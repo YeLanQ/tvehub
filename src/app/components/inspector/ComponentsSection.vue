@@ -3,7 +3,7 @@ import { ref } from "vue";
 import type { Node } from "../../../framework/prototype/Node";
 import { MeshNode, LightNode, CameraNode } from "../../../framework/prototype/derived/Primitives";
 
-const props = defineProps<{ node: Node }>();
+const props = defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
   addComponent: [type: string];
@@ -21,7 +21,7 @@ function hasComponent(type: string): boolean {
 </script>
 
 <template>
-  <div class="comp-list">
+  <div class="comp-list" :data-rev="rev">
     <div v-if="node instanceof MeshNode" class="comp-row">
       <span class="comp-label">Mesh Renderer</span>
       <span class="comp-type mono">Mesh</span>

@@ -2,7 +2,7 @@
 import type { Node } from "../../../framework/prototype/Node";
 import NumberField from "../NumberField.vue";
 
-defineProps<{ node: Node }>();
+defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
   transform: [axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number];
@@ -14,7 +14,7 @@ function onCommit(axis: "position" | "rotation" | "scale", part: "x" | "y" | "z"
 </script>
 
 <template>
-  <div v-for="axis in ['position', 'rotation', 'scale'] as const" :key="axis" class="vec3">
+  <div v-for="axis in ['position', 'rotation', 'scale'] as const" :key="axis" class="vec3" :data-rev="rev">
     <span class="v-label">{{ axis }}</span>
     <NumberField
       v-for="p in ['x', 'y', 'z'] as const"

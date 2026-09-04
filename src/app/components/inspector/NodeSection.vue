@@ -2,7 +2,7 @@
 import { ref, watch } from "vue";
 import type { Node } from "../../../framework/prototype/Node";
 
-const props = defineProps<{ node: Node }>();
+const props = defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
   rename: [name: string];
@@ -35,7 +35,7 @@ function commitName(): void {
 </script>
 
 <template>
-  <div class="field">
+  <div class="field" :data-rev="rev">
     <label>名称</label>
     <input v-model="localName" type="text" @change="commitName" />
   </div>

@@ -2,7 +2,7 @@
 import { LightNode } from "../../../framework/prototype/derived/Primitives";
 import NumberField from "../NumberField.vue";
 
-defineProps<{ node: LightNode }>();
+defineProps<{ node: LightNode; rev?: number }>();
 
 const emit = defineEmits<{
   update: [label: string];
@@ -20,7 +20,7 @@ function onColorHex(hex: string): void {
 </script>
 
 <template>
-  <div class="field">
+  <div class="field" :data-rev="rev">
     <label>Kind</label>
     <select :value="node.lightKind" @change="emit('update', 'Set Light Kind')">
       <option value="point">Point</option>

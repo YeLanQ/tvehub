@@ -18,6 +18,7 @@ const store = getEditorStore();
 const { state, engine } = store;
 
 const node = computed<Node | undefined>(() => store.nodeById(state.selectedId ?? undefined));
+const revision = computed(() => store.revision());
 
 function commit(mutate: (n: Node) => void, label: string): void {
   const n = node.value;
@@ -109,6 +110,7 @@ function onRemoveComponent(type: string): void {
         </template>
         <NodeSection
           :node="node"
+          :rev="revision"
           @rename="onNodeRename"
           @toggleActive="onNodeToggleActive"
           @toggleVisible="onNodeToggleVisible"
@@ -116,24 +118,25 @@ function onRemoveComponent(type: string): void {
       </ComponentCard>
 
       <ComponentCard title="Transform" :open="true">
-        <TransformSection :node="node" @transform="onTransformChange" />
+        <TransformSection :node="node" :rev="revision" @transform="onTransformChange" />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof MeshNode" title="Mesh" :open="true">
-        <MeshSection :node="node" @update="onMeshUpdate" />
+        <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof LightNode" title="Light" :open="true">
-        <LightSection :node="node" @update="onLightUpdate" />
+        <LightSection :node="node" :rev="revision" @update="onLightUpdate" />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof CameraNode" title="Camera" :open="true">
-        <CameraSection :node="node" @update="onCameraUpdate" />
+        <CameraSection :node="node" :rev="revision" @update="onCameraUpdate" />
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">
         <ComponentsSection
           :node="node"
+          :rev="revision"
           @addComponent="onAddComponent"
           @removeComponent="onRemoveComponent"
         />

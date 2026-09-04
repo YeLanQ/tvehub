@@ -2,7 +2,7 @@
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import NumberField from "../NumberField.vue";
 
-defineProps<{ node: MeshNode }>();
+defineProps<{ node: MeshNode; rev?: number }>();
 
 const emit = defineEmits<{
   update: [label: string];
@@ -20,7 +20,7 @@ function onColorHex(hex: string): void {
 </script>
 
 <template>
-  <div class="field">
+  <div class="field" :data-rev="rev">
     <label>Geometry</label>
     <select :value="node.geometry" @change="emit('update', 'Set Geometry')">
       <option value="box">Box</option>

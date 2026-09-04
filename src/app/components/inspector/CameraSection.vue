@@ -2,7 +2,7 @@
 import { CameraNode } from "../../../framework/prototype/derived/Primitives";
 import NumberField from "../NumberField.vue";
 
-defineProps<{ node: CameraNode }>();
+defineProps<{ node: CameraNode; rev?: number }>();
 
 const emit = defineEmits<{
   update: [label: string];
@@ -10,7 +10,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="field">
+  <div class="field" :data-rev="rev">
     <label>Fov</label>
     <NumberField
       :model-value="node.fov"
