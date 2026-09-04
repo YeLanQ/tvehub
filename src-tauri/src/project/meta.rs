@@ -12,6 +12,46 @@ pub fn sibling_with_meta(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// 该相对路径资产是否应生成 .meta（排除隐藏项与已存在的 .meta 本身）
+pub fn is_meta_candidate(_root: &Path, rel: &str) -> bool {
+    if rel.starts_with('.') || rel.ends_with(".meta") {
+        return false;
+    }
+    true
+}
+
+/// 读取资产 .meta 文档（不存在返回 null）。
+pub fn read_meta(asset: &Path) -> Result<serde_json::Value, String> {
+    let meta = sibling_with_meta(asset);
+    if !meta.is_file() {
+        return Ok(serde_json::Value::Null);
+    }
+    let content = fs::read_to_string(&meta).map_err(|e| format!("读取 meta 失败 '{}': {}", meta.display(), e))?;
+    serde_json::from_str(&content).map_err(|e| format!("解析 meta 失败 '{}': {}", meta.display(), e))
+}
+
+/// 合并写入资产 .meta（内部先确保 uuid 存在），保持既有字段。
+pub fn write_meta(asset: &Path, fields: &serde_json::Value) -> Result<(), String> {
+    let mut doc = read_meta(asset)?;
+    if !doc.is_object() {
+        doc = serde_json::json!({});
+    }
+    if let Some(obj) = doc.as_object_mut() {
+        if let Some(fields) = fields.as_object() {
+            for (k, v) in fields {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    if doc.get("uuid").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("uuid".into(), serde_json::Value::String(uuid::Uuid::new_v4().to_string()));
+        }
+    }
+    fs::write(&sibling_with_meta(asset), serde_json::to_string_pretty(&doc).unwrap_or_default())
+        .map_err(|e| format!("写入 meta 失败 '{}': {}", sibling_with_meta(asset).display(), e))
+}
+
 /// 确保资产带 .meta（不存在或缺失 uuid 则用新 uuid 创建并写盘）。返回 uuid。
 pub fn ensure_meta(asset: &Path) -> Result<String, String> {
     let meta = sibling_with_meta(asset);
@@ -31,6 +71,36 @@ pub fn ensure_meta(asset: &Path) -> Result<String, String> {
     fs::write(&meta, serde_json::to_string_pretty(&doc).unwrap_or_default())
         .map_err(|e| format!("写入 meta 失败 '{}': {}", meta.display(), e))?;
     Ok(uuid)
+}
+
+/// 复制资产时把源 .meta 一并复制到目标，并重新生成其中的 uuid（避免与源冲突）。
+pub fn copy_meta_sibling(src: &Path, dest: &Path) -> Result<(), String> {
+    let src_meta = sibling_with_meta(src);
+    if !src_meta.is_file() {
+        return Ok(());
+    }
+    let dest_meta = sibling_with_meta(dest);
+    fs::copy(&src_meta, &dest_meta).map_err(|e| format!("复制 meta 失败 '{}': {}", src_meta.display(), e))?;
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let doc = serde_json::json!({ "uuid": uuid });
+    fs::write(&dest_meta, serde_json::to_string_pretty(&doc).unwrap_or_default())
+        .map_err(|e| format!("重写 meta 失败 '{}': {}", dest_meta.display(), e))?;
+    Ok(())
+}
+
+/// 重写已有 .meta 中的 uuid（递归复制目录时对每个子文件同步处理）。
+pub fn refresh_meta_uuid(path: &Path) -> Result<(), String> {
+    let meta = sibling_with_meta(path);
+    if !meta.is_file() {
+        return Ok(());
+    }
+    let mut doc = read_meta(path)?;
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert("uuid".into(), serde_json::Value::String(uuid::Uuid::new_v4().to_string()));
+    }
+    fs::write(&meta, serde_json::to_string_pretty(&doc).unwrap_or_default())
+        .map_err(|e| format!("刷新 meta 失败 '{}': {}", meta.display(), e))?;
+    Ok(())
 }
 
 /// 递归确保目录下所有资产（文件/子目录）都带 .meta。

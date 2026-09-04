@@ -1,0 +1,49 @@
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.prompt-dialog {
+  min-width: 340px;
+  max-width: 480px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  padding: 16px 18px;
+}
+
+.prompt-dialog h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.prompt-dialog .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.prompt-dialog .row label {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.prompt-dialog .row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

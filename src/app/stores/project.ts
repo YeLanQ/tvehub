@@ -13,6 +13,8 @@ export interface ProjectStore {
   loading: boolean;
   /** 当前打开项目的主场景 JSON 文本（进入编辑器时加载） */
   sceneJson: string | null;
+  /** 当前打开项目的根路径（资产扫描用） */
+  currentPath: string | null;
   setView: (view: "home" | "editor") => void;
   addRecent: (project: RecentProject) => void;
   removeRecent: (path: string) => void;
@@ -39,6 +41,7 @@ export function getProjectStore(): ProjectStore {
     view: "home" as "home" | "editor",
     loading: false,
     sceneJson: null as string | null,
+    currentPath: null as string | null,
   });
 
   const store: ProjectStore = {
@@ -53,6 +56,9 @@ export function getProjectStore(): ProjectStore {
     },
     get sceneJson() {
       return state.sceneJson;
+    },
+    get currentPath() {
+      return state.currentPath;
     },
     setView(view) {
       state.view = view;
@@ -85,6 +91,7 @@ export function getProjectStore(): ProjectStore {
       try {
         const info = await invoke<RecentProject>("open_project", { path });
         await store.loadScene(info.path);
+        state.currentPath = info.path;
         store.addRecent(info);
         state.view = "editor";
         return true;
@@ -105,6 +112,7 @@ export function getProjectStore(): ProjectStore {
           files,
         });
         await store.loadScene(info.path);
+        state.currentPath = info.path;
         store.addRecent(info);
         state.view = "editor";
         return info;

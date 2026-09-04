@@ -1,6 +1,12 @@
+pub mod assets;
 pub mod meta;
+pub mod path;
+pub mod scan;
 
+pub use assets::*;
 pub use meta::*;
+pub use path::*;
+pub use scan::*;
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -13,6 +19,26 @@ pub struct ProjectInfo {
     pub path: String,
     pub name: String,
     pub scene_count: usize,
+}
+
+/// 单个资产条目（递归扫描结果）
+#[derive(Serialize, Clone)]
+pub struct AssetEntry {
+    pub name: String,
+    /// 相对项目根路径（正斜杠）
+    pub path: String,
+    /// "dir" 或小写扩展名（如 "scene"、"ts"）
+    pub kind: String,
+    pub size: u64,
+}
+
+/// uuid -> 相对路径映射（由 `*.meta` 汇总）
+#[derive(Serialize, Clone)]
+pub struct MetaEntry {
+    pub uuid: String,
+    pub url: String,
+    /// 纹理九宫格（.meta 的 sizeGrid 字段，"上,右,下,左"），无则 null
+    pub size_grid: Option<String>,
 }
 
 /// 获取项目信息
@@ -77,25 +103,6 @@ pub fn rename_project_dir(root: &Path, new_name: &str) -> Result<ProjectInfo, St
     project_info(&new_dir)
 }
 
-/// 清理项目名称：移除非法字符，不能为空
-fn sanitize_name(name: &str) -> Result<String, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("项目名称不能为空".to_string());
-    }
-    // Windows 文件名非法字符：\ / : * ? " < > |
-    let sanitized: String = trimmed
-        .chars()
-        .map(|c| match c {
-            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect();
-    if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
-        return Err("项目名称无效".to_string());
-    }
-    Ok(sanitized)
-}
 
 /// 模板占位符替换：{{NAME}} → 项目名，{{NAME_LOWER}} → 项目名小写，
 /// {{UUID}} → 每次出现生成一个全新 UUID（场景节点 _$id 需要彼此不同）。

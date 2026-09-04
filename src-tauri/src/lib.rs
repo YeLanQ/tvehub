@@ -2,7 +2,7 @@
 mod project;
 mod trash;
 
-use project::ProjectInfo;
+use project::{AssetEntry, MetaEntry, ProjectInfo};
 use trash::move_to_trash;
 use serde::Serialize;
 use std::fs;
@@ -146,6 +146,129 @@ async fn trash_path(path: String) -> Result<(), String> {
     move_to_trash(&path)
 }
 
+// ---------------------------------------------------------------------------
+// 资产浏览器命令（扫描项目 assets/src 目录，供资产面板双栏浏览与 CRUD）
+// ---------------------------------------------------------------------------
+
+/// 扫描项目目录为资产平铺表
+#[tauri::command]
+async fn scan_assets(root: String) -> Result<Vec<AssetEntry>, String> {
+    let entries = project::scan_tree(&PathBuf::from(&root))?;
+    Ok(entries
+        .into_iter()
+        .map(|e| AssetEntry {
+            name: e.name,
+            path: e.path,
+            kind: e.kind,
+            size: e.size,
+        })
+        .collect())
+}
+
+/// 扫描项目 `.meta` 为 uuid -> url 映射表
+#[tauri::command]
+async fn scan_asset_db(root: String) -> Result<Vec<MetaEntry>, String> {
+    let entries = project::scan_meta_db(&PathBuf::from(&root))?;
+    Ok(entries
+        .into_iter()
+        .map(|e| MetaEntry {
+            uuid: e.uuid,
+            url: e.url,
+            size_grid: e.size_grid,
+        })
+        .collect())
+}
+
+/// 读取项目内文本文件
+#[tauri::command]
+async fn read_text(root: String, rel: String) -> Result<String, String> {
+    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    std::fs::read_to_string(&p).map_err(|e| format!("读取失败 '{}': {}", rel, e))
+}
+
+/// 写入项目内文本文件（自动补 .meta）
+#[tauri::command]
+async fn write_text(root: String, rel: String, content: String) -> Result<(), String> {
+    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, content).map_err(|e| format!("写入失败 '{}': {}", rel, e))?;
+    if project::is_meta_candidate(&PathBuf::from(&root), &rel) {
+        let _ = project::ensure_meta(&p);
+    }
+    Ok(())
+}
+
+/// 读取资产 .meta（JSON）；无则 null
+#[tauri::command]
+async fn read_asset_meta(root: String, rel: String) -> Result<serde_json::Value, String> {
+    let asset = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    project::read_meta(&asset)
+}
+
+/// 合并写入资产 .meta（内部先确保 uuid 存在）
+#[tauri::command]
+async fn write_asset_meta(root: String, rel: String, meta: serde_json::Value) -> Result<(), String> {
+    let asset = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    project::write_meta(&asset, &meta)
+}
+
+/// 为项目 assets 下所有资产补齐 .meta
+#[tauri::command]
+async fn ensure_project_meta(root: String) -> Result<(), String> {
+    let root_path = PathBuf::from(&root);
+    let assets = root_path.join("assets");
+    if assets.is_dir() {
+        let _ = project::ensure_meta_recursive(&assets);
+    }
+    Ok(())
+}
+
+/// 复制资产，返回新资产相对路径
+#[tauri::command]
+async fn copy_asset(root: String, rel: String) -> Result<String, String> {
+    project::copy_asset(&PathBuf::from(&root), &rel)
+}
+
+/// 导入外部文件/目录到项目内指定目录，返回成功导入的相对路径列表
+#[tauri::command]
+async fn import_assets(root: String, dest_dir: String, source_paths: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        project::import_assets(&PathBuf::from(&root), &dest_dir, &source_paths)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 移动资产到项目内另一目录，返回新资产相对路径
+#[tauri::command]
+async fn move_asset(root: String, rel: String, dest_dir: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        project::move_asset(&PathBuf::from(&root), &rel, &dest_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 删除资产（目录递归删除）
+#[tauri::command]
+async fn delete_asset(root: String, rel: String) -> Result<(), String> {
+    project::delete_asset(&PathBuf::from(&root), &rel)
+}
+
+/// 重命名资产，返回新资产相对路径
+#[tauri::command]
+async fn rename_asset(root: String, rel: String, new_name: String) -> Result<String, String> {
+    project::rename_asset(&PathBuf::from(&root), &rel, &new_name)
+}
+
+/// 新建目录，返回创建目录相对路径
+#[tauri::command]
+async fn create_folder(root: String, rel: String) -> Result<String, String> {
+    project::create_folder(&PathBuf::from(&root), &rel)
+}
+
 /// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）
 #[tauri::command]
 async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
@@ -178,6 +301,19 @@ pub fn run() {
             trash_path,
             pick_project_folder,
             read_project_scene,
+            scan_assets,
+            scan_asset_db,
+            read_text,
+            write_text,
+            read_asset_meta,
+            write_asset_meta,
+            ensure_project_meta,
+            copy_asset,
+            import_assets,
+            move_asset,
+            delete_asset,
+            rename_asset,
+            create_folder,
             append_debug_log,
         ])
         .run(tauri::generate_context!())

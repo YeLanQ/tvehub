@@ -11,6 +11,7 @@ import ConsolePanel from "./app/components/ConsolePanel.vue";
 import AssetsPanel from "./app/components/AssetsPanel.vue";
 import HomeView from "./app/components/HomeView.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
+import PromptDialog from "./app/components/PromptDialog.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
@@ -144,5 +145,7 @@ onMounted(() => {
 
     <!-- 全局确认弹窗 -->
     <ConfirmDialog />
+    <!-- 全局输入弹窗 -->
+    <PromptDialog />
   </div>
 </template>
