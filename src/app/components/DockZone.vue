@@ -12,7 +12,8 @@ import {
 } from "../docks";
 import HierarchyPanel from "./HierarchyPanel.vue";
 import InspectorPanel from "./InspectorPanel.vue";
-import HistoryPanel from "./HistoryPanel.vue";
+import ConsolePanel from "./ConsolePanel.vue";
+import AssetsPanel from "./AssetsPanel.vue";
 
 const props = defineProps<{ zone: DockZoneId }>();
 
@@ -81,10 +82,11 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="dock-body">
-        <!-- v-show 三面板共存：切换标签保留面板状态 -->
+        <!-- v-show 四面板共存：切换标签保留面板状态 -->
         <HierarchyPanel v-show="activePanel === 'hierarchy'" />
         <InspectorPanel v-show="activePanel === 'inspector'" />
-        <HistoryPanel v-show="activePanel === 'history'" />
+        <ConsolePanel v-show="activePanel === 'console'" />
+        <AssetsPanel v-show="activePanel === 'assets'" />
       </div>
     </template>
     <!-- 空停靠区：细条拖放落点（拖回面板停靠） -->
@@ -191,7 +193,8 @@ onUnmounted(() => {
 /* 面板填充与滚动（:deep 覆盖各面板根样式；滚动由面板内部区域自行管理） */
 .dock-body :deep(.hierarchy),
 .dock-body :deep(.inspector),
-.dock-body :deep(.history) {
+.dock-body :deep(.console),
+.dock-body :deep(.assets) {
   flex: 1;
   min-height: 0;
 }

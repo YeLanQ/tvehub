@@ -2,11 +2,11 @@ import { reactive, watch } from "vue";
 
 /**
  * 编辑器停靠布局（Unity 风格）：
- * 层级 / 属性 / 历史 三个面板可跨区域拖拽停靠（左侧 / 右侧 / 底部三个停靠区，
+ * 层级 / 属性 / 控制台 / 资产 四个面板可跨区域拖拽停靠（左侧 / 右侧 / 底部三个停靠区，
  * 支持同一区域内多个标签页与重排），拖到空白处成为浮动窗口；布局持久化到 localStorage。
  * 中央区域（3D 视口）不是可停靠面板，始终保持。
  */
-export type DockPanelId = "hierarchy" | "inspector" | "history";
+export type DockPanelId = "hierarchy" | "inspector" | "console" | "assets";
 export type DockZoneId = "left" | "right" | "bottom";
 
 export interface FloatingDock {
@@ -30,23 +30,24 @@ export interface DockLayout {
   sizes: { left: number; right: number; bottom: number };
 }
 
-export const ALL_PANELS: DockPanelId[] = ["hierarchy", "inspector", "history"];
+export const ALL_PANELS: DockPanelId[] = ["hierarchy", "inspector", "console", "assets"];
 export const ALL_ZONES: DockZoneId[] = ["left", "right", "bottom"];
 
 export const DOCK_PANEL_LABEL: Record<DockPanelId, string> = {
   hierarchy: "层级",
   inspector: "属性",
-  history: "历史",
+  console: "控制台",
+  assets: "资产",
 };
 
-const LAYOUT_KEY = "three-visual-editor:dock-layout";
+const LAYOUT_KEY = "three-visual-editor:dock-layout:v2";
 
 function defaults(): DockLayout {
   return {
-    zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["history"] },
-    active: { left: "hierarchy", right: "inspector", bottom: "history" },
+    zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["console", "assets"] },
+    active: { left: "hierarchy", right: "inspector", bottom: "console" },
     floating: [],
-    sizes: { left: 270, right: 300, bottom: 168 },
+    sizes: { left: 270, right: 300, bottom: 180 },
   };
 }
 

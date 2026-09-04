@@ -8,7 +8,8 @@ import {
 } from "../docks";
 import HierarchyPanel from "./HierarchyPanel.vue";
 import InspectorPanel from "./InspectorPanel.vue";
-import HistoryPanel from "./HistoryPanel.vue";
+import ConsolePanel from "./ConsolePanel.vue";
+import AssetsPanel from "./AssetsPanel.vue";
 
 const props = defineProps<{ win: FloatingDock }>();
 
@@ -46,7 +47,8 @@ function style() {
     <div class="floating-body">
       <HierarchyPanel v-show="win.panel === 'hierarchy'" />
       <InspectorPanel v-show="win.panel === 'inspector'" />
-      <HistoryPanel v-show="win.panel === 'history'" />
+      <ConsolePanel v-show="win.panel === 'console'" />
+      <AssetsPanel v-show="win.panel === 'assets'" />
     </div>
   </div>
 </template>
@@ -108,9 +110,9 @@ function style() {
 }
 .floating-body :deep(.hierarchy),
 .floating-body :deep(.inspector),
-.floating-body :deep(.history) {
+.floating-body :deep(.console),
+.floating-body :deep(.assets) {
   flex: 1;
   min-height: 0;
-
 }
 </style>

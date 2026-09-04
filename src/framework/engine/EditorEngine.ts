@@ -168,6 +168,7 @@ export class EditorEngine {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
     this.orbit?.update();
+    this.gizmo?.update(0);
     if (this.selectedId) this.selectionBox?.update();
     if (this.renderer) this.renderer.render(this.scene, this.camera);
   };

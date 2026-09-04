@@ -2,6 +2,7 @@ import { computed, readonly, reactive } from "vue";
 import { EditorEngine } from "../../framework/engine/EditorEngine";
 import { setupStarterScene } from "../../framework/engine/starterScene";
 import type { Node } from "../../framework/prototype/Node";
+import { logStore } from "./log";
 
 export interface EditorStore {
   engine: EditorEngine;
@@ -66,6 +67,28 @@ export function getEditorStore(): EditorStore {
   engine.events.on("gizmo:state", bump);
   engine.history.events.on("changed", bump);
 
+  // 场景图变化 → 控制台日志（框架层不依赖 app，日志桥接只在 app 层）
+  engine.events.on("graph:changed", (c) => {
+    const node = engine.graph.get(c.nodeId);
+    const name = node?.name ?? c.nodeId;
+    switch (c.kind) {
+      case "add":
+        logStore.log("success", `创建节点 ${name}`, "engine");
+        break;
+      case "remove":
+        logStore.log("warn", `删除节点 ${name}`, "engine");
+        break;
+      case "reparent":
+        logStore.log("info", `调整节点层级 ${name}`, "engine");
+        break;
+      case "rename":
+        logStore.log("info", `重命名节点 ${name}`, "engine");
+        break;
+      default:
+        break;
+    }
+  });
+
   const nodes = computed(() => {
     state.revision;
     return engine.graph.all();
@@ -99,6 +122,7 @@ export function mountEditor(container: HTMLElement): void {
   store.engine.mount(container);
   setupStarterScene(store.engine);
   store.markMounted();
+  logStore.log("info", "编辑器已就绪", "engine");
 }
 
 export function disposeEditor(): void {
