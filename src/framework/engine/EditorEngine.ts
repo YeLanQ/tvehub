@@ -195,6 +195,13 @@ export class EditorEngine {
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
   }
 
+  /** 用一棵完整节点树替换当前场景图并重建渲染（场景文件加载使用） */
+  replaceGraph(root: Node, all: Node[]): void {
+    this.graph.replaceTree(root, all);
+    this.selectedId = null;
+    this.rebuildAll();
+  }
+
   setGizmoMode(mode: GizmoMode): void {
     this.gizmo.setMode(mode);
     this.events.emit("gizmo:state", { mode, space: this.gizmo.getSpace() });

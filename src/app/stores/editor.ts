@@ -1,6 +1,7 @@
 import { computed, readonly, reactive } from "vue";
 import { EditorEngine } from "../../framework/engine/EditorEngine";
 import { setupStarterScene } from "../../framework/engine/starterScene";
+import { loadSceneFromJson } from "../../framework/engine/loadScene";
 import type { Node } from "../../framework/prototype/Node";
 import { logStore } from "./log";
 
@@ -116,11 +117,12 @@ export function getEditorStore(): EditorStore {
   return store;
 }
 
-export function mountEditor(container: HTMLElement): void {
+export function mountEditor(container: HTMLElement, sceneJson?: string | null): void {
   const store = getEditorStore() as EditorStore & { markMounted: () => void };
   if (store.state.mounted) return;
   store.engine.mount(container);
-  setupStarterScene(store.engine);
+  if (sceneJson) loadSceneFromJson(store.engine, sceneJson);
+  else setupStarterScene(store.engine);
   store.markMounted();
   logStore.log("info", "编辑器已就绪", "engine");
 }

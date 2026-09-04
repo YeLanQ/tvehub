@@ -1,12 +1,89 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
+import fs from "node:fs";
+import path from "node:path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * 模板注册表插件：扫描 public/templates/ 下含 template.json 的目录，
+ * 把模板元信息（id/名称/描述/kind/文件清单）生成到 src/generated/template-registry.ts。
+ * 开发服务器启动/模板文件变化时自动重建，构建时（buildStart）同样生成 ——
+ * 前端直接 import 该模块（模板列表零 fetch 依赖），模板目录下新增模板即自动注册。
+ */
+const TEMPLATE_ROOT = "public/templates";
+const REGISTRY_PATH = "src/generated/template-registry.ts";
+
+interface TplMeta {
+  name?: string;
+  description?: string;
+  kind?: string;
+  files?: string[];
+}
+
+function readTplMeta(dir: string): TplMeta {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, "template.json"), "utf-8")) as TplMeta;
+  } catch {
+    return {};
+  }
+}
+
+function listTemplateDirs(root: string): string[] {
+  const abs = path.resolve(root);
+  if (!fs.existsSync(abs)) return [];
+  return fs
+    .readdirSync(abs, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && fs.existsSync(path.join(abs, e.name, "template.json")))
+    .map((e) => e.name)
+    .sort();
+}
+
+function generateTemplateRegistry() {
+  const projectTemplates = listTemplateDirs(TEMPLATE_ROOT).map((dir) => {
+    const m = readTplMeta(path.join(TEMPLATE_ROOT, dir));
+    return {
+      id: `builtin:${dir}`,
+      dir,
+      name: m.name ?? dir,
+      description: m.description ?? "",
+      kind: m.kind ?? "3d",
+      files: m.files ?? [],
+    };
+  });
+
+  const content =
+    `// 由 vite.config.ts 模板索引插件自动生成（模板目录变化时重建；请勿手动编辑）\n` +
+    `export interface BuiltinProjectTemplateInfo { id: string; dir: string; name: string; description: string; kind: string; files: string[]; }\n` +
+    `export const PROJECT_TEMPLATES: BuiltinProjectTemplateInfo[] = ${JSON.stringify(projectTemplates, null, 2)};\n`;
+  fs.mkdirSync(path.dirname(REGISTRY_PATH), { recursive: true });
+  fs.writeFileSync(REGISTRY_PATH, content);
+}
+
+function templateIndexPlugin(): Plugin {
+  return {
+    name: "three-visual-editor-template-index",
+    buildStart() {
+      generateTemplateRegistry();
+    },
+    configureServer(server) {
+      generateTemplateRegistry();
+      const abs = path.resolve(TEMPLATE_ROOT);
+      if (fs.existsSync(abs)) server.watcher.add(abs);
+      const onChange = (file: string) => {
+        if (file.includes("template.json")) generateTemplateRegistry();
+      };
+      server.watcher.on("add", onChange);
+      server.watcher.on("unlink", onChange);
+      server.watcher.on("change", onChange);
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue()],
+  plugins: [vue(), templateIndexPlugin()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

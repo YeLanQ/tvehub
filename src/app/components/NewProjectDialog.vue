@@ -6,6 +6,7 @@ import {
   createProjectCats,
   type ProjectTemplate,
 } from "../lib/project-templates";
+import { fetchTemplateFiles } from "../lib/templates";
 import "../../styles/components/new-project-dialog.scss";
 
 const emit = defineEmits<{
@@ -68,17 +69,33 @@ async function handleCreate() {
     return;
   }
 
+  const template = selectedTemplate.value;
+  if (!template) {
+    error.value = "请选择模板";
+    return;
+  }
+
   creating.value = true;
   error.value = "";
 
-  const project = await projectStore.createProject(path.value, name.value.trim());
-
-  creating.value = false;
-
-  if (project) {
-    emit("created", project);
-  } else {
-    error.value = "创建项目失败，请重试";
+  try {
+    const files = await fetchTemplateFiles(template);
+    const project = await projectStore.createProject(
+      path.value,
+      name.value.trim(),
+      template.id,
+      files,
+    );
+    if (project) {
+      emit("created", project);
+    } else {
+      error.value = "创建项目失败，请重试";
+    }
+  } catch (e) {
+    console.error("创建项目失败:", e);
+    error.value = typeof e === "string" ? e : "创建项目失败，请重试";
+  } finally {
+    creating.value = false;
   }
 }
 

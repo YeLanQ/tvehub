@@ -57,6 +57,14 @@ export class SceneGraph {
     this.rootId = node.id;
   }
 
+  /** 用一棵已构建好的完整节点树整体替换场景图（场景文件加载使用） */
+  replaceTree(root: Node, all: Node[]): void {
+    this.nodes.clear();
+    all.forEach((n) => this.nodes.set(n.id, n));
+    this.rootId = root.id;
+    this.emit({ kind: "replace", nodeId: root.id });
+  }
+
   private indexSubtree(node: Node): void {
     this.nodes.set(node.id, node);
     node.childIds.forEach((childId) => {

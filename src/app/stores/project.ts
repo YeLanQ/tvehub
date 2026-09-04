@@ -11,14 +11,22 @@ export interface ProjectStore {
   recent: RecentProject[];
   view: "home" | "editor";
   loading: boolean;
+  /** 当前打开项目的主场景 JSON 文本（进入编辑器时加载） */
+  sceneJson: string | null;
   setView: (view: "home" | "editor") => void;
   addRecent: (project: RecentProject) => void;
   removeRecent: (path: string) => void;
   clearRecent: () => void;
   refreshRecent: () => Promise<void>;
   openProject: (path: string) => Promise<boolean>;
-  createProject: (parent: string, name: string) => Promise<RecentProject | null>;
+  createProject: (
+    parent: string,
+    name: string,
+    templateId: string,
+    files: Record<string, string>,
+  ) => Promise<RecentProject | null>;
   pickFolder: () => Promise<string | null>;
+  loadScene: (path: string) => Promise<void>;
 }
 
 let singleton: ProjectStore | null = null;
@@ -30,6 +38,7 @@ export function getProjectStore(): ProjectStore {
     recent: [] as RecentProject[],
     view: "home" as "home" | "editor",
     loading: false,
+    sceneJson: null as string | null,
   });
 
   const store: ProjectStore = {
@@ -41,6 +50,9 @@ export function getProjectStore(): ProjectStore {
     },
     get loading() {
       return state.loading;
+    },
+    get sceneJson() {
+      return state.sceneJson;
     },
     setView(view) {
       state.view = view;
@@ -72,6 +84,7 @@ export function getProjectStore(): ProjectStore {
       state.loading = true;
       try {
         const info = await invoke<RecentProject>("open_project", { path });
+        await store.loadScene(info.path);
         store.addRecent(info);
         state.view = "editor";
         return true;
@@ -82,10 +95,16 @@ export function getProjectStore(): ProjectStore {
         state.loading = false;
       }
     },
-    async createProject(parent, name) {
+    async createProject(parent, name, templateId, files) {
       state.loading = true;
       try {
-        const info = await invoke<RecentProject>("create_project", { parent, name });
+        const info = await invoke<RecentProject>("create_project", {
+          parent,
+          name,
+          template_id: templateId,
+          files,
+        });
+        await store.loadScene(info.path);
         store.addRecent(info);
         state.view = "editor";
         return info;
@@ -103,6 +122,14 @@ export function getProjectStore(): ProjectStore {
       } catch (e) {
         console.error("Failed to pick folder:", e);
         return null;
+      }
+    },
+    async loadScene(path) {
+      try {
+        state.sceneJson = await invoke<string>("read_project_scene", { path });
+      } catch (e) {
+        console.error("Failed to read project scene:", e);
+        state.sceneJson = null;
       }
     },
   };

@@ -66,68 +66,21 @@ async fn open_project(app: tauri::AppHandle, path: String) -> Result<ProjectInfo
     Ok(info)
 }
 
-/// 创建项目
+/// 创建项目：内置模板（id = "builtin:<目录名>"）由前端从 public/templates fetch 后，
+/// 以 files（相对路径 → 内容）传入，这里按 template_id 写入项目并生成 .meta。
 #[tauri::command]
-async fn create_project(app: tauri::AppHandle, parent: String, name: String) -> Result<ProjectInfo, String> {
-    let parent_path = PathBuf::from(&parent);
-    let project_path = parent_path.join(&name);
-    
-    // 创建项目目录
-    if project_path.exists() {
-        return Err(format!("项目目录已存在: {}", project_path.display()));
+async fn create_project(
+    app: tauri::AppHandle,
+    parent: String,
+    name: String,
+    template_id: String,
+    files: Option<std::collections::HashMap<String, String>>,
+) -> Result<ProjectInfo, String> {
+    if !template_id.starts_with("builtin:") {
+        return Err(format!("未知模板类型: {template_id}"));
     }
-    
-    fs::create_dir_all(&project_path)
-        .map_err(|e| format!("创建项目目录失败: {}", e))?;
-    
-    // 创建 assets 目录
-    let assets_path = project_path.join("assets");
-    fs::create_dir_all(&assets_path)
-        .map_err(|e| format!("创建 assets 目录失败: {}", e))?;
-    
-    // 创建默认场景文件
-    let scene_path = assets_path.join("Main.scene");
-    fs::write(&scene_path, r#"{
-  "type": "scene",
-  "metadata": {
-    "name": "Main Scene",
-    "version": { "major": 1, "minor": 0, "patch": 0 }
-  },
-  "settings": {
-    "rendering": {
-      "backgroundColor": 4194304,
-      "fogEnabled": false,
-      "fogColor": 0,
-      "fogNear": 1,
-      "fogFar": 100,
-      "ambientIntensity": 0.3,
-      "ambientColor": 16777215
-    },
-    "physics": {
-      "gravity": { "x": 0, "y": -9.81, "z": 0 },
-      "physicsEnabled": false
-    }
-  },
-  "root": {
-    "type": "node",
-    "id": "root",
-    "name": "Scene Root",
-    "parentId": null,
-    "childIds": [],
-    "active": true,
-    "visible": true,
-    "transform": {
-      "type": "transform",
-      "position": { "x": 0, "y": 0, "z": 0 },
-      "rotation": { "x": 0, "y": 0, "z": 0 },
-      "scale": { "x": 1, "y": 1, "z": 1 }
-    },
-    "properties": {}
-  }
-}"#)
-    .map_err(|e| format!("创建场景文件失败: {}", e))?;
-    
-    let info = project::project_info(&project_path)?;
+    let files = files.ok_or("模板缺少文件内容")?;
+    let info = project::scaffold_from_files(&PathBuf::from(&parent), &name, &files)?;
     push_recent(&app, &info.path);
     Ok(info)
 }
@@ -155,6 +108,16 @@ async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<()
     list.retain(|p| p != &path);
     save_recent(&app, &list);
     Ok(())
+}
+
+/// 读取项目主场景（assets/Main.scene）的原始 JSON 内容
+#[tauri::command]
+async fn read_project_scene(path: String) -> Result<String, String> {
+    let scene_path = PathBuf::from(&path).join("assets").join("Main.scene");
+    if !scene_path.exists() {
+        return Err(format!("场景文件不存在: {}", scene_path.display()));
+    }
+    fs::read_to_string(&scene_path).map_err(|e| format!("读取场景失败: {}", e))
 }
 
 /// 选择项目文件夹
@@ -214,6 +177,7 @@ pub fn run() {
             rename_project,
             trash_path,
             pick_project_folder,
+            read_project_scene,
             append_debug_log,
         ])
         .run(tauri::generate_context!())

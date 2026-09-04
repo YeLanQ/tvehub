@@ -1,0 +1,6 @@
+{
+  "name": "3D 模板",
+  "description": "默认 3D 场景",
+  "kind": "3d",
+  "files": ["assets/Main.scene", "src/main.ts"]
+}

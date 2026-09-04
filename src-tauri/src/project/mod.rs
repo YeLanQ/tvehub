@@ -1,6 +1,11 @@
+pub mod meta;
+
+pub use meta::*;
+
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 项目信息返回给前端
 #[derive(Serialize, Clone)]
@@ -90,4 +95,67 @@ fn sanitize_name(name: &str) -> Result<String, String> {
         return Err("项目名称无效".to_string());
     }
     Ok(sanitized)
+}
+
+/// 模板占位符替换：{{NAME}} → 项目名，{{NAME_LOWER}} → 项目名小写，
+/// {{UUID}} → 每次出现生成一个全新 UUID（场景节点 _$id 需要彼此不同）。
+pub fn substitute_template(content: &str, name: &str) -> String {
+    let step1 = content
+        .replace("{{NAME}}", name)
+        .replace("{{NAME_LOWER}}", &name.to_lowercase());
+    let mut parts = step1.split("{{UUID}}");
+    let mut out = String::with_capacity(step1.len() + 64);
+    if let Some(head) = parts.next() {
+        out.push_str(head);
+    }
+    for tail in parts {
+        out.push_str(&uuid::Uuid::new_v4().to_string());
+        out.push_str(tail);
+    }
+    out
+}
+
+/// 从模板文件列表创建项目：写入时替换占位符（项目名 / UUID），并递归生成 .meta。
+/// files 为相对路径 → 内容（内置模板由前端从 public/templates fetch）。返回项目信息。
+pub fn scaffold_from_files(
+    parent: &Path,
+    name: &str,
+    files: &HashMap<String, String>,
+) -> Result<ProjectInfo, String> {
+    let name = sanitize_name(name)?;
+    let root = parent.join(&name);
+    if root.exists() {
+        return Err(format!("目录已存在: '{}'", root.display()));
+    }
+    fs::create_dir_all(&root).map_err(|e| format!("创建项目目录失败: {}", e))?;
+
+    // 写入模板文件（相对路径 → 内容），替换占位符
+    for (rel, content) in files {
+        let target = root.join(rel);
+        // 防御：相对路径不得逃逸出项目目录
+        let normalized = Path::new(rel);
+        if normalized.is_absolute()
+            || rel.contains('\\')
+            || rel.split('/').any(|s| s == "..")
+        {
+            return Err(format!("非法模板相对路径: {rel}"));
+        }
+        if let Some(parent_dir) = target.parent() {
+            fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
+        }
+        fs::write(&target, substitute_template(content, &name))
+            .map_err(|e| format!("写入模板文件失败 '{}': {}", rel, e))?;
+    }
+
+    // 为 assets 与 src 下所有文件自动生成 .meta
+    let assets = root.join("assets");
+    if assets.is_dir() {
+        let _ = ensure_meta_recursive(&assets);
+    }
+    let src = root.join("src");
+    if src.is_dir() {
+        let _ = ensure_meta_recursive(&src);
+    }
+
+    project_info(&root)
 }
