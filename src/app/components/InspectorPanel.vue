@@ -25,7 +25,6 @@ function commit(mutate: (n: Node) => void, label: string): void {
   engine.patchNode(n.id, before, after, label);
 }
 
-// 局部草稿同步 selectedId 变化
 const localName = ref("");
 watch(
   () => node.value?.id,
@@ -76,22 +75,48 @@ function isLight(n: Node | undefined): n is LightNode {
 function isCamera(n: Node | undefined): n is CameraNode {
   return n instanceof CameraNode;
 }
+
+// 组件管理
+const compAddOpen = ref(false);
+
+function addComponent(type: string): void {
+  if (type === "wireframe" && isMesh(node.value)) {
+    commit((m) => ((m as MeshNode).wireframe = true), "添加 Wireframe");
+  }
+  compAddOpen.value = false;
+}
+
+function removeComponent(type: string): void {
+  const n = node.value;
+  if (!n) return;
+  if (type === "wireframe" && isMesh(n)) {
+    commit((m) => ((m as MeshNode).wireframe = false), "移除 Wireframe");
+  }
+}
+
+function hasComponent(type: string): boolean {
+  const n = node.value;
+  if (!n) return false;
+  if (type === "wireframe" && isMesh(n)) return n.wireframe;
+  return false;
+}
 </script>
 
 <template>
   <div class="panel inspector">
-
     <div v-if="!node" class="empty muted">未选择节点</div>
 
     <div v-else class="body mono">
+      <!-- 节点标识 -->
       <div class="section">
+        <div class="section__title">Node</div>
         <div class="field-row">
           <label>Name</label>
           <input v-model="localName" type="text" @change="commitName" />
         </div>
         <div class="field-row">
           <span class="type-tag">{{ node.typeKey }}</span>
-          <span class="muted">{{ node.id }}</span>
+          <span class="muted mono">{{ node.id }}</span>
         </div>
         <div class="field-row">
           <label>Active</label>
@@ -109,6 +134,7 @@ function isCamera(n: Node | undefined): n is CameraNode {
         </div>
       </div>
 
+      <!-- 变换 -->
       <div class="section">
         <div class="section__title">Transform</div>
         <div v-for="axis in (['position', 'rotation', 'scale'] as const)" :key="axis" class="vec3">
@@ -124,6 +150,7 @@ function isCamera(n: Node | undefined): n is CameraNode {
         </div>
       </div>
 
+      <!-- 网格属性 -->
       <div v-if="isMesh(node)" class="section">
         <div class="section__title">Mesh</div>
         <div class="field-row">
@@ -169,16 +196,9 @@ function isCamera(n: Node | undefined): n is CameraNode {
             @change="commit((n) => ((n as MeshNode).roughness = parseFloat(($event.target as HTMLInputElement).value) || 0), 'Set Roughness')"
           />
         </div>
-        <div class="field-row">
-          <label>Wireframe</label>
-          <input
-            type="checkbox"
-            :checked="node.wireframe"
-            @change="commit((n) => ((n as MeshNode).wireframe = ($event.target as HTMLInputElement).checked), 'Toggle Wireframe')"
-          />
-        </div>
       </div>
 
+      <!-- 灯光属性 -->
       <div v-if="isLight(node)" class="section">
         <div class="section__title">Light</div>
         <div class="field-row">
@@ -220,6 +240,7 @@ function isCamera(n: Node | undefined): n is CameraNode {
         </div>
       </div>
 
+      <!-- 相机属性 -->
       <div v-if="isCamera(node)" class="section">
         <div class="section__title">Camera</div>
         <div class="field-row">
@@ -249,6 +270,38 @@ function isCamera(n: Node | undefined): n is CameraNode {
           />
         </div>
       </div>
+
+      <!-- 组件列表 -->
+      <div class="section">
+        <div class="section__title">Components</div>
+        <div class="comp-list">
+          <div v-if="isMesh(node)" class="comp-row">
+            <span class="comp-label">Mesh Renderer</span>
+            <span class="comp-type mono">Mesh</span>
+          </div>
+          <div v-if="hasComponent('wireframe')" class="comp-row">
+            <span class="comp-label">Wireframe</span>
+            <span class="comp-type mono">Render</span>
+            <button class="comp-remove" title="移除组件" @click="removeComponent('wireframe')">✕</button>
+          </div>
+          <div v-if="isLight(node)" class="comp-row">
+            <span class="comp-label">Light</span>
+            <span class="comp-type mono">Light</span>
+          </div>
+          <div v-if="isCamera(node)" class="comp-row">
+            <span class="comp-label">Camera</span>
+            <span class="comp-type mono">Camera</span>
+          </div>
+        </div>
+        <button class="add-comp-btn" @click.stop="compAddOpen = !compAddOpen">＋ 添加组件</button>
+        <div v-if="compAddOpen" class="add-comp-menu">
+          <div v-if="isMesh(node)" class="add-comp-item" @click="addComponent('wireframe')">
+            <span>Wireframe</span>
+            <span class="mono comp-type">Render</span>
+          </div>
+          <div v-if="isMesh(node)" class="hint add-comp-empty">仅网格节点可添加组件</div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -261,10 +314,11 @@ function isCamera(n: Node | undefined): n is CameraNode {
 .body {
   overflow: auto;
   flex: 1;
+  padding: 8px 0;
 }
 
 .section {
-  padding: 8px 0;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -272,7 +326,8 @@ function isCamera(n: Node | undefined): n is CameraNode {
   font-size: 11px;
   text-transform: uppercase;
   color: var(--text-dim);
-  padding: 2px 10px 6px;
+  padding: 0 0 6px;
+  letter-spacing: 0.5px;
 }
 
 .type-tag {
@@ -283,22 +338,61 @@ function isCamera(n: Node | undefined): n is CameraNode {
   font-size: 11px;
 }
 
-.vec3 {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-}
-
-.v-label {
-  width: 68px;
+.muted {
   color: var(--text-dim);
   font-size: 11px;
+  margin-left: 6px;
 }
 
-.vec3 input {
-  width: 60px;
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.field-row label {
+  font-size: 11px;
+  color: var(--text-dim);
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.field-row input[type="text"],
+.field-row input[type="number"],
+.field-row select {
   flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+}
+
+.field-row input[type="text"]:focus,
+.field-row input[type="number"]:focus,
+.field-row select:focus {
+  border-color: var(--accent);
+}
+
+.field-row input[type="color"] {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-input);
+  cursor: pointer;
+}
+
+.field-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
 }
 
 .inline {
@@ -306,12 +400,146 @@ function isCamera(n: Node | undefined): n is CameraNode {
   margin-left: 12px;
 }
 
-.field-row input {
-  max-width: 160px;
+.vec3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.v-label {
+  width: 68px;
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.vec3 input {
+  width: 60px;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+}
+
+.vec3 input:focus {
+  border-color: var(--accent);
+}
+
+.comp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.comp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: var(--bg-panel-2);
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.comp-label {
+  flex: 1;
+  color: var(--text);
+}
+
+.comp-type {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.comp-remove {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.comp-remove:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.add-comp-btn {
+  width: 100%;
+  height: 24px;
+  margin-top: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.add-comp-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.add-comp-menu {
+  margin-top: 4px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-comp-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.add-comp-item:hover {
+  background: var(--bg-active);
+  color: #fff;
+}
+
+.add-comp-item .comp-type {
+  margin-left: auto;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
 }
 
 .empty {
   padding: 10px;
   font-size: 12px;
+  text-align: center;
 }
 </style>

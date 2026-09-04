@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
+import {
+  openContextMenu,
+  menuSeparator,
+  type CtxMenuItem,
+} from "../../lib/editor/context-menu";
 
 const { engine } = getEditorStore();
 
@@ -62,11 +67,85 @@ const currentGroup = computed(
   () => groups.find((g) => g.id === currentGroupId.value) ?? groups[0],
 );
 
-function spawn(item: AssetItem): void {
-  if (item.kind === "mesh") engine.addMesh(item.id as never);
-  else if (item.kind === "light") engine.addLight(item.id as never);
-  else if (item.kind === "camera") engine.addCamera();
-  else engine.addEmptyGroup();
+function spawn(item: AssetItem, parentId?: string): void {
+  if (item.kind === "mesh") engine.addMesh(item.id as never, parentId);
+  else if (item.kind === "light") engine.addLight(item.id as never, parentId);
+  else if (item.kind === "camera") engine.addCamera(parentId);
+  else engine.addEmptyGroup(parentId);
+}
+
+function onItemContext(e: MouseEvent, item: AssetItem): void {
+  e.preventDefault();
+  e.stopPropagation();
+  const items: CtxMenuItem[] = [];
+  items.push({
+    label: `创建 ${item.name}`,
+    onClick: () => spawn(item),
+  });
+  items.push(menuSeparator());
+  items.push({
+    label: "添加到选中节点",
+    onClick: () => spawn(item, undefined),
+  });
+  openContextMenu(e, items);
+}
+
+function onContentContext(e: MouseEvent): void {
+  e.preventDefault();
+  e.stopPropagation();
+  const items: CtxMenuItem[] = [];
+  items.push({
+    label: "新建",
+    children: [
+      {
+        label: "网格",
+        header: true,
+      },
+      {
+        label: "Cube",
+        onClick: () => engine.addMesh("box"),
+      },
+      {
+        label: "Sphere",
+        onClick: () => engine.addMesh("sphere"),
+      },
+      {
+        label: "Cylinder",
+        onClick: () => engine.addMesh("cylinder"),
+      },
+      {
+        label: "Plane",
+        onClick: () => engine.addMesh("plane"),
+      },
+      menuSeparator(),
+      {
+        label: "灯光",
+        header: true,
+      },
+      {
+        label: "Point Light",
+        onClick: () => engine.addLight("point"),
+      },
+      {
+        label: "Directional Light",
+        onClick: () => engine.addLight("directional"),
+      },
+      {
+        label: "Ambient",
+        onClick: () => engine.addLight("ambient"),
+      },
+      menuSeparator(),
+      {
+        label: "Camera",
+        onClick: () => engine.addCamera(),
+      },
+      {
+        label: "Group",
+        onClick: () => engine.addEmptyGroup(),
+      },
+    ],
+  });
+  openContextMenu(e, items);
 }
 </script>
 
@@ -84,13 +163,17 @@ function spawn(item: AssetItem): void {
           {{ g.label }}
         </div>
       </div>
-      <div class="am-content view-grid">
+      <div
+        class="am-content view-grid"
+        @contextmenu.prevent="onContentContext"
+      >
         <div
           v-for="item in currentGroup.items"
           :key="item.id"
           class="am-item grid"
           :title="`创建 ${item.name}`"
           @click="spawn(item)"
+          @contextmenu.prevent="onItemContext($event, item)"
         >
           <span class="am-icon">{{ item.icon }}</span>
           <span class="am-name">{{ item.name }}</span>
@@ -149,7 +232,7 @@ function spawn(item: AssetItem): void {
 .am-content.view-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-  gap:6px;
+  gap: 6px;
   align-content: start;
 }
 
@@ -163,10 +246,12 @@ function spawn(item: AssetItem): void {
   border-radius: 4px;
   cursor: pointer;
   background: var(--bg-panel-2);
+  transition: border-color 0.12s;
 }
 
 .am-item:hover {
   background: var(--bg-hover);
+  border-color: var(--accent);
 }
 
 .am-icon {

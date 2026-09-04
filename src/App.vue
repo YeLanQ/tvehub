@@ -3,6 +3,7 @@ import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
 import DockZone from "./app/components/DockZone.vue";
 import FloatingDock from "./app/components/FloatingDock.vue";
+import ContextMenu from "./components/ContextMenu.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockZoneId } from "./app/docks";
 
 /** 停靠区分隔条拖拽：调整区域尺寸 */
@@ -61,6 +62,9 @@ function onSplitDown(e: MouseEvent, zone: DockZoneId) {
     </div>
     <!-- 拖拽捕获层：仅实际拖拽时渲染，盖住 iframe 等吞掉鼠标事件的区域 -->
     <div v-if="dockDnd.active && dockDnd.moved" class="dock-drag-overlay"></div>
+
+    <!-- 全局右键菜单 -->
+    <ContextMenu />
   </div>
 </template>
 
