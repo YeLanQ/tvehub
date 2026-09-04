@@ -1,10 +1,12 @@
 .inspector {
-  min-width: 260px;
+  min-width: 0; /* flex 子元素允许收缩，避免横向滚动 */
 }
 
-.body {
+.inspector-body {
   overflow: auto;
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 8px 0;
 }
 
@@ -48,25 +50,6 @@
     flex-shrink: 0;
   }
 
-  input[type="text"],
-  input[type="number"],
-  select {
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    font-size: 12px;
-    color: var(--text);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    outline: none;
-
-    &:focus {
-      border-color: var(--accent);
-    }
-  }
-
   input[type="color"] {
     width: 24px;
     height: 24px;
@@ -102,22 +85,32 @@
     flex-shrink: 0;
   }
 
+  /* vec3 输入框只保留自身特有的固定宽度，其它样式继承下方公共规则。 */
   input {
     width: 60px;
-    flex: 1;
-    min-width: 0;
-    height: 24px;
-    padding: 0 6px;
-    font-size: 12px;
-    color: var(--text);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    outline: none;
+  }
+}
 
-    &:focus {
-      border-color: var(--accent);
-    }
+/* 字段输入框公共样式：.field-row 的输入框 / select 与 .vec3 的 input 共享。
+   原先 .vec3 input 块把这些属性整句复制了一遍，此处以一个顶层选择器列表合并，
+   既消除了重复，也避免把 .vec3 input 误嵌套在 .field-row 下编译出错误选择器。 */
+.field-row input[type="text"],
+.field-row input[type="number"],
+.field-row select,
+.vec3 input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
   }
 }
 

@@ -59,7 +59,7 @@ const previewStyle = computed(() => {
     <header class="toolbar"><Toolbar /></header>
 
     <!-- 主体（Unity 风格停靠布局：左侧/右侧停靠区 + 中央视口） -->
-    <div class="body">
+    <div class="editor-body">
       <DockZone zone="left" />
       <div
         v-if="docks.zones.left.length"

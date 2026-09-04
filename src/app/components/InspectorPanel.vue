@@ -94,7 +94,7 @@ function onRemoveComponent(type: string): void {
   <div class="panel inspector">
     <div v-if="!node" class="empty muted">未选择节点</div>
 
-    <div v-else class="body mono">
+    <div v-else class="inspector-body mono">
       <NodeSection
         :node="node"
         @rename="onNodeRename"

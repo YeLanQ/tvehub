@@ -11,7 +11,6 @@
   --text: #d2d2d2;
   --text-dim: #949494;
   --accent: #757575;
-  --accent-2: #757575;
   --ok: #5fb05f;
   --warn: #d9a13b;
   --err: #dc6b6b;
@@ -63,15 +62,10 @@ button {
     cursor: not-allowed;
   }
 
+  /* .primary 仅在默认按钮基础上加粗字体，背景/边框/颜色/悬浮均继承 button 规则，
+     此处不再重复声明已继承的属性。 */
   &.primary {
-    background: var(--btn);
-    border: 1px solid var(--border);
-    color: var(--text);
     font-weight: 600;
-
-    &:hover:not(:disabled) {
-      background: var(--btn-hover);
-    }
   }
 
   &.danger:hover:not(:disabled) {
@@ -170,8 +164,13 @@ body.dock-resizing {
   color: var(--text-dim);
 }
 
+/* 弹性布局中的伸缩占位符，各组件共享 */
+.spacer {
+  flex: 1;
+}
+
 /* 控制面板内容页：允许文本选中 */
-.panel .body,
+.panel .inspector-body,
 .panel .tree,
 .panel .field-row,
 .panel .comp-list,
