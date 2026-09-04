@@ -1,0 +1,1 @@
+export { debugLog, debugError } from "./debug-log";

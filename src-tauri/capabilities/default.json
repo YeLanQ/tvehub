@@ -5,6 +5,13 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "core:window:allow-show",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-is-maximized",
+    "core:window:allow-inner-size",
+    "core:window:allow-scale-factor",
+    "opener:default",
+    "opener:allow-open-path"
   ]
 }

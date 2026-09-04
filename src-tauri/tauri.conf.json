@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "three-visual-editor",
+        "title": "Three Visual Editor",
+        "width": 1300,
+        "height": 860,
         "minWidth": 1300,
-        "minHeight": 860
+        "minHeight": 860,
+        "visible": false,
+        "backgroundColor": "#1a1a2e"
       }
     ],
     "security": {
