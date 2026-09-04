@@ -5,6 +5,8 @@ import { loadSceneFromJson } from "../../framework/engine/loadScene";
 import type { Node } from "../../framework/prototype/Node";
 import { logStore } from "./log";
 
+export type ViewMode = "scene" | "preview" | "script";
+
 export interface EditorStore {
   engine: EditorEngine;
   revision: () => number;
@@ -12,8 +14,10 @@ export interface EditorStore {
   nodeById: (id: string | null | undefined) => Node | undefined;
   childrenOf: (id: string) => Node[];
   markMounted: () => void;
+  setViewMode: (mode: ViewMode) => void;
   state: Readonly<{
     selectedId: string | null;
+    viewMode: ViewMode;
     gizmoMode: "translate" | "rotate" | "scale";
     gizmoSpace: "local" | "world";
     canUndo: boolean;
@@ -38,6 +42,7 @@ export function getEditorStore(): EditorStore {
 
   const state = reactive({
     selectedId: null as string | null,
+    viewMode: "scene" as ViewMode,
     gizmoMode: "translate" as EditorStore["state"]["gizmoMode"],
     gizmoSpace: "local" as EditorStore["state"]["gizmoSpace"],
     canUndo: false,
@@ -109,6 +114,9 @@ export function getEditorStore(): EditorStore {
       return engine.graph.childrenOf(id);
     },
     state: readonly(state) as unknown as EditorStore["state"],
+    setViewMode: (mode) => {
+      state.viewMode = mode;
+    },
     markMounted: () => {
       state.mounted = true;
     },

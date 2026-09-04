@@ -15,7 +15,10 @@ export interface ProjectStore {
   sceneJson: string | null;
   /** 当前打开项目的根路径（资产扫描用） */
   currentPath: string | null;
+  /** 当前打开项目名称 */
+  projectName: string | null;
   setView: (view: "home" | "editor") => void;
+  setProjectName: (name: string | null) => void;
   addRecent: (project: RecentProject) => void;
   removeRecent: (path: string) => void;
   clearRecent: () => void;
@@ -42,6 +45,7 @@ export function getProjectStore(): ProjectStore {
     loading: false,
     sceneJson: null as string | null,
     currentPath: null as string | null,
+    projectName: null as string | null,
   });
 
   const store: ProjectStore = {
@@ -60,8 +64,14 @@ export function getProjectStore(): ProjectStore {
     get currentPath() {
       return state.currentPath;
     },
+    get projectName() {
+      return state.projectName;
+    },
     setView(view) {
       state.view = view;
+    },
+    setProjectName(name) {
+      state.projectName = name;
     },
     addRecent(project) {
       state.recent = [
@@ -92,6 +102,7 @@ export function getProjectStore(): ProjectStore {
         const info = await invoke<RecentProject>("open_project", { path });
         await store.loadScene(info.path);
         state.currentPath = info.path;
+        store.setProjectName(info.name);
         store.addRecent(info);
         state.view = "editor";
         return true;
@@ -113,6 +124,7 @@ export function getProjectStore(): ProjectStore {
         });
         await store.loadScene(info.path);
         state.currentPath = info.path;
+        store.setProjectName(info.name);
         store.addRecent(info);
         state.view = "editor";
         return info;

@@ -1,14 +1,89 @@
 .toolbar-groups {
   flex: 1;
   min-width: 0;
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 12px;
 }
 
-.group {
+/* 项目信息：项目名 + 场景路径（上下层） */
+.project-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.project-name {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-name {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar-build {
+  flex-shrink: 0;
+}
+
+.spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 居中工具切换：场景 / 预览 / 脚本（相对 .toolbar-groups 绝对居中） */
+.tool-switch {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  z-index: 1;
+}
+
+.tool-btn {
+  background: transparent;
+  border: none;
+  padding: 3px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--btn-hover);
+  }
+
+  &.active {
+    color: var(--accent);
+    background: var(--bg-hover);
+    font-weight: 600;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
 }

@@ -96,3 +96,14 @@
   z-index: 250;
   cursor: grabbing;
 }
+
+/* 视图模式占位（预览/脚本，待接入） */
+.center-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  background: var(--bg);
+}

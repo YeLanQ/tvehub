@@ -96,7 +96,15 @@ onMounted(() => {
           @mousedown="onSplitDown($event, 'left')"
         ></div>
 
-        <main class="center"><Viewport /></main>
+        <main class="center">
+          <Viewport v-show="editorStore.state.viewMode === 'scene'" />
+          <div v-if="editorStore.state.viewMode === 'preview'" class="center-placeholder mono">
+            预览模式（待接入）
+          </div>
+          <div v-if="editorStore.state.viewMode === 'script'" class="center-placeholder mono">
+            脚本模式（待接入）
+          </div>
+        </main>
 
         <div
           v-if="docks.zones.right.length"
