@@ -1,7 +1,9 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod project;
+mod trash;
 
 use project::ProjectInfo;
+use trash::move_to_trash;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
@@ -168,6 +170,19 @@ async fn pick_project_folder() -> Result<Option<String>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// 重命名项目
+#[tauri::command]
+async fn rename_project(path: String, new_name: String) -> Result<ProjectInfo, String> {
+    let project_path = PathBuf::from(&path);
+    project::rename_project_dir(&project_path, &new_name)
+}
+
+/// 把路径移入回收站
+#[tauri::command]
+async fn trash_path(path: String) -> Result<(), String> {
+    move_to_trash(&path)
+}
+
 /// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）
 #[tauri::command]
 async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
@@ -196,6 +211,8 @@ pub fn run() {
             create_project,
             list_recent_projects,
             remove_recent_project,
+            rename_project,
+            trash_path,
             pick_project_folder,
             append_debug_log,
         ])

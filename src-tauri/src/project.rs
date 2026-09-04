@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 项目信息返回给前端
 #[derive(Serialize, Clone)]
@@ -52,4 +52,42 @@ fn count_ext(root: &Path, ext: &str) -> usize {
         }
     }
     count
+}
+
+/// 重命名项目：目录名改为新名，返回重命名后的项目信息
+pub fn rename_project_dir(root: &Path, new_name: &str) -> Result<ProjectInfo, String> {
+    let name = sanitize_name(new_name)?;
+    let parent = root.parent().ok_or("项目目录没有父目录")?;
+    let new_dir = parent.join(&name);
+    if new_dir == root {
+        return project_info(root);
+    }
+    if !root.exists() {
+        return Err(format!("项目目录不存在: '{}'", root.display()));
+    }
+    if new_dir.exists() {
+        return Err(format!("目标目录已存在: '{}'", new_dir.display()));
+    }
+    fs::rename(root, &new_dir).map_err(|e| format!("重命名项目目录失败: {}", e))?;
+    project_info(&new_dir)
+}
+
+/// 清理项目名称：移除非法字符，不能为空
+fn sanitize_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("项目名称不能为空".to_string());
+    }
+    // Windows 文件名非法字符：\ / : * ? " < > |
+    let sanitized: String = trimmed
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect();
+    if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+        return Err("项目名称无效".to_string());
+    }
+    Ok(sanitized)
 }
