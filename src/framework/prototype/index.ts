@@ -1,0 +1,13 @@
+import { PrototypeRegistry, createDefaultRegistry } from "./PrototypeRegistry";
+import type { PrototypeCtor } from "./PrototypeRegistry";
+
+export { Prototype } from "./Prototype";
+export { Node } from "./Node";
+export { Transform, AnchoredTransform } from "./Transform";
+export { MeshNode, LightNode, CameraNode } from "./derived/Primitives";
+export { PrototypeRegistry, createDefaultRegistry };
+export type { PrototypeCtor };
+export type { NodeInit, RegisteredNodeTypes } from "./Node";
+export type { GeometryKind, MeshNodeInit, LightNodeInit, CameraNodeInit } from "./derived/Primitives";
+export type { TransformInit } from "./Transform";
+export type { Vec3, Euler, JsonValue, JsonRecord } from "./types";
