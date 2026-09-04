@@ -77,11 +77,11 @@ export class Node extends Prototype {
   }
 
   /** 派生类可覆写本钩子，补充自身特有字段 */
-  protected writeOwnData(target: JsonRecord): void {
+  protected writeOwnData(target: Record<string, unknown>): void {
     void target;
   }
 
-  protected readOwnData(source: JsonRecord): void {
+  protected readOwnData(source: Record<string, unknown>): void {
     void source;
   }
 
@@ -102,7 +102,7 @@ export class Node extends Prototype {
     return record;
   }
 
-  applyJSON(json: JsonRecord): void {
+  applyJSON(json: Record<string, unknown>): void {
     this.id = (json.id as string) ?? this.id;
     this.name = (json.name as string) ?? this.name;
     this.parentId = (json.parentId as string | null) ?? null;

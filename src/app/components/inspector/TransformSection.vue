@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import type { Node } from "../../../framework/prototype/Node";
-import type { TransformSnapshot } from "../../../framework/command/commands";
 
-const props = defineProps<{ node: Node }>();
+defineProps<{ node: Node }>();
 
 const emit = defineEmits<{
   transform: [axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number];

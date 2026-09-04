@@ -50,18 +50,7 @@ const previewStyle = computed(() => {
   return null;
 });
 
-/** 浮动预览位置：拖到空白处时跟随鼠标 */
-const floatPreviewStyle = computed(() => {
-  const t = dockDnd.target;
-  if (t) return null;
-  if (!dockDnd.moved || !dockDnd.panel) return null;
-  return {
-    left: `${dockDnd.clientX - 90}px`,
-    top: `${dockDnd.clientY - 12}px`,
-    width: "320px",
-    height: "260px",
-  };
-});
+
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 import type { SceneGraph } from "../../scene/SceneGraph";
 import type { Command } from "../Command";
+import type { Node } from "../../prototype/Node";
 
 export class RemoveNodeCommand implements Command {
   readonly label: string;

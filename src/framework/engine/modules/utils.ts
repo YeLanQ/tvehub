@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import type { TransformSnapshot } from "../command/commands";
-import type { Vec3 } from "../prototype/types";
-import { MeshNode, LightNode, CameraNode } from "../prototype/derived/Primitives";
+import type { TransformSnapshot } from "../../command/commands";
+import type { Vec3 } from "../../prototype/types";
+import type { GeometryKind } from "../../prototype/nodes/MeshNode";
 
 export function snapshotTransform(node: {
   transform: { position: Vec3; rotation: Vec3; scale: Vec3 };

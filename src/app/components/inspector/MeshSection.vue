@@ -1,17 +1,11 @@
 <script setup lang="ts">
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 
-const props = defineProps<{ node: MeshNode }>();
+defineProps<{ node: MeshNode }>();
 
 const emit = defineEmits<{
   update: [label: string];
 }>();
-
-function hexToNum(hex: string): number {
-  const clean = hex.replace("#", "");
-  const v = parseInt(clean.length === 3 ? clean.replace(/(.)/g, "$1$1") : clean, 16);
-  return Number.isNaN(v) ? 0 : v;
-}
 
 function numToHex(v: number): string {
   return "#" + (v & 0xffffff).toString(16).padStart(6, "0");

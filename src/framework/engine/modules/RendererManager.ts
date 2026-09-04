@@ -72,4 +72,8 @@ export class RendererManager {
   get domElement(): HTMLElement {
     return this.renderer.domElement;
   }
+
+  get orbitControls(): OrbitControls {
+    return this.orbit;
+  }
 }

@@ -8,21 +8,6 @@ const { state, engine } = store;
 
 const hasSelection = computed(() => !!state.selectedId);
 
-function add(kind: "box" | "sphere" | "plane" | "cylinder"): void {
-  engine.addMesh(kind);
-}
-
-function addLight(kind: "point" | "directional" | "ambient"): void {
-  engine.addLight(kind);
-}
-
-function addCam(): void {
-  engine.addCamera();
-}
-
-function addGroup(): void {
-  engine.addEmptyGroup();
-}
 
 function del(): void {
   engine.deleteSelected();

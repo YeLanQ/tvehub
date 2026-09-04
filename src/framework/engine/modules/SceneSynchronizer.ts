@@ -1,14 +1,12 @@
 import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
-import type { SceneGraph, SceneChange } from "../scene/SceneGraph";
+import type { SceneGraph, SceneChange } from "../../scene/SceneGraph";
 import {
   MeshNode,
   LightNode,
   CameraNode,
 } from "../../prototype/derived/Primitives";
-import type { GeometryKind } from "../../prototype/nodes/MeshNode";
-import type { Vec3 } from "../../prototype/types";
-import { disposeObject3D, buildGeometry, findNodeOwner } from "./utils";
+import { disposeObject3D, buildGeometry } from "./utils";
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
@@ -23,14 +21,14 @@ export class SceneSynchronizer {
   }
 
   rebuildAll(graph: SceneGraph): void {
-    this.objectMap.forEach((o) => {
+    this.objectMap.forEach((o: THREE.Object3D) => {
       o.parent?.remove(o);
       disposeObject3D(o);
     });
     this.objectMap.clear();
-    graph.all().forEach((n) => this.createObjectOnly(n));
-    graph.all().forEach((n) => this.attachParent(n));
-    graph.all().forEach((n) => this.refreshNode(n));
+    graph.all().forEach((n: Node) => this.createObjectOnly(n));
+    graph.all().forEach((n: Node) => this.attachParent(n));
+    graph.all().forEach((n: Node) => this.refreshNode(n));
   }
 
   onGraphChange(c: SceneChange, graph: SceneGraph): void {
@@ -200,7 +198,7 @@ function collectSubtree(graph: SceneGraph, id: string): string[] {
   const out: string[] = [];
   const walk = (cur: string) => {
     out.push(cur);
-    graph.childrenOf(cur).forEach((c) => walk(c.id));
+    graph.childrenOf(cur).forEach((c: Node) => walk(c.id));
   };
   if (graph.has(id)) walk(id);
   return out;

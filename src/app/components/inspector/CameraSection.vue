@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CameraNode } from "../../../framework/prototype/derived/Primitives";
 
-const props = defineProps<{ node: CameraNode }>();
+defineProps<{ node: CameraNode }>();
 
 const emit = defineEmits<{
   update: [label: string];

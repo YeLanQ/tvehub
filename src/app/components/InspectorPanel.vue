@@ -60,9 +60,7 @@ function onTransformChange(axis: "position" | "rotation" | "scale", part: "x" | 
 function onMeshUpdate(label: string): void {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
-  // 这里需要根据label来执行不同的更新逻辑
-  // 简化处理：重新应用当前值
-  commit((node) => {
+  commit((_n) => {
     // 实际更新在模板中处理
   }, label);
 }

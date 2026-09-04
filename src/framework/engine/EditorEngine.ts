@@ -21,11 +21,12 @@ import {
   MeshNode,
   type GeometryKind,
 } from "../prototype/derived/Primitives";
-import type { JsonRecord, Vec3 } from "../prototype/types";
+import type { JsonRecord } from "../prototype/types";
 import { RendererManager } from "./modules/RendererManager";
+export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
-import { applySpawnOffset, sameTransform, snapshotTransform } from "./modules/utils";
+import { applySpawnOffset, snapshotTransform } from "./modules/utils";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -40,41 +41,42 @@ export class EditorEngine {
   readonly events = new EventBus<EditorEvents>();
 
   readonly renderer = new RendererManager();
-  readonly gizmo: GizmoController;
   readonly synchronizer: SceneSynchronizer;
+  gizmo!: GizmoController;
 
   selectedId: string | null = null;
 
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
-    this.gizmo = new GizmoController(this.renderer.camera, this.renderer.domElement);
     this.synchronizer = new SceneSynchronizer(this.renderer.scene);
+  }
 
-    this.renderer.setRenderCb(() => {
-      this.gizmo.updateSelectionBox();
-    });
-
+  private initGizmo(): void {
+    this.gizmo = new GizmoController(this.renderer.camera, this.renderer.domElement);
     this.gizmo.setCallbacks({
       onDraggingChanged: (val) => {
-        this.renderer.orbit.enabled = !val;
+        this.renderer.orbitControls.enabled = !val;
       },
       onGizmoObjectChange: () => {
         this.gizmo.updateSelectionBox();
       },
     });
-
     this.gizmo.onCommitTransform = (id, after, before) => {
       const cmd = new TransformCommand(this.graph, id, after);
       cmd.setBefore(before);
       this.run(cmd);
     };
+    this.gizmo.attachToScene(this.renderer.scene);
   }
 
   // ===================== 生命周期 =====================
 
   mount(container: HTMLElement): void {
     this.renderer.mount(container);
-    this.gizmo.attachToScene(this.renderer.scene);
+    this.initGizmo();
+    this.renderer.setRenderCb(() => {
+      this.gizmo.updateSelectionBox();
+    });
     this.graph.onChange((c) => this.onGraphChange(c));
     logger.info("EditorEngine mounted");
   }
@@ -168,7 +170,7 @@ export class EditorEngine {
 
   select(id: string | null): void {
     this.selectedId = id;
-    this.gizmo.select(id, this.synchronizer.getObjectMap(), this.graph);
+    this.gizmo.select(id, this.synchronizer.getObjectMap());
     this.events.emit("select:changed", { nodeId: this.selectedId });
   }
 
@@ -190,7 +192,7 @@ export class EditorEngine {
 
   rebuildAll(): void {
     this.synchronizer.rebuildAll(this.graph);
-    this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap(), this.graph);
+    this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
   }
 
   setGizmoMode(mode: GizmoMode): void {
@@ -201,5 +203,13 @@ export class EditorEngine {
   setGizmoSpace(space: "local" | "world"): void {
     this.gizmo.setSpace(space);
     this.events.emit("gizmo:state", { mode: this.gizmo.getMode(), space });
+  }
+
+  get gizmoMode(): GizmoMode {
+    return this.gizmo.getMode();
+  }
+
+  get gizmoSpace(): "local" | "world" {
+    return this.gizmo.getSpace();
   }
 }

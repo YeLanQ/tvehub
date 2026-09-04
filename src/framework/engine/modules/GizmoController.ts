@@ -1,10 +1,7 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import type { Node } from "../prototype/Node";
-import type { SceneGraph } from "../scene/SceneGraph";
-import type { TransformSnapshot } from "../command/commands";
-import { snapshotTransform, sameTransform } from "./utils";
-import { TransformCommand } from "../command/commands";
+import type { TransformSnapshot } from "../../command/commands";
+import { sameTransform } from "./utils";
 
 export type GizmoMode = "translate" | "rotate" | "scale";
 
@@ -90,8 +87,7 @@ export class GizmoController {
 
   select(
     id: string | null,
-    objectMap: Map<string, THREE.Object3D>,
-    graph: SceneGraph
+    objectMap: Map<string, THREE.Object3D>
   ): void {
     this.selectedId = id;
     if (id) {
@@ -100,7 +96,7 @@ export class GizmoController {
         this.gizmo.attach(obj);
         if (!this.selectionBox) {
           this.selectionBox = new THREE.BoxHelper(obj as THREE.Mesh, 0x757575);
-          this.gizmo.parent?.add?.(this.selectionBox);
+          obj.parent?.add(this.selectionBox);
         } else {
           this.selectionBox.setFromObject(obj);
         }
@@ -128,7 +124,7 @@ export class GizmoController {
   }
 
   private getTransformSnapshot(): TransformSnapshot | null {
-    const obj = this.selectedId ? this.gizmo.attached as THREE.Object3D : null;
+    const obj = this.selectedId ? (this.gizmo as unknown as { attached: THREE.Object3D | null }).attached : null;
     if (!obj) return null;
     return {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
@@ -142,7 +138,7 @@ export class GizmoController {
     const id = this.selectedId;
     this.dragStart = null;
     if (!id || !before) return;
-    const obj = this.gizmo.attached as THREE.Object3D;
+    const obj = (this.gizmo as unknown as { attached: THREE.Object3D | null }).attached;
     if (!obj) return;
     const after: TransformSnapshot = {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
