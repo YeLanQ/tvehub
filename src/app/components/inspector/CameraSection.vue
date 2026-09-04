@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CameraNode } from "../../../framework/prototype/derived/Primitives";
+import NumberField from "../NumberField.vue";
 
 defineProps<{ node: CameraNode }>();
 
@@ -9,33 +10,31 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="section">
-    <div class="section__title">Camera</div>
-    <div class="field-row">
-      <label>Fov</label>
-      <input
-        type="number"
-        step="1"
-        :value="node.fov"
-        @change="emit('update', 'Set Fov')"
-      />
-    </div>
-    <div class="field-row">
-      <label>Near</label>
-      <input
-        type="number"
-        step="0.1"
-        :value="node.near"
-        @change="emit('update', 'Set Near')"
-      />
-    </div>
-    <div class="field-row">
-      <label>Far</label>
-      <input
-        type="number"
-        :value="node.far"
-        @change="emit('update', 'Set Far')"
-      />
-    </div>
+  <div class="field">
+    <label>Fov</label>
+    <NumberField
+      :model-value="node.fov"
+      :step="1"
+      title="Fov"
+      @commit="() => emit('update', 'Set Fov')"
+    />
+  </div>
+  <div class="field">
+    <label>Near</label>
+    <NumberField
+      :model-value="node.near"
+      :step="0.001"
+      title="Near"
+      @commit="() => emit('update', 'Set Near')"
+    />
+  </div>
+  <div class="field">
+    <label>Far</label>
+    <NumberField
+      :model-value="node.far"
+      :step="0.5"
+      title="Far"
+      @commit="() => emit('update', 'Set Far')"
+    />
   </div>
 </template>

@@ -5,6 +5,7 @@ import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode } from "../../framework/prototype/derived/Primitives";
 import type { JsonRecord } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/command/commands";
+import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
@@ -95,26 +96,48 @@ function onRemoveComponent(type: string): void {
     <div v-if="!node" class="empty muted">未选择节点</div>
 
     <div v-else class="inspector-body mono">
-      <NodeSection
-        :node="node"
-        @rename="onNodeRename"
-        @toggleActive="onNodeToggleActive"
-        @toggleVisible="onNodeToggleVisible"
-      />
+      <ComponentCard title="Node" :open="true" :type="node.typeKey">
+        <template #head>
+          <label class="active-toggle" title="是否激活（失活后视口隐藏）" @click.stop>
+            <input
+              type="checkbox"
+              :checked="node.active"
+              @change="onNodeToggleActive(($event.target as HTMLInputElement).checked)"
+            />
+            <span>激活</span>
+          </label>
+        </template>
+        <NodeSection
+          :node="node"
+          @rename="onNodeRename"
+          @toggleActive="onNodeToggleActive"
+          @toggleVisible="onNodeToggleVisible"
+        />
+      </ComponentCard>
 
-      <TransformSection :node="node" @transform="onTransformChange" />
+      <ComponentCard title="Transform" :open="true">
+        <TransformSection :node="node" @transform="onTransformChange" />
+      </ComponentCard>
 
-      <MeshSection v-if="node instanceof MeshNode" :node="node" @update="onMeshUpdate" />
+      <ComponentCard v-if="node instanceof MeshNode" title="Mesh" :open="true">
+        <MeshSection :node="node" @update="onMeshUpdate" />
+      </ComponentCard>
 
-      <LightSection v-if="node instanceof LightNode" :node="node" @update="onLightUpdate" />
+      <ComponentCard v-if="node instanceof LightNode" title="Light" :open="true">
+        <LightSection :node="node" @update="onLightUpdate" />
+      </ComponentCard>
 
-      <CameraSection v-if="node instanceof CameraNode" :node="node" @update="onCameraUpdate" />
+      <ComponentCard v-if="node instanceof CameraNode" title="Camera" :open="true">
+        <CameraSection :node="node" @update="onCameraUpdate" />
+      </ComponentCard>
 
-      <ComponentsSection
-        :node="node"
-        @addComponent="onAddComponent"
-        @removeComponent="onRemoveComponent"
-      />
+      <ComponentCard title="Components" :open="true">
+        <ComponentsSection
+          :node="node"
+          @addComponent="onAddComponent"
+          @removeComponent="onRemoveComponent"
+        />
+      </ComponentCard>
     </div>
   </div>
 </template>

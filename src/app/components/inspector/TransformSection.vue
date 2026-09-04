@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Node } from "../../../framework/prototype/Node";
+import NumberField from "../NumberField.vue";
 
 defineProps<{ node: Node }>();
 
@@ -7,30 +8,21 @@ const emit = defineEmits<{
   transform: [axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number];
 }>();
 
-function num(v: number, digits = 3): number {
-  const f = Math.pow(10, digits);
-  return Math.round(v * f) / f;
-}
-
-function onChange(axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", e: Event): void {
-  const target = e.target as HTMLInputElement;
-  emit("transform", axis, part, parseFloat(target.value) || 0);
+function onCommit(axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number): void {
+  emit("transform", axis, part, value);
 }
 </script>
 
 <template>
-  <div class="section">
-    <div class="section__title">Transform</div>
-    <div v-for="axis in ['position', 'rotation', 'scale'] as const" :key="axis" class="vec3">
-      <span class="v-label">{{ axis }}</span>
-      <input
-        v-for="p in ['x', 'y', 'z'] as const"
-        :key="p"
-        type="number"
-        step="0.1"
-        :value="num(node.transform[axis][p])"
-        @change="onChange(axis, p, $event)"
-      />
-    </div>
+  <div v-for="axis in ['position', 'rotation', 'scale'] as const" :key="axis" class="vec3">
+    <span class="v-label">{{ axis }}</span>
+    <NumberField
+      v-for="p in ['x', 'y', 'z'] as const"
+      :key="p"
+      :title="`${p}`"
+      :model-value="node.transform[axis][p]"
+      :step="axis === 'rotation' ? 0.25 : 0.01"
+      @commit="(v) => onCommit(axis, p, v)"
+    />
   </div>
 </template>

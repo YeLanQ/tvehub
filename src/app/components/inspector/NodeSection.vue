@@ -20,6 +20,13 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => props.node.name,
+  (v) => {
+    if (localName.value !== v) localName.value = v;
+  }
+);
+
 function commitName(): void {
   if (localName.value !== props.node.name) {
     emit("rename", localName.value);
@@ -28,29 +35,24 @@ function commitName(): void {
 </script>
 
 <template>
-  <div class="section">
-    <div class="section__title">Node</div>
-    <div class="field-row">
-      <label>Name</label>
-      <input v-model="localName" type="text" @change="commitName" />
-    </div>
-    <div class="field-row">
-      <span class="type-tag">{{ node.typeKey }}</span>
-      <span class="muted mono">{{ node.id }}</span>
-    </div>
-    <div class="field-row">
-      <label>Active</label>
-      <input
-        type="checkbox"
-        :checked="node.active"
-        @change="emit('toggleActive', ($event.target as HTMLInputElement).checked)"
-      />
-      <label class="inline">Visible</label>
-      <input
-        type="checkbox"
-        :checked="node.visible"
-        @change="emit('toggleVisible', ($event.target as HTMLInputElement).checked)"
-      />
-    </div>
+  <div class="field">
+    <label>名称</label>
+    <input v-model="localName" type="text" @change="commitName" />
+  </div>
+  <div class="field">
+    <label>ID</label>
+    <span class="mono">{{ node.id }}</span>
+  </div>
+  <div class="field">
+    <label>子节点</label>
+    <span>{{ node.childIds.length }}</span>
+  </div>
+  <div class="field">
+    <label>可见</label>
+    <input
+      type="checkbox"
+      :checked="node.visible"
+      @change="emit('toggleVisible', ($event.target as HTMLInputElement).checked)"
+    />
   </div>
 </template>
