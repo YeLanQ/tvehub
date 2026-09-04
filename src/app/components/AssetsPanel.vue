@@ -91,6 +91,12 @@ function onItemContext(e: MouseEvent, item: AssetItem): void {
   openContextMenu(e, items);
 }
 
+function onDragStart(e: DragEvent, item: AssetItem): void {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData("application/x-editor-asset", JSON.stringify(item));
+  e.dataTransfer.effectAllowed = "copy";
+}
+
 function onContentContext(e: MouseEvent): void {
   e.preventDefault();
   e.stopPropagation();
@@ -172,8 +178,10 @@ function onContentContext(e: MouseEvent): void {
           v-for="item in currentGroup.items"
           :key="item.id"
           class="am-item grid"
-          :title="`创建 ${item.name}`"
+          :title="`创建 ${item.name} · 拖拽到视口`"
+          draggable
           @click="spawn(item)"
+          @dragstart="onDragStart($event, item)"
           @contextmenu.prevent="onItemContext($event, item)"
         >
           <span class="am-icon">{{ item.icon }}</span>

@@ -16,6 +16,39 @@ function setSpace(space: "local" | "world"): void {
   engine.setGizmoSpace(space);
 }
 
+function onDragOver(e: DragEvent): void {
+  if (!e.dataTransfer) return;
+  if (e.dataTransfer.types.includes("application/x-editor-asset")) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function onDrop(e: DragEvent): void {
+  if (!e.dataTransfer) return;
+  const data = e.dataTransfer.getData("application/x-editor-asset");
+  if (!data) return;
+  e.preventDefault();
+  try {
+    const item = JSON.parse(data) as AssetItem;
+    if (item.kind === "mesh") engine.addMesh(item.id as never);
+    else if (item.kind === "light") engine.addLight(item.id as never);
+    else if (item.kind === "camera") engine.addCamera();
+    else engine.addEmptyGroup();
+  } catch {
+    // ignore invalid drop data
+  }
+}
+
+type AssetKind = "mesh" | "light" | "camera" | "prefab";
+
+interface AssetItem {
+  id: string;
+  name: string;
+  kind: AssetKind;
+  icon: string;
+}
+
 onMounted(() => {
   if (host.value) mountEditor(host.value);
 });
@@ -27,7 +60,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="viewport">
-    <div ref="host" class="viewport-canvas"></div>
+    <div
+      ref="host"
+      class="viewport-canvas"
+      @dragover.prevent="onDragOver"
+      @drop="onDrop"
+    ></div>
 
     <!-- 视口顶部悬浮工具栏（Unity 风格）：变换工具 + gizmo 坐标系 -->
     <div class="overlay top">
