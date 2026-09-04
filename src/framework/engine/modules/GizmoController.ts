@@ -15,6 +15,7 @@ export class GizmoController {
   private dragging = false;
   private dragStart: TransformSnapshot | null = null;
   private selectedId: string | null = null;
+  private objectMap: Map<string, THREE.Object3D> = new Map();
 
   private onDraggingChangedCb?: (val: boolean) => void;
   private onGizmoObjectChangeCb?: () => void;
@@ -90,6 +91,7 @@ export class GizmoController {
     objectMap: Map<string, THREE.Object3D>
   ): void {
     this.selectedId = id;
+    this.objectMap = objectMap;
     if (id) {
       const obj = objectMap.get(id);
       if (obj) {
@@ -124,7 +126,7 @@ export class GizmoController {
   }
 
   private getTransformSnapshot(): TransformSnapshot | null {
-    const obj = this.selectedId ? (this.gizmo as unknown as { attached: THREE.Object3D | null }).attached : null;
+    const obj = this.selectedId ? this.objectMap.get(this.selectedId) ?? null : null;
     if (!obj) return null;
     return {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
@@ -138,7 +140,7 @@ export class GizmoController {
     const id = this.selectedId;
     this.dragStart = null;
     if (!id || !before) return;
-    const obj = (this.gizmo as unknown as { attached: THREE.Object3D | null }).attached;
+    const obj = this.objectMap.get(id) ?? null;
     if (!obj) return;
     const after: TransformSnapshot = {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
@@ -146,7 +148,6 @@ export class GizmoController {
       scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
     };
     if (sameTransform(before, after)) return;
-    // 这里需要外部处理命令执行
     this.onCommitTransform?.(id, after, before);
   }
 
