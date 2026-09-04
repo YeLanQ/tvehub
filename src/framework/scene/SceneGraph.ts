@@ -137,7 +137,9 @@ export class SceneGraph {
   reparent(id: string, newParentId: string | null, index = -1): boolean {
     const node = this.nodes.get(id);
     if (!node) return false;
-    if (this.isDescendant(newParentId, id)) return false;
+    // 防环：新父是被拖节点自身或其子孙（拖入自身子树）才禁止；
+    // 新父是被拖节点的祖先（拖回根/父级）是合法操作，必须放行。
+    if (newParentId !== null && (newParentId === id || this.isDescendant(id, newParentId))) return false;
     if (node.parentId) this.nodes.get(node.parentId)?.removeChildId(id);
     node.parentId = newParentId;
     if (newParentId === null) {

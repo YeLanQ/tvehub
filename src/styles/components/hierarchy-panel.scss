@@ -65,7 +65,9 @@
   }
 
   &.drop-inside {
-    background: var(--accent);
+    background: var(--bg-active);
+    outline: 1px dashed var(--accent);
+    outline-offset: -1px;
   }
 
   &.drop-before::after,
@@ -74,8 +76,8 @@
     position: absolute;
     left: 8px;
     right: 8px;
-    height: 2px;
-    background: var(--accent);
+    height: 0;
+    border-top: 1px dashed var(--accent);
     pointer-events: none;
   }
 
@@ -86,6 +88,22 @@
   &.drop-after::after {
     bottom: 0;
   }
+}
+
+/* 层级拖拽跟随幽灵（teleport 到 body，需全局样式；与资产面板一致：虚线框 + 节点名称） */
+.hierarchy-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-panel-2);
+  border: 1px dashed var(--accent);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
 }
 
 .badge {

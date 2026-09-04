@@ -196,6 +196,14 @@ const dnd = reactive<{
   target: { id: string; mode: "before" | "after" | "inside" } | null;
 }>({ active: false, target: null });
 
+const dragGhost = ref<{ x: number; y: number; label: string } | null>(null);
+
+function ghostLabel(): string {
+  if (!dragCandidate) return "";
+  const first = engine.graph.get(dragCandidate.ids[0]);
+  return first?.name ?? "";
+}
+
 function onRowMouseDown(e: MouseEvent, id: string): void {
   if (e.button !== 0) return;
   const root = engine.graph.root;
@@ -217,6 +225,7 @@ function onWindowMouseMove(e: MouseEvent): void {
     dnd.active = true;
   }
   resolveDrop(e.clientX, e.clientY);
+  dragGhost.value = { x: e.clientX, y: e.clientY, label: ghostLabel() };
 }
 
 function resolveDrop(clientX: number, clientY: number): void {
@@ -229,13 +238,18 @@ function resolveDrop(clientX: number, clientY: number): void {
   }
   const row = el.closest?.(".node-row[data-node-id]") as HTMLElement | null;
   if (!row || !root) {
-    dnd.target = root && !dragCandidate?.ids.includes(root.id) ? { id: root.id, mode: "inside" } : null;
+    dnd.target = root ? { id: root.id, mode: "inside" } : null;
     return;
   }
   const id = row.getAttribute("data-node-id");
   if (!id) return;
   if (dragCandidate?.ids.includes(id)) {
     dnd.target = null;
+    return;
+  }
+  // 拖到根节点行或面板空白处 → 收进根节点成为其子级
+  if (id === root.id) {
+    dnd.target = { id: root.id, mode: "inside" };
     return;
   }
   const rect = row.getBoundingClientRect();
@@ -252,6 +266,7 @@ function onWindowMouseUp(): void {
   dragging = false;
   dnd.active = false;
   dnd.target = null;
+  dragGhost.value = null;
   if (!t || !t.id) return;
   applyMove(ids, t.id, t.mode);
 }
@@ -336,5 +351,16 @@ onUnmounted(() => {
         {{ search.trim() ? "无匹配节点" : "场景为空" }}
       </div>
     </div>
+
+    <!-- 拖拽跟随幽灵（teleport 到 body：虚线框 + 节点名称） -->
+    <teleport to="body">
+      <div
+        v-if="dragGhost"
+        class="hierarchy-drag-ghost"
+        :style="{ left: dragGhost.x + 'px', top: dragGhost.y + 'px' }"
+      >
+        <span>{{ dragGhost.label }}</span>
+      </div>
+    </teleport>
   </div>
 </template>
