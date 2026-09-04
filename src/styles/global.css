@@ -1,6 +1,4 @@
 :root {
-  /* Unity 编辑器风格的原生深色配色（中性灰）：
-     深色主背景 #141414，面板/控件/按钮逐级更亮（层级不倒置） */
   --bg: #141414;
   --bg-panel: #1c1c1c;
   --bg-panel-2: #212121;
@@ -31,6 +29,7 @@
 
 * {
   box-sizing: border-box;
+  user-select: none;
 }
 
 html,
@@ -152,4 +151,19 @@ body.dock-resizing {
 
 .muted {
   color: var(--text-dim);
+}
+
+/* 控制面板内容页：允许文本选中 */
+.panel .body,
+.panel .tree,
+.panel .field-row,
+.panel .comp-list,
+.panel .section {
+  user-select: none;
+}
+
+input,
+textarea,
+select {
+  user-select: none;
 }

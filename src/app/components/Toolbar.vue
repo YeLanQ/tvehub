@@ -30,18 +30,6 @@ function del(): void {
 
 <template>
   <div class="toolbar-groups">
-    <!-- 左侧：创建 -->
-    <div class="group">
-      <button @click="add('box')">Cube</button>
-      <button @click="add('sphere')">Sphere</button>
-      <button @click="add('cylinder')">Cylinder</button>
-      <button @click="add('plane')">Plane</button>
-      <button @click="addGroup">Group</button>
-      <button @click="addLight('directional')">Directional Light</button>
-      <button @click="addLight('point')">Point Light</button>
-      <button @click="addLight('ambient')">Ambient</button>
-      <button @click="addCam">Camera</button>
-    </div>
 
     <div class="spacer"></div>
 

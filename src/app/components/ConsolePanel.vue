@@ -106,6 +106,7 @@ function clearAll(): void {
   flex: 1;
   font-size: 11px;
   line-height: 1.7;
+  user-select: all !important;
 }
 
 .line {
@@ -113,6 +114,7 @@ function clearAll(): void {
   gap: 6px;
   padding: 0 10px;
   white-space: nowrap;
+  user-select: all !important;
 }
 
 .line:hover {

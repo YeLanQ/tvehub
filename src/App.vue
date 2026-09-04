@@ -4,7 +4,12 @@ import Viewport from "./app/components/Viewport.vue";
 import DockZone from "./app/components/DockZone.vue";
 import FloatingDock from "./app/components/FloatingDock.vue";
 import ContextMenu from "./components/ContextMenu.vue";
-import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockZoneId } from "./app/docks";
+import HierarchyPanel from "./app/components/HierarchyPanel.vue";
+import InspectorPanel from "./app/components/InspectorPanel.vue";
+import ConsolePanel from "./app/components/ConsolePanel.vue";
+import AssetsPanel from "./app/components/AssetsPanel.vue";
+import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
+import { computed } from "vue";
 
 /** 停靠区分隔条拖拽：调整区域尺寸 */
 function onSplitDown(e: MouseEvent, zone: DockZoneId) {
@@ -12,6 +17,49 @@ function onSplitDown(e: MouseEvent, zone: DockZoneId) {
   e.preventDefault();
   beginZoneResize(zone, e.clientX, e.clientY);
 }
+
+/** 拖拽预览用的面板组件映射 */
+const PANEL_COMP: Record<DockPanelId, any> = {
+  hierarchy: HierarchyPanel,
+  inspector: InspectorPanel,
+  console: ConsolePanel,
+  assets: AssetsPanel,
+};
+function panelComponent(p: DockPanelId) {
+  return PANEL_COMP[p];
+}
+
+/** 拖拽预览位置：落点停靠区的矩形 */
+const previewStyle = computed(() => {
+  const t = dockDnd.target;
+  if (!t || t.kind !== "zone") return null;
+  for (const z of ALL_ZONES) {
+    const el = document.querySelector<HTMLElement>(`.dock-zone.${z}`);
+    if (el && z === t.zone) {
+      const r = el.getBoundingClientRect();
+      return {
+        left: `${r.left}px`,
+        top: `${r.top}px`,
+        width: `${r.width}px`,
+        height: `${r.height}px`,
+      };
+    }
+  }
+  return null;
+});
+
+/** 浮动预览位置：拖到空白处时跟随鼠标 */
+const floatPreviewStyle = computed(() => {
+  const t = dockDnd.target;
+  if (t) return null;
+  if (!dockDnd.moved || !dockDnd.panel) return null;
+  return {
+    left: `${dockDnd.clientX - 90}px`,
+    top: `${dockDnd.clientY - 12}px`,
+    width: "320px",
+    height: "260px",
+  };
+});
 </script>
 
 <template>
@@ -62,6 +110,15 @@ function onSplitDown(e: MouseEvent, zone: DockZoneId) {
     </div>
     <!-- 拖拽捕获层：仅实际拖拽时渲染，盖住 iframe 等吞掉鼠标事件的区域 -->
     <div v-if="dockDnd.active && dockDnd.moved" class="dock-drag-overlay"></div>
+
+    <!-- 拖拽预览：落点位置实时显示面板内容 -->
+    <div
+      v-if="dockDnd.active && dockDnd.moved && dockDnd.panel && dockDnd.target && previewStyle"
+      class="dock-preview"
+      :style="previewStyle"
+    >
+      <component :is="panelComponent(dockDnd.panel)" />
+    </div>
 
     <!-- 全局右键菜单 -->
     <ContextMenu />
@@ -131,6 +188,25 @@ function onSplitDown(e: MouseEvent, zone: DockZoneId) {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
 }
+/* 拖拽预览：落点位置实时显示面板内容 */
+.dock-preview {
+  position: fixed;
+  z-index: 290;
+  pointer-events: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.dock-preview :deep(.hierarchy),
+.dock-preview :deep(.inspector),
+.dock-preview :deep(.console),
+.dock-preview :deep(.assets) {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 拖拽捕获层：透明全屏，拦截 iframe 内事件，保证拖拽流畅 */
 .dock-drag-overlay {
   position: fixed;

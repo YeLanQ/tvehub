@@ -20,14 +20,13 @@ function onHeadDown(e: MouseEvent) {
 }
 
 function style() {
-  return {
-    left: `${props.win.x}px`,
-    top: `${props.win.y}px`,
-    width: `${props.win.w}px`,
-    height: `${props.win.h}px`,
-    zIndex: dockDnd.active && dockDnd.panel === props.win.panel ? 100 : 60,
-  };
-}
+    return {
+      left: `${props.win.x}px`,
+      top: `${props.win.y}px`,
+      height: `${props.win.h}px`,
+      zIndex: dockDnd.active && dockDnd.panel === props.win.panel ? 320 : 320,
+    };
+  }
 </script>
 
 <template>
@@ -45,10 +44,10 @@ function style() {
       </button>
     </div>
     <div class="floating-body">
-      <HierarchyPanel v-show="win.panel === 'hierarchy'" />
-      <InspectorPanel v-show="win.panel === 'inspector'" />
-      <ConsolePanel v-show="win.panel === 'console'" />
-      <AssetsPanel v-show="win.panel === 'assets'" />
+      <HierarchyPanel v-if="win.panel === 'hierarchy'" />
+      <InspectorPanel v-if="win.panel === 'inspector'" />
+      <ConsolePanel v-if="win.panel === 'console'" />
+      <AssetsPanel v-if="win.panel === 'assets'" />
     </div>
   </div>
 </template>

@@ -82,12 +82,12 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="dock-body">
-        <!-- v-show 四面板共存：切换标签保留面板状态 -->
-        <HierarchyPanel v-show="activePanel === 'hierarchy'" />
-        <InspectorPanel v-show="activePanel === 'inspector'" />
-        <ConsolePanel v-show="activePanel === 'console'" />
-        <AssetsPanel v-show="activePanel === 'assets'" />
-      </div>
+      <!-- v-if：同一面板只存在一个实例，避免状态不同步 -->
+      <HierarchyPanel v-if="activePanel === 'hierarchy'" />
+      <InspectorPanel v-if="activePanel === 'inspector'" />
+      <ConsolePanel v-if="activePanel === 'console'" />
+      <AssetsPanel v-if="activePanel === 'assets'" />
+    </div>
     </template>
     <!-- 空停靠区：细条拖放落点（拖回面板停靠） -->
     <div v-else class="dock-empty">

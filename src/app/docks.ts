@@ -18,6 +18,8 @@ export interface FloatingDock {
   h: number;
   /** 浮动前的停靠区：关闭浮动窗口时返回该区 */
   origin: DockZoneId;
+  /** 浮动窗口内当前激活的面板（与停靠区 active 同步） */
+  active: DockPanelId;
 }
 
 export interface DockLayout {
@@ -89,6 +91,7 @@ function normalize(l: Partial<DockLayout> | null): DockLayout {
       w: clampNum(f.w, 220, 900, 320),
       h: clampNum(f.h, 140, 700, 260),
       origin: ALL_ZONES.includes(f.origin) ? f.origin : "left",
+      active: f.panel,
     });
   }
   floating.forEach((f) => placed.add(f.panel));
@@ -199,6 +202,7 @@ export function floatPanel(panel: DockPanelId, x: number, y: number, origin: Doc
     w: existed?.w ?? 320,
     h: existed?.h ?? 260,
     origin,
+    active: panel,
   });
 }
 
@@ -291,6 +295,15 @@ export function beginTabDrag(
       dockDnd.moved = true;
     }
     dockDnd.target = computeTarget(e.clientX, e.clientY);
+
+    // 浮动窗口拖拽时实时更新位置
+    if (dockDnd.moved && origin === "floating") {
+      const f = docks.floating.find((w) => w.panel === dockDnd.panel);
+      if (f) {
+        f.x = Math.max(0, Math.round(e.clientX - 20));
+        f.y = Math.max(0, Math.round(e.clientY - 12));
+      }
+    }
   };
   const cleanup = () => {
     window.removeEventListener("mousemove", onMove);
