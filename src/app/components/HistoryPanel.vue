@@ -14,12 +14,6 @@ function redo(): void {
 
 <template>
   <div class="panel history">
-    <div class="panel__title">
-      历史栈 / Command Stack
-      <span class="count mono">
-        depth {{ state.historyDepth }} · canUndo {{ state.canUndo }} · canRedo {{ state.canRedo }}
-      </span>
-    </div>
     <div class="bar">
       <button :disabled="!state.canUndo" @click="undo">
         ← Undo {{ state.undoLabel ?? "—" }}
@@ -27,6 +21,9 @@ function redo(): void {
       <button :disabled="!state.canRedo" @click="redo">
         Redo {{ state.redoLabel ?? "—" }} →
       </button>
+      <span class="count mono">
+        depth {{ state.historyDepth }} · canUndo {{ state.canUndo }} · canRedo {{ state.canRedo }}
+      </span>
     </div>
     <ol class="stack mono">
       <li v-for="(label, i) in state.historyLabels.slice().reverse()" :key="i" class="entry">
@@ -44,8 +41,9 @@ function redo(): void {
 }
 
 .count {
-  float: right;
+  margin-left: auto;
   font-size: 11px;
+  color: var(--text-dim);
 }
 
 .bar {
@@ -71,12 +69,12 @@ function redo(): void {
 }
 
 .idx {
-  color: var(--muted);
+  color: var(--text-dim);
   width: 34px;
 }
 
 .label {
-  color: var(--fg);
+  color: var(--text);
 }
 
 .empty {

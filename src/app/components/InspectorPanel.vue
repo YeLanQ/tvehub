@@ -80,7 +80,6 @@ function isCamera(n: Node | undefined): n is CameraNode {
 
 <template>
   <div class="panel inspector">
-    <div class="panel__title">检查器 / Inspector</div>
 
     <div v-if="!node" class="empty muted">未选择节点</div>
 
@@ -272,12 +271,12 @@ function isCamera(n: Node | undefined): n is CameraNode {
 .section__title {
   font-size: 11px;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-dim);
   padding: 2px 10px 6px;
 }
 
 .type-tag {
-  background: var(--panel-2);
+  background: var(--bg-panel-2);
   color: var(--accent);
   padding: 1px 6px;
   border-radius: 3px;
@@ -293,7 +292,7 @@ function isCamera(n: Node | undefined): n is CameraNode {
 
 .v-label {
   width: 68px;
-  color: var(--muted);
+  color: var(--text-dim);
   font-size: 11px;
 }
 

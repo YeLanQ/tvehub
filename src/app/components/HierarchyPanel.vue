@@ -43,7 +43,7 @@ function select(id: string): void {
 
 <template>
   <div class="panel hierarchy">
-    <div class="panel__title">层级 / Hierarchy</div>
+
     <div class="tree mono">
 
       <div
@@ -88,11 +88,11 @@ function select(id: string): void {
 }
 
 .row:hover {
-  background: var(--panel-2);
+  background: var(--bg-hover);
 }
 
 .row.sel {
-  background: rgba(77, 163, 255, 0.18);
+  background: var(--bg-active);
 }
 
 .badge {
@@ -104,28 +104,28 @@ function select(id: string): void {
   border-radius: 3px;
   font-size: 10px;
   font-weight: 700;
-  color: #06121f;
+  color: #1a1a1a;
 }
 
 .badge.node {
-  background: #7c8aa0;
+  background: #6a6a6a;
 }
 
 .badge.meshNode {
-  background: #4da3ff;
+  background: #9a9a9a;
 }
 
 .badge.lightNode {
-  background: #ffcf5c;
+  background: #8a8a8a;
 }
 
 .badge.cameraNode {
-  background: #ff7d9c;
+  background: #7a7a7a;
 }
 
 .name {
   font-size: 12px;
-  color: var(--fg);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -133,7 +133,7 @@ function select(id: string): void {
 
 .off {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--text-dim);
 }
 
 .empty {

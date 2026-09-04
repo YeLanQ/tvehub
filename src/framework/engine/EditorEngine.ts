@@ -43,6 +43,21 @@ function snapshotTransform(node: Node): TransformSnapshot {
   };
 }
 
+function sameTransform(a: TransformSnapshot, b: TransformSnapshot): boolean {
+  const EPS = 1e-6;
+  return (
+    Math.abs(a.position.x - b.position.x) < EPS &&
+    Math.abs(a.position.y - b.position.y) < EPS &&
+    Math.abs(a.position.z - b.position.z) < EPS &&
+    Math.abs(a.rotation.x - b.rotation.x) < EPS &&
+    Math.abs(a.rotation.y - b.rotation.y) < EPS &&
+    Math.abs(a.rotation.z - b.rotation.z) < EPS &&
+    Math.abs(a.scale.x - b.scale.x) < EPS &&
+    Math.abs(a.scale.y - b.scale.y) < EPS &&
+    Math.abs(a.scale.z - b.scale.z) < EPS
+  );
+}
+
 /**
  * 编辑器引擎（框架层协调者）。
  * 组合 SceneGraph(数据) + NodeFactory(工厂) + CommandStack(命令/栈)，
@@ -87,9 +102,12 @@ export class EditorEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.domElement.style.display = "block";
+    this.renderer.domElement.style.position = "absolute";
+    this.renderer.domElement.style.top = "0";
+    this.renderer.domElement.style.left = "0";
     container.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x1b1e24);
+    this.scene.background = new THREE.Color(0x141414);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
     this.camera.position.set(6, 6, 9);
 
@@ -104,7 +122,7 @@ export class EditorEngine {
     this.gizmo.addEventListener("dragging-changed", this.onDraggingChanged);
     this.gizmo.addEventListener("objectChange", this.onGizmoObjectChange);
 
-    const grid = new THREE.GridHelper(40, 40, 0x4a5060, 0x2a2e36);
+    const grid = new THREE.GridHelper(40, 40, 0x3f3f3f, 0x262626);
     grid.name = "__grid";
     this.scene.add(grid);
 
@@ -240,7 +258,7 @@ export class EditorEngine {
       if (obj) {
         this.gizmo.attach(obj);
         if (!this.selectionBox) {
-          this.selectionBox = new THREE.BoxHelper(obj as THREE.Mesh, 0x4da3ff);
+          this.selectionBox = new THREE.BoxHelper(obj as THREE.Mesh, 0x757575);
           this.scene.add(this.selectionBox);
         } else {
           this.selectionBox.setFromObject(obj);
@@ -268,15 +286,16 @@ export class EditorEngine {
   private onPointerDown = (e: PointerEvent): void => {
     if (!this.renderer || this.dragging) return;
     if ((e.target as HTMLElement) !== this.renderer.domElement) return;
-    const hit = this.pickAt(e.offsetX, e.offsetY);
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const hit = this.pickAt(e.clientX - rect.left, e.clientY - rect.top);
     this.select(hit);
   };
 
   private pickAt(px: number, py: number): string | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
-      ((px - rect.left) / rect.width) * 2 - 1,
-      -((py - rect.top) / rect.height) * 2 + 1,
+      (px / rect.width) * 2 - 1,
+      -(py / rect.height) * 2 + 1,
     );
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
@@ -491,24 +510,29 @@ export class EditorEngine {
 
   private onGizmoObjectChange = (): void => {
     if (!this.selectedId) return;
-    const obj = this.objectMap.get(this.selectedId);
-    const node = this.graph.get(this.selectedId);
-    if (!obj || !node) return;
-    node.transform.setPosition(obj.position.x, obj.position.y, obj.position.z);
-    node.transform.setRotation(obj.rotation.x, obj.rotation.y, obj.rotation.z);
-    node.transform.setScale(obj.scale.x, obj.scale.y, obj.scale.z);
+    // 只读视图：拖动过程仅由 TransformControls 驱动 Three 对象（objectMap 镜像）做预览，
+    // 不写 model（node.transform）、不发 graph:changed；松手后经 TransformCommand 落地。
     this.selectionBox?.update();
-    this.events.emit("graph:changed", { kind: "transform", nodeId: node.id });
   };
 
   private commitDrag(): void {
-    if (!this.selectedId || !this.dragStart) return;
-    const after = snapshotTransform(this.graph.get(this.selectedId)!);
-    const cmd = new TransformCommand(this.graph, this.selectedId, after);
-    cmd.setBefore(this.dragStart);
-    // 拖动期间已即时生效，仅登记命令（不重复 execute）
-    this.history.recordOnly(cmd);
+    const before = this.dragStart;
+    const id = this.selectedId;
     this.dragStart = null;
+    if (!id || !before) return;
+    const obj = this.objectMap.get(id);
+    const node = this.graph.get(id);
+    if (!obj || !node) return;
+    const after: TransformSnapshot = {
+      position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+      rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+      scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
+    };
+    if (sameTransform(before, after)) return;
+    // 视口变换本质是一条 diff 命令：记录拖动前后差异，走命令栈（可撤销/重做）
+    const cmd = new TransformCommand(this.graph, id, after);
+    cmd.setBefore(before);
+    this.run(cmd);
   }
 
   getTransform(id: string): TransformSnapshot | null {
