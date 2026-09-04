@@ -90,9 +90,18 @@ export class SceneSynchronizer {
     if (obj.parent !== host) host.add(obj);
   }
 
-  private disposeMapped(id: string, graph: SceneGraph): void {
-    const subIds = collectSubtree(graph, id);
-    subIds.forEach((sid) => {
+  private disposeMapped(id: string, _graph: SceneGraph): void {
+    const rootObj = this.objectMap.get(id);
+    if (!rootObj) return;
+    // 不依赖 graph 遍历：SceneGraph.remove 在 emit "remove" 前已把节点从图中删除，
+    // 若按 graph 找子树会拿到空集合，导致 Three 对象残留。改为按 objectMap 中的
+    // Three 子树收集映射到的场景节点 id，逐一摘除并释放。
+    const ids: string[] = [];
+    rootObj.traverse((o) => {
+      const nid = (o as THREE.Object3D).userData?.nodeId as string | undefined;
+      if (nid && this.objectMap.has(nid)) ids.push(nid);
+    });
+    ids.forEach((sid) => {
       const obj = this.objectMap.get(sid);
       if (obj) {
         obj.parent?.remove(obj);
@@ -194,15 +203,6 @@ export class SceneSynchronizer {
   }
 }
 
-function collectSubtree(graph: SceneGraph, id: string): string[] {
-  const out: string[] = [];
-  const walk = (cur: string) => {
-    out.push(cur);
-    graph.childrenOf(cur).forEach((c: Node) => walk(c.id));
-  };
-  if (graph.has(id)) walk(id);
-  return out;
-}
 
 function emissiveMat(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({ color, wireframe: false });

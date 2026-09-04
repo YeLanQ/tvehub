@@ -184,3 +184,76 @@ export class PropertyPatchCommand implements Command {
 export function snapshotNode(node: Node): JsonRecord {
   return nodeJson(node);
 }
+
+// —— 批量删除（多选一次撤销）——
+
+export class RemoveNodesCommand implements Command {
+  readonly label: string;
+  private captured: { node: Node; removed: Node[] }[] = [];
+  constructor(
+    private graph: SceneGraph,
+    private ids: string[],
+    label?: string,
+  ) {
+    this.label = label ?? "Remove nodes";
+  }
+  execute(): void {
+    if (this.captured.length) {
+      // redo：重新摘除（und 已回挂）
+      for (const c of this.captured) this.graph.remove(c.node.id);
+      return;
+    }
+    for (const id of this.ids) {
+      // 跳过根节点与不存在的节点（多选会先在前端过滤，这里再兜底）
+      if (this.graph.root?.id === id) continue;
+      const res = this.graph.remove(id);
+      if (res) this.captured.push(res);
+    }
+  }
+  undo(): void {
+    for (let i = this.captured.length - 1; i >= 0; i--) {
+      const c = this.captured[i];
+      this.graph.reattach(c.node, c.removed);
+    }
+  }
+}
+
+// —— 批量重挂/移动（多选拖拽一次撤销）——
+
+export interface MoveTarget {
+  id: string;
+  newParentId: string | null;
+  newIndex: number;
+}
+
+export class ReparentNodesCommand implements Command {
+  readonly label: string;
+  private olds: { id: string; oldParentId: string | null; oldIndex: number }[] = [];
+  constructor(
+    private graph: SceneGraph,
+    private moves: MoveTarget[],
+    label?: string,
+  ) {
+    this.label = label ?? "Move nodes";
+  }
+  execute(): void {
+    if (!this.olds.length) {
+      for (const m of this.moves) {
+        const node = this.graph.get(m.id);
+        if (!node) continue;
+        const parent = node.parentId ? this.graph.get(node.parentId) : undefined;
+        const oldIndex = parent ? parent.childIds.indexOf(m.id) : 0;
+        this.olds.push({ id: m.id, oldParentId: node.parentId, oldIndex });
+        this.graph.reparent(m.id, m.newParentId, m.newIndex);
+      }
+    } else {
+      for (const m of this.moves) this.graph.reparent(m.id, m.newParentId, m.newIndex);
+    }
+  }
+  undo(): void {
+    for (let i = this.olds.length - 1; i >= 0; i--) {
+      const o = this.olds[i];
+      this.graph.reparent(o.id, o.oldParentId, o.oldIndex);
+    }
+  }
+}

@@ -17,6 +17,7 @@ export interface EditorStore {
   setViewMode: (mode: ViewMode) => void;
   state: Readonly<{
     selectedId: string | null;
+    selectionIds: string[];
     viewMode: ViewMode;
     gizmoMode: "translate" | "rotate" | "scale";
     gizmoSpace: "local" | "world";
@@ -42,6 +43,7 @@ export function getEditorStore(): EditorStore {
 
   const state = reactive({
     selectedId: null as string | null,
+    selectionIds: [] as string[],
     viewMode: "scene" as ViewMode,
     gizmoMode: "translate" as EditorStore["state"]["gizmoMode"],
     gizmoSpace: "local" as EditorStore["state"]["gizmoSpace"],
@@ -57,6 +59,7 @@ export function getEditorStore(): EditorStore {
 
   const bump = (): void => {
     state.selectedId = engine.selectedId;
+    state.selectionIds = engine.selectionIds;
     state.gizmoMode = engine.gizmoMode;
     state.gizmoSpace = engine.gizmoSpace;
     state.canUndo = engine.history.canUndo;

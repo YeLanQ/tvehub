@@ -5,10 +5,13 @@ import { CommandStack } from "../history/CommandStack";
 import {
   AddNodeCommand,
   PropertyPatchCommand,
-  RemoveNodeCommand,
+
+  RemoveNodesCommand,
   RenameCommand,
   ReparentCommand,
+  ReparentNodesCommand,
   TransformCommand,
+  type MoveTarget,
   type TransformSnapshot,
 } from "../command/commands";
 import type { Command } from "../command/Command";
@@ -45,6 +48,7 @@ export class EditorEngine {
   gizmo!: GizmoController;
 
   selectedId: string | null = null;
+  private selectedIds: string[] = [];
 
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
@@ -136,12 +140,24 @@ export class EditorEngine {
 
   deleteSelected(): void {
     if (!this.selectedId) return;
-    if (this.graph.root?.id === this.selectedId) {
-      console.warn("不能删除场景根节点");
-      return;
-    }
-    this.run(new RemoveNodeCommand(this.graph, this.selectedId));
-    this.select(null);
+    this.deleteNodes([this.selectedId]);
+  }
+
+  deleteNodes(ids: string[]): void {
+    const targets = ids.filter((id) => {
+      if (!id) return false;
+      if (this.graph.root?.id === id) return false;
+      return this.graph.has(id);
+    });
+    if (!targets.length) return;
+    this.run(new RemoveNodesCommand(this.graph, targets));
+    this.setSelection(this.selectedIds.filter((s) => this.graph.has(s)));
+  }
+
+  reparentNodes(moves: MoveTarget[]): void {
+    const valid = moves.filter((m) => m.id && this.graph.has(m.id));
+    if (!valid.length) return;
+    this.run(new ReparentNodesCommand(this.graph, valid));
   }
 
   renameSelected(name: string): void {
@@ -172,10 +188,51 @@ export class EditorEngine {
 
   // ===================== 选择 =====================
 
+  get selectionIds(): string[] {
+    return [...this.selectedIds];
+  }
+
   select(id: string | null): void {
+    this.selectedIds = id ? [id] : [];
     this.selectedId = id;
     this.gizmo.select(id, this.synchronizer.getObjectMap());
     this.events.emit("select:changed", { nodeId: this.selectedId });
+  }
+
+  addToSelection(id: string): void {
+    if (!id || this.selectedIds.includes(id)) return;
+    if (this.selectedIds.length === 0) this.selectedId = id;
+    this.selectedIds.push(id);
+    this.syncGizmo();
+    this.events.emit("select:changed", { nodeId: this.selectedId });
+  }
+
+  toggleSelection(id: string): void {
+    if (!id) return;
+    if (this.selectedIds.includes(id)) {
+      this.selectedIds = this.selectedIds.filter((s) => s !== id);
+      this.selectedId = this.selectedIds[this.selectedIds.length - 1] ?? null;
+    } else {
+      this.selectedIds.push(id);
+      this.selectedId = id;
+    }
+    this.syncGizmo();
+    this.events.emit("select:changed", { nodeId: this.selectedId });
+  }
+
+  setSelection(ids: string[]): void {
+    this.selectedIds = [...ids];
+    this.selectedId = ids[ids.length - 1] ?? null;
+    this.syncGizmo();
+    this.events.emit("select:changed", { nodeId: this.selectedId });
+  }
+
+  clearSelection(): void {
+    this.select(null);
+  }
+
+  private syncGizmo(): void {
+    this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
   }
 
   getTransform(id: string): TransformSnapshot | null {
