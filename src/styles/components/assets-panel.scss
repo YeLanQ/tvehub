@@ -58,13 +58,17 @@
   padding: 8px 4px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  cursor: pointer;
+  cursor: grab;
   background: var(--bg-panel-2);
   transition: border-color 0.12s;
 
   &:hover {
     background: var(--bg-hover);
     border-color: var(--accent);
+  }
+
+  &:active {
+    cursor: grabbing;
   }
 }
 

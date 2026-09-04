@@ -11,3 +11,13 @@ export type { NodeInit, RegisteredNodeTypes } from "./Node";
 export type { GeometryKind, MeshNodeInit, LightNodeInit, CameraNodeInit } from "./derived/Primitives";
 export type { TransformInit } from "./Transform";
 export type { Vec3, Euler, JsonValue, JsonRecord } from "./types";
+export type {
+  ScenePrototypeDoc,
+  NodePrototypeDoc,
+  MeshNodePrototypeDoc,
+  LightNodePrototypeDoc,
+  CameraNodePrototypeDoc,
+  TransformPrototypeDoc,
+  PrototypeTypeMap,
+  PrototypeDocumentation,
+} from "./docs";
