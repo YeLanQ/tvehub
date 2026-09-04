@@ -108,7 +108,7 @@ export function getProjectStore(): ProjectStore {
         const info = await invoke<RecentProject>("create_project", {
           parent,
           name,
-          template_id: templateId,
+          templateId,
           files,
         });
         await store.loadScene(info.path);

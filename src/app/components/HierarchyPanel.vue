@@ -127,6 +127,7 @@ function createItems(parentId: string): CtxMenuItem[] {
   items.push({
     label: "删除",
     danger: true,
+    disabled: parentId === engine.graph.root?.id,
     onClick: () => engine.deleteSelected(),
   });
   return items;

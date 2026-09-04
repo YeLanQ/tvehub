@@ -22,7 +22,7 @@
   "root": {
     "type": "node",
     "id": "root",
-    "name": "Scene Root",
+    "name": "Root",
     "parentId": null,
     "childIds": [],
     "active": true,

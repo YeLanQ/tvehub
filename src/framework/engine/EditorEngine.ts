@@ -136,6 +136,10 @@ export class EditorEngine {
 
   deleteSelected(): void {
     if (!this.selectedId) return;
+    if (this.graph.root?.id === this.selectedId) {
+      console.warn("不能删除场景根节点");
+      return;
+    }
     this.run(new RemoveNodeCommand(this.graph, this.selectedId));
     this.select(null);
   }

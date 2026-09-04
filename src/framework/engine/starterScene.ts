@@ -7,7 +7,7 @@ import { vec3 } from "../prototype/types";
  * 通过工厂派生原型节点，并直接写入场景图（初始态不入历史栈）。
  */
 export function setupStarterScene(engine: EditorEngine): void {
-  const root = new Node({ name: "Scene Root" });
+  const root = new Node({ name: "Root" });
 
   engine.graph.setRoot(root);
 
