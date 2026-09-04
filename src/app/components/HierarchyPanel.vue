@@ -8,6 +8,7 @@ import {
   menuSeparator,
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
+import "../../styles/components/hierarchy-panel.scss";
 
 const store = getEditorStore();
 const { state, engine } = store;
@@ -235,106 +236,3 @@ function onBlankContext(e: MouseEvent): void {
   </div>
 </template>
 
-<style scoped>
-.hierarchy {
-  min-width: 220px;
-}
-
-.h-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.h-search {
-  flex: 1;
-  min-width: 0;
-  height: 24px;
-  padding: 0 8px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  outline: none;
-}
-
-.h-search:focus {
-  border-color: var(--accent);
-}
-
-.tree {
-  overflow: auto;
-  flex: 1;
-  padding: 4px 0;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  border-radius: 0;
-}
-
-.row:hover {
-  background: var(--bg-hover);
-}
-
-.row.sel {
-  background: var(--bg-active);
-}
-
-.badge {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #1a1a1a;
-}
-
-.badge.node {
-  background: #6a6a6a;
-}
-
-.badge.meshNode {
-  background: #9a9a9a;
-}
-
-.badge.lightNode {
-  background: #8a8a8a;
-}
-
-.badge.cameraNode {
-  background: #7a7a7a;
-}
-
-.name {
-  font-size: 12px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.off {
-  margin-left: auto;
-  color: var(--text-dim);
-}
-
-.empty {
-  padding: 10px;
-  font-size: 12px;
-}
-</style>

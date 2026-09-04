@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { disposeEditor, mountEditor, getEditorStore } from "../stores/editor";
+import "../../styles/components/viewport.scss";
 
 const host = ref<HTMLDivElement | null>(null);
 
@@ -80,73 +81,3 @@ onBeforeUnmount(() => {
     <div class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
   </div>
 </template>
-
-<style scoped>
-.viewport {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: var(--bg);
-  overflow: hidden;
-}
-
-.viewport-canvas {
-  position: absolute;
-  inset: 0;
-}
-
-.overlay {
-  position: absolute;
-  pointer-events: none;
-}
-
-.overlay.top {
-  top: 8px;
-  left: 8px;
-  right: 8px;
-  display: flex;
-  gap: 8px;
-}
-
-.overlay .mini {
-  pointer-events: auto;
-}
-
-.tool-group {
-  display: flex;
-  gap: 4px;
-  pointer-events: auto;
-  background: rgba(0, 0, 0, 0.45);
-  border-radius: 4px;
-  padding: 2px;
-}
-
-.mini {
-  padding: 2px 10px;
-  font-size: 11px;
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  border-radius: 3px;
-}
-.mini:hover {
-  color: var(--text);
-  background: var(--btn-hover);
-}
-.mini.active {
-  background: var(--bg-hover);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.viewport__hint {
-  position: absolute;
-  left: 10px;
-  bottom: 8px;
-  pointer-events: none;
-  opacity: 0.6;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-</style>

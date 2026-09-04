@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { getEditorStore } from "../stores/editor";
+import "../../styles/components/toolbar.scss";
 
 const store = getEditorStore();
 const { state, engine } = store;
@@ -43,24 +44,3 @@ function del(): void {
     </div>
   </div>
 </template>
-
-<style scoped>
-.toolbar-groups {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-}
-
-.group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.spacer {
-  flex: 1;
-}
-</style>

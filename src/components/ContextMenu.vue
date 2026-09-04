@@ -5,6 +5,7 @@ import {
   closeContextMenu,
   type CtxMenuItem,
 } from "../lib/editor/context-menu";
+import "../styles/components/context-menu.scss";
 
 const rootEl = ref<HTMLElement | null>(null);
 const subEl = ref<HTMLElement | null>(null);
@@ -166,77 +167,3 @@ watch(
     </div>
   </Teleport>
 </template>
-
-<style scoped>
-.ctx-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  pointer-events: none;
-}
-.ctx-menu {
-  position: fixed;
-  min-width: 190px;
-  padding: 4px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
-  pointer-events: auto;
-  user-select: none;
-}
-.ctx-sub {
-  z-index: 1;
-}
-.ctx-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  border-radius: 3px;
-  cursor: pointer;
-  white-space: nowrap;
-  color: var(--text);
-}
-.ctx-item:hover {
-  background: var(--bg-active);
-  color: #fff;
-}
-.ctx-item.disabled {
-  opacity: 0.45;
-  pointer-events: none;
-}
-.ctx-item.danger:hover {
-  background: var(--err);
-}
-.ctx-label {
-  flex: 1;
-  font-size: 12px;
-}
-.ctx-shortcut {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-.ctx-item:hover .ctx-shortcut {
-  color: rgba(255, 255, 255, 0.75);
-}
-.ctx-arrow {
-  color: var(--text-dim);
-  font-size: 10px;
-}
-.ctx-header {
-  padding: 5px 10px 2px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  user-select: none;
-  white-space: nowrap;
-}
-.ctx-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-</style>

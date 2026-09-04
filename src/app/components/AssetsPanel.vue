@@ -6,6 +6,7 @@ import {
   menuSeparator,
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
+import "../../styles/components/assets-panel.scss";
 
 const { engine } = getEditorStore();
 
@@ -183,90 +184,3 @@ function onContentContext(e: MouseEvent): void {
   </div>
 </template>
 
-<style scoped>
-.assets {
-  flex: 1;
-  min-height: 0;
-}
-
-.am-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-.am-tree {
-  width: 110px;
-  flex-shrink: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: 4px 0;
-}
-
-.am-tree-item {
-  padding: 5px 10px;
-  font-size: 12px;
-  color: var(--text-dim);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.am-tree-item:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.am-tree-item.active {
-  background: var(--bg-active);
-  color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.am-content {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 6px;
-}
-
-.am-content.view-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-  gap: 6px;
-  align-content: start;
-}
-
-.am-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 4px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-  background: var(--bg-panel-2);
-  transition: border-color 0.12s;
-}
-
-.am-item:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent);
-}
-
-.am-icon {
-  font-size: 18px;
-  line-height: 1;
-  color: var(--text);
-}
-
-.am-name {
-  font-size: 11px;
-  color: var(--text-dim);
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-</style>

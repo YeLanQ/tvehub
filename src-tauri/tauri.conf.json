@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "three-visual-editor",
-        "min-width": 1300,
-        "min-height": 860
+        "minWidth": 1300,
+        "minHeight": 860
       }
     ],
     "security": {

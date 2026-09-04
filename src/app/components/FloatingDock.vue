@@ -10,6 +10,7 @@ import HierarchyPanel from "./HierarchyPanel.vue";
 import InspectorPanel from "./InspectorPanel.vue";
 import ConsolePanel from "./ConsolePanel.vue";
 import AssetsPanel from "./AssetsPanel.vue";
+import "../../styles/components/floating-dock.scss";
 
 const props = defineProps<{ win: FloatingDock }>();
 
@@ -51,67 +52,3 @@ function style() {
     </div>
   </div>
 </template>
-
-<style scoped>
-.floating-dock {
-  position: fixed;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-}
-.floating-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 12px;
-  background: var(--bg-panel-2);
-  border-bottom: 1px solid var(--border);
-  cursor: grab;
-  user-select: none;
-  flex-shrink: 0;
-}
-.floating-head:active {
-  cursor: grabbing;
-}
-.floating-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-.floating-hint {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.floating-close {
-  margin-left: auto;
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  font-size: 12px;
-  padding: 0 4px;
-  cursor: pointer;
-}
-.floating-close:hover {
-  background: var(--btn-hover);
-  border: none;
-  color: var(--err);
-}
-.floating-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.floating-body :deep(.hierarchy),
-.floating-body :deep(.inspector),
-.floating-body :deep(.console),
-.floating-body :deep(.assets) {
-  flex: 1;
-  min-height: 0;
-}
-</style>
