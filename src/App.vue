@@ -54,7 +54,7 @@ const previewStyle = computed(() => {
 </script>
 
 <template>
-  <div class="editor">
+  <div class="editor" @contextmenu.prevent>
     <!-- 顶部工具栏 -->
     <header class="toolbar"><Toolbar /></header>
 

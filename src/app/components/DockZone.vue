@@ -66,6 +66,7 @@ onUnmounted(() => {
     class="dock-zone"
     :class="[zone, { 'drop-target': isDropTarget }]"
     :style="zoneStyle"
+    @contextmenu.prevent
   >
     <template v-if="panels.length">
       <div class="dock-tabs">

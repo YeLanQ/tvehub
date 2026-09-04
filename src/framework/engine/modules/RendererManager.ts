@@ -30,6 +30,12 @@ export class RendererManager {
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.08;
 
+    const dom = this.renderer.domElement;
+    dom.addEventListener("contextmenu", (e) => e.preventDefault(), { passive: false });
+    dom.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
+    dom.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
+    dom.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false });
+
     const grid = new THREE.GridHelper(40, 40, 0x3f3f3f, 0x262626);
     grid.name = "__grid";
     this.scene.add(grid);
