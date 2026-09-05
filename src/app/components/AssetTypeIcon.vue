@@ -6,7 +6,9 @@
  */
 import {
   CAMERA_ICON_PATHS,
-  LIGHT_ICON_PATHS,
+  LIGHT_POINT_ICON_PATHS,
+  LIGHT_DIRECTIONAL_ICON_PATHS,
+  LIGHT_AMBIENT_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 
 defineProps<{ kind: string }>();
@@ -71,9 +73,15 @@ defineProps<{ kind: string }>();
       <path v-for="d in CAMERA_ICON_PATHS" :key="d" :d="d" />
     </template>
 
-    <!-- 灯光：灯泡 -->
-    <template v-else-if="kind === 'light' || kind === 'light:point' || kind === 'light:directional' || kind === 'light:ambient'">
-      <path v-for="d in LIGHT_ICON_PATHS" :key="d" :d="d" />
+    <!-- 灯光：点光 = 灯泡 / 平行光 = 太阳 / 环境光 = 球体 -->
+    <template v-else-if="kind === 'light' || kind === 'light:point'">
+      <path v-for="d in LIGHT_POINT_ICON_PATHS" :key="d" :d="d" />
+    </template>
+    <template v-else-if="kind === 'light:directional'">
+      <path v-for="d in LIGHT_DIRECTIONAL_ICON_PATHS" :key="d" :d="d" />
+    </template>
+    <template v-else-if="kind === 'light:ambient'">
+      <path v-for="d in LIGHT_AMBIENT_ICON_PATHS" :key="d" :d="d" />
     </template>
 
     <!-- 其它文件：带折角的文档 -->

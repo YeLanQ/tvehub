@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
-import { CameraNode, LightNode, MeshNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { JsonRecord } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/command/commands";
 import ComponentCard from "./ComponentCard.vue";
@@ -84,20 +84,35 @@ function onMeshUpdate(label: string, value: unknown): void {
 function onLightUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof LightNode)) return;
-  commit((node) => {
-    const light = node as LightNode;
+  commit((target) => {
+    const light = target as LightNode;
     switch (label) {
-      case "Set Light Kind":
-        light.lightKind = value as LightNode["lightKind"];
-        break;
-      case "Set Light Color":
+      case "Set Color":
         light.lightColor = value as number;
         break;
       case "Set Intensity":
         light.intensity = value as number;
         break;
+      case "Set Distance":
+        if (light instanceof PointLightNode || light instanceof SpotLightNode) {
+          light.distance = value as number;
+        }
+        break;
+      case "Set Decay":
+        if (light instanceof PointLightNode || light instanceof SpotLightNode) {
+          light.decay = value as number;
+        }
+        break;
+      case "Set Angle":
+        if (light instanceof SpotLightNode) light.angle = value as number;
+        break;
+      case "Set Penumbra":
+        if (light instanceof SpotLightNode) light.penumbra = value as number;
+        break;
       case "Toggle Shadow":
-        light.castShadow = value as boolean;
+        if (light instanceof DirectionalLightNode || light instanceof SpotLightNode) {
+          light.castShadow = value as boolean;
+        }
         break;
     }
   }, label);

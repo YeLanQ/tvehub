@@ -4,11 +4,14 @@ import type { SceneGraph, SceneChange } from "../../scene/SceneGraph";
 import {
   MeshNode,
   LightNode,
+  PointLightNode,
+  DirectionalLightNode,
+  SpotLightNode,
   CameraNode,
 } from "../../prototype/derived/Primitives";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D, buildGeometry } from "./utils";
-import { createIconSprite } from "./helpers/spriteIcon";
+import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
@@ -167,19 +170,57 @@ export class SceneSynchronizer {
         obj.remove(c);
         disposeObject3D(c);
       });
+
+    // 平行光/聚光灯有方向语义：指向节点本地 -Z 的目标点对象随节点一起旋转
+    const isTargeted =
+      light instanceof DirectionalLightNode || light instanceof SpotLightNode;
+    let dirTarget = obj.children.find((c) => c.name === "__dirTarget") as THREE.Object3D | null;
+    if (!isTargeted) {
+      if (dirTarget) {
+        obj.remove(dirTarget);
+        dirTarget = null;
+      }
+    } else if (!dirTarget) {
+      dirTarget = new THREE.Object3D();
+      dirTarget.name = "__dirTarget";
+      dirTarget.position.set(0, 0, -1);
+      obj.add(dirTarget);
+    }
+
     const lamp = new THREE.Group();
     lamp.userData.lamp = true;
-    if (light.lightKind === "point") {
-      lamp.add(new THREE.PointLight(light.lightColor, light.intensity));
-    } else if (light.lightKind === "directional") {
+    let iconKind: SpriteIconKind = "light-point";
+    if (light instanceof PointLightNode) {
+      lamp.add(new THREE.PointLight(light.lightColor, light.intensity, light.distance, light.decay));
+      iconKind = "light-point";
+    } else if (light instanceof DirectionalLightNode) {
       const dl = new THREE.DirectionalLight(light.lightColor, light.intensity);
       dl.castShadow = light.castShadow;
+      if (dirTarget) dl.target = dirTarget;
       lamp.add(dl);
+      iconKind = "light-directional";
+    } else if (light instanceof SpotLightNode) {
+      const angleRad = (light.angle * Math.PI) / 180;
+      const sl = new THREE.SpotLight(
+        light.lightColor,
+        light.intensity,
+        light.distance,
+        angleRad,
+        light.penumbra,
+        light.decay,
+      );
+      sl.castShadow = light.castShadow;
+      if (dirTarget) sl.target = dirTarget;
+      lamp.add(sl);
+      iconKind = "light-spot";
     } else {
+      // AmbientLightNode
       lamp.add(new THREE.AmbientLight(light.lightColor, light.intensity));
+      iconKind = "light-ambient";
     }
-    // 灯光节点用图标精灵表示（真实渲染时灯光本身无实体几何）
-    const icon = createIconSprite("light", light.lightColor, 0.8);
+
+    // 灯光类型对应的图标（点光灯泡 / 平行光太阳 / 环境光球体 / 聚光灯束）
+    const icon = createIconSprite(iconKind, light.lightColor, 0.8);
     icon.name = "__lightIcon";
     lamp.add(icon);
     obj.add(lamp);

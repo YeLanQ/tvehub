@@ -1,9 +1,10 @@
-import { vec3, type JsonRecord, type Vec3 } from "../prototype/types";
+import type { JsonRecord, Vec3 } from "../prototype/types";
 import {
   CameraNode,
   LightNode,
   MeshNode,
   type GeometryKind,
+  type LightKind,
 } from "../prototype/derived/Primitives";
 import { Node } from "../prototype/Node";
 import { PrototypeRegistry } from "../prototype/PrototypeRegistry";
@@ -16,6 +17,20 @@ export interface CreateOptions {
   name?: string;
   position?: Vec3;
 }
+
+const LIGHT_TYPE_KEY: Record<LightKind, string> = {
+  point: "pointLightNode",
+  directional: "directionalLightNode",
+  ambient: "ambientLightNode",
+  spot: "spotLightNode",
+};
+
+const LIGHT_DEFAULT_NAME: Record<LightKind, string> = {
+  point: "Point Light",
+  directional: "Directional Light",
+  ambient: "Ambient Light",
+  spot: "Spot Light",
+};
 
 /**
  * 工厂层。
@@ -46,14 +61,10 @@ export class NodeFactory {
     return node;
   }
 
-  createLight(
-    kind: "point" | "directional" | "ambient",
-    opts: CreateOptions = {},
-  ): LightNode {
-    const node = this.registry.create("lightNode") as LightNode;
-    node.lightKind = kind;
-    node.positionHint = vec3(5, 8, 5);
-    node.name = opts.name ?? `Light_${kind}`;
+  /** 按灯光类型创建对应节点原型（点光/平行光/环境光/聚光灯） */
+  createLight(kind: LightKind, opts: CreateOptions = {}): LightNode {
+    const node = this.registry.create(LIGHT_TYPE_KEY[kind]) as LightNode;
+    node.name = opts.name ?? LIGHT_DEFAULT_NAME[kind];
     this.decorate(node, { ...opts, name: undefined });
     return node;
   }

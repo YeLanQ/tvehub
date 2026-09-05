@@ -31,7 +31,7 @@ import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
-import { applySpawnOffset, snapshotTransform } from "./modules/utils";
+import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -139,6 +139,7 @@ export class EditorEngine {
   addLight(kind: LightNode["lightKind"], parentId?: string): LightNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createLight(kind, { parentId: parent?.id ?? null });
+    applyLightSpawn(node);
     this.run(new AddNodeCommand(this.graph, node));
     this.select(node.id);
     return node;

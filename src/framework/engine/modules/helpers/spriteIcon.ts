@@ -2,10 +2,18 @@ import * as THREE from "three";
 import {
   buildIconSvg,
   CAMERA_ICON_PATHS,
-  LIGHT_ICON_PATHS,
+  LIGHT_POINT_ICON_PATHS,
+  LIGHT_DIRECTIONAL_ICON_PATHS,
+  LIGHT_AMBIENT_ICON_PATHS,
+  LIGHT_SPOT_ICON_PATHS,
 } from "./icons";
 
-export type SpriteIconKind = "camera" | "light";
+export type SpriteIconKind =
+  | "camera"
+  | "light-point"
+  | "light-directional"
+  | "light-ambient"
+  | "light-spot";
 
 const TEXTURE_SIZE = 128;
 
@@ -13,9 +21,23 @@ const TEXTURE_SIZE = 128;
 const textureCache = new Map<string, THREE.Texture>();
 const pendingLoad = new Map<string, Promise<THREE.Texture>>();
 
+function iconPaths(kind: SpriteIconKind): string[] {
+  switch (kind) {
+    case "camera":
+      return CAMERA_ICON_PATHS;
+    case "light-point":
+      return LIGHT_POINT_ICON_PATHS;
+    case "light-directional":
+      return LIGHT_DIRECTIONAL_ICON_PATHS;
+    case "light-ambient":
+      return LIGHT_AMBIENT_ICON_PATHS;
+    case "light-spot":
+      return LIGHT_SPOT_ICON_PATHS;
+  }
+}
+
 function svgDataUri(kind: SpriteIconKind): string {
-  const paths = kind === "camera" ? CAMERA_ICON_PATHS : LIGHT_ICON_PATHS;
-  const svg = buildIconSvg(paths, {
+  const svg = buildIconSvg(iconPaths(kind), {
     size: TEXTURE_SIZE,
     strokeWidth: 2.2,
     stroke: "#ffffff",
@@ -72,7 +94,7 @@ function loadTexture(kind: SpriteIconKind): Promise<THREE.Texture> {
 
 /**
  * 创建一张摄像机对齐（billboard）的图标精灵。
- * @param kind  "camera" | "light"
+ * @param kind  "camera" | "light-point" | "light-directional" | "light-ambient" | "light-spot"
  * @param color 图标着色（相机用编辑器强调色、灯光用灯光颜色），纹理为白色线稿被其着色
  * @param scale 世界单位尺寸
  */

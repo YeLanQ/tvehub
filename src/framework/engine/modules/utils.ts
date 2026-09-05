@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { TransformSnapshot } from "../../command/commands";
 import type { Vec3 } from "../../prototype/types";
 import type { GeometryKind } from "../../prototype/nodes/MeshNode";
+import type { LightNode } from "../../prototype/nodes/LightNode";
 
 export function snapshotTransform(node: {
   transform: { position: Vec3; rotation: Vec3; scale: Vec3 };
@@ -31,6 +32,28 @@ export function sameTransform(a: TransformSnapshot, b: TransformSnapshot): boole
 export function applySpawnOffset(node: { transform: { setPosition: (x: number, y: number, z: number) => void } }): void {
   const r = () => (Math.random() - 0.5) * 3;
   node.transform.setPosition(r(), 0.5 + Math.random(), r());
+}
+
+/**
+ * 新添加的灯光节点放置到场景里可观察的位置/方向：
+ * - point：放置在原点附近；
+ * - directional / spot：放在斜上方并让本地 -Z（光照方向）指向世界原点，
+ *   保证一加入就能照亮场景中心物体（聚光灯可见光束效果）。
+ * - ambient：无空间语义，保持默认位置。
+ */
+export function applyLightSpawn(node: LightNode): void {
+  if (node.lightKind === "ambient") return;
+  const pos =
+    node.lightKind === "point" ? new THREE.Vector3(2, 2.5, 2) : new THREE.Vector3(3, 4, 3);
+  node.transform.position = { x: pos.x, y: pos.y, z: pos.z };
+  if (node.lightKind === "directional" || node.lightKind === "spot") {
+    const dir = new THREE.Vector3(0, 0, 0).sub(pos);
+    if (dir.lengthSq() < 1e-6) return;
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dir.normalize());
+    const e = new THREE.Euler().setFromQuaternion(q, "XYZ");
+    const R2D = 180 / Math.PI;
+    node.transform.setRotation(e.x * R2D, e.y * R2D, e.z * R2D);
+  }
 }
 
 export function findNodeOwner(

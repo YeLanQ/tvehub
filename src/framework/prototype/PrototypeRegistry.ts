@@ -1,4 +1,12 @@
-import { CameraNode, LightNode, MeshNode } from "./derived/Primitives";
+import {
+  AmbientLightNode,
+  CameraNode,
+  DirectionalLightNode,
+  LightNode,
+  MeshNode,
+  PointLightNode,
+  SpotLightNode,
+} from "./derived/Primitives";
 import { Node } from "./Node";
 import type { JsonRecord } from "./types";
 
@@ -51,7 +59,13 @@ export function createDefaultRegistry(): PrototypeRegistry {
   const registry = new PrototypeRegistry();
   registry.register(Node.kType, () => new Node());
   registry.register(MeshNode.kType, () => new MeshNode());
-  registry.register(LightNode.kType, () => new LightNode());
+  // 灯光按类型拆分注册
+  registry.register(PointLightNode.kType, () => new PointLightNode());
+  registry.register(DirectionalLightNode.kType, () => new DirectionalLightNode());
+  registry.register(AmbientLightNode.kType, () => new AmbientLightNode());
+  registry.register(SpotLightNode.kType, () => new SpotLightNode());
+  // 兼容旧场景里 type = "lightNode" 的灯光：按点光源回退解析
+  registry.register(LightNode.kType, () => new PointLightNode());
   registry.register(CameraNode.kType, () => new CameraNode());
   return registry;
 }

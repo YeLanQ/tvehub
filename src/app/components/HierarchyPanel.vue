@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
-import type { GeometryKind, LightNode } from "../../framework/prototype/derived/Primitives";
+import type { GeometryKind, LightKind } from "../../framework/prototype/derived/Primitives";
 import type { MoveTarget } from "../../framework/command/commands";
 import {
   openContextMenu,
@@ -18,6 +18,10 @@ const typeBadge: Record<string, string> = {
   node: "G",
   meshNode: "M",
   lightNode: "L",
+  pointLightNode: "P",
+  directionalLightNode: "D",
+  ambientLightNode: "A",
+  spotLightNode: "S",
   cameraNode: "C",
 };
 
@@ -97,7 +101,7 @@ function addNodeTo(parentId: string, type: string, name?: string): void {
   if (type.startsWith("mesh:")) {
     node = engine.addMesh(type.slice(5) as GeometryKind, parentId);
   } else if (type.startsWith("light:")) {
-    node = engine.addLight(type.slice(6) as LightNode["lightKind"], parentId);
+    node = engine.addLight(type.slice(6) as LightKind, parentId);
   } else if (type === "camera") {
     node = engine.addCamera(parentId);
   } else {
@@ -118,6 +122,7 @@ function createAddItems(parentId: string): CtxMenuItem[] {
     { label: "灯光", header: true },
     { label: "Point Light", onClick: () => addNodeTo(parentId, "light:point") },
     { label: "Directional Light", onClick: () => addNodeTo(parentId, "light:directional") },
+    { label: "Spot Light", onClick: () => addNodeTo(parentId, "light:spot") },
     { label: "Ambient", onClick: () => addNodeTo(parentId, "light:ambient") },
     menuSeparator(),
     { label: "Camera", onClick: () => addNodeTo(parentId, "camera") },

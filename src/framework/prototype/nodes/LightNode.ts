@@ -1,64 +1,44 @@
 import { Node, type NodeInit } from "../Node";
-import { cloneRecord, vec3, type Vec3 } from "../types";
+
+export type LightKind = "point" | "directional" | "ambient" | "spot";
 
 export interface LightNodeInit extends NodeInit {
-  lightKind?: "point" | "directional" | "ambient";
   intensity?: number;
   lightColor?: number;
-  positionHint?: Vec3;
-  castShadow?: boolean;
 }
 
-export class LightNode extends Node {
+/**
+ * 灯光节点基类。
+ *
+ * 灯光按类型拆分为独立节点原型（PointLightNode / DirectionalLightNode /
+ * AmbientLightNode / SpotLightNode），基类只维护所有灯光共有的参数：
+ * 强度 intensity 与颜色 lightColor，并暴露类型标识 lightKind。
+ * 具体类型各自的参数（距离、衰减、角度、阴影…）由子类扩展。
+ */
+export abstract class LightNode extends Node {
   static override readonly kType: string = "lightNode";
   override readonly typeKey: string = LightNode.kType;
-  lightKind: "point" | "directional" | "ambient" = "point";
+
+  /** 灯光类型标识（由具体子类固定） */
+  abstract readonly lightKind: LightKind;
+
   intensity = 1;
   lightColor = 0xffffff;
-  positionHint: Vec3 = vec3(5, 5, 5);
-  castShadow = false;
 
   constructor(init: LightNodeInit = {}) {
     super(init);
-    this.lightKind = init.lightKind ?? this.lightKind;
     this.intensity = init.intensity ?? this.intensity;
     this.lightColor = init.lightColor ?? this.lightColor;
-    if (init.positionHint) this.positionHint = { ...init.positionHint };
-    this.castShadow = init.castShadow ?? this.castShadow;
   }
 
-  override clone(): LightNode {
-    return new LightNode({
-      name: this.name,
-      transform: this.transform,
-      properties: cloneRecord(this.properties),
-      lightKind: this.lightKind,
-      intensity: this.intensity,
-      lightColor: this.lightColor,
-      positionHint: this.positionHint,
-      castShadow: this.castShadow,
-    });
-  }
-
-  protected override writeOwnData(target: Record<string, unknown>): void {
-    target.lightKind = this.lightKind;
+  /** 子类在 writeOwnData / readOwnData 里追加自身参数时，先落公共字段 */
+  protected writeCommon(target: Record<string, unknown>): void {
     target.intensity = this.intensity;
     target.lightColor = this.lightColor;
-    target.positionHint = { ...this.positionHint };
-    target.castShadow = this.castShadow;
   }
 
-  protected override readOwnData(source: Record<string, unknown>): void {
-    this.lightKind = (source.lightKind as LightNode["lightKind"]) ?? this.lightKind;
+  protected readCommon(source: Record<string, unknown>): void {
     this.intensity = (source.intensity as number) ?? this.intensity;
     this.lightColor = (source.lightColor as number) ?? this.lightColor;
-    this.positionHint = (source.positionHint as Vec3) ?? this.positionHint;
-    this.castShadow = (source.castShadow as boolean) ?? this.castShadow;
-  }
-
-  static fromJSON(json: Record<string, unknown>): LightNode {
-    const node = new LightNode();
-    node.applyJSON(json);
-    return node;
   }
 }
