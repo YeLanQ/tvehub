@@ -147,20 +147,23 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   if (store.state.mounted) return Promise.resolve();
   if (!mountTask) {
     mountTask = (async () => {
+      const engine = store.engine;
       const projectStore = getProjectStore();
       const root = projectStore.currentPath;
       // 相机辅助视锥取景宽高比 = 项目设计分辨率（打开/新建项目时已从 project.config.json 读入）
-      store.engine.designResolution = {
+      engine.designResolution = {
         width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
         height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
       };
       // 材质资产内容来源：内置 internal/… 走内置读取；项目 assets/… 读项目文件
-      store.engine.materials.setFetcher(root ? (rel) => readMaterialText(root, rel) : null);
-      await store.engine.mount(container, {
+      engine.materials.setFetcher(root ? (rel) => readMaterialText(root, rel) : null);
+      await engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,
         hdrMode: projectStore.hdrMode,
       });
+      // 挂载期间被销毁（如就绪前点击“关闭”返回首页）→ 不再装载场景/重建
+      if (engine.isDisposed()) return;
       if (sceneJson) {
         // 旧版场景：先把内嵌材质参数迁移为项目材质资产（internal 默认无需生成）
         let text = sceneJson;
@@ -171,6 +174,7 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
             logStore.log("warn", `旧场景材质迁移失败（按默认材质加载）: ${e}`, "engine");
           }
         }
+        if (engine.isDisposed()) return;
         // 装载前预取全部材质引用：节点入图即渲染到正确外观（避免先默认后跳变）
         let refs: string[] = [];
         try {
@@ -178,11 +182,13 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
         } catch {
           /* 保留空引用集合 */
         }
-        if (refs.length) await store.engine.materials.preload(refs);
-        loadSceneFromJson(store.engine, text);
+        if (refs.length) await engine.materials.preload(refs);
+        if (engine.isDisposed()) return;
+        loadSceneFromJson(engine, text);
       } else {
-        await store.engine.materials.preload([DEFAULT_MATERIAL_REL]);
-        setupStarterScene(store.engine);
+        await engine.materials.preload([DEFAULT_MATERIAL_REL]);
+        if (engine.isDisposed()) return;
+        setupStarterScene(engine);
       }
       store.markMounted();
       logStore.log("info", "编辑器已就绪", "engine");
@@ -194,6 +200,7 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
 export function disposeEditor(): void {
   mountTask = null;
   if (!singleton) return;
+  // dispose 幂等且容错：即便引擎仍在异步 mount 中也能安全销毁（跳过未初始化的模块）
   singleton.engine.dispose();
   singleton = null;
 }

@@ -90,6 +90,8 @@ export class EditorEngine {
   private readonly previewCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
   /** 天空盒背景当前生效状态（签名 + 背景纹理）：变更/移除/销毁时据此释放 */
   private skyApplied: { sig: string; texture: THREE.Texture } | null = null;
+  /** 已销毁标记：mount 期间被 dispose 后终止后续初始化；dispose 幂等 */
+  private disposed = false;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
   private previewMode = false;
   /** 编辑器辅助物（网格/相机盒体/灯球/gizmo/选择框）是否显示 */
@@ -176,7 +178,11 @@ export class EditorEngine {
       hdrMode?: "hdr" | "ldr";
     },
   ): Promise<void> {
+    this.disposed = false;
     await this.renderer.mount(container, options);
+    // 挂载期间（渲染器异步初始化）可能已被 dispose（如用户在就绪前点了“关闭”）：
+    // 此时渲染器已释放，直接终止后续初始化，避免在已销毁的引擎上补建 gizmo/监听。
+    if (this.disposed) return;
     this.initGizmo();
     this.renderer.setRenderCb(() => {
       this.gizmo.updateSelectionBox();
@@ -193,23 +199,31 @@ export class EditorEngine {
   }
 
   dispose(): void {
+    // 幂等且容错：允许在引擎尚未 mount（或挂载中）时被销毁，不抛错
+    if (this.disposed) return;
+    this.disposed = true;
     window.removeEventListener("pointerdown", this.onCapturePointerDown, true);
     window.removeEventListener("keydown", this.onCaptureKeyDown, true);
     if (this.skyApplied) {
       this.skyApplied.texture.dispose();
       this.skyApplied = null;
     }
-    this.renderer.dispose();
-    this.gizmo.dispose();
-    this.helperSystem.dispose();
-    this.synchronizer.dispose();
-    this.materials.clear();
+    this.renderer?.dispose();
+    this.gizmo?.dispose();
+    this.helperSystem?.dispose();
+    this.synchronizer?.dispose();
+    this.materials?.clear();
     this.removeViewportClickHandler();
   }
 
   /** gizmo 是否正在拖动（变换过程中）——其它交互可用此状态判断是否需要忽略 */
   get isGizmoDragging(): boolean {
-    return this.gizmo.isDragging();
+    return this.gizmo ? this.gizmo.isDragging() : false;
+  }
+
+  /** 引擎是否已销毁（mount 流程与 store 层用它判断是否中止后续初始化/装载） */
+  isDisposed(): boolean {
+    return this.disposed;
   }
 
   // ===================== 操作 API 走命令 + 栈 =====================
@@ -681,21 +695,38 @@ export class EditorEngine {
       return;
     }
 
-    // Find the first intersection that maps to a node
+    // Find the first intersection that maps to a selectable node.
+    // 场景根节点只能从层级面板选中，不允许通过视口点击选中：
+    // 命中对象的最近映射节点若解析到根节点，跳过该项（视为点击空白）。
+    const rootId = this.graph.root?.id ?? null;
+    let pickedId: string | null = null;
     for (const hit of intersects) {
       let obj: THREE.Object3D | null = hit.object as THREE.Object3D;
       while (obj) {
         const nodeId = (obj.userData as { nodeId?: string }).nodeId ?? null;
         if (nodeId && objectMap.has(nodeId)) {
-          if (e.shiftKey || e.ctrlKey) {
-            this.toggleSelection(nodeId);
-          } else {
-            this.select(nodeId);
+          if (nodeId !== rootId) {
+            pickedId = nodeId;
           }
-          return;
+          obj = null; // 已找到最近映射节点（根节点不可从视口选中 → 不采纳）
+          break;
         }
         obj = obj.parent;
       }
+      if (pickedId) break;
+    }
+    if (!pickedId) {
+      // Clicked empty space (or only resolved to the scene root) — clear selection
+      // (unless shift is held for multi-select)
+      if (!e.shiftKey && !e.ctrlKey) {
+        this.clearSelection();
+      }
+      return;
+    }
+    if (e.shiftKey || e.ctrlKey) {
+      this.toggleSelection(pickedId);
+    } else {
+      this.select(pickedId);
     }
   }
 }

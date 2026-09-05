@@ -12,6 +12,28 @@ use std::path::PathBuf;
 
 use tauri::Manager;
 
+/// 应用主菜单：把「撤销 / 保存场景 / 关闭项目」做成原生菜单 + 快捷键命令，
+/// 点击后经 Tauri 事件（editor-command）通知前端执行，不再依赖前端 UI 生命周期。
+fn build_main_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{IsMenuItem, Menu, MenuItem, Submenu};
+
+    let undo = MenuItem::with_id(app, "app-undo", "撤销", true, Some("CmdOrCtrl+Z"))?;
+    let save = MenuItem::with_id(app, "app-save", "保存场景", true, Some("CmdOrCtrl+S"))?;
+    let close = MenuItem::with_id(app, "app-close", "关闭项目", true, Some("CmdOrCtrl+W"))?;
+
+    let edit_menu = Submenu::with_items(app, "编辑", true, &[&undo as &dyn IsMenuItem<R>])?;
+    let file_menu = Submenu::with_items(
+        app,
+        "文件",
+        true,
+        &[&save as &dyn IsMenuItem<R>, &close as &dyn IsMenuItem<R>],
+    )?;
+    Menu::with_items(
+        app,
+        &[&file_menu as &dyn IsMenuItem<R>, &edit_menu as &dyn IsMenuItem<R>],
+    )
+}
+
 #[derive(Serialize, Clone)]
 struct RecentProject {
     path: String,
@@ -349,6 +371,20 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(preview::PreviewServerState::default())
+        .menu(build_main_menu)
+        .on_menu_event(|app, event| {
+            // 原生菜单/快捷键 → 统一命令事件（前端 runEditorCommand 消费）
+            let cmd = match event.id().as_ref() {
+                "app-undo" => Some("undo"),
+                "app-save" => Some("save"),
+                "app-close" => Some("close"),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                use tauri::Emitter;
+                let _ = app.emit("editor-command", cmd);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             open_project,

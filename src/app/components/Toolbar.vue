@@ -3,16 +3,12 @@ import { computed } from "vue";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
-import { saveCurrentSceneToMain } from "../lib/save-scene";
+import { runEditorCommand } from "../lib/editor-commands";
 import "../../styles/components/toolbar.scss";
-
-defineEmits<{
-  goHome: [];
-}>();
 
 const store = getEditorStore();
 const projectStore = getProjectStore();
-const { state, engine } = store;
+const { state } = store;
 
 const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
   { key: "scene", label: "场景", title: "场景编辑" },
@@ -28,16 +24,6 @@ const projectName = computed(() => projectStore.projectName ?? "未命名项目"
 
 function setViewMode(mode: ViewMode): void {
   store.setViewMode(mode);
-}
-
-async function save(): Promise<void> {
-  try {
-    await saveCurrentSceneToMain();
-    logStore.log("success", "场景已保存", "toolbar");
-  } catch (e) {
-    console.error("Failed to save scene:", e);
-    logStore.log("error", `场景保存失败: ${e}`, "toolbar");
-  }
 }
 </script>
 
@@ -77,8 +63,14 @@ async function save(): Promise<void> {
       </button>
     </div>
 
-    <button :disabled="!state.canUndo" @click="engine.undo()" title="撤销上一次场景修改">撤销</button>
-    <button class="primary" @click="save">保存</button>
-    <button @click="$emit('goHome')" title="关闭项目返回首页">关闭</button>
+    <button
+      :disabled="!state.canUndo"
+      @click="runEditorCommand('undo')"
+      title="撤销上一次场景修改"
+    >
+      撤销
+    </button>
+    <button class="primary" @click="runEditorCommand('save')">保存</button>
+    <button @click="runEditorCommand('close')" title="关闭项目返回首页">关闭</button>
   </div>
 </template>

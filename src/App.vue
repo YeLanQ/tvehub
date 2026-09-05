@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { runEditorCommand, type EditorCommand } from "./app/lib/editor-commands";
 import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
 import WebPreviewPanel from "./app/components/WebPreviewPanel.vue";
@@ -25,10 +27,6 @@ const projectStore = getProjectStore();
 const editorStore = getEditorStore();
 
 const isHome = computed(() => projectStore.view === "home");
-
-function goHome() {
-  projectStore.setView("home");
-}
 
 /** 退出预览（网页预览面板）返回场景编辑 */
 function goScene() {
@@ -72,12 +70,29 @@ const previewStyle = computed(() => {
   return null;
 });
 
+/** 订阅 Rust 原生菜单/快捷键事件（撤销/保存/关闭 → 前端执行） */
+let unlistenNative: UnlistenFn | null = null;
+
 /** 编辑器挂载到 DOM */
-onMounted(() => {
+onMounted(async () => {
+  // 原生菜单命令通道：桌面端菜单/快捷键经 Rust 发来 editor-command 事件
+  try {
+    unlistenNative = await listen<string>("editor-command", (e) => {
+      const cmd = e.payload as EditorCommand;
+      if (cmd === "undo" || cmd === "save" || cmd === "close") runEditorCommand(cmd);
+    });
+  } catch {
+    /* 浏览器开发环境没有原生菜单事件源，忽略 */
+  }
   const container = document.querySelector<HTMLElement>(".center");
   if (container && !editorStore.state.mounted) {
     mountEditor(container);
   }
+});
+
+onUnmounted(() => {
+  unlistenNative?.();
+  unlistenNative = null;
 });
 </script>
 
@@ -90,7 +105,7 @@ onMounted(() => {
     <template v-else>
       <!-- 顶部工具栏 -->
       <header class="toolbar">
-        <Toolbar @go-home="goHome" />
+        <Toolbar />
       </header>
 
       <!-- 主体（Unity 风格停靠布局：左侧/右侧停靠区 + 中央视口） -->
