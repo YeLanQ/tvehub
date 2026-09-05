@@ -145,4 +145,10 @@ export class RendererManager {
   get orbitControls(): OrbitControls {
     return this.orbit;
   }
+
+  /** 当前视口宽高比（辅助线等需要按视口比例绘制时使用） */
+  get aspect(): number {
+    if (this.appliedW > 0 && this.appliedH > 0) return this.appliedW / this.appliedH;
+    return this.camera ? this.camera.aspect : 1;
+  }
 }

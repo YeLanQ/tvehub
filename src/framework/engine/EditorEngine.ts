@@ -27,6 +27,7 @@ import {
 } from "../prototype/derived/Primitives";
 import { degToRad, type JsonRecord } from "../prototype/types";
 import { RendererManager } from "./modules/RendererManager";
+import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
@@ -46,6 +47,7 @@ export class EditorEngine {
 
   readonly renderer = new RendererManager();
   readonly synchronizer: SceneSynchronizer;
+  readonly helperSystem: HelperSystem;
   gizmo!: GizmoController;
 
   selectedId: string | null = null;
@@ -63,6 +65,9 @@ export class EditorEngine {
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
     this.synchronizer = new SceneSynchronizer(this.renderer.scene);
+    this.helperSystem = new HelperSystem(this.renderer.scene, {
+      getAspect: () => this.renderer.aspect,
+    });
     this.renderer.registerCamera(this.previewCamera);
   }
 
@@ -91,6 +96,8 @@ export class EditorEngine {
     this.initGizmo();
     this.renderer.setRenderCb(() => {
       this.gizmo.updateSelectionBox();
+      // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
+      this.helperSystem.tick(this.synchronizer.getObjectMap());
     });
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
@@ -101,6 +108,7 @@ export class EditorEngine {
   dispose(): void {
     this.renderer.dispose();
     this.gizmo.dispose();
+    this.helperSystem.dispose();
     this.synchronizer.dispose();
     this.removeViewportClickHandler();
   }
@@ -262,12 +270,14 @@ export class EditorEngine {
 
   private onGraphChange(c: SceneChange): void {
     this.synchronizer.onGraphChange(c, this.graph);
+    this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
   }
 
   rebuildAll(): void {
     this.synchronizer.rebuildAll(this.graph);
+    this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
   }
 
@@ -394,6 +404,7 @@ export class EditorEngine {
       }
     });
     this.gizmo.setEditorEnabled(vis);
+    this.helperSystem.setVisible(vis);
   }
 
   // ===================== 视口点击选择 =====================
