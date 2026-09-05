@@ -24,6 +24,7 @@ export class GizmoController {
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.gizmo = new TransformControls(camera, domElement);
     this.gizmo.setSize(0.7);
+    this.gizmo.setSpace(this.space);
     this.gizmoHelper = this.resolveGizmoHelper();
     this.gizmo.addEventListener("dragging-changed", this.onDraggingChanged);
     this.gizmo.addEventListener("objectChange", this.onGizmoObjectChange);
