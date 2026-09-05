@@ -1,5 +1,6 @@
 import { logger } from "../../platform_abstraction/logger";
 import { EventBus } from "../../platform_abstraction/eventBus";
+import * as THREE from "three";
 import { createNodeFactory, NodeFactory } from "../factory/NodeFactory";
 import { CommandStack } from "../history/CommandStack";
 import {
@@ -49,6 +50,8 @@ export class EditorEngine {
 
   selectedId: string | null = null;
   private selectedIds: string[] = [];
+  private raycaster = new THREE.Raycaster();
+  private mouse = new THREE.Vector2();
 
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
@@ -82,6 +85,7 @@ export class EditorEngine {
       this.gizmo.updateSelectionBox();
     });
     this.graph.onChange((c) => this.onGraphChange(c));
+    this.setupViewportClickHandler();
     logger.info("EditorEngine mounted");
   }
 
@@ -89,6 +93,7 @@ export class EditorEngine {
     this.renderer.dispose();
     this.gizmo.dispose();
     this.synchronizer.dispose();
+    this.removeViewportClickHandler();
   }
 
   // ===================== 操作 API 走命令 + 栈 =====================
@@ -279,5 +284,67 @@ export class EditorEngine {
 
   get gizmoSpace(): "local" | "world" {
     return this.gizmo.getSpace();
+  }
+
+  // ===================== 视口点击选择 =====================
+
+  private setupViewportClickHandler(): void {
+    const dom = this.renderer.domElement;
+    const handler = (e: MouseEvent) => this.onViewportMouseDown(e);
+    this._viewportClickHandler = handler;
+    dom.addEventListener("mousedown", handler);
+  }
+
+  private removeViewportClickHandler(): void {
+    if (!this._viewportClickHandler) return;
+    this.renderer.domElement.removeEventListener("mousedown", this._viewportClickHandler);
+    this._viewportClickHandler = null;
+  }
+
+  _viewportClickHandler: ((e: MouseEvent) => void) | null = null;
+
+  private onViewportMouseDown(e: MouseEvent): void {
+    // Only handle left-click (button 0) and only when not dragging in orbit/gizmo
+    if (e.button !== 0) return;
+    if (this.gizmo.isDragging()) return;
+
+    // Calculate mouse position in normalized device coordinates (-1 to +1)
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Set up raycasting from camera through mouse position
+    this.raycaster.setFromCamera(this.mouse, this.renderer.camera);
+
+    // Get all mapped scene objects
+    const objectMap = this.synchronizer.getObjectMap();
+    const objects = Array.from(objectMap.values());
+
+    // Find intersections with scene objects
+    const intersects = this.raycaster.intersectObjects(objects, true);
+    if (intersects.length === 0) {
+      // Clicked empty space — clear selection (unless shift is held for multi-select)
+      if (!e.shiftKey && !e.ctrlKey) {
+        this.clearSelection();
+      }
+      return;
+    }
+
+    // Find the first intersection that maps to a node
+    for (const hit of intersects) {
+      let obj: THREE.Object3D | null = hit.object as THREE.Object3D;
+      while (obj) {
+        const nodeId = (obj.userData as { nodeId?: string }).nodeId ?? null;
+        if (nodeId && objectMap.has(nodeId)) {
+          if (e.shiftKey || e.ctrlKey) {
+            this.toggleSelection(nodeId);
+          } else {
+            this.select(nodeId);
+          }
+          return;
+        }
+        obj = obj.parent;
+      }
+    }
   }
 }
