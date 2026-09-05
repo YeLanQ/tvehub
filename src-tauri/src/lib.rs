@@ -25,6 +25,61 @@ fn recent_file_path(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("recent_projects.json"))
 }
 
+fn app_prefs_file_path(app: &tauri::AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .map(|d| d.join("prefs.json"))
+        .unwrap_or_else(|_| PathBuf::from("prefs.json"))
+}
+
+/// 读取应用级偏好文件（JSON 对象）；不存在/损坏返回空对象
+fn load_app_prefs(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    let f = app_prefs_file_path(app);
+    std::fs::read_to_string(&f)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(m) => Some(m),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// 写回应用级偏好文件
+fn save_app_prefs(app: &tauri::AppHandle, prefs: &serde_json::Map<String, serde_json::Value>) {
+    let f = app_prefs_file_path(app);
+    if let Some(dir) = f.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(prefs) {
+        let _ = std::fs::write(f, json);
+    }
+}
+
+/// 读取默认项目位置（新建项目默认父目录）；未设置返回 null
+#[tauri::command]
+async fn get_default_project_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let prefs = load_app_prefs(&app);
+    Ok(prefs
+        .get("default_project_dir")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// 设置默认项目位置（空值 = 清除）
+#[tauri::command]
+async fn set_default_project_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {
+    let mut prefs = load_app_prefs(&app);
+    let dir = dir.trim().to_string();
+    if dir.is_empty() {
+        prefs.remove("default_project_dir");
+    } else {
+        prefs.insert("default_project_dir".into(), dir.into());
+    }
+    save_app_prefs(&app, &prefs);
+    Ok(())
+}
+
 fn load_recent(app: &tauri::AppHandle) -> Vec<String> {
     let f = recent_file_path(app);
     std::fs::read_to_string(f)
@@ -300,6 +355,8 @@ pub fn run() {
             rename_project,
             trash_path,
             pick_project_folder,
+            get_default_project_dir,
+            set_default_project_dir,
             read_project_scene,
             scan_assets,
             scan_asset_db,

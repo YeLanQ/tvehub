@@ -8,6 +8,10 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
 import { BUILTIN_PROJECT_TEMPLATES, type ProjectTemplate } from "../lib/project-templates";
 import { PREFS_CATS, THEME_COLOR_DEFS } from "../lib/home-helpers";
+import {
+  loadDefaultProjectDir,
+  saveDefaultProjectDir,
+} from "../lib/default-project-dir";
 
 const projectStore = getProjectStore();
 
@@ -19,11 +23,18 @@ const showNewProject = ref(false);
 const menuPath = ref<string | null>(null);
 const busy = ref(false);
 
+/** 默认项目位置（新建项目默认父目录） */
+const defaultProjectDir = ref("");
+const prefBusy = ref(false);
+
 /** 工程模板（内置数据驱动；后续可接入后端自定义模板） */
 const templates = ref<ProjectTemplate[]>(BUILTIN_PROJECT_TEMPLATES);
 
 onMounted(() => {
   projectStore.refreshRecent();
+  void loadDefaultProjectDir().then((dir) => {
+    defaultProjectDir.value = dir;
+  });
 });
 
 async function browseAndOpen() {
@@ -117,6 +128,23 @@ function toggleMenu(path: string) {
 
 function closeMenu() {
   menuPath.value = null;
+}
+
+async function browseDefaultDir() {
+  prefBusy.value = true;
+  try {
+    const dir = await projectStore.pickFolder();
+    if (dir) {
+      defaultProjectDir.value = dir;
+      await saveDefaultProjectDir(dir);
+    }
+  } finally {
+    prefBusy.value = false;
+  }
+}
+
+async function onChangeDefaultDir() {
+  await saveDefaultProjectDir(defaultProjectDir.value);
 }
 
 watch(showNewProject, (val) => {
@@ -308,10 +336,17 @@ watch(showNewProject, (val) => {
               <h3>项目</h3>
               <div class="set-row">
                 <label>默认项目位置</label>
-                <input type="text" placeholder="选择父目录" />
-                <button>浏览…</button>
+                <input
+                  v-model="defaultProjectDir"
+                  type="text"
+                  placeholder="选择新建项目的默认父目录"
+                  @change="onChangeDefaultDir"
+                />
+                <button :disabled="prefBusy" @click="browseDefaultDir">
+                  {{ prefBusy ? "打开中…" : "浏览…" }}
+                </button>
               </div>
-              <p class="hint">新建项目时默认使用该位置。</p>
+              <p class="hint">新建项目时默认使用该位置；留空则每次手动选择。</p>
             </div>
           </template>
 

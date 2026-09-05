@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import {
   BUILTIN_PROJECT_TEMPLATES,
@@ -7,6 +7,7 @@ import {
   type ProjectTemplate,
 } from "../lib/project-templates";
 import { fetchTemplateFiles } from "../lib/templates";
+import { loadDefaultProjectDir } from "../lib/default-project-dir";
 import "../../styles/components/new-project-dialog.scss";
 
 const emit = defineEmits<{
@@ -28,6 +29,12 @@ const name = ref("NewProject");
 const path = ref("");
 const creating = ref(false);
 const error = ref("");
+
+onMounted(async () => {
+  // 默认项目位置：预先填充默认父目录（若已配置）
+  const def = await loadDefaultProjectDir();
+  if (def && !path.value) path.value = def;
+});
 
 /** 模板类别列表（由模板动态推导） */
 const catList = computed(() => createProjectCats(templates.value));
