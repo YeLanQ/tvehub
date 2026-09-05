@@ -19,6 +19,7 @@ function setSpace(space: "local" | "world"): void {
 }
 
 function onDragOver(e: DragEvent): void {
+  if (state.viewMode !== "scene") return;
   if (!e.dataTransfer) return;
   if (e.dataTransfer.types.includes("application/x-editor-asset")) {
     e.preventDefault();
@@ -27,6 +28,7 @@ function onDragOver(e: DragEvent): void {
 }
 
 function onDrop(e: DragEvent): void {
+  if (state.viewMode !== "scene") return;
   if (!e.dataTransfer) return;
   const data = e.dataTransfer.getData("application/x-editor-asset");
   if (!data) return;
@@ -69,8 +71,8 @@ onBeforeUnmount(() => {
       @drop="onDrop"
     ></div>
 
-    <!-- 视口顶部悬浮工具栏（Unity 风格）：变换工具 + gizmo 坐标系 -->
-    <div class="overlay top">
+    <!-- 视口顶部悬浮工具栏（Unity 风格）：仅编辑场景模式下显示 -->
+    <div v-if="state.viewMode === 'scene'" class="overlay top">
       <div class="tool-group" title="变换工具">
         <button
           class="mini"
@@ -118,6 +120,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
+    <div v-if="state.viewMode === 'scene'" class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
+    <div v-else class="viewport__hint mono">预览渲染 · 使用场景相机视角</div>
   </div>
 </template>

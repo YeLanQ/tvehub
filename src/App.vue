@@ -97,10 +97,10 @@ onMounted(() => {
         ></div>
 
         <main class="center">
-          <Viewport v-show="editorStore.state.viewMode === 'scene'" />
-          <div v-if="editorStore.state.viewMode === 'preview'" class="center-placeholder mono">
-            预览模式（待接入）
-          </div>
+          <!-- 场景/预览都复用同一视口画布：编辑模式用编辑器相机，预览模式切换到场景真实渲染相机 -->
+          <Viewport
+            v-show="editorStore.state.viewMode === 'scene' || editorStore.state.viewMode === 'preview'"
+          />
           <div v-if="editorStore.state.viewMode === 'script'" class="center-placeholder mono">
             脚本模式（待接入）
           </div>

@@ -118,6 +118,8 @@ export function getEditorStore(): EditorStore {
     },
     state: readonly(state) as unknown as EditorStore["state"],
     setViewMode: (mode) => {
+      // 引擎只关心 编辑(scene)/预览(preview) 两种渲染；脚本等占位页签保持编辑渲染
+      engine.setViewMode(mode === "preview" ? "preview" : "scene");
       state.viewMode = mode;
     },
     markMounted: () => {

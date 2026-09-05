@@ -71,6 +71,13 @@ export class GizmoController {
     this.gizmo.setMode(mode);
   }
 
+  /** 预览等编辑器场景下禁用并隐藏变换工具及其选中框 */
+  setEditorEnabled(enabled: boolean): void {
+    this.gizmo.enabled = enabled;
+    this.gizmoHelper.visible = enabled;
+    if (this.selectionBox) this.selectionBox.visible = enabled;
+  }
+
   setSpace(space: "local" | "world"): void {
     this.space = space;
     this.gizmo.setSpace(space);
