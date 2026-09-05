@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
@@ -9,7 +9,12 @@ import { CameraNode, LightNode, MeshNode, DirectionalLightNode, PointLightNode, 
 import type { MaterialParams, MaterialParamKey } from "../../framework/material";
 import { materialFileStem } from "../../framework/material";
 import { isInternalAsset } from "../../lib/internal-assets";
-import { duplicateMaterialToProject, listProjectMaterialRels, saveMaterialParams } from "../lib/materials";
+import {
+  duplicateMaterialToProject,
+  listProjectMaterialRels,
+  loadMaterialParams,
+  saveMaterialParams,
+} from "../lib/materials";
 import type { JsonRecord } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/command/commands";
 import ComponentCard from "./ComponentCard.vue";
@@ -34,6 +39,44 @@ const revision = computed(() => store.revision());
 onMounted(() => {
   if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
 });
+
+// ---------------------------------------------------------------------------
+// 材质参数落盘：编辑时先即时写入引擎缓存（面板/视口立即同步），文件写盘做
+// 300ms 防抖合并，避免拖拽/连续输入时每条都跨 IPC 写盘造成的延迟与乱序覆盖。
+// ---------------------------------------------------------------------------
+let materialDirtyTimer: ReturnType<typeof setTimeout> | null = null;
+let materialDirty: { root: string; rel: string; name: string; params: MaterialParams } | null = null;
+
+function persistMaterialNow(d: NonNullable<typeof materialDirty>): void {
+  saveMaterialParams(d.root, d.rel, d.name, d.params).catch((e) =>
+    logStore.log("error", `保存材质 ${d.rel} 失败: ${e}`, "engine"),
+  );
+}
+
+function flushMaterialPersist(): void {
+  if (materialDirtyTimer) clearTimeout(materialDirtyTimer);
+  materialDirtyTimer = null;
+  const d = materialDirty;
+  materialDirty = null;
+  if (d) persistMaterialNow(d);
+}
+
+function scheduleMaterialPersist(rel: string, params: MaterialParams): void {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  // 连续编辑中切到另一份材质时，先把上一份落盘，避免被覆盖丢失
+  if (materialDirty && materialDirty.rel !== rel) flushMaterialPersist();
+  materialDirty = { root, rel, name: materialFileStem(rel), params: { ...params } };
+  if (materialDirtyTimer) clearTimeout(materialDirtyTimer);
+  materialDirtyTimer = setTimeout(() => {
+    materialDirtyTimer = null;
+    const d = materialDirty;
+    materialDirty = null;
+    if (d) persistMaterialNow(d);
+  }, 300);
+}
+
+onBeforeUnmount(flushMaterialPersist);
 
 function commit(mutate: (n: Node) => void, label: string): void {
   const n = node.value;
@@ -91,21 +134,20 @@ function onMeshUpdate(label: string, value: unknown): void {
 // 材质资产（Material）卡片事件
 // ---------------------------------------------------------------------------
 
-/** 切换到另一份材质资产 */
+/** 切换到另一份材质资产：先取到新材质参数再提交引用（避免先默认灰再跳变） */
 async function onSetMaterial(rel: string): Promise<void> {
   const n = node.value;
-  if (!n || !(n instanceof MeshNode) || !rel) return;
-  commit((m) => { (m as MeshNode).material = rel; }, "Set Material");
+  if (!n || !(n instanceof MeshNode) || !rel || rel === n.material) return;
   const root = projectStore.currentPath;
-  if (!root) return;
-  // 预取新引用的参数（若尚未缓存），成功后按真实参数刷新外观
-  if (!engine.materials.has(rel)) {
+  if (materialDirty) flushMaterialPersist(); // 切换前把正在编辑的材质落盘
+  if (root && !engine.materials.has(rel)) {
     await engine.materials.preload([rel]);
-    engine.refreshMaterialNodes(rel);
   }
+  commit((m) => { (m as MeshNode).material = rel; }, "Set Material");
+  if (root) engine.refreshMaterialNodes(rel);
 }
 
-/** 修改当前材质资产的某个参数（写入 .mat 文件 + 更新引擎缓存） */
+/** 修改当前材质资产的某个参数：即时更新缓存（面板/视口立刻同步），文件写盘防抖 */
 async function onMaterialEdit(field: MaterialParamKey, value: number | boolean): Promise<void> {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
@@ -145,13 +187,9 @@ async function onMaterialEdit(field: MaterialParamKey, value: number | boolean):
       params.wireframe = value === true;
       break;
   }
-  try {
-    await saveMaterialParams(root, rel, materialFileStem(rel), params);
-    // 写缓存并广播：引用该材质的所有网格外观同步刷新
-    engine.materials.cachePut(rel, params);
-  } catch (e) {
-    logStore.log("error", `保存材质 ${rel} 失败: ${e}`, "engine");
-  }
+  // 先同步进缓存并广播（引用该材质的所有网格外观同步刷新），文件落盘走防抖
+  engine.materials.cachePut(rel, params);
+  scheduleMaterialPersist(rel, params);
 }
 
 /** 复制当前材质为项目资产并绑定到本节点（内置材质转可编辑 / 生成独立副本） */
@@ -160,17 +198,20 @@ async function onMaterialCopyToProject(): Promise<void> {
   if (!n || !(n instanceof MeshNode)) return;
   const root = projectStore.currentPath;
   if (!root) return;
+  if (materialDirty) flushMaterialPersist(); // 复制前先把未落盘的修改写入源文件
   const taken = await listProjectMaterialRels(root);
   const dup = await duplicateMaterialToProject(root, n.material, n.name, taken);
   if (!dup) {
     logStore.log("error", "复制材质资产失败", "engine");
     return;
   }
-  mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
-  if (!engine.materials.has(dup)) {
-    await engine.materials.preload([dup]);
-    engine.refreshMaterialNodes(dup);
+  // 复制完成后先把新副本参数入缓存，再切换引用：面板/视口不经过默认灰
+  if (root) {
+    const dupParams = await loadMaterialParams(root, dup);
+    if (dupParams) engine.materials.cachePut(dup, dupParams);
   }
+  mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
+  if (root) engine.refreshMaterialNodes(dup);
   // 资产面板下拉项同步
   void assetsStore.load(root);
 }

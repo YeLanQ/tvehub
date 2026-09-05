@@ -25,7 +25,7 @@ import {
   MeshNode,
   type GeometryKind,
 } from "../prototype/derived/Primitives";
-import { degToRad, type JsonRecord } from "../prototype/types";
+import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { RendererManager, type RendererBackend } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
@@ -67,6 +67,22 @@ export class EditorEngine {
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
 
+  // —— gizmo 拖动“独占”期间的全局输入拦截（避免左键/键位串扰变换）——
+  private onCapturePointerDown = (e: PointerEvent): void => {
+    if (this.gizmo && this.gizmo.isDragging()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  };
+
+  private onCaptureKeyDown = (e: KeyboardEvent): void => {
+    if (this.gizmo && this.gizmo.isDragging()) {
+      // 拖动中屏蔽 W/E/R、Delete、Ctrl+Z、Shift/空格 等键位，避免干扰变换
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  };
+
   /** 场景真实渲染相机（预览用）：与编辑器自由轨道相机相互独立 */
   private readonly previewCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
@@ -102,6 +118,9 @@ export class EditorEngine {
       },
       onGizmoObjectChange: () => {
         this.gizmo.updateSelectionBox();
+        // 拖动中把 three 对象的当前变换实时回写数据节点并广播，
+        // 属性面板的 Transform 数值与视口 gizmo 同步变化（松手才写历史）
+        if (this.gizmo.isDragging()) this.syncGizmoTransformToNode();
       },
     });
     this.gizmo.onCommitTransform = (id, after, before) => {
@@ -110,6 +129,36 @@ export class EditorEngine {
       this.run(cmd);
     };
     this.gizmo.attachToScene(this.renderer.scene);
+    // 关键：把 OrbitControls 的监听器摘掉后重新挂到 gizmo 之后——
+    // 指针按下时 gizmo 先进入拖拽并（经 dragging-changed）禁用轨道相机，
+    // OrbitControls 随后收到同一个按下事件时因 enabled=false 直接忽略，
+    // 避免“拖动变换的同时相机也在旋转”。
+    {
+      const oc = this.renderer.orbitControls as unknown as {
+        disconnect?: () => void;
+        connect?: (el: HTMLElement) => void;
+      };
+      oc.disconnect?.();
+      oc.connect?.(this.renderer.domElement);
+    }
+  }
+
+  /**
+   * gizmo 拖动中调用：把当前被拖 three 对象的变换实时写回数据节点
+   * （不产生历史命令，undo 仍以拖动起点/终点为准），并广播 transform 变化，
+   * 让属性面板数值与 gizmo 同步。
+   */
+  private syncGizmoTransformToNode(): void {
+    const id = this.selectedId;
+    if (!id) return;
+    const node = this.graph.get(id);
+    const obj = id ? this.synchronizer.getObjectMap().get(id) : undefined;
+    if (!node || !obj) return;
+    const rot = radToDeg({ x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z });
+    node.transform.setPosition(obj.position.x, obj.position.y, obj.position.z);
+    node.transform.setRotation(rot.x, rot.y, rot.z);
+    node.transform.setScale(obj.scale.x, obj.scale.y, obj.scale.z);
+    this.graph.patchTransform(node.id);
   }
 
   // ===================== 生命周期 =====================
@@ -132,16 +181,26 @@ export class EditorEngine {
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
     this.setupViewportClickHandler();
+    // gizmo 拖动期间：捕获阶段拦截其它鼠标按下与键位输入（独占变换操作）
+    window.addEventListener("pointerdown", this.onCapturePointerDown, true);
+    window.addEventListener("keydown", this.onCaptureKeyDown, true);
     logger.info("EditorEngine mounted");
   }
 
   dispose(): void {
+    window.removeEventListener("pointerdown", this.onCapturePointerDown, true);
+    window.removeEventListener("keydown", this.onCaptureKeyDown, true);
     this.renderer.dispose();
     this.gizmo.dispose();
     this.helperSystem.dispose();
     this.synchronizer.dispose();
     this.materials.clear();
     this.removeViewportClickHandler();
+  }
+
+  /** gizmo 是否正在拖动（变换过程中）——其它交互可用此状态判断是否需要忽略 */
+  get isGizmoDragging(): boolean {
+    return this.gizmo.isDragging();
   }
 
   // ===================== 操作 API 走命令 + 栈 =====================
