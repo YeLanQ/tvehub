@@ -542,7 +542,7 @@ async function main() {
   // ---------------------------------------------------------------- 渲染器
   // “显示与运行”：预览画布按项目设计分辨率取景/渲染，再按缩放模式适配 iframe
   // （noscale=原尺寸 / fixedwidth=等比宽度铺满 / fixedheight=等比高度铺满 /
-  //   fixedauto=等比完整显示(留边) / full=拉伸铺满）。
+  //   fixedauto=固定宽高比铺满(超出裁切) / full=全屏拉伸铺满）。
   const designCfg =
     cfg.designResolution &&
     typeof cfg.designResolution === "object" &&
@@ -575,9 +575,14 @@ async function main() {
 
   let stageW = -1;
   let stageH = -1;
+  // 容器实测尺寸（#app 铺满页面；iframe/窗口变化时自适应）
+  function viewSize() {
+    const cw = Math.max(1, app.clientWidth || window.innerWidth || 1);
+    const ch = Math.max(1, app.clientHeight || window.innerHeight || 1);
+    return { cw, ch };
+  }
   function resize() {
-    const cw = Math.max(1, window.innerWidth || 1);
-    const ch = Math.max(1, window.innerHeight || 1);
+    const { cw, ch } = viewSize();
     if (!designCfg) {
       // 未配置设计分辨率：直接铺满窗口渲染
       if (stageW !== cw || stageH !== ch) {
@@ -601,28 +606,38 @@ async function main() {
     }
     cam.aspect = dw / dh;
     cam.updateProjectionMatrix();
-    // CSS 层按缩放模式把设计画面适配到预览窗口
-    let cssW = cw;
-    let cssH = ch;
+
+    let cssW = dw;
+    let cssH = dh;
     if (scaleMode === "noscale") {
-      cssW = dw;
-      cssH = dh;
+      // 不缩放：按设计分辨率原尺寸显示
     } else if (scaleMode === "fixedwidth") {
-      const s = cw / dw;
-      cssH = dh * s;
+      // 固定宽度：宽度铺满，高度按设计比例等比
+      cssW = cw;
+      cssH = (dh * cw) / dw;
     } else if (scaleMode === "fixedheight") {
-      const s = ch / dh;
-      cssW = dw * s;
+      // 固定高度：高度铺满，宽度按设计比例等比
+      cssW = (dw * ch) / dh;
+      cssH = ch;
     } else if (scaleMode === "fixedauto") {
-      const s = Math.min(cw / dw, ch / dh);
+      // 固定宽高比：保持设计比例并占满全屏（超出部分居中裁切）
+      const s = Math.max(cw / dw, ch / dh);
       cssW = dw * s;
       cssH = dh * s;
+    } else {
+      // full（全屏拉伸，默认）及其它未知值：直接拉伸铺满全屏
+      cssW = cw;
+      cssH = ch;
     }
-    // full（默认）：拉伸铺满
-    canvas.style.width = `${Math.max(1, cssW)}px`;
-    canvas.style.height = `${Math.max(1, cssH)}px`;
+    canvas.style.width = `${Math.max(1, Math.round(cssW))}px`;
+    canvas.style.height = `${Math.max(1, Math.round(cssH))}px`;
   }
   window.addEventListener("resize", resize);
+  // 容器尺寸变化（iframe 元素缩放/应用窗口变化）也触发自适应
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => resize());
+    ro.observe(app);
+  }
   resize();
 
   function frame() {
