@@ -6,11 +6,22 @@ const props = defineProps<{
   title?: string;
   step?: number;
   disabled?: boolean;
+  /** 允许的最小值（缺省不限） */
+  min?: number;
+  /** 允许的最大值（缺省不限） */
+  max?: number;
 }>();
 
 const emit = defineEmits<{
   (e: "commit", value: number): void;
 }>();
+
+/** 提交前按 min/max 收敛（模型值始终落在允许范围内） */
+function clamp(v: number): number {
+  if (typeof props.min === "number" && v < props.min) return props.min;
+  if (typeof props.max === "number" && v > props.max) return props.max;
+  return v;
+}
 
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "0";
@@ -34,7 +45,7 @@ watch(
 function onInput(e: Event) {
   text.value = (e.target as HTMLInputElement).value;
   const v = parseFloat(text.value);
-  if (Number.isFinite(v)) emit("commit", v);
+  if (Number.isFinite(v)) emit("commit", clamp(v));
 }
 
 function finish() {
@@ -42,8 +53,9 @@ function finish() {
   if (!Number.isFinite(v)) {
     text.value = fmt(props.modelValue);
   } else {
-    emit("commit", v);
-    text.value = fmt(v);
+    const c = clamp(v);
+    emit("commit", c);
+    text.value = fmt(c);
   }
   focused.value = false;
 }
@@ -73,7 +85,7 @@ function onPointerMove(e: PointerEvent) {
   const dx = e.clientX - startX;
   if (Math.abs(dx) > 2) moved.value = true;
   const step = (props.step ?? 0.01) * (e.shiftKey ? 0.1 : 1);
-  emit("commit", startValue + dx * step);
+  emit("commit", clamp(startValue + dx * step));
 }
 
 function endDrag(e: PointerEvent) {

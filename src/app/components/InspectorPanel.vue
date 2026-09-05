@@ -128,10 +128,10 @@ function onCameraUpdate(label: string, value: unknown): void {
         camera.fov = value as number;
         break;
       case "Set Near":
-        camera.near = value as number;
+        camera.near = Math.max(0.01, value as number);
         break;
       case "Set Far":
-        camera.far = value as number;
+        camera.far = Math.max(1, value as number);
         break;
     }
   }, label);

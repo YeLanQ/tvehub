@@ -139,6 +139,11 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   if (!mountTask) {
     mountTask = (async () => {
       const projectStore = getProjectStore();
+      // 相机辅助视锥取景宽高比 = 项目设计分辨率（打开/新建项目时已从 project.config.json 读入）
+      store.engine.designResolution = {
+        width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
+        height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
+      };
       await store.engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,

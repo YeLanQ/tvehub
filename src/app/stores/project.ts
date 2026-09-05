@@ -29,9 +29,13 @@ export interface ProjectStore {
   antiAliasing: number;
   /** 渲染合成：hdr = HDR（ACES 色调映射）/ ldr = LDR（常规输出） */
   hdrMode: "hdr" | "ldr";
+  /** 项目设计分辨率（project.config.json designResolution；相机辅助视锥取景用） */
+  designWidth: number;
+  designHeight: number;
   setRendererBackend: (v: RendererBackend) => void;
   setAntiAliasing: (v: number) => void;
   setHDRMode: (v: "hdr" | "ldr") => void;
+  setDesignSize: (width: number, height: number) => void;
   setView: (view: "home" | "editor") => void;
   setProjectName: (name: string | null) => void;
   openSettings: () => void;
@@ -67,9 +71,11 @@ export function getProjectStore(): ProjectStore {
     rendererBackend: "webgl" as RendererBackend,
     antiAliasing: 2,
     hdrMode: "ldr" as "hdr" | "ldr",
+    designWidth: 1280,
+    designHeight: 720,
   });
 
-  /** 读取项目 project.config.json 中的渲染后端/抗锯齿/HDR 偏好（缺失/损坏回退默认） */
+  /** 读取项目 project.config.json 中的渲染后端/抗锯齿/HDR/设计分辨率偏好（缺失/损坏回退默认） */
   async function loadProjectRenderConfig(root: string): Promise<void> {
     try {
       const text = await api.readText(root, "project.config.json");
@@ -80,10 +86,17 @@ export function getProjectStore(): ProjectStore {
       state.antiAliasing =
         typeof aa === "number" ? Math.max(0, Math.min(8, Math.round(aa))) : 2;
       state.hdrMode = cfg.hdrMode === "hdr" ? "hdr" : "ldr";
+      const dr = (cfg.designResolution ?? {}) as { width?: unknown; height?: unknown };
+      const dw = typeof dr.width === "number" ? Math.round(dr.width) : 0;
+      const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
+      state.designWidth = dw > 0 ? dw : 1280;
+      state.designHeight = dh > 0 ? dh : 720;
     } catch {
       state.rendererBackend = "webgl";
       state.antiAliasing = 2;
       state.hdrMode = "ldr";
+      state.designWidth = 1280;
+      state.designHeight = 720;
     }
   }
 
@@ -118,6 +131,12 @@ export function getProjectStore(): ProjectStore {
     get hdrMode() {
       return state.hdrMode;
     },
+    get designWidth() {
+      return state.designWidth;
+    },
+    get designHeight() {
+      return state.designHeight;
+    },
     setRendererBackend(v) {
       state.rendererBackend = v;
     },
@@ -126,6 +145,10 @@ export function getProjectStore(): ProjectStore {
     },
     setHDRMode(v) {
       state.hdrMode = v;
+    },
+    setDesignSize(width, height) {
+      state.designWidth = Math.max(1, Math.min(16384, Math.round(width)));
+      state.designHeight = Math.max(1, Math.min(16384, Math.round(height)));
     },
     setView(view) {
       state.view = view;

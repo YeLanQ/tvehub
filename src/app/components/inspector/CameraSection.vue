@@ -24,6 +24,7 @@ const emit = defineEmits<{
     <NumberField
       :model-value="node.near"
       :step="0.001"
+      :min="0.01"
       title="Near"
       @commit="(v) => emit('update', 'Set Near', v)"
     />
@@ -33,6 +34,7 @@ const emit = defineEmits<{
     <NumberField
       :model-value="node.far"
       :step="0.5"
+      :min="1"
       title="Far"
       @commit="(v) => emit('update', 'Set Far', v)"
     />

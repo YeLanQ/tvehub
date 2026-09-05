@@ -162,5 +162,8 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   p.setRendererBackend(draft.renderer);
   p.setAntiAliasing(clampInt(draft.antiAliasing, 0, 8));
   p.setHDRMode(draft.hdrMode);
+  const w = clampInt(draft.designWidth, 1, 16384);
+  const h = clampInt(draft.designHeight, 1, 16384);
+  p.setDesignSize(w, h);
   logStore.log("success", "已保存项目设置", "toolbar");
 }

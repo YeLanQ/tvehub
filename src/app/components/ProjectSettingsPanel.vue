@@ -7,6 +7,7 @@
 import { computed, onMounted, ref } from "vue";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
+import { getEditorStore } from "../stores/editor";
 import { logStore } from "../stores/log";
 import {
   groupResolutionPresets,
@@ -56,6 +57,12 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     await saveProjectDraft(draft.value);
+    // 设计分辨率 → 相机辅助视锥取景即时同步（无需重开编辑器；
+    // store 已在 saveProjectDraft 内 setDesignSize 更新）
+    getEditorStore().engine.designResolution = {
+      width: projectStore.designWidth,
+      height: projectStore.designHeight,
+    };
     close();
   } catch (e) {
     logStore.log("error", `项目设置保存失败: ${e}`, "toolbar");
@@ -188,7 +195,7 @@ onMounted(async () => {
               </div>
               <p class="ps-note">
                 渲染后端在编辑器启动/重载视口时生效；WebGPU 与 WebGL 的后端在运行时不可切换，
-                修改后请重新打开编辑器查看效果。
+                修改后请重新打开编辑器查看效果。设计分辨率修改会即时同步到相机辅助视锥线框。
               </p>
             </section>
           </template>

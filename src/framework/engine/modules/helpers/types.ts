@@ -12,6 +12,11 @@ import type { Node } from "../../../prototype/Node";
 export interface HelperContext {
   /** 视口当前宽高比（绘制相机视锥辅助线用） */
   getAspect(): number;
+  /**
+   * 项目设计分辨率（来自项目配置 designResolution）。
+   * 相机视锥辅助线的取景宽高比优先用它；未配置返回 null（回退视口宽高比）。
+   */
+  getDesignSize?(): { width: number; height: number } | null;
   /** 编辑器相机到给定世界点的距离（用于屏幕恒定尺寸的 gizmo 缩放） */
   getEditorDistanceTo(point: THREE.Vector3): number;
 }

@@ -50,6 +50,13 @@ export class EditorEngine {
   readonly helperSystem: HelperSystem;
   gizmo!: GizmoController;
 
+  /**
+   * 项目设计分辨率（取自 project.config.json 的 designResolution）。
+   * 相机辅助视锥线框的取景宽高比优先使用它；null = 未设置（回退视口宽高比）。
+   * 应用层在项目打开/设置保存后写入，辅助线每帧读取即时同步。
+   */
+  designResolution: { width: number; height: number } | null = null;
+
   selectedId: string | null = null;
   private selectedIds: string[] = [];
   private raycaster = new THREE.Raycaster();
@@ -69,6 +76,7 @@ export class EditorEngine {
     this.synchronizer = new SceneSynchronizer(this.renderer.scene);
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
+      getDesignSize: () => this.designResolution,
       getEditorDistanceTo: (p) => {
         const cam = this.renderer.camera;
         return cam ? cam.position.distanceTo(p) : 1;
@@ -354,8 +362,11 @@ export class EditorEngine {
   private syncPreviewCameraTo(node: CameraNode): void {
     const cam = this.previewCamera;
     cam.fov = node.fov;
-    cam.near = node.near;
-    cam.far = node.far;
+    // 模型层保证 near ≥ 0.01、far ≥ 1；真实透视相机还需要 far > near，这里兜底
+    const near = Math.max(0.01, node.near);
+    const far = Math.max(node.far, near + 1e-4);
+    cam.near = near;
+    cam.far = far;
     const obj = this.synchronizer.getObjectMap().get(node.id);
     if (obj) {
       obj.getWorldPosition(cam.position);

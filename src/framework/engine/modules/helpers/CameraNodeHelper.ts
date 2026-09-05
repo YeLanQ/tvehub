@@ -8,10 +8,12 @@ const RAY_COLOR = 0xffcf5c;
 
 /**
  * 相机辅助线（视锥线框，参照 LQEN drawCameraHelper）：
- * - 近/远平面矩形由相机真实 fov / near / far 与视口宽高比推导（近小远大）；
+ * - 近/远平面矩形由相机真实 fov / near / far 与取景宽高比推导（近小远大）；
+ *   取景宽高比 = 项目设计分辨率（designWidth/designHeight），未配置时回退视口宽高比，
+ *   项目配置修改后宽高比变化 → 线框即时重建同步；
  * - 近矩形 + 远矩形 + 四角棱线 + 相机位置 → 远平面中心的“视向线段”；
  * - 全部在相机局部空间生成、随节点世界矩阵放置；
- * - 修改 Near / Far / Fov 或视口宽高比后立即重建线框（参数实时同步）。
+ * - 修改 Near / Far / Fov 或设计分辨率后立即重建线框（参数实时同步）。
  */
 export class CameraNodeHelper implements NodeHelper {
   readonly object: THREE.Group;
@@ -62,7 +64,12 @@ export class CameraNodeHelper implements NodeHelper {
     const isEditor = cam.isEditorCamera;
     this.frustumMat.color.setHex(isEditor ? 0x66ccff : FRUSTUM_COLOR);
 
-    const aspect = Math.max(0.01, ctx.getAspect());
+    // 取景宽高比：优先项目设计分辨率（设计分辨率修改后此处随之变化 → 重建线框）
+    const design = ctx.getDesignSize?.() ?? null;
+    const aspect =
+      design && design.width > 0 && design.height > 0
+        ? design.width / design.height
+        : Math.max(0.01, ctx.getAspect());
     const sig = `${cam.fov}|${cam.near}|${cam.far}|${aspect.toFixed(4)}`;
     if (sig !== this.signature) {
       this.signature = sig;
