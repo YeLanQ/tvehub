@@ -37,7 +37,7 @@ function onGeometryChange(e: Event): void {
   </div>
   <div class="field">
     <label>Color</label>
-    <input type="color" :value="numToHex(node.color)" @change="onColorHex(($event.target as HTMLInputElement).value)" />
+    <input type="color" :value="numToHex(node.color)" @input="(e) => onColorHex((e.target as HTMLInputElement).value)" @change="onColorHex(($event.target as HTMLInputElement).value)" />
   </div>
   <div class="field">
     <label>Metalness</label>
