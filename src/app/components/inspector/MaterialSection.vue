@@ -3,10 +3,17 @@
  * 材质资产（Material）卡片内容：
  * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）
  * - 中部：当前材质资产参数（颜色/自发光/金属度/粗糙度/线框）
- * - 参数修改直接写入 .mat 资产文件（共享语义：引用该资产的所有网格同步变化）；
- *   内置材质只读，先「复制到项目材质」转为项目资产后才能编辑。
+ *
+ * 显示值维护一份本地响应式镜像（local），由两路监听驱动刷新：
+ * - node.material（切换材质引用）
+ * - rev（属性/材质库每次变更后的 revision，编辑参数后引擎缓存已更新）
+ * 这样无论“切换材质”还是“就地改参数”，面板都立即显示最新值，
+ * 不依赖被动重渲染时机。
+ *
+ * 参数修改写入 .mat 资产文件（共享语义：引用该资产的所有网格同步变化）；
+ * 内置材质只读，先「复制到项目材质」转为项目资产后才能编辑。
  */
-import { computed } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import {
   colorToHexString,
@@ -52,29 +59,84 @@ const options = computed(() => {
   return { internal, project };
 });
 
-const rel = computed(() => props.node.material);
-const isInternal = computed(() => isInternalAsset(rel.value));
-/**
- * 每次渲染读取引擎材质库中的当前参数（每次 rev 变化都会重渲染，拿到最新缓存；
- * 材质参数是资产数据而非节点字段，不能依赖 computed 缓存）。
- */
-function matParams(): MaterialParams {
-  return editorStore.engine.materials.paramsFor(props.node.material);
+// ---------------------------------------------------------------------------
+// 本地镜像：唯一展示源。切换材质 / 参数被编辑后由 syncFromEngine 刷新
+// ---------------------------------------------------------------------------
+const local = reactive({
+  rel: "",
+  internal: false,
+  color: "#9aa4b2",
+  emissive: "#000000",
+  metalness: 0.1,
+  roughness: 0.75,
+  wireframe: false,
+});
+
+function paramsFromEngine(rel: string): MaterialParams {
+  return editorStore.engine.materials.paramsFor(rel);
 }
+
+function syncFromEngine(): void {
+  const rel = props.node?.material ?? "";
+  const p = paramsFromEngine(rel);
+  local.rel = rel;
+  local.internal = isInternalAsset(rel);
+  local.color = colorToHexString(p.color);
+  local.emissive = colorToHexString(p.emissive);
+  local.metalness = p.metalness;
+  local.roughness = p.roughness;
+  local.wireframe = p.wireframe;
+}
+
+// 材质引用变化 → 立即同步（切换内置/项目材质场景）
+watch(
+  () => props.node?.material,
+  () => syncFromEngine(),
+  { immediate: true },
+);
+// revision 变化（含材质参数编辑后 engine 广播的 material:changed）→ 刷新最新缓存值
+watch(
+  () => props.rev,
+  () => syncFromEngine(),
+);
+
+/** 供模板响应式读取的镜像字段 */
+const rel = ref("");
+const isInternal = ref(false);
+
+watch(
+  local,
+  () => {
+    rel.value = local.rel;
+    isInternal.value = local.internal;
+  },
+  { immediate: true },
+);
 
 function onSelect(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;
-  if (v && v !== rel.value) emit("setMaterial", v);
+  if (v && v !== props.node.material) emit("setMaterial", v);
 }
 
 function onColorInput(field: "color" | "emissive", e: Event): void {
   const hex = (e.target as HTMLInputElement).value;
   const n = parseColorHex(hex);
+  // 先就地更新镜像（即时反馈），再交给父层持久化
+  if (field === "color") local.color = hex;
+  else local.emissive = hex;
   emit("editParam", field, n);
 }
 
+function onNumberCommit(field: "metalness" | "roughness", v: number): void {
+  if (field === "metalness") local.metalness = v;
+  else local.roughness = v;
+  emit("editParam", field, v);
+}
+
 function onWireframeChange(e: Event): void {
-  emit("editParam", "wireframe", (e.target as HTMLInputElement).checked);
+  const v = (e.target as HTMLInputElement).checked;
+  local.wireframe = v;
+  emit("editParam", "wireframe", v);
 }
 </script>
 
@@ -82,7 +144,7 @@ function onWireframeChange(e: Event): void {
   <div class="mat-section" :data-rev="rev">
     <div class="field">
       <label>材质资产</label>
-      <select :value="rel" @change="onSelect">
+      <select :value="node.material" @change="onSelect">
         <optgroup label="内置材质">
           <option v-for="o in options.internal" :key="o.rel" :value="o.rel">{{ o.name }}</option>
         </optgroup>
@@ -98,7 +160,11 @@ function onWireframeChange(e: Event): void {
         {{ isInternal ? "内置 · 只读" : "项目材质" }}
       </span>
       <span class="mat-rel mono">{{ rel }}</span>
-      <button class="mat-btn" :title="isInternal ? '复制为项目材质资产并绑定到本节点（可编辑）' : '从当前材质新建一份独立副本并绑定到本节点'" @click="emit('copyToProject')">
+      <button
+        class="mat-btn"
+        :title="isInternal ? '复制为项目材质资产并绑定到本节点（可编辑）' : '从当前材质新建一份独立副本并绑定到本节点'"
+        @click="emit('copyToProject')"
+      >
         {{ isInternal ? "复制到项目材质" : "另存副本" }}
       </button>
     </div>
@@ -110,7 +176,7 @@ function onWireframeChange(e: Event): void {
       <label>颜色</label>
       <input
         type="color"
-        :value="colorToHexString(matParams().color)"
+        :value="local.color"
         :disabled="isInternal"
         @input="onColorInput('color', $event)"
       />
@@ -119,7 +185,7 @@ function onWireframeChange(e: Event): void {
       <label>自发光</label>
       <input
         type="color"
-        :value="colorToHexString(matParams().emissive)"
+        :value="local.emissive"
         :disabled="isInternal"
         @input="onColorInput('emissive', $event)"
       />
@@ -127,32 +193,32 @@ function onWireframeChange(e: Event): void {
     <div class="field">
       <label>金属度</label>
       <NumberField
-        :model-value="matParams().metalness"
+        :model-value="local.metalness"
         :step="0.05"
         :min="0"
         :max="1"
         :disabled="isInternal"
         title="金属度"
-        @commit="(v) => emit('editParam', 'metalness', v)"
+        @commit="(v) => onNumberCommit('metalness', v)"
       />
     </div>
     <div class="field">
       <label>粗糙度</label>
       <NumberField
-        :model-value="matParams().roughness"
+        :model-value="local.roughness"
         :step="0.05"
         :min="0"
         :max="1"
         :disabled="isInternal"
         title="粗糙度"
-        @commit="(v) => emit('editParam', 'roughness', v)"
+        @commit="(v) => onNumberCommit('roughness', v)"
       />
     </div>
     <div class="field">
       <label>线框</label>
       <input
         type="checkbox"
-        :checked="matParams().wireframe"
+        :checked="local.wireframe"
         :disabled="isInternal"
         @change="onWireframeChange"
       />
