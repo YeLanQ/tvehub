@@ -1,8 +1,14 @@
 <script setup lang="ts">
 /**
  * 资产类型 SVG 图标（简洁线稿风格，24×24 viewBox，随 currentColor 着色）：
- * 目录 / 场景 / 脚本 / 材质 / 纹理 / 模型 / 着色器 / 其它文件。
+ * 目录 / 场景 / 脚本 / 材质 / 纹理 / 模型 / 着色器 / 相机 / 灯光 / 其它文件。
+ * 相机与灯光路径与 3D 视口节点图标共用（framework/engine/modules/helpers/icons）。
  */
+import {
+  CAMERA_ICON_PATHS,
+  LIGHT_ICON_PATHS,
+} from "../../framework/engine/modules/helpers/icons";
+
 defineProps<{ kind: string }>();
 </script>
 
@@ -58,6 +64,16 @@ defineProps<{ kind: string }>();
     <template v-else-if="kind === 'shader' || kind === 'shader2d'">
       <path d="M8.5 7.5L4 12l4.5 4.5" />
       <path d="M15.5 7.5L20 12l-4.5 4.5" />
+    </template>
+
+    <!-- 相机：相机机身 + 镜头 -->
+    <template v-else-if="kind === 'camera'">
+      <path v-for="d in CAMERA_ICON_PATHS" :key="d" :d="d" />
+    </template>
+
+    <!-- 灯光：灯泡 -->
+    <template v-else-if="kind === 'light' || kind === 'light:point' || kind === 'light:directional' || kind === 'light:ambient'">
+      <path v-for="d in LIGHT_ICON_PATHS" :key="d" :d="d" />
     </template>
 
     <!-- 其它文件：带折角的文档 -->

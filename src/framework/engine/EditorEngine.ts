@@ -391,7 +391,7 @@ export class EditorEngine {
   private applyOverlayVisibility(): void {
     const vis = this.overlayVisible;
     this.renderer.scene.traverse((o) => {
-      if (o.name === "__grid" || o.name === "__camBody") {
+      if (o.name === "__grid" || o.name === "__camBody" || o.name === "__camIcon") {
         o.visible = vis;
         return;
       }

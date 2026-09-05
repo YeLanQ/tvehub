@@ -8,6 +8,7 @@ import {
 } from "../../prototype/derived/Primitives";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D, buildGeometry } from "./utils";
+import { createIconSprite } from "./helpers/spriteIcon";
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
@@ -170,30 +171,31 @@ export class SceneSynchronizer {
     lamp.userData.lamp = true;
     if (light.lightKind === "point") {
       lamp.add(new THREE.PointLight(light.lightColor, light.intensity));
-      lamp.add(new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), emissiveMat(light.lightColor)));
     } else if (light.lightKind === "directional") {
       const dl = new THREE.DirectionalLight(light.lightColor, light.intensity);
       dl.castShadow = light.castShadow;
       lamp.add(dl);
-      lamp.add(new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), emissiveMat(light.lightColor)));
     } else {
       lamp.add(new THREE.AmbientLight(light.lightColor, light.intensity));
     }
+    // 灯光节点用图标精灵表示（真实渲染时灯光本身无实体几何）
+    const icon = createIconSprite("light", light.lightColor, 0.8);
+    icon.name = "__lightIcon";
+    lamp.add(icon);
     obj.add(lamp);
   }
 
   private refreshCamera(node: CameraNode, obj: THREE.Object3D): void {
-    let body = obj.children.find((c) => c.name === "__camBody");
-    if (!body) {
-      body = new THREE.Mesh();
-      body.name = "__camBody";
-      obj.add(body);
+    // 相机节点用图标精灵表示（真实渲染时相机本身无实体几何）
+    let icon = obj.children.find((c) => c.name === "__camIcon") as THREE.Sprite | null;
+    if (!icon) {
+      icon = createIconSprite("camera", node.isEditorCamera ? 0x66aaff : 0x9ad7ff, 1.15);
+      icon.name = "__camIcon";
+      obj.add(icon);
     }
-    const mesh = body as THREE.Mesh;
-    const geom = new THREE.BoxGeometry(0.7, 0.5, 1.0);
-    mesh.geometry.dispose();
-    mesh.geometry = geom;
-    mesh.material = emissiveMat(node.isEditorCamera ? 0x44aaff : 0xcccccc);
+    (icon.material as THREE.SpriteMaterial).color.setHex(
+      node.isEditorCamera ? 0x66aaff : 0x9ad7ff,
+    );
   }
 
   dispose(): void {
@@ -203,9 +205,4 @@ export class SceneSynchronizer {
     });
     this.objectMap.clear();
   }
-}
-
-
-function emissiveMat(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({ color, wireframe: false });
 }
