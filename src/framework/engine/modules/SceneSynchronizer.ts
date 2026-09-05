@@ -17,6 +17,8 @@ import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/typ
 /** 材质参数查询（EditorEngine 注入 MaterialManager） */
 export interface MaterialParamsLookup {
   paramsFor(rel: string): MaterialParams;
+  /** 异步加载贴图资产（rel → Texture；srgb=true 表示颜色贴图）。引擎注入，未注入则无贴图 */
+  loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
 }
 
 const defaultLookup: MaterialParamsLookup = {
@@ -174,20 +176,92 @@ export class SceneSynchronizer {
     this.updateMeshMaterial(mesh, obj as THREE.Mesh);
   }
 
-  /** 按材质引用路径把 three 材质对齐到资产参数 */
+  /**
+   * 按材质引用路径把 three 材质对齐到 PBR 资产参数。
+   * 使用 MeshPhysicalMaterial（Blender 原理化 BSDF 可映射的 three PBR 材质），
+   * 覆盖全部标量/颜色参数。
+   */
   private updateMeshMaterial(mesh: MeshNode, obj: THREE.Mesh): void {
-    let mat = obj.material as THREE.MeshStandardMaterial;
-    if (!(mat instanceof THREE.MeshStandardMaterial)) {
-      mat = new THREE.MeshStandardMaterial();
+    let mat = obj.material as THREE.MeshPhysicalMaterial;
+    if (!(mat instanceof THREE.MeshPhysicalMaterial)) {
+      mat = new THREE.MeshPhysicalMaterial();
       obj.material = mat;
     }
     const params = this.lookup.paramsFor(mesh.material);
     mat.color.setHex(params.color);
     mat.metalness = params.metalness;
     mat.roughness = params.roughness;
+    mat.specularIntensity = params.specularIntensity;
+    mat.specularColor.setHex(params.specularColor);
+    mat.ior = params.ior;
     mat.emissive.setHex(params.emissive);
+    mat.emissiveIntensity = params.emissiveIntensity;
+    mat.clearcoat = params.clearcoat;
+    mat.clearcoatRoughness = params.clearcoatRoughness;
+    mat.sheen = params.sheen;
+    mat.sheenColor.setHex(params.sheenColor);
+    mat.sheenRoughness = params.sheenRoughness;
+    mat.transmission = params.transmission;
+    mat.thickness = params.thickness;
+    mat.attenuationColor.setHex(params.attenuationColor);
+    mat.attenuationDistance = params.attenuationDistance;
+    mat.anisotropy = params.anisotropy;
+    mat.anisotropyRotation = params.anisotropyRotation;
+    mat.iridescence = params.iridescence;
+    mat.iridescenceIOR = params.iridescenceIOR;
+    mat.opacity = params.opacity;
+    // 混合模式：opacity<1 → 半透明；贴图裁剪阈值>0 → alphaTest 裁剪；
+    // 有贴图但阈值为 0 → 贴图 alpha 走混合透明
+    mat.transparent =
+      params.opacity < 0.999 || (params.map !== "" && params.alphaClipThreshold <= 0.0001);
+    mat.alphaTest =
+      params.map !== "" && params.alphaClipThreshold > 0.0001 ? params.alphaClipThreshold : 0;
     mat.wireframe = params.wireframe;
     mat.needsUpdate = true;
+    // 贴图通道（异步加载后赋值）
+    this.attachMap(params, "map", true, (t) => {
+      mat.map = t;
+      mat.needsUpdate = true;
+    });
+    this.attachMap(params, "emissiveMap", true, (t) => {
+      mat.emissiveMap = t;
+      mat.needsUpdate = true;
+    });
+    this.attachMap(params, "metalnessMap", false, (t) => {
+      mat.metalnessMap = t;
+      mat.needsUpdate = true;
+    });
+    this.attachMap(params, "roughnessMap", false, (t) => {
+      mat.roughnessMap = t;
+      mat.needsUpdate = true;
+    });
+    this.attachMap(params, "normalMap", false, (t) => {
+      mat.normalMap = t;
+      if (t) mat.normalScale.set(1, 1);
+      mat.needsUpdate = true;
+    });
+  }
+
+  /** 按贴图通道字段异步装载并回填材质（无加载器/空引用则清空该通道） */
+  private attachMap(
+    params: MaterialParams,
+    key: "map" | "metalnessMap" | "roughnessMap" | "normalMap" | "emissiveMap",
+    srgb: boolean,
+    assign: (tex: THREE.Texture | null) => void,
+  ): void {
+    const loader = this.lookup.loadTexture;
+    const rel = params[key];
+    if (!rel) {
+      assign(null);
+      return;
+    }
+    if (!loader) {
+      assign(null);
+      return;
+    }
+    void loader(rel, srgb).then((tex) => {
+      assign(tex);
+    });
   }
 
   private refreshLight(light: LightNode, obj: THREE.Object3D): void {

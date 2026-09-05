@@ -191,10 +191,21 @@ async function copyInternalToProject(item: ChildEntry): Promise<void> {
     fname = candidate(name);
   }
   const rel = `${dir}/${fname}`;
+  // 二进制资源（图片/模型等）走 base64；文本资源（材质/脚本等）走文本
+  const BINARY_EXTS = new Set([
+    "png", "jpg", "jpeg", "webp", "gif", "bmp",
+    "glb", "gltf", "obj", "bin",
+  ]);
   try {
-    const content = await api.readInternalAsset(item.path);
-    if (content == null) throw new Error("读取内置资源失败");
-    await api.writeText(root, rel, content);
+    if (BINARY_EXTS.has(ext)) {
+      const b64 = await api.readInternalBinary(item.path);
+      if (b64 == null) throw new Error("读取内置资源失败");
+      await api.writeAssetBinary(root, rel, b64);
+    } else {
+      const content = await api.readInternalAsset(item.path);
+      if (content == null) throw new Error("读取内置资源失败");
+      await api.writeText(root, rel, content);
+    }
     await assetsStore.load(root);
     logStore.log("success", `已复制到项目: ${rel}`);
   } catch (e) {

@@ -31,13 +31,41 @@ function fail(msg) {
 function num(v, fb) {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
+function u01(v, fb) {
+  return Math.max(0, Math.min(1, num(v, fb)));
+}
 function vec(v, fb) {
   return v && typeof v === "object" ? v : fb;
 }
 const D2R = Math.PI / 180;
 
-// 材质参数兜底：与编辑器内置 internal/materials/Default.mat 一致
-const MAT_DEFAULTS = { color: 0x9aa4b2, metalness: 0.1, roughness: 0.75, emissive: 0x000000, wireframe: false };
+// 材质参数兜底：与编辑器内置 internal/materials/Default.mat（含 PBR 默认）一致
+const MAT_DEFAULTS = {
+  color: 0x9aa4b2,
+  metalness: 0.1,
+  roughness: 0.75,
+  specularIntensity: 1,
+  specularColor: 0xffffff,
+  ior: 1.5,
+  emissive: 0x000000,
+  emissiveIntensity: 1,
+  clearcoat: 0,
+  clearcoatRoughness: 0,
+  sheen: 0,
+  sheenColor: 0xffffff,
+  sheenRoughness: 0.5,
+  transmission: 0,
+  thickness: 0,
+  attenuationColor: 0xffffff,
+  attenuationDistance: 0,
+  anisotropy: 0,
+  anisotropyRotation: 0,
+  iridescence: 0,
+  iridescenceIOR: 1.3,
+  opacity: 1,
+  alphaClipThreshold: 0.5,
+  wireframe: false,
+};
 
 // 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致）
 const SKY_DEFAULTS = { top: 0x2f6fbb, horizon: 0xcfe4f7, ground: 0x8fa2b5 };
@@ -63,6 +91,20 @@ function skyRgb(c) {
 
 function skyRgba(c, alpha) {
   return `rgba(${skyRgb(c)}, ${alpha})`;
+}
+
+/** 混合两个 RGB hex 颜色（t=0 全 a，t=1 全 b） */
+function mixHexColor(a, b, t) {
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return ((r & 255) << 16) | ((g & 255) << 8) | (bl & 255);
 }
 
 /** 程序化天空：等距柱状垂直渐变（顶=天顶 → 中=地平线 → 底=下方）+ 可选太阳，与编辑器一致 */
@@ -214,6 +256,51 @@ async function main() {
 
   const canvasCameras = [];
 
+  // —— 贴图支持：收集网格，按 .mat 通道异步加载贴图回填 ——
+  const meshEntries = [];
+  const texCache = new Map();
+  function loadImageTex(rel, srgb) {
+    const key = `${srgb ? "c" : "n"}|${rel}`;
+    if (texCache.has(key)) return texCache.get(key);
+    const p = fetch(rel)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => (blob ? createImageBitmap(blob) : null))
+      .then((bmp) => {
+        if (!bmp) return null;
+        const tex = new THREE.Texture(bmp);
+        tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        tex.needsUpdate = true;
+        return tex;
+      })
+      .catch(() => null);
+    texCache.set(key, p);
+    return p;
+  }
+  const TEXTURE_CHANNELS = [
+    ["map", true],
+    ["metalnessMap", false],
+    ["roughnessMap", false],
+    ["normalMap", false],
+    ["emissiveMap", true],
+  ];
+  async function applyMeshTextures() {
+    for (const entry of meshEntries) {
+      const mat = entry.obj.material;
+      if (!mat) continue;
+      const m = materialParams.get(entry.json.material);
+      if (!m) continue;
+      for (const [field, srgb] of TEXTURE_CHANNELS) {
+        const rel = m[field];
+        if (!rel) continue;
+        const tex = await loadImageTex(rel, srgb);
+        if (!tex) continue;
+        mat[field] = tex;
+        if (field === "normalMap") mat.normalScale.set(1, 1);
+        mat.needsUpdate = true;
+      }
+    }
+  }
+
   /**
    * 生成单个节点的 three 对象并应用自身/子级：
    * - meshNode → Mesh（几何/材质照编辑器规则）
@@ -244,6 +331,9 @@ async function main() {
 
     if (type === "cameraNode") {
       canvasCameras.push({ json, obj });
+    }
+    if (type === "meshNode") {
+      meshEntries.push({ json, obj });
     }
     return obj;
   }
@@ -277,13 +367,34 @@ async function main() {
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
     else geom = new THREE.BoxGeometry(x, y, z);
 
-    // 材质按 .mat 资产引用解析（缺失回退默认参数）
+    // 材质按 .mat 资产引用解析（缺失回退默认参数）；three PBR（Principled 可映射项）
     const m = materialParams.get(json.material) || MAT_DEFAULTS;
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshPhysicalMaterial({
       color: m.color & 0xffffff,
       metalness: m.metalness,
       roughness: m.roughness,
+      specularIntensity: m.specularIntensity,
+      specularColor: m.specularColor & 0xffffff,
+      ior: m.ior,
       emissive: m.emissive & 0xffffff,
+      emissiveIntensity: m.emissiveIntensity,
+      clearcoat: m.clearcoat,
+      clearcoatRoughness: m.clearcoatRoughness,
+      sheen: m.sheen,
+      sheenColor: m.sheenColor & 0xffffff,
+      sheenRoughness: m.sheenRoughness,
+      transmission: m.transmission,
+      thickness: m.thickness,
+      attenuationColor: m.attenuationColor & 0xffffff,
+      attenuationDistance: m.attenuationDistance,
+      anisotropy: m.anisotropy,
+      anisotropyRotation: m.anisotropyRotation,
+      iridescence: m.iridescence,
+      iridescenceIOR: m.iridescenceIOR,
+      opacity: m.opacity,
+      transparent:
+        m.opacity < 0.999 || (m.map && !(m.alphaClipThreshold > 0.0001)),
+      alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
       wireframe: m.wireframe === true,
     });
     return new THREE.Mesh(geom, mat);
@@ -346,10 +457,34 @@ async function main() {
           const j = await r.json();
           materialParams.set(rel, {
             color: matColor(j.color, MAT_DEFAULTS.color),
-            metalness: num(j.metalness, MAT_DEFAULTS.metalness),
-            roughness: num(j.roughness, MAT_DEFAULTS.roughness),
+            metalness: u01(j.metalness, MAT_DEFAULTS.metalness),
+            roughness: u01(j.roughness, MAT_DEFAULTS.roughness),
+            specularIntensity: u01(j.specularIntensity, MAT_DEFAULTS.specularIntensity),
+            specularColor: matColor(j.specularColor, MAT_DEFAULTS.specularColor),
+            ior: Math.max(1, Math.min(2.333, num(j.ior, MAT_DEFAULTS.ior))),
             emissive: matColor(j.emissive, MAT_DEFAULTS.emissive),
+            emissiveIntensity: Math.max(0, Math.min(10, num(j.emissiveIntensity, MAT_DEFAULTS.emissiveIntensity))),
+            clearcoat: u01(j.clearcoat, MAT_DEFAULTS.clearcoat),
+            clearcoatRoughness: u01(j.clearcoatRoughness, MAT_DEFAULTS.clearcoatRoughness),
+            sheen: u01(j.sheen, MAT_DEFAULTS.sheen),
+            sheenColor: matColor(j.sheenColor, MAT_DEFAULTS.sheenColor),
+            sheenRoughness: u01(j.sheenRoughness, MAT_DEFAULTS.sheenRoughness),
+            transmission: u01(j.transmission, MAT_DEFAULTS.transmission),
+            thickness: Math.max(0, Math.min(100, num(j.thickness, MAT_DEFAULTS.thickness))),
+            attenuationColor: matColor(j.attenuationColor, MAT_DEFAULTS.attenuationColor),
+            attenuationDistance: Math.max(0, Math.min(10, num(j.attenuationDistance, MAT_DEFAULTS.attenuationDistance))),
+            anisotropy: u01(j.anisotropy, MAT_DEFAULTS.anisotropy),
+            anisotropyRotation: u01(j.anisotropyRotation, MAT_DEFAULTS.anisotropyRotation),
+            iridescence: u01(j.iridescence, MAT_DEFAULTS.iridescence),
+            iridescenceIOR: Math.max(1, Math.min(2.333, num(j.iridescenceIOR, MAT_DEFAULTS.iridescenceIOR))),
+            opacity: u01(j.opacity, MAT_DEFAULTS.opacity),
+            alphaClipThreshold: u01(j.alphaClipThreshold, MAT_DEFAULTS.alphaClipThreshold),
             wireframe: j.wireframe === true,
+            map: typeof j.map === "string" ? j.map : "",
+            metalnessMap: typeof j.metalnessMap === "string" ? j.metalnessMap : "",
+            roughnessMap: typeof j.roughnessMap === "string" ? j.roughnessMap : "",
+            normalMap: typeof j.normalMap === "string" ? j.normalMap : "",
+            emissiveMap: typeof j.emissiveMap === "string" ? j.emissiveMap : "",
           });
         }
       } catch {
@@ -378,9 +513,15 @@ async function main() {
               azimuth: sky.sunAzimuth,
               elevation: sky.sunElevation,
             });
+      // 天空作为环境光照参与网格材质（与编辑器注入的半球环境光一致）
+      const env = new THREE.HemisphereLight(mixHexColor(top, horizon, 0.5), ground, 0.55);
+      scene.add(env);
     }
   }
   scene.updateMatrixWorld(true);
+
+  // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）
+  await applyMeshTextures();
 
   // ---------------------------------------------------------------- 渲染相机
   const cams = canvasCameras.filter((c) => c.json.isEditorCamera !== true);

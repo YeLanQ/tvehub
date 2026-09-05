@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
-import { isInternalAsset, INTERNAL_ASSET_ENTRIES } from "../../lib/internal-assets";
+import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { logStore } from "./log";
 
@@ -69,12 +69,13 @@ export function getAssetsStore(): AssetsStore {
     async load(root) {
       try {
         const assets = await api.scanAssets(root);
-        // 项目资产（去掉可能与内置 internal 冲突的同名目录）+ 编辑器内置资源合并展示
+        // 项目资产（去掉可能与内置 internal 冲突的同名目录）+ 编辑器内置资源（后端扫描）合并展示
         const projectAssets = assets.filter((a) => !isInternalAsset(a.path));
+        const internalAssets = await api.scanInternalAssets();
         const metas = await api.scanAssetDb(root);
         const map = new Map<string, string>();
         for (const m of metas) map.set(m.uuid, m.url);
-        state.assets = [...projectAssets, ...INTERNAL_ASSET_ENTRIES];
+        state.assets = [...projectAssets, ...internalAssets];
         state.metaMap = map;
         state.loadedPath = root;
         // logStore.log("success", `资产扫描完成: ${state.assets.length} 项`);

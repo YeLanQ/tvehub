@@ -4,6 +4,8 @@ import { setupStarterScene } from "../../framework/engine/starterScene";
 import { loadSceneFromJson } from "../../framework/engine/loadScene";
 import { collectMeshMaterialRefs, DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { Node } from "../../framework/prototype/Node";
+import { api } from "../../lib/api";
+import { isInternalAsset } from "../../lib/internal-assets";
 import { readMaterialText, migrateLegacySceneText } from "../lib/materials";
 import { logStore } from "./log";
 import { getProjectStore } from "./project";
@@ -157,6 +159,15 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
       };
       // 材质资产内容来源：内置 internal/… 走内置读取；项目 assets/… 读项目文件
       engine.materials.setFetcher(root ? (rel) => readMaterialText(root, rel) : null);
+      // 贴图来源：internal/… 走内置二进制读取；项目 assets/… 读项目文件
+      engine.setTextureReader(
+        root
+          ? async (rel) =>
+              isInternalAsset(rel)
+                ? await api.readInternalBinary(rel).catch(() => null)
+                : await api.readAssetBinary(root, rel).catch(() => null)
+          : null,
+      );
       await engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,

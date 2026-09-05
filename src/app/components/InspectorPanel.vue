@@ -7,7 +7,7 @@ import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { MaterialParams, MaterialParamKey } from "../../framework/material";
-import { materialFileStem } from "../../framework/material";
+import { clampMaterialParam, materialFileStem } from "../../framework/material";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
@@ -148,8 +148,11 @@ async function onSetMaterial(rel: string): Promise<void> {
   if (root) engine.refreshMaterialNodes(rel);
 }
 
-/** 修改当前材质资产的某个参数：即时更新缓存（面板/视口立刻同步），文件写盘防抖 */
-async function onMaterialEdit(field: MaterialParamKey, value: number | boolean): Promise<void> {
+/** 修改当前材质资产的某个 PBR 参数/贴图：即时更新缓存（面板/视口立刻同步），文件写盘防抖 */
+async function onMaterialEdit(
+  field: MaterialParamKey,
+  value: number | boolean | string,
+): Promise<void> {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
   const root = projectStore.currentPath;
@@ -166,27 +169,23 @@ async function onMaterialEdit(field: MaterialParamKey, value: number | boolean):
       logStore.log("error", "复制内置材质到项目失败", "engine");
       return;
     }
-    mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
+    mutateNode(n, (m) => {
+      (m as MeshNode).material = dup;
+    }, "复制材质到项目");
     rel = dup;
   }
-  const current = engine.materials.paramsFor(rel);
-  const params: MaterialParams = { ...current };
-  switch (field) {
-    case "color":
-      params.color = (value as number) & 0xffffff;
-      break;
-    case "emissive":
-      params.emissive = (value as number) & 0xffffff;
-      break;
-    case "metalness":
-      params.metalness = Math.max(0, Math.min(1, value as number));
-      break;
-    case "roughness":
-      params.roughness = Math.max(0, Math.min(1, value as number));
-      break;
-    case "wireframe":
-      params.wireframe = value === true;
-      break;
+  const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
+  if (field === "wireframe") {
+    params.wireframe = value === true;
+  } else if (typeof value === "string") {
+    // 贴图通道：存项目资产相对路径（空串 = 无贴图）
+    (params as unknown as Record<string, unknown>)[field] = value;
+  } else {
+    // 数值/颜色统一收敛（颜色按 hex 截断）
+    (params as unknown as Record<string, unknown>)[field] = clampMaterialParam(
+      field,
+      value as number,
+    );
   }
   // 先同步进缓存并广播（引用该材质的所有网格外观同步刷新），文件落盘走防抖
   engine.materials.cachePut(rel, params);

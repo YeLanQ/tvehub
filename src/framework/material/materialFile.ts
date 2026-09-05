@@ -47,15 +47,40 @@ export function parseMaterialFile(text: string): MaterialDoc | null {
 
 /** 把材质文档序列化为 .mat 文本（颜色写为 "#rrggbb" 便于人工阅读/编辑） */
 export function serializeMaterialFile(doc: MaterialDoc): string {
+  const p = doc.params;
   const json = {
     $type: MAGIC_TYPE,
     $ver: MAGIC_VER,
     name: doc.name,
-    color: colorToHexString(doc.params.color),
-    metalness: doc.params.metalness,
-    roughness: doc.params.roughness,
-    emissive: colorToHexString(doc.params.emissive),
-    wireframe: doc.params.wireframe,
+    color: colorToHexString(p.color),
+    metalness: p.metalness,
+    roughness: p.roughness,
+    specularIntensity: p.specularIntensity,
+    specularColor: colorToHexString(p.specularColor),
+    ior: p.ior,
+    emissive: colorToHexString(p.emissive),
+    emissiveIntensity: p.emissiveIntensity,
+    clearcoat: p.clearcoat,
+    clearcoatRoughness: p.clearcoatRoughness,
+    sheen: p.sheen,
+    sheenColor: colorToHexString(p.sheenColor),
+    sheenRoughness: p.sheenRoughness,
+    transmission: p.transmission,
+    thickness: p.thickness,
+    attenuationColor: colorToHexString(p.attenuationColor),
+    attenuationDistance: p.attenuationDistance,
+    anisotropy: p.anisotropy,
+    anisotropyRotation: p.anisotropyRotation,
+    iridescence: p.iridescence,
+    iridescenceIOR: p.iridescenceIOR,
+    opacity: p.opacity,
+    alphaClipThreshold: p.alphaClipThreshold,
+    wireframe: p.wireframe,
+    map: p.map,
+    metalnessMap: p.metalnessMap,
+    roughnessMap: p.roughnessMap,
+    normalMap: p.normalMap,
+    emissiveMap: p.emissiveMap,
   };
   return JSON.stringify(json, null, 2);
 }

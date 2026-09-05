@@ -52,8 +52,8 @@ async function fetchRuntimeTexts(): Promise<Record<string, string>> {
   return files;
 }
 
-/** 组装导出文件：运行时 + 当前场景 + 项目配置 + 场景引用的材质资产 */
-async function buildExportFiles(): Promise<Record<string, string>> {
+/** 组装导出文件：运行时 + 当前场景 + 项目配置 + 场景引用的材质资产（含贴图二进制） */
+async function buildExportFiles(): Promise<{ files: Record<string, string>; binaries: Record<string, string> }> {
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
   const files = await fetchRuntimeTexts();
@@ -72,17 +72,43 @@ async function buildExportFiles(): Promise<Record<string, string>> {
   } catch {
     /* 场景解析失败时仅导出默认产物 */
   }
+  const matRels: string[] = [];
   for (const rel of refs) {
     try {
       const text = isInternalAsset(rel)
         ? await api.readInternalAsset(rel)
         : await api.readText(root, rel);
       files[rel] = text;
+      matRels.push(rel);
     } catch {
       /* 缺失材质：player 侧回退默认材质参数 */
     }
   }
-  return files;
+  // 材质引用的贴图资产（Base/Metalness/Roughness/Normal/Emission）以二进制导出
+  const binaries: Record<string, string> = {};
+  const textureFields = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
+  const texRels = new Set<string>();
+  for (const rel of matRels) {
+    try {
+      const doc = JSON.parse(files[rel]) as Record<string, unknown>;
+      for (const f of textureFields) {
+        const v = doc[f];
+        if (typeof v === "string" && v) texRels.add(v);
+      }
+    } catch {
+      /* 忽略无法解析的材质 */
+    }
+  }
+  for (const trel of texRels) {
+    try {
+      binaries[trel] = isInternalAsset(trel)
+        ? await api.readInternalBinary(trel)
+        : await api.readAssetBinary(root, trel);
+    } catch {
+      /* 贴图缺失：player 回退无贴图 */
+    }
+  }
+  return { files, binaries };
 }
 
 /** 导出并启动（首次进入 / 重试） */
@@ -104,8 +130,8 @@ async function start(): Promise<void> {
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
-    const files = await buildExportFiles();
-    await api.exportWebPreview(root, files);
+    const { files, binaries } = await buildExportFiles();
+    await api.exportWebPreview(root, files, binaries);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止
     // 导出成功后再单独启动服务器（两步分离避免竞态拉起）
     const url = await api.startWebPreviewServer(root);
@@ -134,8 +160,8 @@ async function refresh(): Promise<void> {
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
-    const files = await buildExportFiles();
-    await api.exportWebPreview(root, files);
+    const { files, binaries } = await buildExportFiles();
+    await api.exportWebPreview(root, files, binaries);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止
     // 服务器保持运行、按需读盘；重新导出完成后重载 iframe 即看到最新内容
     frameKey.value++;

@@ -32,11 +32,13 @@ struct PreviewServer {
 /// 把文件写入 `<root>/.tmp/web-preview`（先清空旧产物）。只负责写产物，
 /// 不启停服务器 —— 启动/停止分别由 start_web_preview_server / stop_web_preview 负责，
 /// 避免导出与停止并发时产生“导出完成后又拉起服务器”的竞态。
-/// files：相对路径 → 内容（含 index.html / player.mjs / three.*.min.js / scene.json / config.json）。
+/// files：相对路径 → 文本内容（index.html / player.mjs / three.*.min.js / scene.json / config.json）。
+/// binaries：相对路径 → base64（贴图等二进制资产；解码后写入，供 player 按相对路径 fetch）。
 #[tauri::command]
 pub async fn export_web_preview(
     root: String,
     files: Option<HashMap<String, String>>,
+    binaries: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
@@ -63,6 +65,23 @@ pub async fn export_web_preview(
         }
         fs::write(&target, content.as_bytes())
             .map_err(|e| format!("写入预览文件失败 '{}': {}", rel, e))?;
+    }
+    // 二进制贴图资产：解码 base64 后写为真实文件
+    let binaries = binaries.unwrap_or_default();
+    for (rel, b64) in &binaries {
+        if rel.is_empty()
+            || Path::new(rel).is_absolute()
+            || rel.contains('\\')
+            || rel.split('/').any(|s| s == "..")
+        {
+            return Err(format!("非法预览二进制相对路径: {rel}"));
+        }
+        let bytes = crate::base64_decode(b64).map_err(|e| format!("解码二进制失败 '{}': {}", rel, e))?;
+        let target = out.join(rel);
+        if let Some(parent_dir) = target.parent() {
+            fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
+        }
+        fs::write(&target, &bytes).map_err(|e| format!("写入预览二进制失败 '{}': {}", rel, e))?;
     }
     Ok(())
 }

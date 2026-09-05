@@ -56,6 +56,10 @@ export class EditorEngine {
   readonly helperSystem: HelperSystem;
   /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
   readonly materials = new MaterialManager();
+  /** 贴图二进制读取器（返回 base64；应用层注入项目文件读取） */
+  private textureReader: ((rel: string) => Promise<string | null>) | null = null;
+  /** 贴图加载缓存（key = "srgb?c|n|rel" → Texture 或 null） */
+  private textureCache = new Map<string, Promise<THREE.Texture | null>>();
   gizmo!: GizmoController;
 
   /**
@@ -92,6 +96,8 @@ export class EditorEngine {
   private skyApplied: { sig: string; texture: THREE.Texture } | null = null;
   /** 已销毁标记：mount 期间被 dispose 后终止后续初始化；dispose 幂等 */
   private disposed = false;
+  /** 天空盒激活时注入的半球环境光（天空色照亮网格材质；无天空盒时移除） */
+  private skyLight: THREE.HemisphereLight | null = null;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
   private previewMode = false;
   /** 编辑器辅助物（网格/相机盒体/灯球/gizmo/选择框）是否显示 */
@@ -103,6 +109,7 @@ export class EditorEngine {
     this.factory = createNodeFactory(createDefaultRegistry());
     this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
       paramsFor: (rel) => this.materials.paramsFor(rel),
+      loadTexture: (rel, srgb) => this.loadTexture(rel, srgb),
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
     this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
@@ -208,6 +215,9 @@ export class EditorEngine {
       this.skyApplied.texture.dispose();
       this.skyApplied = null;
     }
+    this.removeSkyEnvLight();
+    this.textureCache.clear();
+    this.textureReader = null;
     this.renderer?.dispose();
     this.gizmo?.dispose();
     this.helperSystem?.dispose();
@@ -224,6 +234,34 @@ export class EditorEngine {
   /** 引擎是否已销毁（mount 流程与 store 层用它判断是否中止后续初始化/装载） */
   isDisposed(): boolean {
     return this.disposed;
+  }
+
+  // ===================== 贴图加载（纹理支持） =====================
+
+  /** 注入贴图二进制读取器（base64 文本；应用层按项目根目录封装） */
+  setTextureReader(fn: ((rel: string) => Promise<string | null>) | null): void {
+    this.textureReader = fn;
+    this.textureCache.clear();
+  }
+
+  /**
+   * 按相对路径异步加载贴图（带缓存）。
+   * srgb=true 表示颜色贴图（Base/Emissive），false 表示数据贴图（Metallic/Roughness/Normal）。
+   */
+  loadTexture(rel: string, srgb: boolean): Promise<THREE.Texture | null> {
+    const key = `${srgb ? "c" : "n"}|${rel}`;
+    const cached = this.textureCache.get(key);
+    if (cached) return cached;
+    const task = (async (): Promise<THREE.Texture | null> => {
+      const reader = this.textureReader;
+      if (!reader || !rel) return null;
+      const b64 = await reader(rel);
+      if (!b64) return null;
+      const mime = textureMimeForRel(rel);
+      return await decodeBase64Texture(`data:${mime};base64,${b64}`, srgb);
+    })().catch(() => null);
+    this.textureCache.set(key, task);
+    return task;
   }
 
   // ===================== 操作 API 走命令 + 栈 =====================
@@ -462,6 +500,7 @@ export class EditorEngine {
         release();
         scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
       }
+      this.removeSkyEnvLight();
       return;
     }
     const sig = [
@@ -489,6 +528,30 @@ export class EditorEngine {
     } catch (e) {
       console.warn(`[sky] 天空盒背景生成失败: ${String(e)}`);
       scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
+    }
+    // 天空作为环境光照参与网格材质：半球光（天空色/地面色）随天空变化
+    this.applySkyEnvLight(sky);
+  }
+
+  /**
+   * 天空环境光：天空盒激活时向场景注入一盏与天空配色一致的半球光，
+   * 使网格材质的明暗/环境色随天空颜色变化（天空顶/地平线混色为天空光，
+   * 下方色为地面反射光）。无天空盒/被停用时移除。
+   */
+  private applySkyEnvLight(sky: SkyboxNode): void {
+    if (!this.skyLight) {
+      this.skyLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.55);
+      this.skyLight.name = "__skyEnvLight";
+      this.renderer.scene.add(this.skyLight);
+    }
+    this.skyLight.color.setHex(mixHexColor(sky.topColor, sky.horizonColor, 0.5));
+    this.skyLight.groundColor.setHex(sky.groundColor & 0xffffff);
+  }
+
+  private removeSkyEnvLight(): void {
+    if (this.skyLight) {
+      this.skyLight.parent?.remove(this.skyLight);
+      this.skyLight = null;
     }
   }
 
@@ -741,4 +804,58 @@ export class EditorEngine {
       this.select(pickedId);
     }
   }
+}
+
+/** 混合两个 RGB hex 颜色（t=0 全 a，t=1 全 b） */
+function mixHexColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return ((r & 255) << 16) | ((g & 255) << 8) | (bl & 255);
+}
+
+/** 相对路径 → MIME（贴图解码用） */
+function textureMimeForRel(rel: string): string {
+  const ext = rel.toLowerCase().split(".").pop() ?? "";
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    case "bmp":
+      return "image/bmp";
+    case "svg":
+      return "image/svg+xml";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/** 把 data URL 图片解码为 three 纹理（colorSpace 依通道选择） */
+function decodeBase64Texture(
+  dataUrl: string,
+  srgb: boolean,
+): Promise<THREE.Texture | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const tex = new THREE.Texture(img);
+      tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      tex.needsUpdate = true;
+      resolve(tex);
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
 }

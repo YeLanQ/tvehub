@@ -8,7 +8,7 @@ use project::{AssetEntry, MetaEntry, ProjectInfo};
 use trash::move_to_trash;
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::Manager;
 
@@ -348,6 +348,26 @@ async fn create_folder(root: String, rel: String) -> Result<String, String> {
     project::create_folder(&PathBuf::from(&root), &rel)
 }
 
+/// 写入项目内二进制文件（base64 内容；internal 复制等场景用）
+#[tauri::command]
+async fn write_asset_binary(root: String, rel: String, content_b64: String) -> Result<(), String> {
+    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = crate::base64_decode(&content_b64)
+        .map_err(|e| format!("解码二进制失败 '{}': {}", rel, e))?;
+    std::fs::write(&p, bytes).map_err(|e| format!("写入二进制失败 '{}': {}", rel, e))
+}
+
+/// 读取项目内二进制文件，以 base64 文本返回（纹理等图片资产用）
+#[tauri::command]
+async fn read_asset_binary(root: String, rel: String) -> Result<String, String> {
+    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
+    let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败 '{}': {}", rel, e))?;
+    Ok(base64_encode(&bytes))
+}
+
 /// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）
 #[tauri::command]
 async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
@@ -366,8 +386,149 @@ async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), Str
     writeln!(f, "[{:?}] {}", now.as_secs(), line).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// base64（免第三方依赖：预览二进制贴图导出 + 前端纹理读取共用）
+// ---------------------------------------------------------------------------
+
+const BASE64_TABLE: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn base64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(BASE64_TABLE[(b0 >> 2) as usize] as char);
+        out.push(BASE64_TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_TABLE[(b2 & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn base64_val(c: u8) -> Option<u32> {
+    match c {
+        b'A'..=b'Z' => Some((c - b'A') as u32),
+        b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+        b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &c in s.as_bytes() {
+        if c == b'=' || c == b'\n' || c == b'\r' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let v = base64_val(c).ok_or_else(|| "非法 base64 字符".to_string())?;
+        acc = (acc << 6) | v;
+        bits += 6;
+        while bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// 内置资源目录（public/internal）：开发读仓库目录；生产读 build.rs 打包、
+// 启动时释放到 exe 同级 public/internal（与 LQEN 一致，不做清单/内嵌硬编码）。
+// ---------------------------------------------------------------------------
+
+fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 内置资源根目录：开发为仓库 public/<kind>；生产为 exe 同级 public/<kind>。
+fn builtin_root(kind: &str) -> PathBuf {
+    if cfg!(debug_assertions) {
+        return Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../public/{kind}"));
+    }
+    exe_dir().join("public").join(kind)
+}
+
+/// LQEN 式内置资源根目录（internal）
+pub(crate) fn internal_root() -> PathBuf {
+    builtin_root("internal")
+}
+
+/// build.rs 生成的归档：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]
+static INTERNAL_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/internal.bin"));
+
+fn parse_internal_archive(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    if data.len() < 4 {
+        return Err("内置资源归档为空".into());
+    }
+    let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let mut pos = 4usize;
+    let mut out = Vec::with_capacity(count.min(4096));
+    for _ in 0..count {
+        if pos + 4 > data.len() {
+            return Err("内置资源归档截断(pathLen)".into());
+        }
+        let plen =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        pos += 4;
+        if pos + plen + 4 > data.len() {
+            return Err("内置资源归档截断(path)".into());
+        }
+        let path = String::from_utf8_lossy(&data[pos..pos + plen]).to_string();
+        pos += plen;
+        let dlen =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        pos += 4;
+        if pos + dlen > data.len() {
+            return Err("内置资源归档截断(data)".into());
+        }
+        out.push((path, data[pos..pos + dlen].to_vec()));
+        pos += dlen;
+    }
+    Ok(out)
+}
+
+/// 把内嵌资源释放到 exe 同级 public/（幂等：已存在文件不覆盖，保留用户修改）
+fn extract_internal_archive(exe_dir: &Path) -> Result<(), String> {
+    let public = exe_dir.join("public");
+    for (rel, bytes) in parse_internal_archive(INTERNAL_ARCHIVE)? {
+        let dest = public.join(&rel);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&dest, bytes).map_err(|e| format!("写入失败 {}: {e}", dest.display()))?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 生产（release）启动时把内置资源释放到 exe 同级 public/（开发直接读仓库目录）
+    if !cfg!(debug_assertions) {
+        if let Err(e) = extract_internal_archive(&exe_dir()) {
+            eprintln!("[internal] 内置资源释放失败: {e}");
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(preview::PreviewServerState::default())
@@ -411,7 +572,11 @@ pub fn run() {
             rename_asset,
             create_folder,
             append_debug_log,
+            read_asset_binary,
+            write_asset_binary,
             internal::read_internal_asset,
+            internal::read_internal_binary,
+            internal::scan_internal_assets,
             preview::export_web_preview,
             preview::start_web_preview_server,
             preview::stop_web_preview,
