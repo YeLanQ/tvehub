@@ -37,6 +37,8 @@ export const api = {
   renameAsset: (root: string, rel: string, newName: string) =>
     invoke<string>("rename_asset", { root, rel, newName }),
   createFolder: (root: string, rel: string) => invoke<string>("create_folder", { root, rel }),
+  /** 读取编辑器内置资源（internal/…，只读；内容编译期内嵌） */
+  readInternalAsset: (rel: string) => invoke<string>("read_internal_asset", { rel }),
   /** 导出网页预览产物（相对路径 → 内容）到 <root>/.tmp/web-preview（不启停服务器） */
   exportWebPreview: (root: string, files: Record<string, string>) =>
     invoke<void>("export_web_preview", { root, files }),

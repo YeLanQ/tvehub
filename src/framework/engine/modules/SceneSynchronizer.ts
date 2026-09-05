@@ -12,13 +12,25 @@ import {
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D, buildGeometry } from "./utils";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
+import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
+
+/** 材质参数查询（EditorEngine 注入 MaterialManager） */
+export interface MaterialParamsLookup {
+  paramsFor(rel: string): MaterialParams;
+}
+
+const defaultLookup: MaterialParamsLookup = {
+  paramsFor: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
+};
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
   private scene: THREE.Scene;
+  private lookup: MaterialParamsLookup;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, lookup: MaterialParamsLookup = defaultLookup) {
     this.scene = scene;
+    this.lookup = lookup;
   }
 
   getObjectMap(): Map<string, THREE.Object3D> {
@@ -149,16 +161,32 @@ export class SceneSynchronizer {
     const geom = buildGeometry(mesh.geometry, mesh.size);
     obj.geometry.dispose();
     obj.geometry = geom;
+    this.updateMeshMaterial(mesh, obj);
+  }
+
+  /**
+   * 只刷新网格材质（几何/变换不动）：
+   * 材质资产参数被修改保存后调用（避免重建几何）。
+   */
+  refreshMeshMaterial(mesh: MeshNode): void {
+    const obj = this.objectMap.get(mesh.id);
+    if (!obj) return;
+    this.updateMeshMaterial(mesh, obj as THREE.Mesh);
+  }
+
+  /** 按材质引用路径把 three 材质对齐到资产参数 */
+  private updateMeshMaterial(mesh: MeshNode, obj: THREE.Mesh): void {
     let mat = obj.material as THREE.MeshStandardMaterial;
     if (!(mat instanceof THREE.MeshStandardMaterial)) {
       mat = new THREE.MeshStandardMaterial();
       obj.material = mat;
     }
-    mat.color.setHex(mesh.color);
-    mat.metalness = mesh.metalness;
-    mat.roughness = mesh.roughness;
-    mat.emissive.setHex(mesh.emissive);
-    mat.wireframe = mesh.wireframe;
+    const params = this.lookup.paramsFor(mesh.material);
+    mat.color.setHex(params.color);
+    mat.metalness = params.metalness;
+    mat.roughness = params.roughness;
+    mat.emissive.setHex(params.emissive);
+    mat.wireframe = params.wireframe;
     mat.needsUpdate = true;
   }
 

@@ -1,0 +1,10 @@
+{
+  "$type": "material",
+  "$ver": 1,
+  "name": "Default",
+  "color": "#9aa4b2",
+  "metalness": 0.1,
+  "roughness": 0.75,
+  "emissive": "#000000",
+  "wireframe": false
+}

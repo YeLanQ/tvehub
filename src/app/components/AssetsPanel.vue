@@ -26,6 +26,10 @@ import AssetTreeNode, {
 } from "./AssetTreeNode.vue";
 import AssetTypeIcon from "./AssetTypeIcon.vue";
 import { fmtSize } from "../lib/format";
+import { api } from "../../lib/api";
+import { isInternalAsset } from "../../lib/internal-assets";
+import { isProtectedAsset } from "../lib/asset-guards";
+import { sanitizeAssetStem } from "../lib/materials";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -147,6 +151,57 @@ function parentOf(path: string): string | null {
   return i > 0 ? path.slice(0, i) : i === 0 ? "" : null;
 }
 
+/** 内置资源按类型复制到项目的默认目录 */
+const INTERNAL_COPY_DIRS: Record<string, string> = {
+  mat: "assets/materials",
+  ts: "src",
+  png: "assets/textures",
+  jpg: "assets/textures",
+  jpeg: "assets/textures",
+  webp: "assets/textures",
+  bmp: "assets/textures",
+  glb: "assets/models",
+  gltf: "assets/models",
+  obj: "assets/models",
+  json: "assets",
+};
+
+/** 目录是否可作为拖放目标（内置 internal 目录只读，不可作为落点） */
+function dropDirAttr(item: ChildEntry): string | undefined {
+  return item.kind === "dir" && !isInternalAsset(item.path) ? item.path : undefined;
+}
+
+/** 把内置资源（internal/…）复制到项目资产目录（只读源 → 项目内可编辑副本） */
+async function copyInternalToProject(item: ChildEntry): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root || item.kind === "dir") return;
+  const dot = item.name.lastIndexOf(".");
+  const ext = dot >= 0 ? item.name.slice(dot + 1).toLowerCase() : "";
+  const stem = sanitizeAssetStem(dot >= 0 ? item.name.slice(0, dot) : item.name);
+  const dir = INTERNAL_COPY_DIRS[ext] ?? "assets";
+  const used = new Set(
+    assetsStore.assets.filter((a) => a.kind !== "dir").map((a) => a.path.toLowerCase()),
+  );
+  let name = stem;
+  let n = 2;
+  const candidate = (base: string) => (ext ? `${base}.${ext}` : base);
+  let fname = candidate(name);
+  while (used.has(`${dir}/${fname}`.toLowerCase())) {
+    name = `${stem} ${n++}`;
+    fname = candidate(name);
+  }
+  const rel = `${dir}/${fname}`;
+  try {
+    const content = await api.readInternalAsset(item.path);
+    if (content == null) throw new Error("读取内置资源失败");
+    await api.writeText(root, rel, content);
+    await assetsStore.load(root);
+    logStore.log("success", `已复制到项目: ${rel}`);
+  } catch (e) {
+    logStore.log("error", `复制内置资源到项目失败: ${e}`);
+  }
+}
+
 function onItemClick(e: MouseEvent, item: ChildEntry) {
   const idx = selectedPaths.value.indexOf(item.path);
   if (e.ctrlKey || e.metaKey) {
@@ -186,17 +241,30 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
   e.preventDefault();
   e.stopPropagation();
   const items: CtxMenuItem[] = [];
-  if (item.kind === "dir") {
-    items.push({ label: "打开", onClick: () => navigate(item.path) });
-  }
-  items.push(
-    { label: "复制", onClick: () => void doCopy(item) },
-    { label: "重命名", onClick: () => void doRename(item) },
-    { label: "删除", danger: true, onClick: () => void doDelete(item) },
-  );
-  const parentDir = item.kind === "dir" ? item.path : parentOf(item.path);
-  if (parentDir != null) {
-    items.push({ label: "新建目录", onClick: () => void doNewFolder(parentDir) });
+  const isProtected = isProtectedAsset(item.path);
+  const isInternal = isInternalAsset(item.path);
+
+  if (item.kind === "dir") items.push({ label: "打开", onClick: () => navigate(item.path) });
+
+  if (isProtected) {
+    // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
+    if (!isInternal && item.kind === "dir" && item.path === "assets") {
+      // assets 固定根目录内仍可新建子目录（assets/materials 等）；src 为脚本目录不提供
+      items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
+    } else if (isInternal && item.kind !== "dir") {
+      // 内置文件可「复制到项目」生成项目内可编辑副本
+      items.push({ label: "复制到项目", onClick: () => void copyInternalToProject(item) });
+    }
+  } else {
+    items.push(
+      { label: "复制", onClick: () => void doCopy(item) },
+      { label: "重命名", onClick: () => void doRename(item) },
+      { label: "删除", danger: true, onClick: () => void doDelete(item) },
+    );
+    const parentDir = item.kind === "dir" ? item.path : parentOf(item.path);
+    if (parentDir != null) {
+      items.push({ label: "新建目录", onClick: () => void doNewFolder(parentDir) });
+    }
   }
   items.push(menuSeparator());
   items.push({ label: "复制路径", onClick: () => void copyPath(item.path) });
@@ -211,17 +279,18 @@ function onContentClick(e: MouseEvent) {
   lastAnchor = null;
 }
 
-/** 右栏空白区右键：在当前目录新建目录 + 刷新 */
+/** 右栏空白区右键：在当前目录新建目录 + 刷新（内置 internal 目录只读，无新建） */
 function onContentContext(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (t?.closest(".am-item, input, select, button")) return;
   e.preventDefault();
   e.stopPropagation();
-  openContextMenu(e, [
-    { label: "新建目录", onClick: () => void doNewFolder(currentDir.value) },
-    menuSeparator(),
-    { label: "刷新资产", onClick: () => void assetsStore.refresh() },
-  ]);
+  const items: CtxMenuItem[] = [];
+  if (!isInternalAsset(currentDir.value)) {
+    items.push({ label: "新建目录", onClick: () => void doNewFolder(currentDir.value) });
+  }
+  items.push(menuSeparator(), { label: "刷新资产", onClick: () => void assetsStore.refresh() });
+  openContextMenu(e, items);
 }
 
 /** 左栏（树）空白区右键：默认位置新建目录 + 刷新 */
@@ -230,11 +299,12 @@ function onBlankContext(e: MouseEvent) {
   if (t?.closest(".asset-row, input, select, button, textarea")) return;
   e.preventDefault();
   e.stopPropagation();
-  openContextMenu(e, [
-    { label: "新建目录", onClick: () => void doNewFolder("assets") },
-    menuSeparator(),
-    { label: "刷新资产", onClick: () => void assetsStore.refresh() },
-  ]);
+  const items: CtxMenuItem[] = [];
+  if (!isInternalAsset(currentDir.value)) {
+    items.push({ label: "新建目录", onClick: () => void doNewFolder("assets") });
+  }
+  items.push(menuSeparator(), { label: "刷新资产", onClick: () => void assetsStore.refresh() });
+  openContextMenu(e, items);
 }
 
 async function doNewFolder(dir: string) {
@@ -331,6 +401,7 @@ const dragGhost = ref<{ x: number; y: number; label: string } | null>(null);
 
 function onItemMouseDown(e: MouseEvent, item: ChildEntry) {
   if (e.button !== 0) return;
+  if (isProtectedAsset(item.path)) return; // 内置资源与项目固定目录（assets/src）只读，不能拖拽移动
   const draggingAll = selectedPaths.value.includes(item.path);
   dragStart = {
     x: e.clientX,
@@ -475,7 +546,7 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
             class="am-item grid"
             :class="{ selected: selectedPaths.includes(item.path), 'drop-over': item.kind === 'dir' && item.path === hoverPath }"
             :title="item.path"
-            :data-drop-dir="item.kind === 'dir' ? item.path : undefined"
+            :data-drop-dir="dropDirAttr(item)"
             @click="onItemClickGuard($event, item)"
             @dblclick="onItemDblClick(item)"
             @contextmenu.prevent.stop="onItemContext($event, item)"
@@ -494,7 +565,7 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
             class="am-item list"
             :class="{ selected: selectedPaths.includes(item.path), 'drop-over': item.kind === 'dir' && item.path === hoverPath }"
             :title="item.path"
-            :data-drop-dir="item.kind === 'dir' ? item.path : undefined"
+            :data-drop-dir="dropDirAttr(item)"
             @click="onItemClickGuard($event, item)"
             @dblclick="onItemDblClick(item)"
             @contextmenu.prevent.stop="onItemContext($event, item)"

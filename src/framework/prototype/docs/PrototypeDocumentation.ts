@@ -222,18 +222,17 @@ export interface NodePrototypeDoc {
 /**
  * 网格节点原型文档
  * 
- * 继承自 Node，添加了网格和材质相关属性。
+ * 继承自 Node，添加了几何与材质**资产引用**。
+ * 材质参数不内嵌在节点上，而是由 .mat 材质资产文件持有（可被多个网格共享）：
+ * - internal/materials/…：编辑器内置材质（只读，编辑前「复制到项目材质」）
+ * - assets/materials/…：项目材质资产（可编辑，修改写回 .mat）
  * 
  * 结构：
  * ```
  * MeshNode extends Node {
  *   geometry: GeometryKind   // 几何体类型
  *   size: Vec3               // 尺寸
- *   color: number            // 材质颜色
- *   metalness: number        // 金属度
- *   roughness: number        // 粗糙度
- *   emissive: number         // 自发光颜色
- *   wireframe: boolean       // 线框模式
+ *   material: string         // 材质资产引用路径（默认 internal/materials/Default.mat）
  * }
  * ```
  */
@@ -261,29 +260,11 @@ export interface MeshNodePrototypeDoc extends NodePrototypeDoc {
   size: { x: number; y: number; z: number };
 
   /**
-   * 材质颜色 (RGB hex)
+   * 材质资产引用路径
+   * - "internal/materials/Default.mat"：内置默认材质
+   * - "assets/materials/<Name>.mat"：项目材质资产
    */
-  color: number;
-
-  /**
-   * 金属度 (0-1)
-   */
-  metalness: number;
-
-  /**
-   * 粗糙度 (0-1)
-   */
-  roughness: number;
-
-  /**
-   * 自发光颜色 (RGB hex)
-   */
-  emissive: number;
-
-  /**
-   * 线框模式
-   */
-  wireframe: boolean;
+  material: string;
 }
 
 /**

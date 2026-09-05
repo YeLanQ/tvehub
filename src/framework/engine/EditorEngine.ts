@@ -32,11 +32,14 @@ export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
 import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
+import { MaterialManager } from "../material/MaterialManager";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
   "select:changed": { nodeId: string | null };
   "gizmo:state": { mode: GizmoMode; space: "local" | "world" };
+  /** 材质资产参数变更（保存/刷新后广播；rel 为空串表示全部） */
+  "material:changed": { rel: string };
 }
 
 export class EditorEngine {
@@ -48,6 +51,8 @@ export class EditorEngine {
   readonly renderer = new RendererManager();
   readonly synchronizer: SceneSynchronizer;
   readonly helperSystem: HelperSystem;
+  /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
+  readonly materials = new MaterialManager();
   gizmo!: GizmoController;
 
   /**
@@ -73,7 +78,11 @@ export class EditorEngine {
 
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
-    this.synchronizer = new SceneSynchronizer(this.renderer.scene);
+    this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
+      paramsFor: (rel) => this.materials.paramsFor(rel),
+    });
+    // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
+    this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -131,6 +140,7 @@ export class EditorEngine {
     this.gizmo.dispose();
     this.helperSystem.dispose();
     this.synchronizer.dispose();
+    this.materials.clear();
     this.removeViewportClickHandler();
   }
 
@@ -221,6 +231,19 @@ export class EditorEngine {
     this.run(new PropertyPatchCommand(this.graph, nodeId, before, after, label));
   }
 
+  /**
+   * 材质资产参数保存后：刷新引用该材质的所有网格外观并广播 material:changed。
+   * rel 为空时刷新全部网格材质（装载/迁移后兜底用）。
+   */
+  refreshMaterialNodes(rel?: string | null): void {
+    for (const node of this.graph.all()) {
+      if (node instanceof MeshNode && (rel == null || node.material === rel)) {
+        this.synchronizer.refreshMeshMaterial(node);
+      }
+    }
+    this.events.emit("material:changed", { rel: rel ?? "" });
+  }
+
   private resolveParent(preferred?: string): Node | undefined {
     if (preferred) return this.graph.get(preferred);
     if (this.selectedId) {
@@ -295,6 +318,12 @@ export class EditorEngine {
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
+    // 新入图/属性变更引用了尚未解析的材质资产（如撤销/重做改回引用）→ 异步预取后刷新
+    const n = this.graph.get(c.nodeId);
+    if (n instanceof MeshNode && !this.materials.has(n.material)) {
+      const rel = n.material;
+      void this.materials.preload([rel]).then(() => this.refreshMaterialNodes(rel));
+    }
   }
 
   rebuildAll(): void {

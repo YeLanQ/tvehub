@@ -1,28 +1,48 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { getEditorStore } from "../stores/editor";
+import { getProjectStore } from "../stores/project";
+import { getAssetsStore } from "../stores/assets";
+import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
+import type { MaterialParams, MaterialParamKey } from "../../framework/material";
+import { materialFileStem } from "../../framework/material";
+import { isInternalAsset } from "../../lib/internal-assets";
+import { duplicateMaterialToProject, listProjectMaterialRels, saveMaterialParams } from "../lib/materials";
 import type { JsonRecord } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/command/commands";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
+import MaterialSection from "./inspector/MaterialSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
 import ComponentsSection from "./inspector/ComponentsSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
 const store = getEditorStore();
+const projectStore = getProjectStore();
+const assetsStore = getAssetsStore();
 const { state, engine } = store;
 
 const node = computed<Node | undefined>(() => store.nodeById(state.selectedId ?? undefined));
 const revision = computed(() => store.revision());
 
+/** 进入编辑器/切换项目后同步一次资产列表（材质下拉需要 assets/materials 内容） */
+onMounted(() => {
+  if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
+});
+
 function commit(mutate: (n: Node) => void, label: string): void {
   const n = node.value;
   if (!n) return;
+  mutateNode(n, mutate, label);
+}
+
+/** 直接对指定节点执行 patch（节点可能非当前选中；捕获前后快照进历史） */
+function mutateNode(n: Node, mutate: (nn: Node) => void, label: string): void {
   const before = n.toJSON() as JsonRecord;
   mutate(n);
   const after = n.toJSON() as JsonRecord;
@@ -62,23 +82,97 @@ function onTransformChange(axis: "position" | "rotation" | "scale", part: "x" | 
 function onMeshUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
-  commit((node) => {
-    const mesh = node as MeshNode;
-    switch (label) {
-      case "Set Geometry":
-        mesh.geometry = value as MeshNode["geometry"];
-        break;
-      case "Set Color":
-        mesh.color = value as number;
-        break;
-      case "Set Metalness":
-        mesh.metalness = value as number;
-        break;
-      case "Set Roughness":
-        mesh.roughness = value as number;
-        break;
+  if (label === "Set Geometry") {
+    commit((m) => { (m as MeshNode).geometry = value as MeshNode["geometry"]; }, label);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 材质资产（Material）卡片事件
+// ---------------------------------------------------------------------------
+
+/** 切换到另一份材质资产 */
+async function onSetMaterial(rel: string): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode) || !rel) return;
+  commit((m) => { (m as MeshNode).material = rel; }, "Set Material");
+  const root = projectStore.currentPath;
+  if (!root) return;
+  // 预取新引用的参数（若尚未缓存），成功后按真实参数刷新外观
+  if (!engine.materials.has(rel)) {
+    await engine.materials.preload([rel]);
+    engine.refreshMaterialNodes(rel);
+  }
+}
+
+/** 修改当前材质资产的某个参数（写入 .mat 文件 + 更新引擎缓存） */
+async function onMaterialEdit(field: MaterialParamKey, value: number | boolean): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode)) return;
+  const root = projectStore.currentPath;
+  if (!root) {
+    logStore.log("error", "未打开项目，无法保存材质修改", "engine");
+    return;
+  }
+  let rel = n.material;
+  if (isInternalAsset(rel)) {
+    // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再修改
+    const taken = await listProjectMaterialRels(root);
+    const dup = await duplicateMaterialToProject(root, rel, n.name, taken);
+    if (!dup) {
+      logStore.log("error", "复制内置材质到项目失败", "engine");
+      return;
     }
-  }, label);
+    mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
+    rel = dup;
+  }
+  const current = engine.materials.paramsFor(rel);
+  const params: MaterialParams = { ...current };
+  switch (field) {
+    case "color":
+      params.color = (value as number) & 0xffffff;
+      break;
+    case "emissive":
+      params.emissive = (value as number) & 0xffffff;
+      break;
+    case "metalness":
+      params.metalness = Math.max(0, Math.min(1, value as number));
+      break;
+    case "roughness":
+      params.roughness = Math.max(0, Math.min(1, value as number));
+      break;
+    case "wireframe":
+      params.wireframe = value === true;
+      break;
+  }
+  try {
+    await saveMaterialParams(root, rel, materialFileStem(rel), params);
+    // 写缓存并广播：引用该材质的所有网格外观同步刷新
+    engine.materials.cachePut(rel, params);
+  } catch (e) {
+    logStore.log("error", `保存材质 ${rel} 失败: ${e}`, "engine");
+  }
+}
+
+/** 复制当前材质为项目资产并绑定到本节点（内置材质转可编辑 / 生成独立副本） */
+async function onMaterialCopyToProject(): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode)) return;
+  const root = projectStore.currentPath;
+  if (!root) return;
+  const taken = await listProjectMaterialRels(root);
+  const dup = await duplicateMaterialToProject(root, n.material, n.name, taken);
+  if (!dup) {
+    logStore.log("error", "复制材质资产失败", "engine");
+    return;
+  }
+  mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
+  if (!engine.materials.has(dup)) {
+    await engine.materials.preload([dup]);
+    engine.refreshMaterialNodes(dup);
+  }
+  // 资产面板下拉项同步
+  void assetsStore.load(root);
 }
 
 function onLightUpdate(label: string, value: unknown): void {
@@ -121,8 +215,8 @@ function onLightUpdate(label: string, value: unknown): void {
 function onCameraUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof CameraNode)) return;
-  commit((node) => {
-    const camera = node as CameraNode;
+  commit((target) => {
+    const camera = target as CameraNode;
     switch (label) {
       case "Set Fov":
         camera.fov = value as number;
@@ -135,18 +229,6 @@ function onCameraUpdate(label: string, value: unknown): void {
         break;
     }
   }, label);
-}
-
-function onAddComponent(type: string): void {
-  if (type === "wireframe" && node.value instanceof MeshNode) {
-    commit((m) => { (m as MeshNode).wireframe = true; }, "添加 Wireframe");
-  }
-}
-
-function onRemoveComponent(type: string): void {
-  if (type === "wireframe" && node.value) {
-    commit((m) => { (m as MeshNode).wireframe = false; }, "移除 Wireframe");
-  }
 }
 </script>
 
@@ -183,6 +265,16 @@ function onRemoveComponent(type: string): void {
         <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
       </ComponentCard>
 
+      <ComponentCard v-if="node instanceof MeshNode" title="Material" :open="true">
+        <MaterialSection
+          :node="node"
+          :rev="revision"
+          @setMaterial="onSetMaterial"
+          @editParam="onMaterialEdit"
+          @copyToProject="onMaterialCopyToProject"
+        />
+      </ComponentCard>
+
       <ComponentCard v-if="node instanceof LightNode" title="Light" :open="true">
         <LightSection :node="node" :rev="revision" @update="onLightUpdate" />
       </ComponentCard>
@@ -192,12 +284,7 @@ function onRemoveComponent(type: string): void {
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">
-        <ComponentsSection
-          :node="node"
-          :rev="revision"
-          @addComponent="onAddComponent"
-          @removeComponent="onRemoveComponent"
-        />
+        <ComponentsSection :node="node" :rev="revision" />
       </ComponentCard>
     </div>
   </div>

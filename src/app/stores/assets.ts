@@ -1,5 +1,7 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
+import { isInternalAsset, INTERNAL_ASSET_ENTRIES } from "../../lib/internal-assets";
+import { isProtectedAsset } from "../lib/asset-guards";
 import { logStore } from "./log";
 
 export interface AssetsStore {
@@ -67,10 +69,12 @@ export function getAssetsStore(): AssetsStore {
     async load(root) {
       try {
         const assets = await api.scanAssets(root);
+        // 项目资产（去掉可能与内置 internal 冲突的同名目录）+ 编辑器内置资源合并展示
+        const projectAssets = assets.filter((a) => !isInternalAsset(a.path));
         const metas = await api.scanAssetDb(root);
         const map = new Map<string, string>();
         for (const m of metas) map.set(m.uuid, m.url);
-        state.assets = assets;
+        state.assets = [...projectAssets, ...INTERNAL_ASSET_ENTRIES];
         state.metaMap = map;
         state.loadedPath = root;
         // logStore.log("success", `资产扫描完成: ${state.assets.length} 项`);
@@ -86,6 +90,10 @@ export function getAssetsStore(): AssetsStore {
       state.selectedAsset = rel;
     },
     async createFolder(root, rel) {
+      if (isInternalAsset(rel)) {
+        logStore.log("warn", "内置目录只读，不能在其中新建");
+        return null;
+      }
       try {
         const r = await api.createFolder(root, rel);
         await store.load(root);
@@ -96,6 +104,10 @@ export function getAssetsStore(): AssetsStore {
       }
     },
     async rename(root, rel, newName) {
+      if (isProtectedAsset(rel)) {
+        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许重命名");
+        return null;
+      }
       try {
         const r = await api.renameAsset(root, rel, newName);
         await store.load(root);
@@ -106,6 +118,10 @@ export function getAssetsStore(): AssetsStore {
       }
     },
     async duplicate(root, rel) {
+      if (isProtectedAsset(rel)) {
+        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许复制，请使用「复制到项目」");
+        return null;
+      }
       try {
         const r = await api.copyAsset(root, rel);
         await store.load(root);
@@ -116,6 +132,10 @@ export function getAssetsStore(): AssetsStore {
       }
     },
     async remove(root, rel) {
+      if (isProtectedAsset(rel)) {
+        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许删除");
+        return false;
+      }
       try {
         await api.deleteAsset(root, rel);
         if (state.selectedAsset === rel) state.selectedAsset = null;
@@ -127,6 +147,10 @@ export function getAssetsStore(): AssetsStore {
       }
     },
     async moveTo(root, rel, destDir) {
+      if (isProtectedAsset(rel) || isInternalAsset(destDir)) {
+        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许移动");
+        return null;
+      }
       try {
         const r = await api.moveAsset(root, rel, destDir);
         await store.load(root);

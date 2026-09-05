@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod internal;
 mod preview;
 mod project;
 mod trash;
@@ -374,6 +375,7 @@ pub fn run() {
             rename_asset,
             create_folder,
             append_debug_log,
+            internal::read_internal_asset,
             preview::export_web_preview,
             preview::start_web_preview_server,
             preview::stop_web_preview,

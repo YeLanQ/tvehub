@@ -28,6 +28,8 @@ import {
 import { getProjectStore } from "../stores/project";
 import { prompt } from "../lib/prompt";
 import { confirm } from "../lib/confirm";
+import { isInternalAsset } from "../../lib/internal-assets";
+import { isProtectedAsset } from "../lib/asset-guards";
 
 const dragHandle = inject<AssetDragHandle | null>(ASSET_DRAG_KEY, null);
 
@@ -35,6 +37,11 @@ const dropOver = computed(() => {
   if (props.node.kind !== "dir") return false;
   return dragHandle?.hoverPath?.value === props.node.path;
 });
+
+/** 目录树可作为拖放目标的行（internal 内置目录只读，不作为落点） */
+const dropDir = computed(() =>
+  props.node.kind === "dir" && !isInternalAsset(props.node.path) ? props.node.path : undefined,
+);
 
 const props = defineProps<{
   node: AssetNode;
@@ -72,6 +79,7 @@ function dblclick() {
 function onContext(e: MouseEvent) {
   e.preventDefault();
   e.stopPropagation();
+  const protectedNode = isProtectedAsset(props.node.path);
   const items: CtxMenuItem[] = [];
   if (props.node.kind === "dir") {
     items.push({
@@ -79,20 +87,30 @@ function onContext(e: MouseEvent) {
       onClick: () => (open.value = !open.value),
     });
   }
-  items.push(
-    { label: "复制", onClick: () => void doCopy() },
-    { label: "重命名", onClick: () => void doRename() },
-    { label: "删除", danger: true, onClick: () => void doDelete() },
-  );
+  if (!protectedNode) {
+    // 仅非保护目录提供复制/重命名/删除（internal / assets / src 固定目录除外）
+    items.push(
+      { label: "复制", onClick: () => void doCopy() },
+      { label: "重命名", onClick: () => void doRename() },
+      { label: "删除", danger: true, onClick: () => void doDelete() },
+    );
+  }
+  // 「新建目录」只允许出现在项目资产目录树内（assets 及 assets/…，含 assets 本身）；
+  // internal 只读、src 为脚本目录，均不提供
+  const canCreateInside = (dir: string): boolean =>
+    !isInternalAsset(dir) && (dir === "assets" || dir.startsWith("assets/"));
   const slash = props.node.path.lastIndexOf("/");
-  const parentDir =
-    props.node.kind === "dir" ? props.node.path : slash > 0 ? props.node.path.slice(0, slash) : undefined;
-  if (parentDir !== undefined && (parentDir === "assets" || parentDir.startsWith("assets/"))) {
+  const createDir =
+    props.node.kind === "dir"
+      ? canCreateInside(props.node.path)
+        ? props.node.path
+        : null
+      : slash > 0 && canCreateInside(props.node.path.slice(0, slash))
+        ? props.node.path.slice(0, slash)
+        : null;
+  if (createDir) {
     items.push(menuSeparator());
-    items.push({
-      label: "新建目录",
-      onClick: () => void doNewFolder(parentDir),
-    });
+    items.push({ label: "新建目录", onClick: () => void doNewFolder(createDir) });
   }
   items.push(menuSeparator());
   items.push({ label: "复制路径", onClick: copyPath });
@@ -168,7 +186,7 @@ async function copyPath() {
         'drop-over': dropOver,
       }"
       :style="{ paddingLeft: 8 + depth * 16 + 'px' }"
-      :data-drop-dir="node.kind === 'dir' ? node.path : undefined"
+      :data-drop-dir="dropDir"
       @click="click"
       @dblclick="dblclick"
       @contextmenu.prevent.stop="onContext"

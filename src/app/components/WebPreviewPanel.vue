@@ -12,6 +12,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
+import { isInternalAsset } from "../../lib/internal-assets";
+import { collectMeshMaterialRefs } from "../../framework/material";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
@@ -50,16 +52,35 @@ async function fetchRuntimeTexts(): Promise<Record<string, string>> {
   return files;
 }
 
-/** 组装导出文件：运行时 + 当前场景 + 项目配置（渲染合成/抗锯齿等） */
+/** 组装导出文件：运行时 + 当前场景 + 项目配置 + 场景引用的材质资产 */
 async function buildExportFiles(): Promise<Record<string, string>> {
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
   const files = await fetchRuntimeTexts();
-  files["scene.json"] = await api.readText(root, "assets/Main.scene");
+  const sceneText = await api.readText(root, "assets/Main.scene");
+  files["scene.json"] = sceneText;
   try {
     files["config.json"] = await api.readText(root, "project.config.json");
   } catch {
     files["config.json"] = "{}";
+  }
+  // 场景引用的 .mat 材质资产随导出一起写入（internal 内置内容 / assets 项目文件），
+  // 网页运行时按引用相对路径 fetch。读取失败跳过：player 回退默认参数。
+  let refs: string[] = [];
+  try {
+    refs = collectMeshMaterialRefs(JSON.parse(sceneText));
+  } catch {
+    /* 场景解析失败时仅导出默认产物 */
+  }
+  for (const rel of refs) {
+    try {
+      const text = isInternalAsset(rel)
+        ? await api.readInternalAsset(rel)
+        : await api.readText(root, rel);
+      files[rel] = text;
+    } catch {
+      /* 缺失材质：player 侧回退默认材质参数 */
+    }
   }
   return files;
 }

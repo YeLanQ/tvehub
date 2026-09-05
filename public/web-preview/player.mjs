@@ -36,6 +36,19 @@ function vec(v, fb) {
 }
 const D2R = Math.PI / 180;
 
+// 材质参数兜底：与编辑器内置 internal/materials/Default.mat 一致
+const MAT_DEFAULTS = { color: 0x9aa4b2, metalness: 0.1, roughness: 0.75, emissive: 0x000000, wireframe: false };
+
+/** 颜色：number / "#rrggbb" → number */
+function matColor(v, fb) {
+  if (typeof v === "number" && Number.isFinite(v)) return v & 0xffffff;
+  if (typeof v === "string") {
+    const s = v.trim().replace(/^#/, "");
+    if (/^[0-9a-fA-F]{6}$/.test(s)) return parseInt(s, 16) & 0xffffff;
+  }
+  return fb;
+}
+
 async function main() {
   // 项目配置（渲染合成/抗锯齿；缺省按编辑器 LDR 默认）
   let cfg = {};
@@ -129,12 +142,14 @@ async function main() {
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
     else geom = new THREE.BoxGeometry(x, y, z);
 
+    // 材质按 .mat 资产引用解析（缺失回退默认参数）
+    const m = materialParams.get(json.material) || MAT_DEFAULTS;
     const mat = new THREE.MeshStandardMaterial({
-      color: num(json.color, 0x9aa4b2) & 0xffffff,
-      metalness: num(json.metalness, 0.1),
-      roughness: num(json.roughness, 0.75),
-      emissive: num(json.emissive, 0) & 0xffffff,
-      wireframe: json.wireframe === true,
+      color: m.color & 0xffffff,
+      metalness: m.metalness,
+      roughness: m.roughness,
+      emissive: m.emissive & 0xffffff,
+      wireframe: m.wireframe === true,
     });
     return new THREE.Mesh(geom, mat);
   }
@@ -178,6 +193,34 @@ async function main() {
       light.target = target;
     }
     return group;
+  }
+
+  // 材质资产：节点只保存 .mat 引用，这里先按引用预取文件并解析参数（缺失回退默认）
+  const materialParams = new Map();
+  {
+    const refs = new Set();
+    (function walkMatRefs(o) {
+      if (!o || typeof o !== "object") return;
+      if (o.type === "meshNode" && typeof o.material === "string" && o.material) refs.add(o.material);
+      if (Array.isArray(o.children)) o.children.forEach(walkMatRefs);
+    })(rootJson);
+    for (const rel of refs) {
+      try {
+        const r = await fetch(rel);
+        if (r.ok) {
+          const j = await r.json();
+          materialParams.set(rel, {
+            color: matColor(j.color, MAT_DEFAULTS.color),
+            metalness: num(j.metalness, MAT_DEFAULTS.metalness),
+            roughness: num(j.roughness, MAT_DEFAULTS.roughness),
+            emissive: matColor(j.emissive, MAT_DEFAULTS.emissive),
+            wireframe: j.wireframe === true,
+          });
+        }
+      } catch {
+        /* 缺失材质：回退默认 */
+      }
+    }
   }
 
   buildNode(rootJson, null);

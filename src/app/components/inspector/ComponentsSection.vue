@@ -1,23 +1,8 @@
 <script setup lang="ts">
-import { ref } from "vue";
 import type { Node } from "../../../framework/prototype/Node";
 import { MeshNode, LightNode, CameraNode } from "../../../framework/prototype/derived/Primitives";
 
-const props = defineProps<{ node: Node; rev?: number }>();
-
-const emit = defineEmits<{
-  addComponent: [type: string];
-  removeComponent: [type: string];
-}>();
-
-const compAddOpen = ref(false);
-
-function hasComponent(type: string): boolean {
-  if (type === "wireframe" && props.node instanceof MeshNode) {
-    return props.node.wireframe;
-  }
-  return false;
-}
+defineProps<{ node: Node; rev?: number }>();
 </script>
 
 <template>
@@ -26,10 +11,9 @@ function hasComponent(type: string): boolean {
       <span class="comp-label">Mesh Renderer</span>
       <span class="comp-type mono">Mesh</span>
     </div>
-    <div v-if="hasComponent('wireframe')" class="comp-row">
-      <span class="comp-label">Wireframe</span>
-      <span class="comp-type mono">Render</span>
-      <button class="comp-remove" title="移除组件" @click="emit('removeComponent', 'wireframe')">✕</button>
+    <div v-if="node instanceof MeshNode" class="comp-row">
+      <span class="comp-label">Material</span>
+      <span class="comp-type mono">Mat</span>
     </div>
     <div v-if="node instanceof LightNode" class="comp-row">
       <span class="comp-label">Light</span>
@@ -40,12 +24,5 @@ function hasComponent(type: string): boolean {
       <span class="comp-type mono">Camera</span>
     </div>
   </div>
-  <button class="add-comp-btn" @click.stop="compAddOpen = !compAddOpen">＋ 添加组件</button>
-  <div v-if="compAddOpen" class="add-comp-menu">
-    <div v-if="node instanceof MeshNode" class="add-comp-item" @click="emit('addComponent', 'wireframe')">
-      <span>Wireframe</span>
-      <span class="mono comp-type">Render</span>
-    </div>
-    <div v-if="node instanceof MeshNode" class="hint add-comp-empty">仅网格节点可添加组件</div>
-  </div>
+  <div class="hint add-comp-empty">线框已并入材质参数（Material 卡片），修改会写入材质资产</div>
 </template>

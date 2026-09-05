@@ -2,7 +2,9 @@ import { computed, readonly, reactive } from "vue";
 import { EditorEngine } from "../../framework/engine/EditorEngine";
 import { setupStarterScene } from "../../framework/engine/starterScene";
 import { loadSceneFromJson } from "../../framework/engine/loadScene";
+import { collectMeshMaterialRefs, DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { Node } from "../../framework/prototype/Node";
+import { readMaterialText, migrateLegacySceneText } from "../lib/materials";
 import { logStore } from "./log";
 import { getProjectStore } from "./project";
 
@@ -77,6 +79,7 @@ export function getEditorStore(): EditorStore {
   engine.events.on("graph:changed", bump);
   engine.events.on("select:changed", bump);
   engine.events.on("gizmo:state", bump);
+  engine.events.on("material:changed", bump);
   engine.history.events.on("changed", bump);
 
   // 场景图变化 → 控制台日志（框架层不依赖 app，日志桥接只在 app 层）
@@ -145,18 +148,42 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   if (!mountTask) {
     mountTask = (async () => {
       const projectStore = getProjectStore();
+      const root = projectStore.currentPath;
       // 相机辅助视锥取景宽高比 = 项目设计分辨率（打开/新建项目时已从 project.config.json 读入）
       store.engine.designResolution = {
         width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
         height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
       };
+      // 材质资产内容来源：内置 internal/… 走内置读取；项目 assets/… 读项目文件
+      store.engine.materials.setFetcher(root ? (rel) => readMaterialText(root, rel) : null);
       await store.engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,
         hdrMode: projectStore.hdrMode,
       });
-      if (sceneJson) loadSceneFromJson(store.engine, sceneJson);
-      else setupStarterScene(store.engine);
+      if (sceneJson) {
+        // 旧版场景：先把内嵌材质参数迁移为项目材质资产（internal 默认无需生成）
+        let text = sceneJson;
+        if (root) {
+          try {
+            text = await migrateLegacySceneText(root, sceneJson);
+          } catch (e) {
+            logStore.log("warn", `旧场景材质迁移失败（按默认材质加载）: ${e}`, "engine");
+          }
+        }
+        // 装载前预取全部材质引用：节点入图即渲染到正确外观（避免先默认后跳变）
+        let refs: string[] = [];
+        try {
+          refs = collectMeshMaterialRefs(JSON.parse(text));
+        } catch {
+          /* 保留空引用集合 */
+        }
+        if (refs.length) await store.engine.materials.preload(refs);
+        loadSceneFromJson(store.engine, text);
+      } else {
+        await store.engine.materials.preload([DEFAULT_MATERIAL_REL]);
+        setupStarterScene(store.engine);
+      }
       store.markMounted();
       logStore.log("info", "编辑器已就绪", "engine");
     })();
