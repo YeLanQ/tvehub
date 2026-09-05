@@ -61,6 +61,8 @@ export class EditorEngine {
   private previewMode = false;
   /** 编辑器辅助物（网格/相机盒体/灯球/gizmo/选择框）是否显示 */
   private overlayVisible = true;
+  /** 无场景相机时的回退提示是否已输出过（避免每次图事件刷屏） */
+  private previewFallbackLogged = false;
 
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
@@ -319,6 +321,7 @@ export class EditorEngine {
     const want = mode === "preview";
     if (want === this.previewMode) return;
     this.previewMode = want;
+    if (want) this.previewFallbackLogged = false;
     this.syncPreviewView();
   }
 
@@ -356,8 +359,8 @@ export class EditorEngine {
 
   /**
    * 依据当前 previewMode 应用一致的状态：
-   * 有可用相机节点 → 预览相机渲染 + 隐藏编辑器辅助物 + 关闭轨道/变换工具；
-   * 无相机节点 → 回退到编辑器视角。
+   * 有可用相机节点 → 用该节点渲染预览；
+   * 无相机节点 → 用默认取景视角渲染（隐藏编辑器辅助物、禁用轨道）。
    */
   private syncPreviewView(): void {
     if (!this.previewMode) {
@@ -369,12 +372,14 @@ export class EditorEngine {
     }
     const node = this.resolvePreviewCameraNode();
     if (!node) {
-      if (this.overlayVisible !== true) {
-        logger.info("场景中未找到 CameraNode，预览回退到编辑器视角");
+      if (!this.previewFallbackLogged) {
+        logger.info("场景中没有 CameraNode，预览使用默认相机视角");
+        this.previewFallbackLogged = true;
       }
-      this.overlayVisible = true;
-      this.renderer.setActiveCamera(this.renderer.camera);
-      this.renderer.orbitControls.enabled = true;
+      this.applyDefaultPreviewPose();
+      this.overlayVisible = false;
+      this.renderer.setActiveCamera(this.previewCamera);
+      this.renderer.orbitControls.enabled = false;
       this.applyOverlayVisibility();
       return;
     }
@@ -383,6 +388,17 @@ export class EditorEngine {
     this.renderer.setActiveCamera(this.previewCamera);
     this.renderer.orbitControls.enabled = false;
     this.applyOverlayVisibility();
+  }
+
+  /** 无场景相机时的预览取景：从斜上方望向场景中心 */
+  private applyDefaultPreviewPose(): void {
+    const cam = this.previewCamera;
+    cam.fov = 50;
+    cam.near = 0.1;
+    cam.far = 2000;
+    cam.position.set(7, 5, 8);
+    cam.lookAt(0, 0.6, 0);
+    cam.updateProjectionMatrix();
   }
 
   /**
