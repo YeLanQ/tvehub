@@ -16,10 +16,10 @@ export type RendererBackend = "webgl" | "webgpu" | "auto";
 
 /** 项目设置表单草稿（保存前不落盘） */
 export interface ProjectDraft {
-  name: string;
-  packageName: string;
   version: string;
   description: string;
+  /** 主场景（工程入口场景，相对项目路径，如 "assets/Main.scene"；空 = 未设置） */
+  mainScene: string;
   designWidth: number;
   designHeight: number;
   orientation: Orientation;
@@ -88,12 +88,10 @@ function clampInt(v: number, min: number, max: number): number {
 
 /** 无配置文件时的默认草稿 */
 export function defaultDraft(): ProjectDraft {
-  const p = getProjectStore();
   return {
-    name: p.projectName ?? "Untitled Project",
-    packageName: `com.example.${(p.projectName ?? "project").toLowerCase().replace(/\s+/g, "")}`,
     version: "0.0.1",
     description: "",
+    mainScene: "",
     designWidth: 1280,
     designHeight: 720,
     orientation: "landscape",
@@ -112,10 +110,9 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
   const str = (v: unknown, fb: string) => (typeof v === "string" && v.trim() ? v.trim() : fb);
   const design = (cfg.designResolution ?? {}) as { width?: unknown; height?: unknown };
   return {
-    name: str(cfg.name, d.name),
-    packageName: str(cfg.packageName, d.packageName),
     version: str(cfg.version, d.version),
     description: str(cfg.description, d.description),
+    mainScene: str(cfg.mainScene, d.mainScene),
     designWidth: num(design.width, d.designWidth),
     designHeight: num(design.height, d.designHeight),
     orientation: cfg.orientation === "portrait" || cfg.orientation === "landscape"
@@ -143,15 +140,14 @@ export async function loadProjectDraft(): Promise<ProjectDraft> {
   }
 }
 
-/** 保存项目设置到 project.config.json（保留未编辑字段由草稿整体写回），并更新 store 项目名 */
+/** 保存项目设置到 project.config.json（保留未编辑字段由草稿整体写回），并同步 store */
 export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   const p = getProjectStore();
   if (!p.currentPath) throw new Error("尚未打开项目，无法保存设置");
   const next: Record<string, unknown> = {
-    name: draft.name.trim() || p.projectName,
-    packageName: draft.packageName.trim(),
     version: draft.version.trim() || "0.0.1",
     description: draft.description.trim(),
+    mainScene: draft.mainScene.trim(),
     designResolution: {
       width: clampInt(draft.designWidth, 1, 16384),
       height: clampInt(draft.designHeight, 1, 16384),
@@ -163,7 +159,6 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
     renderer: draft.renderer,
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
-  p.setProjectName(String(next.name));
   p.setRendererBackend(draft.renderer);
-  logStore.log("success", `已保存项目设置: ${next.name}`, "toolbar");
+  logStore.log("success", "已保存项目设置", "toolbar");
 }

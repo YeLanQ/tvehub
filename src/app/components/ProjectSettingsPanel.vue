@@ -6,6 +6,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 import { getProjectStore } from "../stores/project";
+import { getAssetsStore } from "../stores/assets";
 import { logStore } from "../stores/log";
 import {
   groupResolutionPresets,
@@ -19,13 +20,13 @@ import {
 import "../../styles/components/project-settings.scss";
 
 const projectStore = getProjectStore();
+const assetsStore = getAssetsStore();
 
-type SettingsCat = "basic" | "display" | "about";
+type SettingsCat = "basic" | "display";
 const cat = ref<SettingsCat>("basic");
 const CATS: { id: SettingsCat; label: string }[] = [
   { id: "basic", label: "基础信息" },
   { id: "display", label: "显示与运行" },
-  { id: "about", label: "关于" },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -37,7 +38,13 @@ const resolutionPreset = computed(() =>
 );
 
 const configFileName = PROJECT_CONFIG_REL;
-const scenePath = "assets/Main.scene";
+
+/** 项目内可选主场景（.scene 资产路径列表） */
+const projectScenes = computed(() =>
+  assetsStore.assets
+    .filter((a) => a.kind === "scene" && !a.path.endsWith("/"))
+    .map((a) => a.path),
+);
 
 function close(): void {
   projectStore.closeSettings();
@@ -60,6 +67,8 @@ async function save(): Promise<void> {
 onMounted(async () => {
   cat.value = "basic";
   draft.value = await loadProjectDraft();
+  // 刷新资产列表以提供主场景下拉选项
+  if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
 });
 </script>
 
@@ -92,14 +101,6 @@ onMounted(async () => {
             <section v-if="cat === 'basic'" class="ps-section">
               <h3 class="ps-section-title">基础信息</h3>
               <div class="ps-field">
-                <label for="ps-name">项目名</label>
-                <input id="ps-name" v-model="draft.name" placeholder="项目名称" />
-              </div>
-              <div class="ps-field">
-                <label for="ps-pkg">包名</label>
-                <input id="ps-pkg" v-model="draft.packageName" placeholder="如 com.example.game" />
-              </div>
-              <div class="ps-field">
                 <label for="ps-version">版本</label>
                 <input id="ps-version" v-model="draft.version" placeholder="0.0.1" />
               </div>
@@ -111,6 +112,13 @@ onMounted(async () => {
                   rows="2"
                   placeholder="项目描述（可选）"
                 ></textarea>
+              </div>
+              <div class="ps-field">
+                <label for="ps-main-scene">主场景</label>
+                <select id="ps-main-scene" v-model="draft.mainScene">
+                  <option value="">未设置（默认空）</option>
+                  <option v-for="s in projectScenes" :key="s" :value="s">{{ s }}</option>
+                </select>
               </div>
             </section>
 
@@ -181,31 +189,6 @@ onMounted(async () => {
               <p class="ps-note">
                 渲染后端在编辑器启动/重载视口时生效；WebGPU 与 WebGL 的后端在运行时不可切换，
                 修改后请重新打开编辑器查看效果。
-              </p>
-            </section>
-
-            <!-- 关于 -->
-            <section v-else class="ps-section">
-              <h3 class="ps-section-title">关于</h3>
-              <div class="ps-kv">
-                <span class="ps-k">项目名</span>
-                <span class="ps-v mono">{{ projectStore.projectName ?? "—" }}</span>
-              </div>
-              <div class="ps-kv">
-                <span class="ps-k">项目路径</span>
-                <span class="ps-v mono">{{ projectStore.currentPath ?? "—" }}</span>
-              </div>
-              <div class="ps-kv">
-                <span class="ps-k">主场景</span>
-                <span class="ps-v mono">{{ scenePath }}</span>
-              </div>
-              <div class="ps-kv">
-                <span class="ps-k">设置文件</span>
-                <span class="ps-v mono">{{ configFileName }}</span>
-              </div>
-              <p class="ps-note">
-                项目设置与场景数据分开存放：场景内容保存在 {{ scenePath }}，
-                显示/包信息等配置保存在 {{ configFileName }}。
               </p>
             </section>
           </template>
