@@ -5,7 +5,7 @@ import NumberField from "../NumberField.vue";
 defineProps<{ node: LightNode; rev?: number }>();
 
 const emit = defineEmits<{
-  update: [label: string];
+  update: [label: string, value: unknown];
 }>();
 
 function numToHex(v: number): string {
@@ -15,14 +15,24 @@ function numToHex(v: number): string {
 function onColorHex(hex: string): void {
   const n = parseInt(hex.replace("#", ""), 16);
   if (Number.isNaN(n)) return;
-  emit("update", "Set Light Color");
+  emit("update", "Set Light Color", n);
+}
+
+function onKindChange(e: Event): void {
+  const value = (e.target as HTMLSelectElement).value as LightNode["lightKind"];
+  emit("update", "Set Light Kind", value);
+}
+
+function onShadowChange(e: Event): void {
+  const checked = (e.target as HTMLInputElement).checked;
+  emit("update", "Toggle Shadow", checked);
 }
 </script>
 
 <template>
   <div class="field" :data-rev="rev">
     <label>Kind</label>
-    <select :value="node.lightKind" @change="emit('update', 'Set Light Kind')">
+    <select :value="node.lightKind" @change="onKindChange($event)">
       <option value="point">Point</option>
       <option value="directional">Directional</option>
       <option value="ambient">Ambient</option>
@@ -34,7 +44,7 @@ function onColorHex(hex: string): void {
       :model-value="node.intensity"
       :step="0.1"
       title="Intensity"
-      @commit="() => emit('update', 'Set Intensity')"
+      @commit="(v) => emit('update', 'Set Intensity', v)"
     />
   </div>
   <div class="field">
@@ -46,7 +56,7 @@ function onColorHex(hex: string): void {
     <input
       type="checkbox"
       :checked="node.castShadow"
-      @change="emit('update', 'Toggle Shadow')"
+      @change="onShadowChange($event)"
     />
   </div>
 </template>

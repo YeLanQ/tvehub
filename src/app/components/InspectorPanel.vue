@@ -59,24 +59,67 @@ function onTransformChange(axis: "position" | "rotation" | "scale", part: "x" | 
   setTransformAxis(axis, part, value);
 }
 
-function onMeshUpdate(label: string): void {
+function onMeshUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
-  commit((_n) => {
-    // 实际更新在模板中处理
+  commit((node) => {
+    const mesh = node as MeshNode;
+    switch (label) {
+      case "Set Geometry":
+        mesh.geometry = value as MeshNode["geometry"];
+        break;
+      case "Set Color":
+        mesh.color = value as number;
+        break;
+      case "Set Metalness":
+        mesh.metalness = value as number;
+        break;
+      case "Set Roughness":
+        mesh.roughness = value as number;
+        break;
+    }
   }, label);
 }
 
-function onLightUpdate(label: string): void {
+function onLightUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof LightNode)) return;
-  commit(() => {}, label);
+  commit((node) => {
+    const light = node as LightNode;
+    switch (label) {
+      case "Set Light Kind":
+        light.lightKind = value as LightNode["lightKind"];
+        break;
+      case "Set Light Color":
+        light.lightColor = value as number;
+        break;
+      case "Set Intensity":
+        light.intensity = value as number;
+        break;
+      case "Toggle Shadow":
+        light.castShadow = value as boolean;
+        break;
+    }
+  }, label);
 }
 
-function onCameraUpdate(label: string): void {
+function onCameraUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof CameraNode)) return;
-  commit(() => {}, label);
+  commit((node) => {
+    const camera = node as CameraNode;
+    switch (label) {
+      case "Set Fov":
+        camera.fov = value as number;
+        break;
+      case "Set Near":
+        camera.near = value as number;
+        break;
+      case "Set Far":
+        camera.far = value as number;
+        break;
+    }
+  }, label);
 }
 
 function onAddComponent(type: string): void {
