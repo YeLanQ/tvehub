@@ -8,14 +8,32 @@
   padding: 0 12px;
 }
 
-/* 项目信息：项目名 + 场景路径（上下层） */
+/* 项目信息：项目名 + 场景路径（上下层）；点击打开项目设置 */
 .project-info {
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
   min-width: 0;
-  padding: 3px 6px;
+  padding: 3px 20px 3px 6px;
   border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.project-info:hover,
+.project-info.open {
+  background: var(--bg-hover);
+}
+
+.project-gear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
 }
 
 .project-name {

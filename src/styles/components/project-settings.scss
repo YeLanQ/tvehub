@@ -1,0 +1,258 @@
+/* 项目设置面板（Unity Project Settings 风格：左标签栏 + 右内容页）。
+   只使用全局颜色变量（见 styles/global.scss），随主题切换。 */
+
+.ps-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.ps-modal {
+  width: 740px;
+  height: 580px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* ---------- 头部 ---------- */
+.ps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ps-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ps-close {
+  padding: 2px 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.ps-close:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* ---------- 主体：左右两栏 ---------- */
+.ps-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* 左：分类标签栏 */
+.ps-nav {
+  width: 168px;
+  flex-shrink: 0;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.ps-nav-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ps-nav-item:hover {
+  background: var(--bg-hover);
+}
+.ps-nav-item.active {
+  background: var(--bg-active);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 右：内容页 */
+.ps-content {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.ps-section-title {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.ps-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ps-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ps-field > label {
+  width: 88px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: left;
+}
+
+.ps-field input[type="text"],
+.ps-field input:not([type]),
+.ps-field textarea,
+.ps-field select {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+.ps-field input:focus,
+.ps-field select:focus,
+.ps-field textarea:focus {
+  border-color: var(--accent);
+}
+.ps-field textarea {
+  resize: vertical;
+  min-height: 42px;
+}
+
+/* 设计分辨率数值槽 */
+.ps-field input[type="number"] {
+  width: 84px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+.ps-field input[type="number"]::-webkit-outer-spin-button,
+.ps-field input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ps-field input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.ps-res {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+}
+.ps-x {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.ps-preset {
+  flex: 0 0 auto;
+  width: 118px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+/* 关于页 key-value */
+.ps-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ps-k {
+  width: 88px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.ps-v {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+}
+.ps-note {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.ps-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 12px;
+}
+
+/* ---------- 底部 ---------- */
+.ps-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ps-hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ps-hint code {
+  color: var(--text);
+}

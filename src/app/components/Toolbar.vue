@@ -51,10 +51,16 @@ async function save(): Promise<void> {
 
 <template>
   <div class="toolbar-groups">
-    <!-- 项目信息：项目名 + 场景路径（上下层） -->
-    <div class="project-info" :title="projectStore.currentPath ?? ''">
+    <!-- 项目信息：点击打开/关闭项目设置面板 -->
+    <div
+      class="project-info"
+      :class="{ open: projectStore.settingsOpen }"
+      :title="projectStore.currentPath ?? ''"
+      @click="projectStore.settingsOpen ? projectStore.closeSettings() : projectStore.openSettings()"
+    >
       <span class="project-name">{{ projectName }}</span>
       <span class="scene-name mono">assets/Main.scene</span>
+      <span class="project-gear" title="项目设置">⚙</span>
     </div>
 
     <button class="toolbar-build" title="构建（占位）" @click="logStore.log('info', '构建功能待接入', 'toolbar')">

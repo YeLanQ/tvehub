@@ -17,8 +17,12 @@ export interface ProjectStore {
   currentPath: string | null;
   /** 当前打开项目名称 */
   projectName: string | null;
+  /** 项目设置面板是否打开 */
+  settingsOpen: boolean;
   setView: (view: "home" | "editor") => void;
   setProjectName: (name: string | null) => void;
+  openSettings: () => void;
+  closeSettings: () => void;
   addRecent: (project: RecentProject) => void;
   removeRecent: (path: string) => void;
   clearRecent: () => void;
@@ -46,6 +50,7 @@ export function getProjectStore(): ProjectStore {
     sceneJson: null as string | null,
     currentPath: null as string | null,
     projectName: null as string | null,
+    settingsOpen: false,
   });
 
   const store: ProjectStore = {
@@ -67,11 +72,21 @@ export function getProjectStore(): ProjectStore {
     get projectName() {
       return state.projectName;
     },
+    get settingsOpen() {
+      return state.settingsOpen;
+    },
     setView(view) {
       state.view = view;
     },
     setProjectName(name) {
       state.projectName = name;
+    },
+    openSettings() {
+      if (!state.currentPath || state.view !== "editor") return;
+      state.settingsOpen = true;
+    },
+    closeSettings() {
+      state.settingsOpen = false;
     },
     addRecent(project) {
       state.recent = [
@@ -104,6 +119,7 @@ export function getProjectStore(): ProjectStore {
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
+        state.settingsOpen = false;
         state.view = "editor";
         return true;
       } catch (e) {
@@ -126,6 +142,7 @@ export function getProjectStore(): ProjectStore {
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
+        state.settingsOpen = false;
         state.view = "editor";
         return info;
       } catch (e) {

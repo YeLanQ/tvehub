@@ -12,6 +12,7 @@ import AssetsPanel from "./app/components/AssetsPanel.vue";
 import HomeView from "./app/components/HomeView.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
+import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
@@ -155,5 +156,7 @@ onMounted(() => {
     <ConfirmDialog />
     <!-- 全局输入弹窗 -->
     <PromptDialog />
+    <!-- 项目设置面板（点击工具栏“项目信息”打开） -->
+    <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
   </div>
 </template>
