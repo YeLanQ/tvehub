@@ -12,12 +12,20 @@ pub fn sibling_with_meta(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// 该相对路径资产是否应生成 .meta（排除隐藏项与已存在的 .meta 本身）
+/// 该相对路径资源是否应自动生成 .meta：
+/// - 只对编辑器管理的资源目录 `assets/` 与 `src/` 下的文件生成；
+/// - 排除根级配置文件（project.config.json 等）与任何隐藏项 / `.meta` 本身。
 pub fn is_meta_candidate(_root: &Path, rel: &str) -> bool {
-    if rel.starts_with('.') || rel.ends_with(".meta") {
+    if rel.ends_with(".meta") {
         return false;
     }
-    true
+    // 隐藏项（如 `.git`、`.hidden`）不管理
+    if rel.starts_with('.') || rel.split('/').any(|s| s.starts_with('.')) {
+        return false;
+    }
+    // 仅 assets/ 与 src/ 目录内的资源生成（配置文件在项目根，如 project.config.json）
+    let first = rel.split('/').next().unwrap_or("");
+    first == "assets" || first == "src"
 }
 
 /// 读取资产 .meta 文档（不存在返回 null）。

@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "description": "",
+  "mainScene": "assets/Main.scene",
+  "designResolution": {
+    "width": 1280,
+    "height": 720
+  },
+  "orientation": "landscape",
+  "scaleMode": "fixedauto",
+  "hdrMode": "ldr",
+  "antiAliasing": 2,
+  "renderer": "webgl"
+}

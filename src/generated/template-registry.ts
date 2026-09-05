@@ -8,6 +8,7 @@ export const PROJECT_TEMPLATES: BuiltinProjectTemplateInfo[] = [
     "description": "默认 3D 场景",
     "kind": "3d",
     "files": [
+      "project.config.json",
       "assets/Main.scene",
       "src/main.ts"
     ]
