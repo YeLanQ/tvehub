@@ -170,6 +170,18 @@ onMounted(async () => {
                   <option :value="8">MSAA 8x</option>
                 </select>
               </div>
+              <div class="ps-field">
+                <label for="ps-renderer">渲染后端</label>
+                <select id="ps-renderer" v-model="draft.renderer">
+                  <option value="webgl">WebGL（稳定）</option>
+                  <option value="webgpu">WebGPU（实验，不可用时自动回退 WebGL2）</option>
+                  <option value="auto">自动（优先 WebGPU）</option>
+                </select>
+              </div>
+              <p class="ps-note">
+                渲染后端在编辑器启动/重载视口时生效；WebGPU 与 WebGL 的后端在运行时不可切换，
+                修改后请重新打开编辑器查看效果。
+              </p>
             </section>
 
             <!-- 关于 -->

@@ -1,10 +1,27 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+export type RendererBackend = "webgl" | "webgpu" | "auto";
+
+/** 与具体后端解耦的最小渲染器接口（WebGLRenderer / WebGPURenderer 共用） */
+interface RendererHandle {
+  domElement: HTMLCanvasElement;
+  shadowMap: { enabled: boolean; type: number };
+  setPixelRatio(value?: number): void;
+  setSize(width: number, height: number, updateStyle?: boolean): void;
+  render(scene: THREE.Object3D, camera: THREE.Camera): void;
+  dispose(): void;
+}
+
 /**
  * 渲染器管理：编辑器视口渲染。
  *
  * 渲染设计要点：
+ * - 支持项目设置里选择的渲染后端（webgl / webgpu / auto）：
+ *   - webgl → 经典 WebGLRenderer（默认、稳定）；
+ *   - webgpu / auto → 动态 import three/webgpu 的 WebGPURenderer；three 0.185
+ *     在 WebGPU 不可用时会自动回退 WebGL2 后端（内部 getFallback）；构造失败时
+ *     这里再兜底回退 WebGLRenderer。运行时不可切换，修改后需重新挂载。
  * - 编辑器使用独立的自由轨道相机（editorCamera / OrbitControls）；
  * - 场景“真实渲染相机”（CameraNode 预览）是另一个独立相机，通过
  *   registerCamera / setActiveCamera 切换，互不影响；
@@ -15,7 +32,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 export class RendererManager {
   readonly scene = new THREE.Scene();
   camera!: THREE.PerspectiveCamera;
-  renderer!: THREE.WebGLRenderer;
+  private renderer!: RendererHandle;
+  /** 实际生效的后端（webgl 或 webgpu），供日志/诊断 */
+  activeBackend: RendererBackend | "webgpu" = "webgl";
   private orbit!: OrbitControls;
   private container!: HTMLElement;
   private raf = 0;
@@ -34,9 +53,18 @@ export class RendererManager {
   private appliedW = 0;
   private appliedH = 0;
 
-  mount(container: HTMLElement): void {
+  async mount(
+    container: HTMLElement,
+    options?: { renderer?: RendererBackend },
+  ): Promise<void> {
     this.container = container;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    const backend = options?.renderer ?? "webgl";
+    this.renderer = await createRendererHandle(backend, (actual) => {
+      this.activeBackend = actual;
+    });
+    if (this.activeBackend !== "webgl") {
+      console.info("[renderer] 渲染后端: WebGPU（WebGPU 不可用时 three 自动回退 WebGL2）");
+    }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
 
@@ -150,5 +178,45 @@ export class RendererManager {
   get aspect(): number {
     if (this.appliedW > 0 && this.appliedH > 0) return this.appliedW / this.appliedH;
     return this.camera ? this.camera.aspect : 1;
+  }
+}
+
+/**
+ * 按后端创建渲染器：
+ * - webgl → WebGLRenderer（稳定默认）；
+ * - webgpu / auto → 动态加载 WebGPURenderer（three 内置 WebGL2 自动回退）；
+ *   构造异常或模块不可用时兜底回退 WebGLRenderer。
+ */
+async function createRendererHandle(
+  backend: RendererBackend,
+  onCreated: (actual: RendererBackend | "webgpu") => void,
+): Promise<RendererHandle> {
+  const fallback = (why?: string): RendererHandle => {
+    if (why) console.warn(`[renderer] 使用 WebGLRenderer: ${why}`);
+    onCreated("webgl");
+    return new THREE.WebGLRenderer({ antialias: true }) as unknown as RendererHandle;
+  };
+
+  if (backend === "webgl") return fallback();
+
+  try {
+    const mod = (await import("three/webgpu")) as unknown as {
+      WebGPURenderer?: unknown;
+      default?: unknown;
+    };
+    const Ctor = mod.WebGPURenderer ?? mod.default;
+    if (typeof Ctor !== "function") throw new Error("WebGPURenderer not exported");
+    const instance = new (Ctor as new (params?: { forceWebGL?: boolean }) => unknown)({
+      forceWebGL: false,
+    });
+    // WebGPU 后端为异步初始化：必须先 await renderer.init() 再 render()（WebGL 无此要求）
+    const maybeInit = instance as { init?: () => Promise<void> };
+    if (typeof maybeInit.init === "function") {
+      await maybeInit.init();
+    }
+    onCreated("webgpu");
+    return instance as RendererHandle;
+  } catch (e) {
+    return fallback(`WebGPU 不可用或初始化失败（${String(e)}），已回退 WebGL2/WebGL`);
   }
 }

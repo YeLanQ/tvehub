@@ -4,6 +4,7 @@ import { setupStarterScene } from "../../framework/engine/starterScene";
 import { loadSceneFromJson } from "../../framework/engine/loadScene";
 import type { Node } from "../../framework/prototype/Node";
 import { logStore } from "./log";
+import { getProjectStore } from "./project";
 
 export type ViewMode = "scene" | "preview" | "script";
 
@@ -32,6 +33,8 @@ export interface EditorStore {
 }
 
 let singleton: EditorStore | null = null;
+/** 挂载任务去重：引擎挂载是异步的（渲染后端可能动态加载），并发调用共享同一任务 */
+let mountTask: Promise<void> | null = null;
 
 /**
  * 应用层状态桥接：让框架引擎的事件（graph / selection / gizmo / history）
@@ -130,17 +133,24 @@ export function getEditorStore(): EditorStore {
   return store;
 }
 
-export function mountEditor(container: HTMLElement, sceneJson?: string | null): void {
+export function mountEditor(container: HTMLElement, sceneJson?: string | null): Promise<void> {
   const store = getEditorStore() as EditorStore & { markMounted: () => void };
-  if (store.state.mounted) return;
-  store.engine.mount(container);
-  if (sceneJson) loadSceneFromJson(store.engine, sceneJson);
-  else setupStarterScene(store.engine);
-  store.markMounted();
-  logStore.log("info", "编辑器已就绪", "engine");
+  if (store.state.mounted) return Promise.resolve();
+  if (!mountTask) {
+    mountTask = (async () => {
+      const projectStore = getProjectStore();
+      await store.engine.mount(container, { renderer: projectStore.rendererBackend });
+      if (sceneJson) loadSceneFromJson(store.engine, sceneJson);
+      else setupStarterScene(store.engine);
+      store.markMounted();
+      logStore.log("info", "编辑器已就绪", "engine");
+    })();
+  }
+  return mountTask;
 }
 
 export function disposeEditor(): void {
+  mountTask = null;
   if (!singleton) return;
   singleton.engine.dispose();
   singleton = null;

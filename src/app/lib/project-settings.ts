@@ -11,6 +11,9 @@ export const PROJECT_CONFIG_REL = "project.config.json";
 
 export type Orientation = "auto" | "portrait" | "landscape";
 
+/** 渲染后端：webgl / webgpu（three 自动 WebGL 回退）/ auto */
+export type RendererBackend = "webgl" | "webgpu" | "auto";
+
 /** 项目设置表单草稿（保存前不落盘） */
 export interface ProjectDraft {
   name: string;
@@ -25,6 +28,8 @@ export interface ProjectDraft {
   hdrMode: "hdr" | "ldr";
   /** 抗锯齿（MSAA 采样数：0=无，2/4/8） */
   antiAliasing: number;
+  /** 渲染后端（编辑器视口使用；webgpu 不可用时 three 会自动回退 WebGL2） */
+  renderer: RendererBackend;
 }
 
 /** 常用分辨率预设（label 即「宽 × 高」，竖屏/横屏分组） */
@@ -95,6 +100,7 @@ export function defaultDraft(): ProjectDraft {
     scaleMode: "fixedauto",
     hdrMode: "ldr",
     antiAliasing: 2,
+    renderer: "webgl",
   };
 }
 
@@ -120,6 +126,7 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
     antiAliasing: typeof cfg.antiAliasing === "number"
       ? clampInt(cfg.antiAliasing, 0, 8)
       : d.antiAliasing,
+    renderer: cfg.renderer === "webgpu" || cfg.renderer === "auto" ? cfg.renderer : "webgl",
   };
 }
 
@@ -153,8 +160,10 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
     scaleMode: draft.scaleMode,
     hdrMode: draft.hdrMode,
     antiAliasing: clampInt(draft.antiAliasing, 0, 8),
+    renderer: draft.renderer,
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
   p.setProjectName(String(next.name));
+  p.setRendererBackend(draft.renderer);
   logStore.log("success", `已保存项目设置: ${next.name}`, "toolbar");
 }

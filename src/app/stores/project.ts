@@ -1,11 +1,15 @@
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { api } from "../../lib/api";
 
 export interface RecentProject {
   name: string;
   path: string;
   sceneCount: number;
 }
+
+/** 编辑器渲染后端偏好（来自项目设置） */
+export type RendererBackend = "webgl" | "webgpu" | "auto";
 
 export interface ProjectStore {
   recent: RecentProject[];
@@ -19,6 +23,9 @@ export interface ProjectStore {
   projectName: string | null;
   /** 项目设置面板是否打开 */
   settingsOpen: boolean;
+  /** 编辑器渲染后端（读取项目 project.config.json 的 renderer 字段） */
+  rendererBackend: RendererBackend;
+  setRendererBackend: (v: RendererBackend) => void;
   setView: (view: "home" | "editor") => void;
   setProjectName: (name: string | null) => void;
   openSettings: () => void;
@@ -51,7 +58,20 @@ export function getProjectStore(): ProjectStore {
     currentPath: null as string | null,
     projectName: null as string | null,
     settingsOpen: false,
+    rendererBackend: "webgl" as RendererBackend,
   });
+
+  /** 读取项目 project.config.json 中的渲染后端偏好（文件缺失/损坏回退 WebGL） */
+  async function loadRendererBackend(root: string): Promise<void> {
+    try {
+      const text = await api.readText(root, "project.config.json");
+      const cfg = JSON.parse(text) as Record<string, unknown>;
+      const r = cfg.renderer;
+      state.rendererBackend = r === "webgpu" || r === "auto" || r === "webgl" ? r : "webgl";
+    } catch {
+      state.rendererBackend = "webgl";
+    }
+  }
 
   const store: ProjectStore = {
     get recent() {
@@ -74,6 +94,12 @@ export function getProjectStore(): ProjectStore {
     },
     get settingsOpen() {
       return state.settingsOpen;
+    },
+    get rendererBackend() {
+      return state.rendererBackend;
+    },
+    setRendererBackend(v) {
+      state.rendererBackend = v;
     },
     setView(view) {
       state.view = view;
@@ -116,6 +142,7 @@ export function getProjectStore(): ProjectStore {
       try {
         const info = await invoke<RecentProject>("open_project", { path });
         await store.loadScene(info.path);
+        await loadRendererBackend(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
@@ -139,6 +166,7 @@ export function getProjectStore(): ProjectStore {
           files,
         });
         await store.loadScene(info.path);
+        await loadRendererBackend(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);

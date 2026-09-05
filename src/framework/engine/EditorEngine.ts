@@ -26,7 +26,7 @@ import {
   type GeometryKind,
 } from "../prototype/derived/Primitives";
 import { degToRad, type JsonRecord } from "../prototype/types";
-import { RendererManager } from "./modules/RendererManager";
+import { RendererManager, type RendererBackend } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
@@ -97,8 +97,11 @@ export class EditorEngine {
 
   // ===================== 生命周期 =====================
 
-  mount(container: HTMLElement): void {
-    this.renderer.mount(container);
+  async mount(
+    container: HTMLElement,
+    options?: { renderer?: RendererBackend },
+  ): Promise<void> {
+    await this.renderer.mount(container, options);
     this.initGizmo();
     this.renderer.setRenderCb(() => {
       this.gizmo.updateSelectionBox();
