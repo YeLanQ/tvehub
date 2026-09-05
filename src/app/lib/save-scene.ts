@@ -24,10 +24,12 @@ export async function saveCurrentSceneToMain(): Promise<void> {
   } catch {
     data = null;
   }
-  const out = {
+  const out: Record<string, unknown> = {
     ...(data && typeof data === "object" ? (data as object) : {}),
-    root: getEditorStore().engine.graph.toJSON(),
   };
+  // 场景图为空时（无根节点）不覆盖 root，避免把有效场景写成空场景丢失内容。
+  const rootJson = getEditorStore().engine.graph.toJSON();
+  if (rootJson) out.root = rootJson;
   await invoke("write_text", {
     root: path,
     rel: MAIN_SCENE_REL,

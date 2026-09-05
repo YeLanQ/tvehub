@@ -195,7 +195,10 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
         }
         if (refs.length) await engine.materials.preload(refs);
         if (engine.isDisposed()) return;
-        loadSceneFromJson(engine, text);
+        // 空/损坏场景（含旧版 "empty" 魔法标记）解析失败时回退到初始场景，避免白屏报错
+        if (!loadSceneFromJson(engine, text)) {
+          setupStarterScene(engine);
+        }
       } else {
         await engine.materials.preload([DEFAULT_MATERIAL_REL]);
         if (engine.isDisposed()) return;

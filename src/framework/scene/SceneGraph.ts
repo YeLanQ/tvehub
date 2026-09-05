@@ -94,6 +94,8 @@ export class SceneGraph {
     this.nodes.set(node.id, node);
     if (node.parentId) {
       this.nodes.get(node.parentId)?.addChildId(node.id);
+    } else if (!this.rootId) {
+      this.rootId = node.id;
     }
     this.emit({ kind: "add", nodeId: node.id });
   }
@@ -193,7 +195,7 @@ export class SceneGraph {
     return false;
   }
 
-  toJSON(): JsonRecord {
+  toJSON(): JsonRecord | null {
     const serialize = (node: Node): JsonRecord => {
       const children: JsonRecord[] = node.childIds
         .map((cid) => this.nodes.get(cid))
@@ -204,6 +206,6 @@ export class SceneGraph {
       return json;
     };
     const root = this.root;
-    return root ? (serialize(root) as JsonRecord) : { type: "empty" };
+    return root ? (serialize(root) as JsonRecord) : null;
   }
 }
