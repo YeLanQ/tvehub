@@ -17,6 +17,6 @@ export const THEME_COLOR_DEFS: ThemeColorDef[] = [
   { label: "面板背景", defaultValue: "#252540" },
   { label: "强调色", defaultValue: "#4aa3ff" },
   { label: "文本色", defaultValue: "#e8e8e8" },
-  { label: "边框色", defaultValue: "#3a3a5a" },
+  { label: "边框色", defaultValue: "#3f3f3f" },
   { label: "悬停色", defaultValue: "#2d2d4a" },
 ];
