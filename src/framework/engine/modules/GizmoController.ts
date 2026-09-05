@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import type { TransformSnapshot } from "../../command/commands";
+import { radToDeg } from "../../prototype/types";
 import { sameTransform } from "./utils";
 
 export type GizmoMode = "translate" | "rotate" | "scale";
@@ -128,9 +129,10 @@ export class GizmoController {
   private getTransformSnapshot(): TransformSnapshot | null {
     const obj = this.selectedId ? this.objectMap.get(this.selectedId) ?? null : null;
     if (!obj) return null;
+    const rotation = radToDeg({ x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z });
     return {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-      rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+      rotation,
       scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
     };
   }
@@ -142,9 +144,10 @@ export class GizmoController {
     if (!id || !before) return;
     const obj = this.objectMap.get(id) ?? null;
     if (!obj) return;
+    const rotation = radToDeg({ x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z });
     const after: TransformSnapshot = {
       position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-      rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+      rotation,
       scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
     };
     if (sameTransform(before, after)) return;

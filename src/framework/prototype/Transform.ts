@@ -18,6 +18,7 @@ export class Transform extends Prototype {
   readonly typeKey: string = Transform.kType;
 
   position: Vec3;
+  /** Euler rotation in degrees (stored in the model; radians are used at the renderer). */
   rotation: Euler;
   scale: Vec3;
 
@@ -41,6 +42,7 @@ export class Transform extends Prototype {
     this.position = { x, y, z };
   }
 
+  /** Sets rotation from Euler angles in degrees. */
   setRotation(x: number, y: number, z: number): void {
     this.rotation = { x, y, z };
   }

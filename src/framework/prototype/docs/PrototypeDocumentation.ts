@@ -205,7 +205,7 @@ export interface NodePrototypeDoc {
   transform: {
     /** 位置 */
     position: { x: number; y: number; z: number };
-    /** 旋转 (欧拉角，单位：弧度) */
+    /** 旋转 (欧拉角，单位：度) */
     rotation: { x: number; y: number; z: number };
     /** 缩放 */
     scale: { x: number; y: number; z: number };
@@ -428,7 +428,7 @@ export interface TransformPrototypeDoc {
   /**
    * 旋转
    * 
-   * 欧拉角（x, y, z），单位：弧度
+   * 欧拉角（x, y, z），单位：度
    */
   rotation: { x: number; y: number; z: number };
 

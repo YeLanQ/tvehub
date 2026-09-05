@@ -6,6 +6,7 @@ import {
   LightNode,
   CameraNode,
 } from "../../prototype/derived/Primitives";
+import { degToRad } from "../../prototype/types";
 import { disposeObject3D, buildGeometry } from "./utils";
 
 export class SceneSynchronizer {
@@ -125,7 +126,8 @@ export class SceneSynchronizer {
     const obj = this.objectMap.get(node.id);
     if (!obj) return;
     obj.position.set(node.transform.position.x, node.transform.position.y, node.transform.position.z);
-    obj.rotation.set(node.transform.rotation.x, node.transform.rotation.y, node.transform.rotation.z);
+    const rotRad = degToRad(node.transform.rotation);
+    obj.rotation.set(rotRad.x, rotRad.y, rotRad.z);
     obj.scale.set(node.transform.scale.x, node.transform.scale.y, node.transform.scale.z);
   }
 
