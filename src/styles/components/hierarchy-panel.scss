@@ -107,30 +107,19 @@
 }
 
 .badge {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
-  border-radius: 3px;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  font-size: 9px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--text-dim);
 
-  &.node {
-    background: #6a6a6a;
-  }
-
-  &.meshNode {
-    background: #9a9a9a;
-  }
-
-  &.lightNode {
-    background: #8a8a8a;
-  }
-
-  &.cameraNode {
-    background: #7a7a7a;
+  .badge-icon {
+    width: 100%;
+    height: 100%;
   }
 }
 

@@ -51,6 +51,20 @@ export const LIGHT_SPOT_ICON_PATHS: string[] = [
 /** 兼容别名：通用“灯光”默认按点光源灯泡渲染 */
 export const LIGHT_ICON_PATHS: string[] = LIGHT_POINT_ICON_PATHS;
 
+/** 网格节点：三维线框立方体 */
+export const MESH_ICON_PATHS: string[] = [
+  "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+  "m3.3 7 8.7 5 8.7-5",
+  "M12 22V12",
+];
+
+/** 空节点 / 组：层叠块 */
+export const GROUP_ICON_PATHS: string[] = [
+  "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+  "M22 17.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65",
+  "M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

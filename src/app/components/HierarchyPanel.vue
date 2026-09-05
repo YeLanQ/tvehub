@@ -5,6 +5,15 @@ import type { Node } from "../../framework/prototype/Node";
 import type { GeometryKind, LightKind } from "../../framework/prototype/derived/Primitives";
 import type { MoveTarget } from "../../framework/command/commands";
 import {
+  CAMERA_ICON_PATHS,
+  MESH_ICON_PATHS,
+  GROUP_ICON_PATHS,
+  LIGHT_POINT_ICON_PATHS,
+  LIGHT_DIRECTIONAL_ICON_PATHS,
+  LIGHT_AMBIENT_ICON_PATHS,
+  LIGHT_SPOT_ICON_PATHS,
+} from "../../framework/engine/modules/helpers/icons";
+import {
   openContextMenu,
   menuSeparator,
   type CtxMenuItem,
@@ -14,7 +23,19 @@ import "../../styles/components/hierarchy-panel.scss";
 const store = getEditorStore();
 const { state, engine } = store;
 
-const typeBadge: Record<string, string> = {
+/** 节点类型 → SVG 图标路径 + 颜色（与引擎视口/资产图标共用同一份路径数据） */
+const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
+  node: { d: GROUP_ICON_PATHS, color: "#9aa4b2" },
+  meshNode: { d: MESH_ICON_PATHS, color: "#8ab4f8" },
+  cameraNode: { d: CAMERA_ICON_PATHS, color: "#4fc3f7" },
+  lightNode: { d: LIGHT_POINT_ICON_PATHS, color: "#ffb84d" },
+  pointLightNode: { d: LIGHT_POINT_ICON_PATHS, color: "#ffb84d" },
+  directionalLightNode: { d: LIGHT_DIRECTIONAL_ICON_PATHS, color: "#ffd166" },
+  ambientLightNode: { d: LIGHT_AMBIENT_ICON_PATHS, color: "#4dd0a1" },
+  spotLightNode: { d: LIGHT_SPOT_ICON_PATHS, color: "#ff9f43" },
+};
+
+const FALLBACK_BADGE: Record<string, string> = {
   node: "G",
   meshNode: "M",
   lightNode: "L",
@@ -348,7 +369,26 @@ onUnmounted(() => {
         @click="onRowClick(node.id, $event)"
         @contextmenu.prevent="onNodeContext($event, node.id)"
       >
-        <span class="badge" :class="node.typeKey">{{ typeBadge[node.typeKey] ?? "?" }}</span>
+        <span
+          class="badge"
+          :class="node.typeKey"
+          :style="{ color: NODE_ICONS[node.typeKey]?.color }"
+        >
+          <svg
+            v-if="NODE_ICONS[node.typeKey]"
+            class="badge-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path v-for="d in NODE_ICONS[node.typeKey].d" :key="d" :d="d" />
+          </svg>
+          <template v-else>{{ FALLBACK_BADGE[node.typeKey] ?? "?" }}</template>
+        </span>
         <span class="name">{{ node.name }}</span>
         <span v-if="!node.visible || !node.active" class="off mono">off</span>
       </div>
