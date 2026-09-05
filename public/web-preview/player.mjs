@@ -200,6 +200,21 @@ async function main() {
   }
 
   // ---------------------------------------------------------------- 渲染器
+  // “显示与运行”：预览画布按项目设计分辨率取景/渲染，再按缩放模式适配 iframe
+  // （noscale=原尺寸 / fixedwidth=等比宽度铺满 / fixedheight=等比高度铺满 /
+  //   fixedauto=等比完整显示(留边) / full=拉伸铺满）。
+  const designCfg =
+    cfg.designResolution &&
+    typeof cfg.designResolution === "object" &&
+    cfg.designResolution.width > 0 &&
+    cfg.designResolution.height > 0
+      ? {
+          width: Math.max(1, Math.round(cfg.designResolution.width)),
+          height: Math.max(1, Math.round(cfg.designResolution.height)),
+        }
+      : null;
+  const scaleMode =
+    typeof cfg.scaleMode === "string" && cfg.scaleMode ? cfg.scaleMode : "full";
   const renderer = new THREE.WebGLRenderer({
     antialias: cfg.antiAliasing !== 0,
   });
@@ -208,6 +223,7 @@ async function main() {
     cfg.hdrMode === "hdr" ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   renderer.shadowMap.enabled = true;
   app.appendChild(renderer.domElement);
+  const canvas = renderer.domElement;
 
   // 平行光/聚光阴影范围兜底（相机朝 -Z 时 target 世界矩阵由场景更新）
   scene.traverse((o) => {
@@ -217,12 +233,54 @@ async function main() {
     }
   });
 
+  let stageW = -1;
+  let stageH = -1;
   function resize() {
-    const w = Math.max(1, window.innerWidth || 1);
-    const h = Math.max(1, window.innerHeight || 1);
-    renderer.setSize(w, h, false);
-    cam.aspect = w / h;
+    const cw = Math.max(1, window.innerWidth || 1);
+    const ch = Math.max(1, window.innerHeight || 1);
+    if (!designCfg) {
+      // 未配置设计分辨率：直接铺满窗口渲染
+      if (stageW !== cw || stageH !== ch) {
+        renderer.setSize(cw, ch, false);
+        stageW = cw;
+        stageH = ch;
+      }
+      cam.aspect = cw / ch;
+      cam.updateProjectionMatrix();
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      return;
+    }
+    const dw = designCfg.width;
+    const dh = designCfg.height;
+    // 渲染缓冲 = 设计分辨率（相机取景比例固定为设计比例）
+    if (stageW !== dw || stageH !== dh) {
+      renderer.setSize(dw, dh, false);
+      stageW = dw;
+      stageH = dh;
+    }
+    cam.aspect = dw / dh;
     cam.updateProjectionMatrix();
+    // CSS 层按缩放模式把设计画面适配到预览窗口
+    let cssW = cw;
+    let cssH = ch;
+    if (scaleMode === "noscale") {
+      cssW = dw;
+      cssH = dh;
+    } else if (scaleMode === "fixedwidth") {
+      const s = cw / dw;
+      cssH = dh * s;
+    } else if (scaleMode === "fixedheight") {
+      const s = ch / dh;
+      cssW = dw * s;
+    } else if (scaleMode === "fixedauto") {
+      const s = Math.min(cw / dw, ch / dh);
+      cssW = dw * s;
+      cssH = dh * s;
+    }
+    // full（默认）：拉伸铺满
+    canvas.style.width = `${Math.max(1, cssW)}px`;
+    canvas.style.height = `${Math.max(1, cssH)}px`;
   }
   window.addEventListener("resize", resize);
   resize();
