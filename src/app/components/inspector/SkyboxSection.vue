@@ -12,6 +12,7 @@ import { SkyboxNode } from "../../../framework/prototype/derived/Primitives";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { useMaterialAssetOptions } from "../../lib/material-options";
 import { getAssetsStore } from "../../stores/assets";
+import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ node: SkyboxNode; rev?: number }>();
 
@@ -58,6 +59,20 @@ function onColorChange(key: "top" | "horizon" | "ground", hex: string): void {
   const label =
     key === "top" ? "Set Top Color" : key === "horizon" ? "Set Horizon Color" : "Set Ground Color";
   emit("update", label, hexToNum(hex));
+}
+
+function onSunDiskChange(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value;
+  emit("update", "Set Sun Disk", v);
+}
+
+function onSunColorChange(e: Event): void {
+  const hex = (e.target as HTMLInputElement).value;
+  emit("update", "Set Sun Color", hexToNum(hex));
+}
+
+function onSunNumber(label: string, v: number): void {
+  emit("update", label, v);
 }
 </script>
 
@@ -126,6 +141,72 @@ function onColorChange(key: "top" | "horizon" | "ground", hex: string): void {
         @change="onColorChange('ground', ($event.target as HTMLInputElement).value)"
       />
     </div>
+
+    <!-- 程序化天空专属：太阳参数 -->
+    <template v-if="node.skyKind === 'procedural'">
+      <div class="sky-sun-head">太阳</div>
+      <div class="field">
+        <label>太阳盘</label>
+        <select :value="node.sunDisk" @change="onSunDiskChange">
+          <option value="high">高精度（光晕）</option>
+          <option value="simple">简化（纯亮盘）</option>
+          <option value="none">无</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>太阳颜色</label>
+        <input
+          type="color"
+          :value="numToHex(node.sunColor)"
+          @input="onSunColorChange"
+          @change="onSunColorChange"
+        />
+      </div>
+      <div class="field">
+        <label>太阳大小</label>
+        <NumberField
+          :model-value="node.sunSize"
+          :step="0.5"
+          :min="0.2"
+          :max="30"
+          title="太阳盘半径（度）"
+          @commit="(v) => onSunNumber('Set Sun Size', v)"
+        />
+      </div>
+      <div class="field">
+        <label>光晕强度</label>
+        <NumberField
+          :model-value="node.sunGlow"
+          :step="0.05"
+          :min="0"
+          :max="1"
+          title="光晕强度（0~1；颜色与太阳颜色一致）"
+          @commit="(v) => onSunNumber('Set Sun Glow', v)"
+        />
+      </div>
+      <div class="field">
+        <label>方位角</label>
+        <NumberField
+          :model-value="node.sunAzimuth"
+          :step="5"
+          :min="0"
+          :max="360"
+          title="太阳方位角（度，0 = +X）"
+          @commit="(v) => onSunNumber('Set Sun Azimuth', v)"
+        />
+      </div>
+      <div class="field">
+        <label>仰角</label>
+        <NumberField
+          :model-value="node.sunElevation"
+          :step="1"
+          :min="0"
+          :max="360"
+          title="太阳仰角（度：0=地平线，90=天顶，180=对侧地平线，270=正下方，360=回到地平线）"
+          @commit="(v) => onSunNumber('Set Sun Elevation', v)"
+        />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -170,5 +251,13 @@ function onColorChange(key: "top" | "horizon" | "ground", hex: string): void {
 .sky-mat-btn:hover {
   border-color: var(--accent, #4a9eff);
   color: var(--accent, #4a9eff);
+}
+.sky-sun-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim, #999);
+  border-top: 1px solid var(--border, #333);
+  padding: 6px 0 2px;
+  margin-top: 4px;
 }
 </style>

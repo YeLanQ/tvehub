@@ -464,7 +464,19 @@ export class EditorEngine {
       }
       return;
     }
-    const sig = [sky.id, sky.skyKind, sky.topColor, sky.horizonColor, sky.groundColor].join("|");
+    const sig = [
+      sky.id,
+      sky.skyKind,
+      sky.topColor,
+      sky.horizonColor,
+      sky.groundColor,
+      sky.sunDisk,
+      sky.sunColor,
+      sky.sunSize,
+      sky.sunGlow,
+      sky.sunAzimuth,
+      sky.sunElevation,
+    ].join("|");
     if (this.skyApplied?.sig === sig) return;
     release();
     try {
