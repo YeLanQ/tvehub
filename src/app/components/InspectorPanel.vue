@@ -279,9 +279,6 @@ function onSkyboxUpdate(label: string, value: unknown): void {
   commit((target) => {
     const sky = target as SkyboxNode;
     switch (label) {
-      case "Set Sky Kind":
-        sky.skyKind = value as SkyboxNode["skyKind"];
-        break;
       case "Set Top Color":
         sky.topColor = (value as number) & 0xffffff;
         break;
@@ -293,6 +290,33 @@ function onSkyboxUpdate(label: string, value: unknown): void {
         break;
     }
   }, label);
+}
+
+/** 切换天空盒材质引用（内置或项目资产；类型不变，仅切换引用的 .mat） */
+function onSetSkyMaterial(rel: string): void {
+  const n = node.value;
+  if (!n || !(n instanceof SkyboxNode) || !rel || rel === n.material) return;
+  commit((m) => {
+    (m as SkyboxNode).material = rel;
+  }, "Set Sky Material");
+}
+
+/** 把当前天空材质（内置只读）复制为项目资产并绑定到本节点 */
+async function onSkyMaterialCopyToProject(): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof SkyboxNode)) return;
+  const root = projectStore.currentPath;
+  if (!root) return;
+  const taken = await listProjectMaterialRels(root);
+  const dup = await duplicateMaterialToProject(root, n.material, n.name, taken);
+  if (!dup) {
+    logStore.log("error", "复制天空盒材质资产失败", "engine");
+    return;
+  }
+  commit((m) => {
+    (m as SkyboxNode).material = dup;
+  }, "复制天空材质到项目");
+  void assetsStore.load(root);
 }
 </script>
 
@@ -348,7 +372,13 @@ function onSkyboxUpdate(label: string, value: unknown): void {
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof SkyboxNode" title="Skybox" :open="true">
-        <SkyboxSection :node="node" :rev="revision" @update="onSkyboxUpdate" />
+        <SkyboxSection
+          :node="node"
+          :rev="revision"
+          @setMaterial="onSetSkyMaterial"
+          @copyToProject="onSkyMaterialCopyToProject"
+          @update="onSkyboxUpdate"
+        />
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">

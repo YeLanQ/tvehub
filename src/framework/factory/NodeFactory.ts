@@ -4,6 +4,7 @@ import {
   LightNode,
   MeshNode,
   SkyboxNode,
+  skyMaterialForKind,
   type GeometryKind,
   type LightKind,
   type SkyboxKind,
@@ -88,6 +89,8 @@ export class NodeFactory {
   createSkybox(kind: SkyboxKind, opts: CreateOptions = {}): SkyboxNode {
     const node = this.registry.create("skyboxNode") as SkyboxNode;
     node.skyKind = kind;
+    // 类型固定 → 材质引用固定到对应的内置天空盒材质
+    node.material = skyMaterialForKind(kind);
     node.name = opts.name ?? defaultSkyboxName(kind);
     this.decorate(node, { ...opts, name: undefined });
     return node;

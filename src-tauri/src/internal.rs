@@ -6,12 +6,24 @@
 // ---------------------------------------------------------------------------
 
 /// 内置材质清单：(相对路径, 文件内容)。约定以 "internal/" 为根（与 LQEN 一致）。
-/// internal 只保留引擎必需的系统材质（网格未指定材质时的默认回退）；
-/// 配色类材质由用户复制到项目 assets/materials/ 后自行编辑，不作为内置资产。
-pub const INTERNAL_MATERIALS: &[(&str, &str)] = &[(
-    "internal/materials/Default.mat",
-    include_str!("../../public/internal/materials/Default.mat"),
-)];
+/// internal 保留引擎必需的系统材质：
+/// - Default.mat：网格未指定材质时的默认回退材质；
+/// - ProceduralSky.mat / SkyBox.mat：天空盒节点的固定类型材质（程序化 / 立方体），
+///   节点创建时按类型引用；配色类材质仍由用户复制到项目 assets/materials/ 后编辑。
+pub const INTERNAL_MATERIALS: &[(&str, &str)] = &[
+    (
+        "internal/materials/Default.mat",
+        include_str!("../../public/internal/materials/Default.mat"),
+    ),
+    (
+        "internal/materials/ProceduralSky.mat",
+        include_str!("../../public/internal/materials/ProceduralSky.mat"),
+    ),
+    (
+        "internal/materials/SkyBox.mat",
+        include_str!("../../public/internal/materials/SkyBox.mat"),
+    ),
+];
 
 /// 读取内置资源文件内容（rel 为 "internal/…" 相对路径；只读，不支持写入）。
 #[tauri::command]

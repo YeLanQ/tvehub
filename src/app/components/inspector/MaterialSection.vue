@@ -13,16 +13,16 @@
  * 参数修改写入 .mat 资产文件（共享语义：引用该资产的所有网格同步变化）；
  * 内置材质只读，先「复制到项目材质」转为项目资产后才能编辑。
  */
-import { computed, reactive, ref, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import {
   colorToHexString,
-  materialFileStem,
   parseColorHex,
   type MaterialParamKey,
   type MaterialParams,
 } from "../../../framework/material";
-import { isInternalAsset, INTERNAL_MATERIAL_ITEMS } from "../../../lib/internal-assets";
+import { isInternalAsset } from "../../../lib/internal-assets";
+import { useMaterialAssetOptions } from "../../lib/material-options";
 import { getAssetsStore } from "../../stores/assets";
 import { getEditorStore } from "../../stores/editor";
 import NumberField from "../NumberField.vue";
@@ -38,26 +38,8 @@ const emit = defineEmits<{
 const editorStore = getEditorStore();
 const assetsStore = getAssetsStore();
 
-/** 材质资产选项（内置在前，项目材质在后；按相对路径去重） */
-const options = computed(() => {
-  const seen = new Set<string>();
-  const internal = INTERNAL_MATERIAL_ITEMS.filter((i) => {
-    if (seen.has(i.rel)) return false;
-    seen.add(i.rel);
-    return true;
-  }).map((i) => ({ rel: i.rel, name: i.name, internal: true }));
-  const project = assetsStore.assets
-    .filter(
-      (a) => a.kind === "mat" && a.path.startsWith("assets/") && !isInternalAsset(a.path),
-    )
-    .filter((a) => {
-      if (seen.has(a.path)) return false;
-      seen.add(a.path);
-      return true;
-    })
-    .map((a) => ({ rel: a.path, name: materialFileStem(a.path), internal: false }));
-  return { internal, project };
-});
+/** 材质资产选项（内置 + 项目；与 Skybox 等其它材质消费方共用同一实现） */
+const options = useMaterialAssetOptions(() => assetsStore.assets);
 
 // ---------------------------------------------------------------------------
 // 本地镜像：唯一展示源。切换材质 / 参数被编辑后由 syncFromEngine 刷新

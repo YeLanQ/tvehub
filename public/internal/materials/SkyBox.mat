@@ -1,0 +1,15 @@
+{
+  "$type": "material",
+  "$ver": 1,
+  "name": "SkyBox",
+  "shader": "SkyBox",
+  "kind": "cube",
+  "topColor": "#2f6fbb",
+  "horizonColor": "#cfe4f7",
+  "groundColor": "#8fa2b5",
+  "color": "#9aa4b2",
+  "metalness": 0,
+  "roughness": 1,
+  "emissive": "#000000",
+  "wireframe": false
+}

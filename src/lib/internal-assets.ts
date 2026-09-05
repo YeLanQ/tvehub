@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // 编辑器内置资源（internal/…）：随编辑器发布的只读资产。
 // 与 public/internal 目录、src-tauri/src/internal.rs 的内嵌表保持同一份清单。
-// internal 只保留引擎必需的系统材质（网格默认回退材质 Default）；
-// 配色类材质应由用户复制到项目 assets/materials/ 后编辑，不作为内置资产。
+// internal 材质包括：
+// - Default：网格默认回退材质；
+// - ProceduralSky / SkyBox：天空盒节点按类型固定的内置材质（程序化 / 立方体）。
+// 配色类材质（非系统必需）应由用户复制到项目 assets/materials/ 后编辑。
 // ---------------------------------------------------------------------------
 
 import type { AssetEntry } from "./api";
@@ -14,9 +16,11 @@ export interface InternalAssetItem {
   name: string;
 }
 
-/** 内置材质资产清单 */
+/** 内置材质资产清单（Default = 网格默认；ProceduralSky / SkyBox = 天空盒固定类型材质） */
 export const INTERNAL_MATERIAL_ITEMS: InternalAssetItem[] = [
   { rel: "internal/materials/Default.mat", name: "Default" },
+  { rel: "internal/materials/ProceduralSky.mat", name: "ProceduralSky" },
+  { rel: "internal/materials/SkyBox.mat", name: "SkyBox" },
 ];
 
 /** 判断资产是否位于编辑器内置目录（internal） */
