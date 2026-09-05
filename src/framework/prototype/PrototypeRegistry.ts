@@ -5,6 +5,7 @@ import {
   LightNode,
   MeshNode,
   PointLightNode,
+  SkyboxNode,
   SpotLightNode,
 } from "./derived/Primitives";
 import { Node } from "./Node";
@@ -67,5 +68,6 @@ export function createDefaultRegistry(): PrototypeRegistry {
   // 兼容旧场景里 type = "lightNode" 的灯光：按点光源回退解析
   registry.register(LightNode.kType, () => new PointLightNode());
   registry.register(CameraNode.kType, () => new CameraNode());
+  registry.register(SkyboxNode.kType, () => new SkyboxNode());
   return registry;
 }

@@ -5,3 +5,4 @@ export { PointLightNode } from "./PointLightNode";
 export { DirectionalLightNode } from "./DirectionalLightNode";
 export { SpotLightNode } from "./SpotLightNode";
 export { CameraNode, type CameraNodeInit } from "./CameraNode";
+export { SkyboxNode, type SkyboxNodeInit, type SkyboxKind } from "./SkyboxNode";

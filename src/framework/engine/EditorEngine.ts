@@ -23,15 +23,18 @@ import {
   CameraNode,
   LightNode,
   MeshNode,
+  SkyboxNode,
   type GeometryKind,
+  type SkyboxKind,
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
-import { RendererManager, type RendererBackend } from "./modules/RendererManager";
+import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
 import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
+import { buildProceduralSkyTexture, buildCubeSkyTexture } from "./modules/skyboxTextures";
 import { MaterialManager } from "../material/MaterialManager";
 
 export interface EditorEvents extends Record<string, unknown> {
@@ -85,6 +88,8 @@ export class EditorEngine {
 
   /** 场景真实渲染相机（预览用）：与编辑器自由轨道相机相互独立 */
   private readonly previewCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+  /** 天空盒背景当前生效状态（签名 + 背景纹理）：变更/移除/销毁时据此释放 */
+  private skyApplied: { sig: string; texture: THREE.Texture } | null = null;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
   private previewMode = false;
   /** 编辑器辅助物（网格/相机盒体/灯球/gizmo/选择框）是否显示 */
@@ -190,6 +195,10 @@ export class EditorEngine {
   dispose(): void {
     window.removeEventListener("pointerdown", this.onCapturePointerDown, true);
     window.removeEventListener("keydown", this.onCaptureKeyDown, true);
+    if (this.skyApplied) {
+      this.skyApplied.texture.dispose();
+      this.skyApplied = null;
+    }
     this.renderer.dispose();
     this.gizmo.dispose();
     this.helperSystem.dispose();
@@ -246,6 +255,22 @@ export class EditorEngine {
   addEmptyGroup(parentId?: string): Node {
     const parent = this.resolveParent(parentId);
     const node = this.factory.create("node", { parentId: parent?.id ?? null, name: "Group" });
+    this.run(new AddNodeCommand(this.graph, node));
+    this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加天空盒节点（场景环境级：程序化天空 / 默认立方体天空盒）。
+   * 场景里第一个 启用且可见 的天空盒节点决定渲染背景（见 applySkyFromGraph）。
+   */
+  addSkybox(kind: SkyboxKind, parentId?: string): SkyboxNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createSkybox(kind, { parentId: parent?.id ?? null });
+    // 场景只应用第一个 启用且可见 的天空盒节点；已有生效天空时给出提示避免困惑
+    if (this.findSkyboxNode()) {
+      console.info("[sky] 场景中已有生效的天空盒节点，新增天空盒不会替换背景（可停用/删除前者）");
+    }
     this.run(new AddNodeCommand(this.graph, node));
     this.select(node.id);
     return node;
@@ -377,6 +402,17 @@ export class EditorEngine {
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
+    // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
+    if (
+      c.kind === "add" ||
+      c.kind === "remove" ||
+      c.kind === "reparent" ||
+      c.kind === "properties" ||
+      c.kind === "replace" ||
+      c.kind === "clear"
+    ) {
+      this.applySkyFromGraph();
+    }
     // 新入图/属性变更引用了尚未解析的材质资产（如撤销/重做改回引用）→ 异步预取后刷新
     const n = this.graph.get(c.nodeId);
     if (n instanceof MeshNode && !this.materials.has(n.material)) {
@@ -389,6 +425,62 @@ export class EditorEngine {
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
+    this.applySkyFromGraph();
+  }
+
+  /**
+   * 依据场景图应用/移除天空背景：
+   * 场景中第一个 启用且可见 的天空盒节点决定 scene.background（程序化渐变 /
+   * 默认立方体贴图），节点增删、属性修改、启停切换都会触发重算；
+   * 无天空盒时回退编辑器默认纯色背景。
+   */
+  private applySkyFromGraph(): void {
+    const scene = this.renderer.scene;
+    const release = (): void => {
+      if (this.skyApplied) {
+        this.skyApplied.texture.dispose();
+        this.skyApplied = null;
+      }
+    };
+    const sky = this.findSkyboxNode();
+    if (!sky) {
+      if (this.skyApplied) {
+        release();
+        scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
+      }
+      return;
+    }
+    const sig = [sky.id, sky.skyKind, sky.topColor, sky.horizonColor, sky.groundColor].join("|");
+    if (this.skyApplied?.sig === sig) return;
+    release();
+    try {
+      const tex =
+        sky.skyKind === "procedural"
+          ? buildProceduralSkyTexture(sky)
+          : buildCubeSkyTexture(sky);
+      scene.background = tex;
+      this.skyApplied = { sig, texture: tex };
+    } catch (e) {
+      console.warn(`[sky] 天空盒背景生成失败: ${String(e)}`);
+      scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
+    }
+  }
+
+  /** 深度优先查找第一个 启用且可见 的天空盒节点（场景树的文档序） */
+  private findSkyboxNode(): SkyboxNode | null {
+    const root = this.graph.root;
+    if (!root) return null;
+    const stack: Node[] = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n instanceof SkyboxNode && n.active && n.visible) return n;
+      const ids = n.childIds;
+      for (let i = ids.length - 1; i >= 0; i--) {
+        const c = this.graph.get(ids[i]);
+        if (c) stack.push(c);
+      }
+    }
+    return null;
   }
 
   /** 用一棵完整节点树替换当前场景图并重建渲染（场景文件加载使用） */

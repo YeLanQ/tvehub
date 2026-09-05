@@ -5,7 +5,7 @@ import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
 import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
-import { CameraNode, LightNode, MeshNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { MaterialParams, MaterialParamKey } from "../../framework/material";
 import { materialFileStem } from "../../framework/material";
 import { isInternalAsset } from "../../lib/internal-assets";
@@ -24,6 +24,7 @@ import MeshSection from "./inspector/MeshSection.vue";
 import MaterialSection from "./inspector/MaterialSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
+import SkyboxSection from "./inspector/SkyboxSection.vue";
 import ComponentsSection from "./inspector/ComponentsSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
@@ -271,6 +272,28 @@ function onCameraUpdate(label: string, value: unknown): void {
     }
   }, label);
 }
+
+function onSkyboxUpdate(label: string, value: unknown): void {
+  const n = node.value;
+  if (!n || !(n instanceof SkyboxNode)) return;
+  commit((target) => {
+    const sky = target as SkyboxNode;
+    switch (label) {
+      case "Set Sky Kind":
+        sky.skyKind = value as SkyboxNode["skyKind"];
+        break;
+      case "Set Top Color":
+        sky.topColor = (value as number) & 0xffffff;
+        break;
+      case "Set Horizon Color":
+        sky.horizonColor = (value as number) & 0xffffff;
+        break;
+      case "Set Ground Color":
+        sky.groundColor = (value as number) & 0xffffff;
+        break;
+    }
+  }, label);
+}
 </script>
 
 <template>
@@ -322,6 +345,10 @@ function onCameraUpdate(label: string, value: unknown): void {
 
       <ComponentCard v-if="node instanceof CameraNode" title="Camera" :open="true">
         <CameraSection :node="node" :rev="revision" @update="onCameraUpdate" />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof SkyboxNode" title="Skybox" :open="true">
+        <SkyboxSection :node="node" :rev="revision" @update="onSkyboxUpdate" />
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">

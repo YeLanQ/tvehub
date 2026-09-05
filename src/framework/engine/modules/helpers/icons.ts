@@ -65,6 +65,13 @@ export const GROUP_ICON_PATHS: string[] = [
   "M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65",
 ];
 
+/** 天空盒节点：小太阳 + 地平线（场景环境/天空背景语义） */
+export const SKYBOX_ICON_PATHS: string[] = [
+  "M12 5.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z",
+  "M4 17.5h16",
+  "M8 20.5h8",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

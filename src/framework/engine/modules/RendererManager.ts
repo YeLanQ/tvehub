@@ -3,6 +3,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
+/** 编辑器视口默认清屏色（无天空盒节点时的场景背景） */
+export const EDITOR_BACKGROUND_COLOR = 0x141414;
+
 /** 与具体后端解耦的最小渲染器接口（WebGLRenderer / WebGPURenderer 共用） */
 interface RendererHandle {
   domElement: HTMLCanvasElement;
@@ -91,7 +94,7 @@ export class RendererManager {
     dom.style.height = "100%";
     container.appendChild(dom);
 
-    this.scene.background = new THREE.Color(0x141414);
+    this.scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
     this.camera.position.set(6, 6, 9);
 

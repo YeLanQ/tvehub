@@ -39,6 +39,9 @@ const D2R = Math.PI / 180;
 // 材质参数兜底：与编辑器内置 internal/materials/Default.mat 一致
 const MAT_DEFAULTS = { color: 0x9aa4b2, metalness: 0.1, roughness: 0.75, emissive: 0x000000, wireframe: false };
 
+// 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致）
+const SKY_DEFAULTS = { top: 0x2f6fbb, horizon: 0xcfe4f7, ground: 0x8fa2b5 };
+
 /** 颜色：number / "#rrggbb" → number */
 function matColor(v, fb) {
   if (typeof v === "number" && Number.isFinite(v)) return v & 0xffffff;
@@ -47,6 +50,72 @@ function matColor(v, fb) {
     if (/^[0-9a-fA-F]{6}$/.test(s)) return parseInt(s, 16) & 0xffffff;
   }
   return fb;
+}
+
+function skyHex(c) {
+  return "#" + (c & 0xffffff).toString(16).padStart(6, "0");
+}
+
+/** 程序化天空：等距柱状垂直渐变（顶=天顶 → 中=地平线 → 底=下方），与编辑器一致 */
+function makeSkyEquirectTexture(top, horizon, ground) {
+  const w = 8;
+  const h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, skyHex(top));
+    g.addColorStop(0.5, skyHex(horizon));
+    g.addColorStop(1, skyHex(ground));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+
+/** 默认立方体天空盒：六面纯色 CubeTexture（四面=地平线色，顶=天空色，底=地面色） */
+function makeSkyCubeTexture(top, horizon, ground) {
+  const solid = (c) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 4;
+    canvas.height = 4;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = skyHex(c);
+      ctx.fillRect(0, 0, 4, 4);
+    }
+    return canvas;
+  };
+  const side = solid(horizon);
+  const up = solid(top);
+  const down = solid(ground);
+  const tex = new THREE.CubeTexture([side, side, up, down, side, side]);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** 深度优先查找首个 type=skyboxNode 且 启用且可见 的节点（与编辑器 findSkyboxNode 一致） */
+function findSkyNode(json) {
+  if (!json || typeof json !== "object") return null;
+  if (json.type === "skyboxNode" && json.active !== false && json.visible !== false) return json;
+  if (Array.isArray(json.children)) {
+    for (const c of json.children) {
+      const r = findSkyNode(c);
+      if (r) return r;
+    }
+  }
+  return null;
 }
 
 async function main() {
@@ -224,6 +293,20 @@ async function main() {
   }
 
   buildNode(rootJson, null);
+
+  // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）
+  {
+    const sky = findSkyNode(rootJson);
+    if (sky) {
+      const top = matColor(sky.topColor, SKY_DEFAULTS.top);
+      const horizon = matColor(sky.horizonColor, SKY_DEFAULTS.horizon);
+      const ground = matColor(sky.groundColor, SKY_DEFAULTS.ground);
+      scene.background =
+        sky.skyKind === "cube"
+          ? makeSkyCubeTexture(top, horizon, ground)
+          : makeSkyEquirectTexture(top, horizon, ground);
+    }
+  }
   scene.updateMatrixWorld(true);
 
   // ---------------------------------------------------------------- 渲染相机

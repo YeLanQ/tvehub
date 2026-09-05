@@ -3,14 +3,21 @@ import {
   CameraNode,
   LightNode,
   MeshNode,
+  SkyboxNode,
   type GeometryKind,
   type LightKind,
+  type SkyboxKind,
 } from "../prototype/derived/Primitives";
 import { Node } from "../prototype/Node";
 import { PrototypeRegistry } from "../prototype/PrototypeRegistry";
 import { Transform } from "../prototype/Transform";
 
-export type EditorNodeType = "node" | "meshNode" | "lightNode" | "cameraNode";
+export type EditorNodeType =
+  | "node"
+  | "meshNode"
+  | "lightNode"
+  | "cameraNode"
+  | "skyboxNode";
 
 export interface CreateOptions {
   parentId?: string | null;
@@ -77,6 +84,15 @@ export class NodeFactory {
     return node;
   }
 
+  /** 按天空盒类型创建对应节点原型（程序化天空 / 默认立方体天空盒） */
+  createSkybox(kind: SkyboxKind, opts: CreateOptions = {}): SkyboxNode {
+    const node = this.registry.create("skyboxNode") as SkyboxNode;
+    node.skyKind = kind;
+    node.name = opts.name ?? defaultSkyboxName(kind);
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   fromJSON(json: JsonRecord): Node {
     return this.registry.createFromJSON(json);
   }
@@ -88,7 +104,9 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
     ? LightNode
     : K extends "cameraNode"
       ? CameraNode
-      : Node;
+      : K extends "skyboxNode"
+        ? SkyboxNode
+        : Node;
 
 function defaultMeshName(geometry: GeometryKind): string {
   const map: Record<GeometryKind, string> = {
@@ -100,7 +118,11 @@ function defaultMeshName(geometry: GeometryKind): string {
   return map[geometry];
 }
 
-export type { MeshNode, LightNode, CameraNode };
+function defaultSkyboxName(kind: SkyboxKind): string {
+  return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";
+}
+
+export type { MeshNode, LightNode, CameraNode, SkyboxNode };
 
 export function createNodeFactory(registry: PrototypeRegistry): NodeFactory {
   return new NodeFactory(registry);

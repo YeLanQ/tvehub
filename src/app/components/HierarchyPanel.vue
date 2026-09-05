@@ -2,12 +2,13 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
-import type { GeometryKind, LightKind } from "../../framework/prototype/derived/Primitives";
+import type { GeometryKind, LightKind, SkyboxKind } from "../../framework/prototype/derived/Primitives";
 import type { MoveTarget } from "../../framework/command/commands";
 import {
   CAMERA_ICON_PATHS,
   MESH_ICON_PATHS,
   GROUP_ICON_PATHS,
+  SKYBOX_ICON_PATHS,
   LIGHT_POINT_ICON_PATHS,
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
@@ -33,6 +34,7 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   directionalLightNode: { d: LIGHT_DIRECTIONAL_ICON_PATHS, color: "#ffd166" },
   ambientLightNode: { d: LIGHT_AMBIENT_ICON_PATHS, color: "#4dd0a1" },
   spotLightNode: { d: LIGHT_SPOT_ICON_PATHS, color: "#ff9f43" },
+  skyboxNode: { d: SKYBOX_ICON_PATHS, color: "#8ecae6" },
 };
 
 const FALLBACK_BADGE: Record<string, string> = {
@@ -44,6 +46,7 @@ const FALLBACK_BADGE: Record<string, string> = {
   ambientLightNode: "A",
   spotLightNode: "S",
   cameraNode: "C",
+  skyboxNode: "SK",
 };
 
 const search = ref("");
@@ -123,6 +126,8 @@ function addNodeTo(parentId: string, type: string, name?: string): void {
     node = engine.addMesh(type.slice(5) as GeometryKind, parentId);
   } else if (type.startsWith("light:")) {
     node = engine.addLight(type.slice(6) as LightKind, parentId);
+  } else if (type.startsWith("skybox:")) {
+    node = engine.addSkybox(type.slice(7) as SkyboxKind, parentId);
   } else if (type === "camera") {
     node = engine.addCamera(parentId);
   } else {
@@ -148,6 +153,10 @@ function createAddItems(parentId: string): CtxMenuItem[] {
     menuSeparator(),
     { label: "Camera", onClick: () => addNodeTo(parentId, "camera") },
     { label: "Group", onClick: () => addNodeTo(parentId, "group") },
+    menuSeparator(),
+    { label: "天空盒", header: true },
+    { label: "Procedural Skybox", onClick: () => addNodeTo(parentId, "skybox:procedural") },
+    { label: "Cube Skybox", onClick: () => addNodeTo(parentId, "skybox:cube") },
   ];
 }
 

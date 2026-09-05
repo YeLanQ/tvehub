@@ -6,6 +6,7 @@ export { PointLightNode } from "../nodes/PointLightNode";
 export { DirectionalLightNode } from "../nodes/DirectionalLightNode";
 export { SpotLightNode } from "../nodes/SpotLightNode";
 export { CameraNode } from "../nodes/CameraNode";
+export { SkyboxNode, type SkyboxKind } from "../nodes/SkyboxNode";
 export type {
   MeshNodeInit,
   LightNodeInit,
