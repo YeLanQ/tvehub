@@ -7,7 +7,11 @@ declare module "three/webgpu" {
   export class WebGPURenderer {
     readonly domElement: HTMLCanvasElement;
     shadowMap: { enabled: boolean; type: number; transmitted?: boolean };
-    constructor(parameters?: { forceWebGL?: boolean });
+    constructor(parameters?: {
+      forceWebGL?: boolean;
+      antialias?: boolean;
+      samples?: number;
+    });
     setPixelRatio(value?: number): void;
     setSize(width: number, height: number, updateStyle?: boolean): void;
     render(scene: Scene, camera: Camera): void;

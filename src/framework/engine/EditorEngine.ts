@@ -99,7 +99,11 @@ export class EditorEngine {
 
   async mount(
     container: HTMLElement,
-    options?: { renderer?: RendererBackend },
+    options?: {
+      renderer?: RendererBackend;
+      antialias?: number;
+      hdrMode?: "hdr" | "ldr";
+    },
   ): Promise<void> {
     await this.renderer.mount(container, options);
     this.initGizmo();

@@ -139,7 +139,11 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   if (!mountTask) {
     mountTask = (async () => {
       const projectStore = getProjectStore();
-      await store.engine.mount(container, { renderer: projectStore.rendererBackend });
+      await store.engine.mount(container, {
+        renderer: projectStore.rendererBackend,
+        antialias: projectStore.antiAliasing,
+        hdrMode: projectStore.hdrMode,
+      });
       if (sceneJson) loadSceneFromJson(store.engine, sceneJson);
       else setupStarterScene(store.engine);
       store.markMounted();

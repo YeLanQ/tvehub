@@ -7,6 +7,7 @@ export type RendererBackend = "webgl" | "webgpu" | "auto";
 interface RendererHandle {
   domElement: HTMLCanvasElement;
   shadowMap: { enabled: boolean; type: number };
+  toneMapping: number;
   setPixelRatio(value?: number): void;
   setSize(width: number, height: number, updateStyle?: boolean): void;
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
@@ -55,16 +56,26 @@ export class RendererManager {
 
   async mount(
     container: HTMLElement,
-    options?: { renderer?: RendererBackend },
+    options?: {
+      renderer?: RendererBackend;
+      antialias?: number;
+      hdrMode?: "hdr" | "ldr";
+    },
   ): Promise<void> {
     this.container = container;
     const backend = options?.renderer ?? "webgl";
-    this.renderer = await createRendererHandle(backend, (actual) => {
+    const aa = Math.max(0, Math.min(8, Math.round(options?.antialias ?? 2)));
+    this.renderer = await createRendererHandle(backend, aa, (actual) => {
       this.activeBackend = actual;
     });
     if (this.activeBackend !== "webgl") {
       console.info("[renderer] 渲染后端: WebGPU（WebGPU 不可用时 three 自动回退 WebGL2）");
     }
+    // HDR/LDR 渲染合成：HDR 用 ACES 电影级色调映射，LDR 常规输出（不映射）
+    this.renderer.toneMapping =
+      (options?.hdrMode ?? "ldr") === "hdr"
+        ? THREE.ACESFilmicToneMapping
+        : THREE.NoToneMapping;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
 
@@ -189,12 +200,14 @@ export class RendererManager {
  */
 async function createRendererHandle(
   backend: RendererBackend,
+  antialias: number,
   onCreated: (actual: RendererBackend | "webgpu") => void,
 ): Promise<RendererHandle> {
+  const aa = antialias > 0;
   const fallback = (why?: string): RendererHandle => {
     if (why) console.warn(`[renderer] 使用 WebGLRenderer: ${why}`);
     onCreated("webgl");
-    return new THREE.WebGLRenderer({ antialias: true }) as unknown as RendererHandle;
+    return new THREE.WebGLRenderer({ antialias: aa }) as unknown as RendererHandle;
   };
 
   if (backend === "webgl") return fallback();
@@ -206,8 +219,14 @@ async function createRendererHandle(
     };
     const Ctor = mod.WebGPURenderer ?? mod.default;
     if (typeof Ctor !== "function") throw new Error("WebGPURenderer not exported");
-    const instance = new (Ctor as new (params?: { forceWebGL?: boolean }) => unknown)({
+    const instance = new (Ctor as new (params?: {
+      forceWebGL?: boolean;
+      antialias?: boolean;
+      samples?: number;
+    }) => unknown)({
       forceWebGL: false,
+      antialias: aa,
+      samples: aa ? antialias : 0,
     });
     // WebGPU 后端为异步初始化：必须先 await renderer.init() 再 render()（WebGL 无此要求）
     const maybeInit = instance as { init?: () => Promise<void> };

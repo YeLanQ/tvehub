@@ -160,5 +160,7 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
   p.setRendererBackend(draft.renderer);
+  p.setAntiAliasing(clampInt(draft.antiAliasing, 0, 8));
+  p.setHDRMode(draft.hdrMode);
   logStore.log("success", "已保存项目设置", "toolbar");
 }

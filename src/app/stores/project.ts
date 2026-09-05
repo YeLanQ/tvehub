@@ -25,7 +25,13 @@ export interface ProjectStore {
   settingsOpen: boolean;
   /** 编辑器渲染后端（读取项目 project.config.json 的 renderer 字段） */
   rendererBackend: RendererBackend;
+  /** 编辑器抗锯齿（MSAA 采样数：0=无，2/4/8；读取项目配置） */
+  antiAliasing: number;
+  /** 渲染合成：hdr = HDR（ACES 色调映射）/ ldr = LDR（常规输出） */
+  hdrMode: "hdr" | "ldr";
   setRendererBackend: (v: RendererBackend) => void;
+  setAntiAliasing: (v: number) => void;
+  setHDRMode: (v: "hdr" | "ldr") => void;
   setView: (view: "home" | "editor") => void;
   setProjectName: (name: string | null) => void;
   openSettings: () => void;
@@ -59,17 +65,25 @@ export function getProjectStore(): ProjectStore {
     projectName: null as string | null,
     settingsOpen: false,
     rendererBackend: "webgl" as RendererBackend,
+    antiAliasing: 2,
+    hdrMode: "ldr" as "hdr" | "ldr",
   });
 
-  /** 读取项目 project.config.json 中的渲染后端偏好（文件缺失/损坏回退 WebGL） */
-  async function loadRendererBackend(root: string): Promise<void> {
+  /** 读取项目 project.config.json 中的渲染后端/抗锯齿/HDR 偏好（缺失/损坏回退默认） */
+  async function loadProjectRenderConfig(root: string): Promise<void> {
     try {
       const text = await api.readText(root, "project.config.json");
       const cfg = JSON.parse(text) as Record<string, unknown>;
       const r = cfg.renderer;
       state.rendererBackend = r === "webgpu" || r === "auto" || r === "webgl" ? r : "webgl";
+      const aa = cfg.antiAliasing;
+      state.antiAliasing =
+        typeof aa === "number" ? Math.max(0, Math.min(8, Math.round(aa))) : 2;
+      state.hdrMode = cfg.hdrMode === "hdr" ? "hdr" : "ldr";
     } catch {
       state.rendererBackend = "webgl";
+      state.antiAliasing = 2;
+      state.hdrMode = "ldr";
     }
   }
 
@@ -98,8 +112,20 @@ export function getProjectStore(): ProjectStore {
     get rendererBackend() {
       return state.rendererBackend;
     },
+    get antiAliasing() {
+      return state.antiAliasing;
+    },
+    get hdrMode() {
+      return state.hdrMode;
+    },
     setRendererBackend(v) {
       state.rendererBackend = v;
+    },
+    setAntiAliasing(v) {
+      state.antiAliasing = v;
+    },
+    setHDRMode(v) {
+      state.hdrMode = v;
     },
     setView(view) {
       state.view = view;
@@ -142,7 +168,7 @@ export function getProjectStore(): ProjectStore {
       try {
         const info = await invoke<RecentProject>("open_project", { path });
         await store.loadScene(info.path);
-        await loadRendererBackend(info.path);
+        await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
@@ -166,7 +192,7 @@ export function getProjectStore(): ProjectStore {
           files,
         });
         await store.loadScene(info.path);
-        await loadRendererBackend(info.path);
+        await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
