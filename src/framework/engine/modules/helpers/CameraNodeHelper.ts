@@ -1,23 +1,26 @@
 import * as THREE from "three";
 import type { CameraNode } from "../../../prototype/nodes/CameraNode";
 import type { Node } from "../../../prototype/Node";
-import {
-  applyHelperWorld,
-  type HelperContext,
-  type NodeHelper,
-} from "./types";
+import type { HelperContext, NodeHelper } from "./types";
 
 const FRUSTUM_COLOR = 0x55bbff;
+const RAY_COLOR = 0xffcf5c;
 
 /**
- * 相机辅助线：从相机位置沿其 -Z（three 相机观察方向）绘制的近/远裁剪视锥线框。
- * 近/远平面尺寸由 fov / near / far / 视口宽高比推导，纯线框装饰，不参与拾取。
+ * 相机辅助线（视锥线框，参照 LQEN drawCameraHelper）：
+ * - 近/远平面矩形由相机真实 fov / near / far 与视口宽高比推导（近小远大）；
+ * - 近矩形 + 远矩形 + 四角棱线 + 相机位置 → 远平面中心的“视向线段”；
+ * - 全部在相机局部空间生成、随节点世界矩阵放置；
+ * - 修改 Near / Far / Fov 或视口宽高比后立即重建线框（参数实时同步）。
  */
 export class CameraNodeHelper implements NodeHelper {
   readonly object: THREE.Group;
   private frustum: THREE.LineSegments;
   private frustumGeom: THREE.BufferGeometry;
-  private material: THREE.LineBasicMaterial;
+  private frustumMat: THREE.LineBasicMaterial;
+  private ray: THREE.LineSegments;
+  private rayGeom: THREE.BufferGeometry;
+  private rayMat: THREE.LineBasicMaterial;
   private signature = "";
   private disposed = false;
 
@@ -27,49 +30,84 @@ export class CameraNodeHelper implements NodeHelper {
       "position",
       new THREE.BufferAttribute(new Float32Array(24 * 3), 3),
     );
-    this.material = new THREE.LineBasicMaterial({
+    this.frustumMat = new THREE.LineBasicMaterial({
       color: FRUSTUM_COLOR,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
     });
-    this.frustum = new THREE.LineSegments(this.frustumGeom, this.material);
+    this.frustum = new THREE.LineSegments(this.frustumGeom, this.frustumMat);
     this.frustum.frustumCulled = false;
+
+    this.rayGeom = new THREE.BufferGeometry();
+    this.rayGeom.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(6), 3),
+    );
+    this.rayMat = new THREE.LineBasicMaterial({
+      color: RAY_COLOR,
+      transparent: true,
+      opacity: 0.9,
+    });
+    this.ray = new THREE.LineSegments(this.rayGeom, this.rayMat);
+    this.ray.frustumCulled = false;
 
     this.object = new THREE.Group();
     this.object.name = "__helper_camera";
     this.object.matrixAutoUpdate = false;
-    this.object.add(this.frustum);
+    this.object.add(this.frustum, this.ray);
   }
 
   sync(node: Node, world: THREE.Object3D | undefined, ctx: HelperContext): void {
     const cam = node as CameraNode;
-    this.material.color.setHex(cam.isEditorCamera ? 0x66ccff : FRUSTUM_COLOR);
+    const isEditor = cam.isEditorCamera;
+    this.frustumMat.color.setHex(isEditor ? 0x66ccff : FRUSTUM_COLOR);
 
-    const aspect = Math.max(0.1, ctx.getAspect());
+    const aspect = Math.max(0.01, ctx.getAspect());
     const sig = `${cam.fov}|${cam.near}|${cam.far}|${aspect.toFixed(4)}`;
     if (sig !== this.signature) {
       this.signature = sig;
-      this.writeFrustum(cam.fov, aspect, cam.near, cam.far);
+      this.writeFrustum(cam.fov, cam.near, cam.far, aspect);
     }
 
-    applyHelperWorld(this.object, node, world);
+    // 局部线框 → 节点世界矩阵（含层级父级变换）
+    if (world) {
+      world.updateMatrixWorld(true);
+      this.object.matrix.copy(world.matrixWorld);
+    } else {
+      this.object.matrixAutoUpdate = false;
+      this.object.matrix.compose(
+        new THREE.Vector3(node.transform.position.x, node.transform.position.y, node.transform.position.z),
+        new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(
+            (node.transform.rotation.x * Math.PI) / 180,
+            (node.transform.rotation.y * Math.PI) / 180,
+            (node.transform.rotation.z * Math.PI) / 180,
+            "XYZ",
+          ),
+        ),
+        new THREE.Vector3(1, 1, 1),
+      );
+    }
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.frustumGeom.dispose();
-    this.material.dispose();
+    this.frustumMat.dispose();
+    this.rayGeom.dispose();
+    this.rayMat.dispose();
   }
 
-  /** 依据 fov(度)/aspect/near/far 生成 12 条线段（近矩形 + 远矩形 + 四角连线） */
-  private writeFrustum(fovDeg: number, aspect: number, near: number, far: number): void {
+  /** 用真实 fov/near/far/aspect 生成：近矩形 + 远矩形 + 四角棱线 + 视向线段 */
+  private writeFrustum(fovDeg: number, near: number, far: number, aspect: number): void {
     const n = Math.max(1e-4, near);
     const f = Math.max(n + 1e-4, far);
-    const halfH = Math.tan((fovDeg * Math.PI) / 360); // tan(verticalFov/2)
-    const nH = 2 * n * halfH;
+    const tanHalf = Math.tan((fovDeg * Math.PI) / 360);
+
+    const nH = 2 * tanHalf * n;
     const nW = nH * aspect;
-    const fH = 2 * f * halfH;
+    const fH = 2 * tanHalf * f;
     const fW = fH * aspect;
 
     const corners = (w: number, h: number, d: number): number[] => [
@@ -82,30 +120,34 @@ export class CameraNodeHelper implements NodeHelper {
     const f0 = corners(fW, fH, f);
     const at = (arr: number[], i: number): number[] => arr.slice(i * 3, i * 3 + 3);
 
-    // 24 个顶点 = 12 段 × 2
+    // 12 条线段：近矩形 4 + 远矩形 4 + 四角棱线 4
     const pos = new Float32Array(24 * 3);
     const seg = (a: number[], b: number[], k: number): void => {
       pos.set(a, k * 6);
       pos.set(b, k * 6 + 3);
     };
-    // 近矩形边
     seg(at(n0, 0), at(n0, 1), 0);
     seg(at(n0, 1), at(n0, 2), 1);
     seg(at(n0, 2), at(n0, 3), 2);
     seg(at(n0, 3), at(n0, 0), 3);
-    // 远矩形边
     seg(at(f0, 0), at(f0, 1), 4);
     seg(at(f0, 1), at(f0, 2), 5);
     seg(at(f0, 2), at(f0, 3), 6);
     seg(at(f0, 3), at(f0, 0), 7);
-    // 近↔远四角连线
     for (let i = 0; i < 4; i++) {
       seg(at(n0, i), at(f0, i), 8 + i);
     }
 
-    const attr = this.frustumGeom.getAttribute("position") as THREE.BufferAttribute;
-    attr.array = pos;
-    attr.needsUpdate = true;
+    const fattr = this.frustumGeom.getAttribute("position") as THREE.BufferAttribute;
+    fattr.array = pos;
+    fattr.needsUpdate = true;
     this.frustumGeom.computeBoundingSphere();
+
+    // 视向线段：相机位置(原点) → 远平面中心(0,0,-far)
+    const rayArr = new Float32Array([0, 0, 0, 0, 0, -f]);
+    const rattr = this.rayGeom.getAttribute("position") as THREE.BufferAttribute;
+    rattr.array = rayArr;
+    rattr.needsUpdate = true;
+    this.rayGeom.computeBoundingSphere();
   }
 }

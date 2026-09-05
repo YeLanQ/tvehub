@@ -12,6 +12,8 @@ import type { Node } from "../../../prototype/Node";
 export interface HelperContext {
   /** 视口当前宽高比（绘制相机视锥辅助线用） */
   getAspect(): number;
+  /** 编辑器相机到给定世界点的距离（用于屏幕恒定尺寸的 gizmo 缩放） */
+  getEditorDistanceTo(point: THREE.Vector3): number;
 }
 
 export interface NodeHelper {

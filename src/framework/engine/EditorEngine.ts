@@ -69,6 +69,10 @@ export class EditorEngine {
     this.synchronizer = new SceneSynchronizer(this.renderer.scene);
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
+      getEditorDistanceTo: (p) => {
+        const cam = this.renderer.camera;
+        return cam ? cam.position.distanceTo(p) : 1;
+      },
     });
     this.renderer.registerCamera(this.previewCamera);
   }
