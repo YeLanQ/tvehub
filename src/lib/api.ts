@@ -37,4 +37,11 @@ export const api = {
   renameAsset: (root: string, rel: string, newName: string) =>
     invoke<string>("rename_asset", { root, rel, newName }),
   createFolder: (root: string, rel: string) => invoke<string>("create_folder", { root, rel }),
+  /** 导出网页预览产物（相对路径 → 内容）到 <root>/.tmp/web-preview（不启停服务器） */
+  exportWebPreview: (root: string, files: Record<string, string>) =>
+    invoke<void>("export_web_preview", { root, files }),
+  /** 启动网页预览本地静态服务（服务 <root>/.tmp/web-preview），返回 base URL */
+  startWebPreviewServer: (root: string) => invoke<string>("start_web_preview_server", { root }),
+  /** 停止网页预览本地静态服务（释放端口） */
+  stopWebPreview: () => invoke<void>("stop_web_preview"),
 };

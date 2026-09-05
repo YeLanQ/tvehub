@@ -344,6 +344,15 @@ export class EditorEngine {
     this.syncPreviewView();
   }
 
+  /**
+   * 控制编辑器后台渲染循环：
+   * - active=true（场景编辑）→ 恢复 rAF 渲染；
+   * - active=false（预览/脚本由中央区域独立面板接管）→ 暂停后台渲染，避免空转。
+   */
+  setRenderingActive(active: boolean): void {
+    this.renderer.setPaused(!active);
+  }
+
   private onSelectionChanged(): void {
     if (!this.previewMode) return;
     this.syncPreviewView();

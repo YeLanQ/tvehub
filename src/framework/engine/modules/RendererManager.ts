@@ -53,6 +53,8 @@ export class RendererManager {
   /** 已应用到画布的尺寸 */
   private appliedW = 0;
   private appliedH = 0;
+  /** 渲染循环暂停（预览/脚本等中央区域被独立面板接管时暂停后台渲染） */
+  private paused = false;
 
   async mount(
     container: HTMLElement,
@@ -130,6 +132,17 @@ export class RendererManager {
     this.renderCb = cb;
   }
 
+  /** 暂停/恢复渲染循环（中央区域被 iframe/面板接管时暂停，避免后台空转） */
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    if (paused) {
+      cancelAnimationFrame(this.raf);
+    } else {
+      this.loop();
+    }
+  }
+
   /** 注册需要跟随视口宽高比更新的相机 */
   registerCamera(cam: THREE.PerspectiveCamera): void {
     this.cameras.add(cam);
@@ -170,6 +183,7 @@ export class RendererManager {
   };
 
   private loop = (): void => {
+    if (this.paused) return;
     this.raf = requestAnimationFrame(this.loop);
     this.applySizeIfNeeded();
     this.orbit?.update();

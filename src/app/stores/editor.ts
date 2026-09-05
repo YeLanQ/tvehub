@@ -121,8 +121,14 @@ export function getEditorStore(): EditorStore {
     },
     state: readonly(state) as unknown as EditorStore["state"],
     setViewMode: (mode) => {
-      // 引擎只关心 编辑(scene)/预览(preview) 两种渲染；脚本等占位页签保持编辑渲染
-      engine.setViewMode(mode === "preview" ? "preview" : "scene");
+      // 预览页签由中央区域的独立“网页预览”面板（WebPreviewPanel iframe）接管，
+      // 编辑器画布不再做引擎内相机预览渲染；脚本/预览期间暂停后台渲染省资源。
+      if (mode === "scene") {
+        engine.setViewMode("scene");
+        engine.setRenderingActive(true);
+      } else {
+        engine.setRenderingActive(false);
+      }
       state.viewMode = mode;
     },
     markMounted: () => {

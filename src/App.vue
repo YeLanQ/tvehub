@@ -2,6 +2,7 @@
 import { computed, onMounted } from "vue";
 import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
+import WebPreviewPanel from "./app/components/WebPreviewPanel.vue";
 import DockZone from "./app/components/DockZone.vue";
 import FloatingDock from "./app/components/FloatingDock.vue";
 import ContextMenu from "./components/ContextMenu.vue";
@@ -27,6 +28,11 @@ const isHome = computed(() => projectStore.view === "home");
 
 function goHome() {
   projectStore.setView("home");
+}
+
+/** 退出预览（网页预览面板）返回场景编辑 */
+function goScene() {
+  editorStore.setViewMode("scene");
 }
 
 /** 停靠区分隔条拖拽：调整区域尺寸 */
@@ -98,9 +104,12 @@ onMounted(() => {
         ></div>
 
         <main class="center">
-          <!-- 场景/预览都复用同一视口画布：编辑模式用编辑器相机，预览模式切换到场景真实渲染相机 -->
-          <Viewport
-            v-show="editorStore.state.viewMode === 'scene' || editorStore.state.viewMode === 'preview'"
+          <!-- 场景编辑：编辑器画布 -->
+          <Viewport v-show="editorStore.state.viewMode === 'scene'" />
+          <!-- 网页预览：内嵌独立网页运行当前场景（导出 + 本地静态服务 + iframe） -->
+          <WebPreviewPanel
+            v-if="editorStore.state.viewMode === 'preview'"
+            @close="goScene"
           />
           <div v-if="editorStore.state.viewMode === 'script'" class="center-placeholder mono">
             脚本模式（待接入）

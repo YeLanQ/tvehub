@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
+import { saveCurrentSceneToMain } from "../lib/save-scene";
 import "../../styles/components/toolbar.scss";
 
 defineEmits<{
@@ -14,10 +14,14 @@ const store = getEditorStore();
 const projectStore = getProjectStore();
 const { state, engine } = store;
 
-const VIEW_TABS: { key: ViewMode; label: string }[] = [
-  { key: "scene", label: "场景" },
-  { key: "preview", label: "预览" },
-  { key: "script", label: "脚本" },
+const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
+  { key: "scene", label: "场景", title: "场景编辑" },
+  {
+    key: "preview",
+    label: "预览",
+    title: "网页预览：导出当前场景为独立网页并在编辑器内嵌预览",
+  },
+  { key: "script", label: "脚本", title: "脚本（待接入）" },
 ];
 
 const projectName = computed(() => projectStore.projectName ?? "未命名项目");
@@ -27,24 +31,12 @@ function setViewMode(mode: ViewMode): void {
 }
 
 async function save(): Promise<void> {
-  const path = projectStore.currentPath;
-  if (!path) {
-    logStore.log("warn", "尚未打开项目，无法保存", "toolbar");
-    return;
-  }
-  let data: unknown = null;
   try {
-    data = JSON.parse(projectStore.sceneJson ?? "");
-  } catch {
-    data = null;
-  }
-  const out = { ...(data && typeof data === "object" ? (data as object) : {}), root: engine.graph.toJSON() };
-  try {
-    await invoke("write_text", { root: path, rel: "assets/Main.scene", content: JSON.stringify(out, null, 2) });
+    await saveCurrentSceneToMain();
     logStore.log("success", "场景已保存", "toolbar");
   } catch (e) {
     console.error("Failed to save scene:", e);
-    logStore.log("error", "场景保存失败", "toolbar");
+    logStore.log("error", `场景保存失败: ${e}`, "toolbar");
   }
 }
 </script>
@@ -78,6 +70,7 @@ async function save(): Promise<void> {
         :class="{ active: state.viewMode === tab.key }"
         role="tab"
         :aria-selected="state.viewMode === tab.key"
+        :title="tab.title"
         @click="setViewMode(tab.key)"
       >
         {{ tab.label }}

@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod preview;
 mod project;
 mod trash;
 
@@ -346,6 +347,7 @@ async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), Str
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(preview::PreviewServerState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             open_project,
@@ -372,6 +374,9 @@ pub fn run() {
             rename_asset,
             create_folder,
             append_debug_log,
+            preview::export_web_preview,
+            preview::start_web_preview_server,
+            preview::stop_web_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
