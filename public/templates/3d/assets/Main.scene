@@ -6,7 +6,7 @@
   },
   "settings": {
     "rendering": {
-      "backgroundColor": 4194304,
+      "backgroundColor": 0,
       "fogEnabled": false,
       "fogColor": 0,
       "fogNear": 1,
