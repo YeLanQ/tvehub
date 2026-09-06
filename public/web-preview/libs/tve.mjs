@@ -53,15 +53,24 @@ function isNodeObj(obj) {
   return !!obj && typeof obj.userData?.nodeId === "string" && obj.userData.nodeId !== "";
 }
 
-/** three 对象 → Entity（非节点对象返回 null） */
+/** three 对象 → Entity 子类实例（按 userData.nodeKind 映射节点类型类；非节点对象返回 null） */
 export function getEntity(obj) {
   if (!isNodeObj(obj) || !host) return null;
   let e = entityByObj.get(obj);
   if (!e) {
-    e = new Entity(obj);
+    const kind = typeof obj.userData?.nodeKind === "string" ? obj.userData.nodeKind : "";
+    const Cls = kind && KIND_CLASSES[kind] ? KIND_CLASSES[kind] : Entity;
+    e = new Cls(obj);
     entityByObj.set(obj, e);
   }
   return e;
+}
+
+/** 按节点 id 解析场景实体（host 注册表；节点引用属性的运行期求值） */
+export function resolveNodeEntity(nodeId) {
+  if (!host || typeof nodeId !== "string" || !nodeId) return null;
+  const entry = (host.registry || []).find((r) => r.json && r.json.id === nodeId);
+  return entry ? getEntity(entry.obj) : null;
 }
 
 /** 宿主注册组件实例（getComponent 查询用） */
@@ -205,6 +214,12 @@ class Entity {
     return String(this.__obj.userData.nodeId ?? "");
   }
 
+  /** 节点类型键（与场景序列化 type 一致：node/meshNode/pointLightNode…） */
+  get kind() {
+    const k = this.__obj.userData?.nodeKind;
+    return typeof k === "string" ? k : "";
+  }
+
   get name() {
     return this.__obj.name ?? "";
   }
@@ -313,14 +328,141 @@ function numOr(v, fb) {
 }
 
 // ---------------------------------------------------------------------------
-// Component 基类（宿主 new 子类并注入 entity/props）
+// 节点类型（Entity 子类 + 编辑器 type 键映射）
+// 作为 @property({ type }) 的引用 token 与运行时类型（instanceof 可判断）。
+// 层级：Transform 承载通用节点能力，具体类型继续派生，保证
+//   meshNode 实例 instanceof Transform / Entity 均成立。
+// ---------------------------------------------------------------------------
+
+class Transform extends Entity {}
+class MeshNode extends Transform {}
+class LightNode extends Transform {}
+class CameraNode extends Transform {}
+class SkyboxNode extends Transform {}
+
+// 编辑器 type 键 → 类型类（供 getEntity 按 userData.nodeKind 构建实例）
+const KIND_CLASSES = {
+  node: Transform,
+  meshNode: MeshNode,
+  cameraNode: CameraNode,
+  skyboxNode: SkyboxNode,
+  lightNode: LightNode,
+  pointLightNode: LightNode,
+  directionalLightNode: LightNode,
+  ambientLightNode: LightNode,
+  spotLightNode: LightNode,
+};
+
+// 节点类型类的静态过滤键（property 装饰器据此识别"节点引用"属性；
+// 编辑器 AST 按 type token 名匹配同一集合）
+Transform.__nodeKinds = null; // 任意场景节点
+MeshNode.__nodeKinds = ["meshNode"];
+LightNode.__nodeKinds = [
+  "lightNode",
+  "pointLightNode",
+  "directionalLightNode",
+  "ambientLightNode",
+  "spotLightNode",
+];
+CameraNode.__nodeKinds = ["cameraNode"];
+SkyboxNode.__nodeKinds = ["skyboxNode"];
+
+/** @property({ type: 节点类 }) 是否节点引用选项（运行时标识） */
+function isNodeRefType(v) {
+  return typeof v === "function" && v !== Entity && Object.prototype.hasOwnProperty.call(v, "__nodeKinds");
+}
+
+// ---------------------------------------------------------------------------
+// Component 基类（宿主 new 子类并注入 entity；props 由宿主在构造后挂只读视图）
 // ---------------------------------------------------------------------------
 
 class ComponentImpl {
-  constructor(entity, props) {
+  constructor(entity) {
     this.entity = entity;
-    this.props = props && typeof props === "object" ? Object.freeze({ ...props }) : {};
   }
+}
+
+// ---------------------------------------------------------------------------
+// 装饰器（参考 Cocos Creator @property / @nodeType 声明式写法）
+// - property：字段装饰器，登记字段为组件可编辑属性（host 据此读取字段初值作
+//   默认并注入节点配置覆盖）；类型契约见 tve.d.ts。
+// - nodeType：类装饰器，登记脚本类为可创建节点类型（编辑器创建入口用）。
+// 元数据挂在类上（__tvePropKeys / __tveNodeType），editor 经 AST 静态解析，
+// 运行期仅 host 需要属性键集合（见 libs/scripts.mjs）。
+// ---------------------------------------------------------------------------
+
+/** 把字段名登记到类的 __tvePropKeys（host 合并默认值与节点配置用） */
+function recordPropKey(ctor, key) {
+  const list = ctor.__tvePropKeys;
+  if (Array.isArray(list)) {
+    if (!list.includes(key)) list.push(key);
+  } else {
+    Object.defineProperty(ctor, "__tvePropKeys", {
+      value: [key],
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+/** 把实体引用键名记入类 __tveEntityKeys（host 将节点配置 id 解析为 Entity） */
+function recordEntityKey(ctor, key) {
+  const list = ctor.__tveEntityKeys;
+  if (Array.isArray(list)) {
+    if (!list.includes(key)) list.push(key);
+  } else {
+    Object.defineProperty(ctor, "__tveEntityKeys", {
+      value: [key],
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+/**
+ * @property 装饰器（参考 Cocos Creator）。双形态：
+ * - @property / @property() / @property({...})：字段装饰器，把字段名记入类
+ *   __tvePropKeys，host 据此以字段初值为默认、按节点配置覆盖（this.字段名 读写）；
+ *   options.type 传节点类型类（如 MeshNode）时，把该字段登记为场景节点引用
+ *   （__tveEntityKeys）：host 会把节点配置里存的节点 id 解析为对应 Entity；
+ * - 作为工厂被 @property(options) 调用时返回装饰器；被裸 @property 直接调用
+ *   （legacy 装饰器把裸引用当作装饰器执行）时按 target/key 就地登记。
+ */
+export function property(targetOrOptions, maybeKey) {
+  // 裸调用形态：@property → (prototype/class, key) 直接登记
+  if (arguments.length >= 2) {
+    const t = targetOrOptions;
+    const ctor = typeof t === "function" ? t : t && t.constructor;
+    if (typeof ctor === "function" && typeof maybeKey === "string") {
+      recordPropKey(ctor, maybeKey);
+    }
+    return undefined;
+  }
+  // 工厂形态：@property() / @property({...}) → 返回字段装饰器
+  const nodeRef = !!(
+    targetOrOptions &&
+    typeof targetOrOptions === "object" &&
+    isNodeRefType(targetOrOptions.type)
+  );
+  return function decorate(target, key) {
+    const ctor = typeof target === "function" ? target : target.constructor;
+    recordPropKey(ctor, key);
+    if (nodeRef) recordEntityKey(ctor, key);
+  };
+}
+
+/** @nodeType(options) 类装饰器：登记脚本类为可创建节点类型（kind/label） */
+export function nodeType(options) {
+  const kind =
+    options && typeof options.kind === "string" && options.kind ? options.kind : "node";
+  const label =
+    options && typeof options.label === "string" && options.label.trim()
+      ? options.label.trim()
+      : "";
+  return function decorate(ctor) {
+    ctor.__tveNodeType = { kind, label };
+    return ctor;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -406,4 +548,18 @@ const engine = {
   },
 };
 
-export { ComponentImpl as Component, Entity, engine };
+export {
+  ComponentImpl as Component,
+  Entity,
+  engine,
+  Transform,
+  MeshNode,
+  LightNode,
+  CameraNode,
+  SkyboxNode,
+  Transform as transform,
+  MeshNode as meshNode,
+  LightNode as lightNode,
+  CameraNode as cameraNode,
+  SkyboxNode as skyboxNode,
+};

@@ -16,8 +16,9 @@ import { logStore } from "./log";
 import {
   compileScript,
   isScriptSource,
-  parsePropsSchema,
+  parseScriptClassMeta,
   type ScriptPropDef,
+  type ScriptNodeType,
 } from "../lib/script-compile";
 import type { JsonRecord } from "../../framework/prototype/types";
 
@@ -29,12 +30,16 @@ interface ScriptFileState {
   compileError: string | null;
   /** props 声明（null = 未声明/无法解析） */
   propsSchema: ScriptPropDef[] | null;
+  /** 节点类型声明（static nodeType；null = 普通脚本组件） */
+  nodeType: ScriptNodeType | null;
 }
 
 export interface ScriptsStore {
   readonly tabs: string[];
   readonly active: string | null;
   readonly busy: boolean;
+  /** 脚本属性 schema 版本号：保存脚本成功后递增（检查器据此刷新属性控件） */
+  readonly schemaRev: number;
   fileState(rel: string): ScriptFileState | undefined;
   isDirty(rel: string): boolean;
   openScript(rel: string): Promise<void>;
@@ -48,6 +53,10 @@ export interface ScriptsStore {
   deleteScript(rel: string): Promise<boolean>;
   /** 检查器用：按需读取并解析脚本 props 声明（缓存） */
   propsSchemaFor(rel: string): Promise<ScriptPropDef[] | null>;
+  /** 节点类型清单：声明了 static nodeType/@nodeType 的脚本（层级/资源面板创建入口数据） */
+  scriptNodeTypes(): { rel: string; name: string; nodeType: ScriptNodeType }[];
+  /** 预读全部 src/ 脚本并解析元数据（面板挂载时预热 nodeType/props 缓存） */
+  prefetchScriptMetas(): Promise<void>;
   /** 项目脚本清单（assets 扫描结果的 src/**.ts） */
   listScripts(): string[];
 }
@@ -61,6 +70,7 @@ export function getScriptsStore(): ScriptsStore {
     tabs: [] as string[],
     active: null as string | null,
     busy: false,
+    schemaRev: 0,
     files: new Map<string, ScriptFileState>(),
   });
 
@@ -72,8 +82,17 @@ export function getScriptsStore(): ScriptsStore {
     try {
       const source = await api.readText(root, rel);
       if (source == null) return null;
-      const propsSchema = await parsePropsSchema(source).catch(() => null);
-      const st: ScriptFileState = { source, dirty: false, compileError: null, propsSchema };
+      const meta = await parseScriptClassMeta(source).catch(() => ({
+        props: null as ScriptPropDef[] | null,
+        nodeType: null as ScriptNodeType | null,
+      }));
+      const st: ScriptFileState = {
+        source,
+        dirty: false,
+        compileError: null,
+        propsSchema: meta.props,
+        nodeType: meta.nodeType,
+      };
       state.files.set(rel, st);
       return st;
     } catch (e) {
@@ -91,6 +110,9 @@ export function getScriptsStore(): ScriptsStore {
     },
     get busy() {
       return state.busy;
+    },
+    get schemaRev() {
+      return state.schemaRev;
     },
     fileState(rel) {
       return state.files.get(rel);
@@ -129,13 +151,19 @@ export function getScriptsStore(): ScriptsStore {
       state.busy = true;
       try {
         await api.writeText(root, rel, st.source);
-        const [compiled, schema] = await Promise.all([
+        const [compiled, meta] = await Promise.all([
           compileScript(st.source, rel),
-          parsePropsSchema(st.source).catch(() => null),
+          parseScriptClassMeta(st.source).catch(() => ({
+            props: null as ScriptPropDef[] | null,
+            nodeType: null as ScriptNodeType | null,
+          })),
         ]);
         st.compileError = compiled.error;
-        st.propsSchema = schema;
+        st.propsSchema = meta.props;
+        st.nodeType = meta.nodeType;
         st.dirty = false;
+        // 保存成功 → bump schema 版本：检查器属性控件据此刷新
+        state.schemaRev += 1;
         if (compiled.error) {
           logStore.log("error", `脚本编译失败 ${rel}: ${compiled.error}`, "script");
         }
@@ -197,6 +225,25 @@ export function getScriptsStore(): ScriptsStore {
     async propsSchemaFor(rel) {
       const st = await ensureLoaded(rel);
       return st?.propsSchema ?? null;
+    },
+    scriptNodeTypes() {
+      const out: { rel: string; name: string; nodeType: ScriptNodeType }[] = [];
+      for (const rel of store.listScripts()) {
+        const st = state.files.get(rel);
+        if (!st?.nodeType) continue;
+        out.push({
+          rel,
+          name: st.nodeType.label || rel.replace(/\.ts$/, "").split("/").pop() || "Node",
+          nodeType: st.nodeType,
+        });
+      }
+      return out;
+    },
+    async prefetchScriptMetas() {
+      for (const rel of store.listScripts()) {
+        if (state.files.has(rel)) continue;
+        await ensureLoaded(rel);
+      }
     },
     listScripts() {
       const assetsStore = getAssetsStore();

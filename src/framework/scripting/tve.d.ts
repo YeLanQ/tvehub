@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // tve —— 引擎脚本 SDK 类型契约（模块说明符 "tve"）。
 //
-// 用户脚本以 `import { Component, engine } from "tve"` 访问引擎能力。
-// 本文件是脚本类型的唯一事实源：编辑器（Monaco 智能提示 / 诊断）直接加载本文件，
-// 运行时实现在 public/web-preview/libs/tve.mjs（播放器侧；两者保持镜像同步）。
+// 用户脚本以 `import { Component, property, nodeType, engine } from "tve"`
+// 访问引擎能力。本文件是脚本类型的唯一事实源：编辑器（Monaco 智能提示 /
+// 诊断）直接加载本文件，运行时实现在 public/web-preview/libs/tve.mjs
+// （播放器侧；两者保持镜像同步）。
 //
 // 设计约束：全部为引擎自有类型（Vec3 普通对象、度制欧拉角，与编辑器数据模型
 // 一致），不暴露任何 three.js / WebGL 接口。
@@ -16,72 +17,157 @@ export interface Vec3 {
   z: number;
 }
 
-/** 组件属性类型（检查器按此渲染编辑控件） */
+/** 组件属性类型（检查器按此渲染编辑控件；也可由字段初值/类型推断） */
 export type PropType = "number" | "string" | "boolean" | "color" | "vec3";
 
-/** 单个组件属性的定义 */
+/**
+ * 场景节点类型键（与编辑器节点序列化的 type 字段一致）。
+ * 脚本节点引用属性（type 用节点类）按此过滤候选场景节点。
+ */
+export type EntityKind =
+  | "node"
+  | "meshNode"
+  | "cameraNode"
+  | "lightNode"
+  | "pointLightNode"
+  | "directionalLightNode"
+  | "ambientLightNode"
+  | "spotLightNode"
+  | "skyboxNode";
+
+/** 节点类型 token 类的构造器形状（@property 的 type 选项可用） */
+export type NodeClass =
+  | typeof Transform
+  | typeof MeshNode
+  | typeof LightNode
+  | typeof CameraNode
+  | typeof SkyboxNode;
+
+/** 单个组件属性的定义（运行时组件声明用；编辑器侧另有同名 AST 结构） */
 export interface PropDef {
-  /** 值类型（color = "#rrggbb" 字符串；vec3 = Vec3 对象）。
-   *  注意：TS 会把对象字面量里的 `type: "number"` 扩宽为 `string`，若此处是
-   *  严格字面量联合 `PropType`，子类 `static props = {...}` 会触发静态侧
-   *  TS2417。放宽为可赋任意字符串以兼容直接字面量声明；运行期只识别
-   *  PropType 中的值，其余按 number 兜底（检查器/AST 解析只认这些值）。 */
   type: PropType | string;
-  /** 默认值 */
   default: number | string | boolean | Vec3;
-  /** 检查器显示名（缺省用属性名） */
   label?: string;
-  /** number 专用：最小值 / 最大值 / 步进 */
   min?: number;
   max?: number;
   step?: number;
 }
 
-/** 组件属性表（脚本类以 `static props = { ... }` 声明） */
-export interface PropsSchema {
-  [key: string]: PropDef;
-}
+/** 脚本声明的可创建节点类型基础（对应编辑器节点类型键） */
+export type ScriptNodeKind = "node" | "meshNode" | "cameraNode" | "lightNode" | "skyboxNode";
 
-/** 组件属性值集合（泛型可收窄：`Component<{ speed: number }>`） */
+// ---------------------------------------------------------------------------
+// 装饰器（参考 Cocos Creator @property / @ccclass 的声明式写法）
+// ---------------------------------------------------------------------------
+
+/**
+ * 属性装饰器：把成员字段声明为脚本组件的可编辑属性（检查器自动按字段类型
+ * 渲染控件；字段初值即默认值；运行期直接以 `this.字段名` 读写）。
+ *
+ * 类型由字段初值推断：number / boolean / string；颜色字符串（#rrggbb 等）与
+ * {x,y,z} 向量对象需显式传 type 或声明对应类型。
+ *
+ * **场景节点引用**：type 传节点类型类（Transform / MeshNode / LightNode /
+ * CameraNode / SkyboxNode，或用小写别名 meshNode 等）即声明"引用一个场景节点"。
+ * 检查器按类型过滤列出可选的场景节点，选择结果在运行期解析为该节点的 Entity
+ * （未选择为 null）：
+ *
+ * ```ts
+ * export default class Game extends Component {
+ *   @property({ type: MeshNode, label: "目标网格" })
+ *   target: MeshNode | null = null;   // 运行期指向被引用的网格节点
+ *
+ *   onUpdate(delta: number) {
+ *     if (this.target) this.target.rotate(0, 90 * delta, 0);
+ *   }
+ * }
+ * ```
+ */
+export function property(options?: {
+  /**
+   * 值类型。基本类型：number/string/boolean/color/vec3（缺省按字段初值推断）；
+   * 或节点类型类：把该属性声明为场景节点引用（检查器选择场景节点，
+   * 运行期字段为该节点的 Entity）。
+   */
+  type?: PropType | NodeClass;
+  /** 检查器显示名（缺省用字段名） */
+  label?: string;
+  /** 悬浮说明（显示在控件标题） */
+  tooltip?: string;
+  /** number 专用：最小值 / 最大值 / 步进 */
+  min?: number;
+  max?: number;
+  step?: number;
+}): PropertyDecorator;
+
+/**
+ * 节点类型装饰器（类装饰器，可选）：声明脚本类同时作为一种可创建的节点类型，
+ * 出现在层级面板「添加节点 > 脚本节点」；创建时生成 kind 对应的基础节点并自动
+ * 挂上本脚本组件（类似 Unity 中以脚本定义 GameObject 行为）。
+ *
+ * ```ts
+ * @nodeType({ kind: "meshNode", label: "敌人" })
+ * export default class Enemy extends Component {
+ *   // ...
+ * }
+ * ```
+ * kind 缺省 node（空组）；label 缺省取类名。
+ */
+export function nodeType(options?: {
+  kind?: ScriptNodeKind;
+  label?: string;
+}): ClassDecorator;
+
+// ---------------------------------------------------------------------------
+// 组件 / 实体
+// ---------------------------------------------------------------------------
+
+/** 组件属性值集合（供声明式引用；装饰器字段写法无需本类型） */
 export type ComponentProps = Record<string, unknown>;
 
 /**
- * 脚本组件基类。用户脚本默认导出一个 Component 子类：
+ * 脚本组件基类（装饰器声明式写法，推荐）：
  *
  * ```ts
- * import { Component, engine } from "tve";
+ * import { Component, property, engine } from "tve";
  *
+ * @nodeType({ kind: "node", label: "旋转体" })
  * export default class Spin extends Component {
- *   static props = {
- *     speed: { type: "number", default: 90, label: "速度", min: 0 },
- *   } ;
+ *   @property({ label: "速度", min: 0 })
+ *   speed = 90;
  *
  *   onStart() {
  *     engine.log("挂载于", this.entity.name);
  *   }
  *
  *   onUpdate(delta: number) {
- *     this.entity.rotate(0, (this.props.speed as number) * delta, 0);
+ *     this.entity.rotate(0, this.speed * delta, 0); // this.speed 类型为 number
  *   }
  * }
  * ```
+ *
+ * 生命周期：onStart 挂载后调用一次；onUpdate 每帧调用（delta = 秒）。
+ * 运行时 `this` 上还提供一个只读属性值视图 `this.props`（装饰器字段的
+ * 当前值 + 检查器配置的覆盖值），便于以字典方式遍历。
  */
 export class Component<P extends ComponentProps = ComponentProps> {
   /**
-   * 属性定义表：子类以 `static props = {...}` 声明后，检查器自动渲染
-   * 对应类型的编辑控件，未在节点上配置的属性取 default。
+   * @deprecated 推荐使用字段 + @property 装饰器声明属性。此静态声明仍受支持：
+   * 声明后检查器按此渲染编辑控件，未在节点上配置的属性取 default，
+   * 运行期经 `this.props` 读取（此时用泛型 P 声明 this.props 的类型）。
    */
-  static props?: PropsSchema;
+  static props?: { [key: string]: PropDef };
 
-  /**
-   * @internal 由运行时构造（挂载到节点时创建实例），脚本不要直接 new。
-   */
-  constructor(entity: Entity, props: P);
+  /** @internal 由运行时构造（挂载到节点时创建实例），脚本不要直接 new。 */
+  constructor(entity: Entity);
 
   /** 宿主实体（挂载所在节点） */
   readonly entity: Entity;
 
-  /** 属性值（已合并默认值；只读视图，运行期不要改写） */
+  /**
+   * 属性值视图（只读）：字段装饰器字段的当前值，叠加检查器配置的覆盖值；
+   * 兼容旧静态 props 声明的脚本。不要在本视图写入。
+   */
   readonly props: Readonly<P>;
 
   /** 生命周期：全部脚本实例创建后调用一次 */
@@ -101,6 +187,9 @@ export class Entity {
 
   /** 节点 id（与场景文件中的节点 id 一致） */
   readonly id: string;
+
+  /** 节点类型键（与场景序列化的 type 字段一致：node/meshNode/pointLightNode…） */
+  readonly kind: EntityKind;
 
   /** 名称（可写，即时生效） */
   get name(): string;
@@ -149,6 +238,42 @@ export class Entity {
   /** 取本实体上挂载的首个指定类型脚本组件（无则 null） */
   getComponent<T extends Component>(componentClass: new (...args: never[]) => T): T | null;
 }
+
+// ---------------------------------------------------------------------------
+// 节点类型（场景节点引用的类型 token）
+//
+// 既可作类型标注（字段类型），也可作为值传给 @property({ type })：
+//   @property({ type: MeshNode }) target: MeshNode | null = null;
+// 编辑器按类型过滤可选场景节点；运行期字段解析为对应 kind 的 Entity 子类实例
+// （instanceof 可判断）。小写别名与编辑器节点名一致（meshNode/cameraNode/…）。
+// ---------------------------------------------------------------------------
+
+/** 通用节点（Transform/空组；可引用任意场景节点） */
+export class Transform extends Entity {}
+
+/** 网格节点（编辑器 meshNode：基元网格或模型网格） */
+export class MeshNode extends Entity {}
+
+/** 灯光节点（编辑器 lightNode / pointLightNode / directionalLightNode / ambientLightNode / spotLightNode） */
+export class LightNode extends Entity {}
+
+/** 相机节点（编辑器 cameraNode） */
+export class CameraNode extends Entity {}
+
+/** 天空盒节点（编辑器 skyboxNode） */
+export class SkyboxNode extends Entity {}
+
+export {
+  Transform as transform,
+  MeshNode as meshNode,
+  LightNode as lightNode,
+  CameraNode as cameraNode,
+  SkyboxNode as skyboxNode,
+};
+
+// ---------------------------------------------------------------------------
+// engine 入口
+// ---------------------------------------------------------------------------
 
 /** 帧时间信息 */
 export interface TimeState {

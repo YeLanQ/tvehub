@@ -45,26 +45,66 @@ function scriptExists(rel: string): boolean {
   return scriptList.value.includes(rel);
 }
 
-// 属性声明缓存：script → props 声明（未解析 = null；异步加载后经 schemasRev 失效）
+/** 节点引用（entity）可选场景节点：按 def.filter 白名单过滤（空 = 全部） */
+function nodeRefOptions(def: ScriptPropDef): { id: string; name: string }[] {
+  const engine = getEditorStore().engine;
+  const allow = def.filter && def.filter.length ? def.filter : null;
+  return engine.graph
+    .all()
+    .filter((n) => (allow ? allow.includes(n.typeKey) : true))
+    .map((n) => ({ id: n.id, name: n.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * 属性 schema 缓存：script → ScriptPropDef[] | null（null = 已解析但无声明）。
+ * 键缺失 = 未加载；用 inFlight 集合跟踪正在异步解析的脚本，避免重复请求。
+ */
 const schemas = ref<Record<string, ScriptPropDef[] | null>>({});
 const schemasRev = ref(0);
+const inFlight = new Set<string>();
 
+/** 异步解析单个脚本的 props 声明（结果回填缓存并触发渲染） */
+function loadSchema(rel: string): void {
+  if (inFlight.has(rel)) return;
+  inFlight.add(rel);
+  void scriptsStore.propsSchemaFor(rel).then((defs) => {
+    inFlight.delete(rel);
+    if (schemas.value[rel] === defs) return;
+    schemas.value = { ...schemas.value, [rel]: defs };
+    schemasRev.value += 1;
+  });
+}
+
+/** 为组件脚本补齐待加载的 schema 键，并触发未解析脚本的异步拉取 */
+function refreshSchemas(list: NodeComponentRef[]): void {
+  let changed = false;
+  for (const c of list) {
+    if (Object.prototype.hasOwnProperty.call(schemas.value, c.script)) continue;
+    schemas.value = { ...schemas.value, [c.script]: null };
+    changed = true;
+  }
+  if (changed) schemasRev.value += 1;
+  for (const c of list) loadSchema(c.script);
+}
+
+watch(components, (list) => refreshSchemas(list), { immediate: true });
+
+// 脚本保存（schemaRev 递增）后，属性声明可能变化 → 清空并重新解析所有组件脚本
 watch(
-  components,
-  (list) => {
+  () => scriptsStore.schemaRev,
+  () => {
     let changed = false;
-    for (const c of list) {
-      if (Object.prototype.hasOwnProperty.call(schemas.value, c.script)) continue;
+    for (const c of components.value) {
+      if (!Object.prototype.hasOwnProperty.call(schemas.value, c.script)) continue;
+      schemas.value = { ...schemas.value, [c.script]: null };
       changed = true;
-      schemas.value[c.script] = null;
-      void scriptsStore.propsSchemaFor(c.script).then((defs) => {
-        schemas.value = { ...schemas.value, [c.script]: defs };
-        schemasRev.value += 1;
-      });
     }
-    if (changed) schemas.value = { ...schemas.value };
+    if (!changed) return;
+    // 强制重拉（inFlight 里的旧请求可能已出队，这里重新入队一次）
+    inFlight.clear();
+    refreshSchemas(components.value);
   },
-  { immediate: true },
 );
 
 function schemaOf(rel: string): ScriptPropDef[] | null {
@@ -211,6 +251,18 @@ const modelMeta = computed(() => {
             :value="String(propValue(c, def.key, def) ?? '#ffffff')"
             @change="emit('setProp', c.id, def.key, ($event.target as HTMLInputElement).value)"
           />
+
+          <!-- 场景节点引用：从场景中按类型选择目标节点（value = 节点 id） -->
+          <select
+            v-else-if="def.type === 'entity'"
+            class="prop-string mono"
+            :value="String(propValue(c, def.key, def) ?? '')"
+            :title="def.filter?.length ? `可选节点类型：${def.filter.join('/')}` : '任意场景节点'"
+            @change="emit('setProp', c.id, def.key, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">（未选择）</option>
+            <option v-for="n in nodeRefOptions(def)" :key="n.id" :value="n.id">{{ n.name }}</option>
+          </select>
 
           <div v-else-if="def.type === 'vec3'" class="prop-vec3">
             <NumberField

@@ -11,7 +11,14 @@
 // （postLog → 编辑器控制台），不影响渲染与其他脚本。
 // ---------------------------------------------------------------------------
 import { postLog } from "./log.mjs";
-import { Component, getEntity, installRuntime, registerComponent, tickTime } from "./tve.mjs";
+import {
+  Component,
+  getEntity,
+  installRuntime,
+  registerComponent,
+  resolveNodeEntity,
+  tickTime,
+} from "./tve.mjs";
 
 /** 源路径（src/**.ts）→ 编译产物路径（src/**.js） */
 function jsPathOf(srcRel) {
@@ -28,19 +35,57 @@ function cloneDefault(v) {
   return v;
 }
 
-/** 节点配置的 props 与脚本类 static props 声明的默认值合并（配置优先） */
-function mergeProps(klass, configured) {
-  const out = {};
-  const schema = typeof klass === "function" ? klass.props : null;
-  if (schema && typeof schema === "object") {
-    for (const [key, def] of Object.entries(schema)) {
-      if (def && typeof def === "object" && Object.prototype.hasOwnProperty.call(def, "default")) {
-        out[key] = cloneDefault(def.default);
+/**
+ * 实例化脚本组件并挂接属性视图：
+ * - 装饰器模式（字段 @property，klass.__tvePropKeys 非空）：new 后字段初值即
+ *   默认值；节点配置的 props 覆盖字段（this.字段名 直接读写）；
+ * - legacy 静态 props（klass.props）：默认值取声明 default，节点配置覆盖；
+ *   两者都挂只读视图 this.props（默认 + 配置覆盖的字典快照）。
+ */
+function buildInstance(klass, entity, configured) {
+  const inst = new klass(entity);
+  const keys = Array.isArray(klass.__tvePropKeys) ? klass.__tvePropKeys : [];
+  const fieldMode = keys.length > 0;
+  const merged = {};
+  if (fieldMode) {
+    for (const k of keys) merged[k] = inst[k];
+  } else {
+    const schema = typeof klass === "function" ? klass.props : null;
+    if (schema && typeof schema === "object") {
+      for (const [k, def] of Object.entries(schema)) {
+        if (def && typeof def === "object" && Object.prototype.hasOwnProperty.call(def, "default")) {
+          merged[k] = cloneDefault(def.default);
+        }
       }
     }
   }
-  if (configured && typeof configured === "object") Object.assign(out, configured);
-  return out;
+  if (configured && typeof configured === "object") {
+    Object.assign(merged, configured);
+    if (fieldMode) {
+      for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(configured, k)) inst[k] = merged[k];
+      }
+    }
+  }
+  // 场景节点引用（@property({type: 节点类}) 登记的实体键）：把配置里存的节点 id
+  // 解析为 Entity；未配置/空 id → null
+  const entityKeys = Array.isArray(klass.__tveEntityKeys) ? klass.__tveEntityKeys : [];
+  if (entityKeys.length) {
+    const raw = (configured && typeof configured === "object" ? configured : {});
+    for (const k of entityKeys) {
+      const id = raw[k];
+      const ent = typeof id === "string" && id ? resolveNodeEntity(id) : null;
+      merged[k] = ent;
+      inst[k] = ent;
+    }
+  }
+  Object.defineProperty(inst, "props", {
+    value: Object.freeze(merged),
+    writable: false,
+    configurable: true,
+    enumerable: false,
+  });
+  return inst;
 }
 
 /** 生命周期调用（出错 → 停用该实例并上报，不再驱动） */
@@ -134,7 +179,7 @@ export async function createScripts({ nodes, cfg, animations, canvas }) {
       if (!entity) continue;
       let inst;
       try {
-        inst = new Klass(entity, mergeProps(Klass, item.props));
+        inst = buildInstance(Klass, entity, item.props);
       } catch (e) {
         postLog("error", `[脚本] 实例化失败 ${item.script}: ${errText(e)}`);
         continue;

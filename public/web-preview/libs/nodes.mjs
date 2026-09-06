@@ -44,6 +44,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
     obj.name = json.name ?? type;
     // 节点身份标记（tve SDK 实体寻址用；内部子对象不带）
     obj.userData.nodeId = typeof json.id === "string" ? json.id : "";
+    obj.userData.nodeKind = typeof type === "string" ? type : "";
     obj.visible = json.active !== false && json.visible !== false;
 
     const p = vec(tr.position, { x: 0, y: 0, z: 0 });

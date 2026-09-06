@@ -20,6 +20,7 @@ import {
   type SkyboxKind,
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
+import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
@@ -429,6 +430,51 @@ export class EditorEngine {
     this.graph.add(node);
     this.select(node.id);
     return node;
+  }
+
+  /**
+   * 添加脚本节点类型（脚本类经 `static nodeType` 声明）：按声明的 kind 创建
+   * 基础节点，并自动挂载对应脚本组件（带脚本声明的默认属性）。一个可撤销操作。
+   * @param scriptRel 脚本源路径（src/**.ts，须声明了 static nodeType）
+   * @param nodeType  脚本类声明的节点类型元数据（kind/label）
+   */
+  addScriptNode(scriptRel: string, nodeType: { kind: string; label?: string }, parentId?: string): Node {
+    const parent = this.resolveParent(parentId);
+    let base: Node;
+    switch (nodeType.kind) {
+      case "meshNode":
+        base = this.addMesh("box", parent?.id ?? undefined);
+        break;
+      case "cameraNode":
+        base = this.addCamera(parent?.id ?? undefined);
+        break;
+      case "lightNode":
+        base = this.addLight("point", parent?.id ?? undefined);
+        break;
+      case "skyboxNode":
+        base = this.addSkybox("procedural", parent?.id ?? undefined);
+        break;
+      default:
+        base = this.addEmptyGroup(parent?.id ?? undefined);
+    }
+    // 命名：优先节点类型 label，其次脚本类名
+    base.name = nodeType.label?.trim() || scriptRel.replace(/\.ts$/, "").split("/").pop() || "Node";
+    // 自动挂脚本组件（随节点写入；一步 undo）
+    const before = base.toJSON() as JsonRecord;
+    base.components = [
+      ...base.components,
+      {
+        id: nextId("comp"),
+        type: "script",
+        script: scriptRel,
+        enabled: true,
+        props: {},
+      },
+    ];
+    const after = base.toJSON() as JsonRecord;
+    this.patchNode(base.id, before, after, "添加脚本节点");
+    this.select(base.id);
+    return base;
   }
 
   deleteSelected(): void {

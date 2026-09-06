@@ -20,10 +20,12 @@ import {
   menuSeparator,
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
+import { getScriptsStore } from "../stores/scripts";
 import "../../styles/components/hierarchy-panel.scss";
 
 const store = getEditorStore();
 const { state, engine } = store;
+const scriptsStore = getScriptsStore();
 
 /** 节点类型 → SVG 图标路径 + 颜色（与引擎视口/资产图标共用同一份路径数据） */
 const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
@@ -131,6 +133,11 @@ function addNodeTo(parentId: string, type: string, name?: string): void {
     node = engine.addSkybox(type.slice(7) as SkyboxKind, parentId);
   } else if (type === "camera") {
     node = engine.addCamera(parentId);
+  } else if (type.startsWith("script:")) {
+    // 脚本节点类型：按声明的 kind 创建基础节点并自动挂脚本组件
+    const rel = type.slice(7);
+    const nt = scriptsStore.scriptNodeTypes().find((s) => s.rel === rel);
+    node = engine.addScriptNode(rel, nt?.nodeType ?? { kind: "node" }, parentId);
   } else {
     node = engine.addEmptyGroup(parentId);
   }
@@ -143,6 +150,11 @@ function createAddItems(parentId: string): CtxMenuItem[] {
   const geometryItems: CtxMenuItem[] = geometryRegistry.list().map((g) => ({
     label: g.label,
     onClick: () => addNodeTo(parentId, `mesh:${g.key}`),
+  }));
+  // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点
+  const scriptNodeItems: CtxMenuItem[] = scriptsStore.scriptNodeTypes().map((s) => ({
+    label: s.name,
+    onClick: () => addNodeTo(parentId, `script:${s.rel}`),
   }));
   return [
     { label: "网格", header: true },
@@ -160,6 +172,13 @@ function createAddItems(parentId: string): CtxMenuItem[] {
     { label: "天空盒", header: true },
     { label: "Procedural Skybox", onClick: () => addNodeTo(parentId, "skybox:procedural") },
     { label: "Cube Skybox", onClick: () => addNodeTo(parentId, "skybox:cube") },
+    ...(scriptNodeItems.length
+      ? [
+          menuSeparator(),
+          { label: "脚本节点", header: true },
+          ...scriptNodeItems,
+        ]
+      : []),
   ];
 }
 
@@ -350,6 +369,8 @@ function applyMove(ids: string[], targetId: string, mode: "before" | "after" | "
 onMounted(() => {
   window.addEventListener("mousemove", onWindowMouseMove);
   window.addEventListener("mouseup", onWindowMouseUp);
+  // 预读脚本元数据（@nodeType / @property）：让「脚本节点」创建菜单开箱可用
+  void scriptsStore.prefetchScriptMetas();
 });
 onUnmounted(() => {
   window.removeEventListener("mousemove", onWindowMouseMove);
