@@ -21,6 +21,8 @@ const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
 ];
 
 const projectName = computed(() => projectStore.projectName ?? "未命名项目");
+/** 编辑器是否有未保存修改（保存按钮标记点） */
+const editorDirty = computed(() => store.dirty());
 
 function setViewMode(mode: ViewMode): void {
   store.setViewMode(mode);
@@ -70,7 +72,15 @@ function setViewMode(mode: ViewMode): void {
     >
       撤销
     </button>
-    <button class="primary" @click="runEditorCommand('save')">保存</button>
+    <button
+      class="primary save-btn"
+      :class="{ dirty: editorDirty }"
+      :title="editorDirty ? '保存当前场景（有未保存修改）' : '保存当前场景'"
+      @click="runEditorCommand('save')"
+    >
+      保存
+      <span v-if="editorDirty" class="save-dirty-dot" aria-label="有未保存修改"></span>
+    </button>
     <button @click="runEditorCommand('close')" title="关闭项目返回首页">关闭</button>
   </div>
 </template>

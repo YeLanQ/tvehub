@@ -19,6 +19,10 @@ export interface EditorStore {
   nodeById: (id: string | null | undefined) => Node | undefined;
   childrenOf: (id: string) => Node[];
   markMounted: () => void;
+  /** 编辑器是否有未保存修改（保存按钮标记 / 关闭提醒用） */
+  dirty: () => boolean;
+  /** 场景已保存/已切换 → 清除脏标记 */
+  markSaved: () => void;
   setViewMode: (mode: ViewMode) => void;
   state: Readonly<{
     selectedId: string | null;
@@ -33,6 +37,7 @@ export interface EditorStore {
     historyDepth: number;
     historyLabels: string[];
     mounted: boolean;
+    dirty: boolean;
   }>;
 }
 
@@ -62,6 +67,7 @@ export function getEditorStore(): EditorStore {
     historyLabels: [] as string[],
     mounted: false,
     revision: 0,
+    dirty: false,
   });
 
   const bump = (): void => {
@@ -83,6 +89,17 @@ export function getEditorStore(): EditorStore {
   engine.events.on("gizmo:state", bump);
   engine.events.on("material:changed", bump);
   engine.history.events.on("changed", bump);
+
+  // 脏标记：编辑器有改动（场景图/材质/撤销重做）→ 保存按钮标记 + 关闭提醒
+  engine.events.on("graph:changed", () => {
+    if (state.mounted) state.dirty = true;
+  });
+  engine.events.on("material:changed", () => {
+    if (state.mounted) state.dirty = true;
+  });
+  engine.history.events.on("changed", () => {
+    if (state.mounted) state.dirty = true;
+  });
 
   // 场景图变化 → 控制台日志（框架层不依赖 app，日志桥接只在 app 层）
   engine.events.on("graph:changed", (c) => {
@@ -138,6 +155,10 @@ export function getEditorStore(): EditorStore {
     },
     markMounted: () => {
       state.mounted = true;
+    },
+    dirty: () => state.dirty,
+    markSaved: () => {
+      state.dirty = false;
     },
   };
   singleton = store;
@@ -205,6 +226,7 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
         setupStarterScene(engine);
       }
       store.markMounted();
+      store.markSaved();
       logStore.log("info", "编辑器已就绪", "engine");
     })();
   }
@@ -233,6 +255,7 @@ export async function reloadEditorScene(root: string, text: string): Promise<voi
   if (refs.length) await engine.materials.preload(refs);
   if (engine.isDisposed()) return;
   loadSceneFromJson(engine, migrated);
+  store.markSaved();
   logStore.log("info", "场景已切换", "engine");
 }
 

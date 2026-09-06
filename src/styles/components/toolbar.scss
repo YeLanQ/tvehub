@@ -105,3 +105,19 @@
     cursor: not-allowed;
   }
 }
+
+/* 保存按钮脏标记：有未保存修改时红点提示 */
+.save-btn {
+  position: relative;
+}
+.save-dirty-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  border: 1px solid var(--text-dim);
+  pointer-events: none;
+}
