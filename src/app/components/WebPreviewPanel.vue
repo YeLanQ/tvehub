@@ -33,6 +33,16 @@ const RUNTIME_FILES = [
   "libs/textures.mjs",
   "libs/camera.mjs",
   "libs/stage.mjs",
+  "libs/model.mjs",
+  "libs/animation.mjs",
+  "libs/loaders/GLTFLoader.js",
+  "libs/loaders/FBXLoader.js",
+  "libs/loaders/OBJLoader.js",
+  "libs/loaders/SkeletonUtils.js",
+  "libs/loaders/BufferGeometryUtils.js",
+  "libs/loaders/fflate.module.js",
+  "libs/loaders/NURBSCurve.js",
+  "libs/loaders/NURBSUtils.js",
 ];
 
 const phase = ref<"idle" | "starting" | "ok" | "error">("idle");

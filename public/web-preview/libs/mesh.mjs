@@ -1,20 +1,34 @@
 // 网格（meshNode）构建：基元几何 + 按材质类型分派 three 材质
-// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / 其余 → MeshPhysicalMaterial）。
+// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / 其余 → MeshPhysicalMaterial），
+// 以及模型网格（source=model）的实例化挂载。
 // 与编辑器 framework/mesh、framework/material/factory 的规则保持同步。
 import * as THREE from "./three.module.min.js";
 import { num, vec } from "./utils.mjs";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material.mjs";
+import { instantiateModel } from "./model.mjs";
 
 /**
  * 生成 meshNode 的 three 对象：
- * - 模型网格（source=model）：预览暂不回放模型资产（几何/动画由编辑器渲染），
- *   渲染空组占位，避免按基元规则画出一个误导性的默认方块；
+ * - 模型网格（source=model）：实例化已解析的模型（SkeletonUtils.clone）挂为子级
+ *   __modelRoot（与编辑器 SceneSynchronizer 同名约定，动画绑定据此取实例）；
+ *   未绑定/加载失败时渲染空组占位，避免按基元规则画出一个误导性的默认方块；
  * - 基元网格：按 geometry/size 生成几何；
  * - 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退 PBR。
  *   透明/裁剪规则与编辑器一致：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪。
  */
-export function createMesh(json, materialParams) {
-  if (json.source === "model") return new THREE.Group();
+export function createMesh(json, ctx) {
+  if (json.source === "model") {
+    const container = new THREE.Group();
+    const rel = typeof json.model === "string" ? json.model : "";
+    const inst = rel ? instantiateModel(ctx.models, rel) : null;
+    if (inst) {
+      inst.name = "__modelRoot";
+      inst.userData.modelRel = rel;
+      inst.userData.sharedResources = true; // 几何/材质与缓存模板共享，移除时不 dispose
+      container.add(inst);
+    }
+    return container;
+  }
   const kind = json.geometry || "box";
   const sz = vec(json.size, { x: 1, y: 1, z: 1 });
   const x = Math.max(0.01, num(sz.x, 1));
@@ -26,7 +40,7 @@ export function createMesh(json, materialParams) {
   else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
   else geom = new THREE.BoxGeometry(x, y, z);
 
-  const m = materialParams.get(json.material) || MAT_DEFAULTS;
+  const m = ctx.materialParams.get(json.material) || MAT_DEFAULTS;
   const f = {
     transparent: m.opacity < 0.999 || (!!m.map && !(m.alphaClipThreshold > 0.0001)),
     alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,

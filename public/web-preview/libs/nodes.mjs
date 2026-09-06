@@ -10,16 +10,17 @@ import { createMesh } from "./mesh.mjs";
 /**
  * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
  * - cameras：cameraNode 列表（{ json, obj }，供渲染相机取位姿/参数）；
- * - meshes：meshNode 列表（{ json, obj }，供贴图回填遍历材质）。
+ * - meshes：meshNode 列表（{ json, obj }，供贴图回填/动画绑定遍历）。
+ * ctx = { materialParams, models }：.mat 参数表 + 模型实例化缓存。
  */
-export function buildSceneTree(rootJson, scene, materialParams) {
+export function buildSceneTree(rootJson, scene, ctx) {
   const cameras = [];
   const meshes = [];
 
   function buildOwn(type, json) {
     switch (type) {
       case "meshNode":
-        return createMesh(json, materialParams);
+        return createMesh(json, ctx);
       case "pointLightNode":
         return wrapLight(json, "point");
       case "directionalLightNode":

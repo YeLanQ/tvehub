@@ -92,8 +92,9 @@ const TEXTURE_FIELDS: [&str; 5] = ["map", "metalnessMap", "roughnessMap", "norma
 /// 从当前场景导出网页预览产物：
 /// - files 由前端提供网页运行时（index.html / player.mjs / libs/* 模块与 three 运行时 / config.json，
 ///   属 WebView 打包资源，前端 fetch 一次传入）；
-/// - scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制全部由 Rust 直接
-///   从磁盘读取写入导出目录——大贴图不再以 base64 形式穿过 IPC（旧导出的主要负载）。
+/// - scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制、模型网格引用的
+///   模型资产（glb/gltf/fbx/obj 及 .gltf 外部 .bin/贴图）全部由 Rust 直接
+///   从磁盘读取写入导出目录——大文件不再以 base64 形式穿过 IPC（旧导出的主要负载）。
 #[tauri::command]
 pub async fn export_web_preview_from_scene(
     root: String,
@@ -134,7 +135,71 @@ pub async fn export_web_preview_from_scene(
         }
     }
 
+    // 场景引用的模型资产（glb/gltf/fbx/obj）二进制随导出——player 按同相对路径
+    // fetch 后解析回放（含内嵌动画）；缺失项跳过（player 渲染空组并告警）。
+    // .gltf（JSON 文本）外部引用的 buffers[].uri / images[].uri 指向模型同目录
+    // 文件（.bin/贴图），一并随拷，保持与编辑器“同目录资源”解析规则一致。
+    let mut model_refs = Vec::new();
+    crate::scene::migrate::collect_model_refs(&scene_json, &mut model_refs);
+    for rel in &model_refs {
+        let Ok(bytes) = read_asset_bytes(&root_path, rel) else {
+            continue;
+        };
+        if rel.to_ascii_lowercase().ends_with(".gltf") {
+            if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                for key in ["buffers", "images"] {
+                    let Some(items) = doc.get(key).and_then(|v| v.as_array()) else {
+                        continue;
+                    };
+                    for item in items {
+                        let Some(uri) = item.get("uri").and_then(|v| v.as_str()) else {
+                            continue;
+                        };
+                        if let Some(sibling) = gltf_sibling_rel(rel, uri) {
+                            if sibling != *rel && !binaries.contains_key(&sibling) {
+                                if let Ok(b) = read_asset_bytes(&root_path, &sibling) {
+                                    binaries.insert(sibling, b);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        binaries.insert(rel.clone(), bytes);
+    }
+
     write_export(&root, files, &binaries)
+}
+
+/// .gltf 内外部引用（buffers[].uri / images[].uri）→ 模型同目录的资产相对路径。
+/// data:/绝对地址、反斜杠与越出资产根（..）的引用返回 None（跳过不拷贝）。
+fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
+    if uri.is_empty() || uri.contains('\\') || uri.contains("://") || uri.starts_with("data:") {
+        return None;
+    }
+    let decoded = percent_decode(uri);
+    let dir = match model_rel.rfind('/') {
+        Some(i) => &model_rel[..i],
+        None => "",
+    };
+    let joined = if dir.is_empty() { decoded } else { format!("{dir}/{decoded}") };
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return None; // 越出资产根
+                }
+            }
+            s => parts.push(s),
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
 }
 
 /// 启动网页预览服务器（服务 `<root>/.tmp/web-preview`），返回可内嵌的 base URL。
@@ -334,6 +399,10 @@ fn mime_for(path: &Path) -> &'static str {
         Some("html") => "text/html; charset=utf-8",
         Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
         Some("json") => "application/json; charset=utf-8",
+        Some("mat") => "application/json; charset=utf-8",
+        Some("glb") => "model/gltf-binary",
+        Some("gltf") => "model/gltf+json",
+        Some("bin") => "application/octet-stream",
         Some("css") => "text/css; charset=utf-8",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
@@ -355,4 +424,38 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(body);
     let _ = stream.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gltf_sibling_rel;
+
+    #[test]
+    fn gltf_sibling_resolves_against_model_dir() {
+        assert_eq!(
+            gltf_sibling_rel("assets/models/a.glb".into(), "scene.bin").as_deref(),
+            Some("assets/models/scene.bin")
+        );
+        // 子目录与 ../ 回溯按相对路径归一化
+        assert_eq!(
+            gltf_sibling_rel("assets/models/a.gltf".into(), "tex/diffuse.png").as_deref(),
+            Some("assets/models/tex/diffuse.png")
+        );
+        assert_eq!(
+            gltf_sibling_rel("assets/models/sub/a.gltf".into(), "../shared.buf").as_deref(),
+            Some("assets/models/shared.buf")
+        );
+        // 根目录模型（无目录段）直接归一化
+        assert_eq!(gltf_sibling_rel("a.gltf".into(), "./b.bin").as_deref(), Some("b.bin"));
+    }
+
+    #[test]
+    fn gltf_sibling_rejects_absolute_and_escape() {
+        assert_eq!(gltf_sibling_rel("assets/models/a.gltf".into(), ""), None);
+        assert_eq!(gltf_sibling_rel("assets/models/a.gltf".into(), "data:application/octet;base64,AAA"), None);
+        assert_eq!(gltf_sibling_rel("assets/models/a.gltf".into(), "https://cdn.example.com/x.png"), None);
+        assert_eq!(gltf_sibling_rel("assets/models/a.gltf".into(), "C:\\x.png"), None);
+        // .. 越出资产根 → 空地址（守卫拒绝）
+        assert_eq!(gltf_sibling_rel("assets/models/a.gltf".into(), "../../../../etc/passwd"), None);
+    }
 }
