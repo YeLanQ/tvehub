@@ -89,7 +89,7 @@ export function createDefaultMetadata(name: string = "Untitled Scene"): SceneMet
 export function createDefaultSettings(): SceneSettings {
   return {
     rendering: {
-      backgroundColor: 0x1a1a2e,
+      backgroundColor: 0,
       fogEnabled: false,
       fogColor: 0x000000,
       fogNear: 1,
