@@ -128,6 +128,8 @@ export class EditorEngine {
   constructor() {
     this.factory = createNodeFactory(createDefaultRegistry());
     this.graph = new SceneClient(this.factory);
+    // 骨骼辅助线需挂在无变换的场景根下（挂在节点容器上会叠加两次节点变换）
+    this.animation.setSceneRoot(this.renderer.scene);
     this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
       paramsFor: (rel) => this.materials.paramsFor(rel),
       typeFor: (rel) => this.materials.typeFor(rel),

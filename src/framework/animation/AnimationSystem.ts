@@ -88,10 +88,28 @@ export class AnimationSystem {
   /** 编辑器辅助物总开关（预览渲染时隐藏骨骼辅助线） */
   private overlayVisible = true;
   private selectedId: string | null = null;
+  /**
+   * 场景根：SkeletonHelper 的 matrix 直接引用模型根的 matrixWorld（顶点按模型根
+   * 局部空间计算），必须挂在无变换的场景根下其最终 matrixWorld 才等于模型根的
+   * matrixWorld；挂在带变换的节点容器上会把节点变换叠加两次，骨架与模型分离。
+   */
+  private sceneRoot: THREE.Scene | null = null;
 
   onChange(l: AnimChangeListener): () => void {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
+  }
+
+  /** 注入场景根（引擎构造时调用；骨骼辅助线挂在它下面） */
+  setSceneRoot(scene: THREE.Scene | null): void {
+    // 已存在的辅助线跟随迁移（正常只在任何绑定建立前调用一次）
+    for (const b of this.bindings.values()) {
+      if (b.skeletonHelper) {
+        b.skeletonHelper.parent?.remove(b.skeletonHelper);
+        scene?.add(b.skeletonHelper);
+      }
+    }
+    this.sceneRoot = scene;
   }
 
   private notify(nodeId: string): void {
@@ -139,12 +157,14 @@ export class AnimationSystem {
       skeletonHelper: null,
       helperSelected: false,
     };
-    // 骨骼辅助线挂在模型根上（随节点变换；仅选中且辅助物可见时显示）
+    // 骨骼辅助线挂在场景根上（其 matrix 引用模型根 matrixWorld，随节点变换；
+    // 仅选中且辅助物可见时显示）
     if (hasSkeleton) {
       const helper = new THREE.SkeletonHelper(root);
       helper.name = "__skelHelper";
       helper.visible = false;
-      root.parent?.add(helper);
+      const host = this.sceneRoot ?? root.parent;
+      if (host) host.add(helper);
       binding.skeletonHelper = helper;
     }
     this.bindings.set(node.id, binding);
