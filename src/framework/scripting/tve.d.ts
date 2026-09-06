@@ -21,8 +21,12 @@ export type PropType = "number" | "string" | "boolean" | "color" | "vec3";
 
 /** 单个组件属性的定义 */
 export interface PropDef {
-  /** 值类型（color = "#rrggbb" 字符串；vec3 = Vec3 对象） */
-  type: PropType;
+  /** 值类型（color = "#rrggbb" 字符串；vec3 = Vec3 对象）。
+   *  注意：TS 会把对象字面量里的 `type: "number"` 扩宽为 `string`，若此处是
+   *  严格字面量联合 `PropType`，子类 `static props = {...}` 会触发静态侧
+   *  TS2417。放宽为可赋任意字符串以兼容直接字面量声明；运行期只识别
+   *  PropType 中的值，其余按 number 兜底（检查器/AST 解析只认这些值）。 */
+  type: PropType | string;
   /** 默认值 */
   default: number | string | boolean | Vec3;
   /** 检查器显示名（缺省用属性名） */

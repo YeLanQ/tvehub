@@ -82,6 +82,7 @@
   position: relative;
   flex: 1;
   min-height: 0;
+  background: #1e1e1e; /* 与 tve-dark 主题编辑器背景一致 */
 }
 
 .monaco-container {
@@ -101,7 +102,57 @@
 }
 
 .monaco-empty {
-  background: var(--bg);
+  background: #1e1e1e;
+  color: var(--text-dim);
+}
+
+/* —— Monaco widget 信息栏放大（建议下拉 / 悬停文档 / 参数提示） ——
+   编辑器选项只能驱动行号与正文，这些浮层字号/行高默认取 12px 偏小，
+   用 CSS 覆盖到与正文一致的行高与更大字号，避免信息栏过挤。 */
+.script-editor .monaco-hover {
+  font-size: 13px;
+  line-height: 1.6;
+
+  code {
+    font-size: 12.5px;
+  }
+
+  .monaco-hover-content {
+    padding: 6px;
+  }
+
+  .hover-row .contents .markdown {
+    padding: 2px 0;
+  }
+}
+
+.script-editor .suggest-widget {
+  font-size: 13.5px;
+  line-height: 1.5;
+
+  .monaco-list-row {
+    font-size: 13.5px;
+
+    // .monaco-icon-label,
+    .label-name,
+    .detail-label,
+    .details-label {
+      font-size: 13.5px;
+    }
+  }
+
+  .monaco-list .monaco-list-row {
+    height: 26px;
+  }
+}
+
+.script-editor .editor-widget.parameter-hints-widget {
+  font-size: 13px;
+  line-height: 1.6;
+
+  .monaco-editor .parameter-hints-widget > .wrapper {
+    padding: 4px 8px;
+  }
 }
 
 .script-status {

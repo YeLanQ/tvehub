@@ -52,14 +52,32 @@ onMounted(async () => {
     await nextTick();
     if (!containerEl.value) return;
     editor = m.editor.create(containerEl.value, {
-      theme: "vs-dark",
+      theme: "tve-dark",
       language: "typescript",
       automaticLayout: true,
-      fontSize: 13,
+      fontSize: 14,
+      fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+      lineHeight: 22,
       minimap: { enabled: true },
       scrollBeyondLastLine: false,
       tabSize: 2,
+      // VS Code 编辑体验：括号配对着色 + 缩进导轨 + 高亮当前行
+      bracketPairColorization: { enabled: true },
+      guides: { bracketPairs: true, indentation: true },
+      renderLineHighlight: "all",
       renderWhitespace: "selection",
+      // TS 智能提示：随输入即时建议 / Tab 补全单词；建议与悬停信息栏字号/行高由 CSS 放大
+      quickSuggestions: { other: true, comments: false, strings: false },
+      tabCompletion: "on",
+      wordBasedSuggestions: "currentDocument",
+      suggest: {
+        preview: true,
+        showWords: false,
+      },
+      smoothScrolling: true,
+      cursorSmoothCaretAnimation: "on",
+      cursorBlinking: "smooth",
+      padding: { top: 4, bottom: 4 },
     });
     // Ctrl+S / Cmd+S 保存当前脚本
     editor.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => {
