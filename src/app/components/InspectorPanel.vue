@@ -18,11 +18,14 @@ import {
 } from "../lib/materials";
 import type { JsonRecord } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/command/commands";
+import type { AnimGraph } from "../../framework/animation";
+import { isModelAssetRel } from "../../framework/mesh";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
 import MaterialSection from "./inspector/MaterialSection.vue";
+import AnimationSection from "./inspector/AnimationSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
@@ -140,9 +143,77 @@ function onTransformChange(axis: "position" | "rotation" | "scale", part: "x" | 
 function onMeshUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof MeshNode)) return;
-  if (label === "Set Geometry") {
-    commit((m) => { (m as MeshNode).geometry = value as MeshNode["geometry"]; }, label);
+  switch (label) {
+    case "Set Geometry":
+      commit((m) => {
+        (m as MeshNode).source = "primitive";
+        (m as MeshNode).geometry = value as MeshNode["geometry"];
+      }, label);
+      break;
+    case "Set Mesh Source": {
+      const source = value === "model" ? "model" : "primitive";
+      commit((m) => {
+        const mesh = m as MeshNode;
+        mesh.source = source;
+        if (source === "model") mesh.material = ""; // 模型材质内嵌，不走资产引用
+      }, label);
+      break;
+    }
+    case "Set Model": {
+      const rel = value as string;
+      if (!isModelAssetRel(rel)) return;
+      const apply = (): void => {
+        commit((m) => {
+          (m as MeshNode).source = "model";
+          (m as MeshNode).model = rel;
+          (m as MeshNode).material = "";
+        }, label);
+      };
+      // 先预取模型再提交：节点入图即渲染实例（未就绪则先占位后自动刷新）
+      if (!engine.models.has(rel)) {
+        void engine.models.preload([rel]);
+      }
+      apply();
+      engine.refreshModelNodes(rel);
+      break;
+    }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 动画卡片（Animation）事件：节点数据提交（可撤销）；运行时控制由卡片直连引擎
+// ---------------------------------------------------------------------------
+
+function onAnimUpdate(label: string, value: unknown): void {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode)) return;
+  commit((m) => {
+    const anim = (m as MeshNode).anim;
+    switch (label) {
+      case "Set Anim Autoplay":
+        anim.autoplay = value === true;
+        break;
+      case "Set Anim Clip":
+        anim.clip = typeof value === "string" ? value : "";
+        break;
+      case "Set Anim Speed":
+        anim.speed = typeof value === "number" ? Math.max(0, value) : 1;
+        break;
+      case "Set Anim Loop":
+        if (value === "loop" || value === "once" || value === "pingpong") anim.loop = value;
+        break;
+    }
+  }, label);
+}
+
+/** 动画图数据变更（编辑器每次操作提交整图；null = 删除图回到单剪辑） */
+function onAnimGraphUpdate(graph: AnimGraph | null): void {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode)) return;
+  commit((m) => {
+    (m as MeshNode).animGraph = graph;
+    if (graph) (m as MeshNode).anim.autoplay = true; // 图模式下自动播放入口状态
+  }, "编辑动画图");
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +491,11 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
         <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
       </ComponentCard>
 
-      <ComponentCard v-if="node instanceof MeshNode" title="Material" :open="true">
+      <ComponentCard
+        v-if="node instanceof MeshNode && node.source === 'primitive'"
+        title="Material"
+        :open="true"
+      >
         <MaterialSection
           :node="node"
           :rev="revision"
@@ -428,6 +503,15 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
           @editParam="onMaterialEdit"
           @changeType="onMaterialChangeType"
           @copyToProject="onMaterialCopyToProject"
+        />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof MeshNode && node.source === 'model'" title="Animation" :open="true">
+        <AnimationSection
+          :node="node"
+          :rev="revision"
+          @updateAnim="onAnimUpdate"
+          @updateGraph="onAnimGraphUpdate"
         />
       </ComponentCard>
 

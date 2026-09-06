@@ -57,7 +57,7 @@ defineProps<{ kind: string }>();
     </template>
 
     <!-- 模型：线框立方体 -->
-    <template v-else-if="kind === 'glb' || kind === 'gltf' || kind === 'obj'">
+    <template v-else-if="kind === 'glb' || kind === 'gltf' || kind === 'fbx' || kind === 'obj'">
       <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
       <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
     </template>

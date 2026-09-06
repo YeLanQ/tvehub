@@ -3,6 +3,7 @@ import { EditorEngine } from "../../framework/engine/EditorEngine";
 import { setupStarterScene } from "../../framework/engine/starterScene";
 import { loadSceneFromJson } from "../../framework/engine/loadScene";
 import { collectMeshMaterialRefs, DEFAULT_MATERIAL_REL } from "../../framework/material";
+import { collectMeshModelRefs } from "../../framework/mesh";
 import type { Node } from "../../framework/prototype/Node";
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
@@ -88,6 +89,8 @@ export function getEditorStore(): EditorStore {
   engine.events.on("select:changed", bump);
   engine.events.on("gizmo:state", bump);
   engine.events.on("material:changed", bump);
+  engine.events.on("model:changed", bump);
+  engine.events.on("animation:changed", bump);
   engine.history.events.on("changed", bump);
 
   // 脏标记：编辑器有改动（场景图/材质/撤销重做）→ 保存按钮标记 + 关闭提醒
@@ -189,6 +192,28 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
                 : await api.readAssetBinary(root, rel).catch(() => null)
           : null,
       );
+      // 模型来源：与贴图同构（二进制 + 同目录清单，清单直接扫盘保证新鲜）
+      engine.setModelAccess(
+        root
+          ? {
+              readBinary: async (rel) =>
+                isInternalAsset(rel)
+                  ? await api.readInternalBinary(rel).catch(() => null)
+                  : await api.readAssetBinary(root, rel).catch(() => null),
+              listDir: async (dir) => {
+                try {
+                  const entries = await api.scanAssets(root);
+                  const prefix = dir ? `${dir}/` : "";
+                  return entries
+                    .filter((a) => a.kind !== "dir" && a.path.startsWith(prefix))
+                    .map((a) => a.path);
+                } catch {
+                  return [];
+                }
+              },
+            }
+          : null,
+      );
       await engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,
@@ -207,14 +232,17 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
           }
         }
         if (engine.isDisposed()) return;
-        // 装载前预取全部材质引用：节点入图即渲染到正确外观（避免先默认后跳变）
-        let refs: string[] = [];
+        // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）
+        let sceneData: unknown = null;
         try {
-          refs = collectMeshMaterialRefs(JSON.parse(text));
+          sceneData = JSON.parse(text);
         } catch {
-          /* 保留空引用集合 */
+          /* 解析失败时按空引用集合处理，装载期会回退初始场景 */
         }
-        if (refs.length) await engine.materials.preload(refs);
+        const matRefs = sceneData ? collectMeshMaterialRefs(sceneData) : [];
+        if (matRefs.length) await engine.materials.preload(matRefs);
+        const modelRefs = sceneData ? collectMeshModelRefs(sceneData) : [];
+        if (modelRefs.length) await engine.models.preload(modelRefs);
         if (engine.isDisposed()) return;
         // 空/损坏场景（含旧版 "empty" 魔法标记）解析失败时回退到初始场景，避免白屏报错
         if (!loadSceneFromJson(engine, text)) {
@@ -246,13 +274,17 @@ export async function reloadEditorScene(root: string, text: string): Promise<voi
     logStore.log("warn", `旧场景材质迁移失败（按原内容加载）: ${e}`, "engine");
   }
   if (engine.isDisposed()) return;
-  let refs: string[] = [];
+  let matRefs: string[] = [];
+  let modelRefs: string[] = [];
   try {
-    refs = collectMeshMaterialRefs(JSON.parse(migrated));
+    const sceneData: unknown = JSON.parse(migrated);
+    matRefs = collectMeshMaterialRefs(sceneData);
+    modelRefs = collectMeshModelRefs(sceneData);
   } catch {
     /* 保留空引用集合 */
   }
-  if (refs.length) await engine.materials.preload(refs);
+  if (matRefs.length) await engine.materials.preload(matRefs);
+  if (modelRefs.length) await engine.models.preload(modelRefs);
   if (engine.isDisposed()) return;
   loadSceneFromJson(engine, migrated);
   store.markSaved();

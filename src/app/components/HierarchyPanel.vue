@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
 import type { GeometryKind, LightKind, SkyboxKind } from "../../framework/prototype/derived/Primitives";
+import { geometryRegistry } from "../../framework/mesh";
 import type { MoveTarget } from "../../framework/command/commands";
 import {
   CAMERA_ICON_PATHS,
@@ -138,12 +139,14 @@ function addNodeTo(parentId: string, type: string, name?: string): void {
 }
 
 function createAddItems(parentId: string): CtxMenuItem[] {
+  // 基元列表由几何工厂注册表驱动（新增基元自动出现在菜单）
+  const geometryItems: CtxMenuItem[] = geometryRegistry.list().map((g) => ({
+    label: g.label,
+    onClick: () => addNodeTo(parentId, `mesh:${g.key}`),
+  }));
   return [
     { label: "网格", header: true },
-    { label: "Cube", onClick: () => addNodeTo(parentId, "mesh:box") },
-    { label: "Sphere", onClick: () => addNodeTo(parentId, "mesh:sphere") },
-    { label: "Cylinder", onClick: () => addNodeTo(parentId, "mesh:cylinder") },
-    { label: "Plane", onClick: () => addNodeTo(parentId, "mesh:plane") },
+    ...geometryItems,
     menuSeparator(),
     { label: "灯光", header: true },
     { label: "Point Light", onClick: () => addNodeTo(parentId, "light:point") },

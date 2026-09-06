@@ -443,6 +443,9 @@ async function main() {
   }
 
   function buildMesh(json) {
+    // 模型网格（source=model）：预览暂不回放模型资产（几何/动画由编辑器渲染），
+    // 渲染空组占位，避免按基元规则画出一个误导性的默认方块
+    if (json.source === "model") return new THREE.Group();
     const kind = json.geometry || "box";
     const sz = vec(json.size, { x: 1, y: 1, z: 1 });
     const x = Math.max(0.01, num(sz.x, 1));

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

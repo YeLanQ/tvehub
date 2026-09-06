@@ -32,6 +32,8 @@ import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { sanitizeAssetStem } from "../lib/materials";
 import { materialTypeRegistry } from "../../framework/material";
+import { isModelAssetRel } from "../../framework/mesh";
+import { getEditorStore } from "../stores/editor";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -161,6 +163,7 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   bmp: "assets/textures",
   glb: "assets/models",
   gltf: "assets/models",
+  fbx: "assets/models",
   obj: "assets/models",
   json: "assets",
 };
@@ -193,7 +196,7 @@ async function copyInternalToProject(item: ChildEntry): Promise<void> {
   // 二进制资源（图片/模型等）走 base64；文本资源（材质/脚本等）走文本
   const BINARY_EXTS = new Set([
     "png", "jpg", "jpeg", "webp", "gif", "bmp",
-    "glb", "gltf", "obj", "bin",
+    "glb", "gltf", "fbx", "obj", "bin",
   ]);
   try {
     if (BINARY_EXTS.has(ext)) {
@@ -253,9 +256,25 @@ function onItemDblClick(item: ChildEntry) {
     });
     return;
   }
+  // 双击模型资产：作为模型网格加入当前场景
+  if (isModelAssetRel(item.path)) {
+    addModelToScene(item);
+    return;
+  }
   // 本项目无 openScene/openTextEditor：双击非目录仅选中并记录日志
   assetsStore.select(item.path);
   logStore.log("info", `${item.name} (${item.kind})`);
+}
+
+/** 把模型资产作为网格节点加入当前场景（source=model；动画自动绑定） */
+function addModelToScene(item: ChildEntry): void {
+  const store = getEditorStore();
+  if (!store.state.mounted) {
+    logStore.log("warn", "编辑器未就绪，无法添加模型");
+    return;
+  }
+  const node = store.engine.addModel(item.path);
+  logStore.log("success", `已添加模型节点 ${node.name}`, "engine");
 }
 
 function onItemContext(e: MouseEvent, item: ChildEntry) {
@@ -266,6 +285,10 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
   const isInternal = isInternalAsset(item.path);
 
   if (item.kind === "dir") items.push({ label: "打开", onClick: () => navigate(item.path) });
+  // 模型资产：加入当前场景（source=model 网格节点）
+  if (item.kind !== "dir" && isModelAssetRel(item.path)) {
+    items.push({ label: "添加到场景", onClick: () => addModelToScene(item) });
+  }
 
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除

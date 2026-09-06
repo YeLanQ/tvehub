@@ -5,13 +5,13 @@ import {
   MeshNode,
   SkyboxNode,
   skyMaterialForKind,
-  type GeometryKind,
   type LightKind,
   type SkyboxKind,
 } from "../prototype/derived/Primitives";
 import { Node } from "../prototype/Node";
 import { PrototypeRegistry } from "../prototype/PrototypeRegistry";
 import { Transform } from "../prototype/Transform";
+import { geometryRegistry, modelFileStem } from "../mesh";
 
 export type EditorNodeType =
   | "node"
@@ -61,10 +61,26 @@ export class NodeFactory {
     if (opts.position) node.transform = new Transform({ position: opts.position });
   }
 
-  createMesh(geometry: GeometryKind, opts: CreateOptions = {}): MeshNode {
+  createMesh(geometry: string, opts: CreateOptions = {}): MeshNode {
     const node = this.registry.create("meshNode") as MeshNode;
-    node.geometry = geometry;
-    node.name = opts.name ?? defaultMeshName(geometry);
+    const def = geometryRegistry.getOrDefault(geometry);
+    node.source = "primitive";
+    node.geometry = def.key;
+    node.name = opts.name ?? def.label;
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /**
+   * 按模型资产引用创建模型网格（source=model）：
+   * 几何/材质由模型内嵌，节点只持有引用；动画默认自动播放首个剪辑。
+   */
+  createModel(rel: string, opts: CreateOptions = {}): MeshNode {
+    const node = this.registry.create("meshNode") as MeshNode;
+    node.source = "model";
+    node.model = rel;
+    node.material = ""; // 模型材质内嵌，不走材质资产
+    node.name = opts.name ?? modelFileStem(rel);
     this.decorate(node, { ...opts, name: undefined });
     return node;
   }
@@ -110,16 +126,6 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
       : K extends "skyboxNode"
         ? SkyboxNode
         : Node;
-
-function defaultMeshName(geometry: GeometryKind): string {
-  const map: Record<GeometryKind, string> = {
-    box: "Cube",
-    sphere: "Sphere",
-    plane: "Plane",
-    cylinder: "Cylinder",
-  };
-  return map[geometry];
-}
 
 function defaultSkyboxName(kind: SkyboxKind): string {
   return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";

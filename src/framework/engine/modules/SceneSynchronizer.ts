@@ -10,7 +10,8 @@ import {
   CameraNode,
 } from "../../prototype/derived/Primitives";
 import { degToRad } from "../../prototype/types";
-import { disposeObject3D, buildGeometry } from "./utils";
+import { disposeObject3D } from "./utils";
+import { buildGeometry } from "../../mesh";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
 import {
@@ -26,6 +27,12 @@ export interface MaterialParamsLookup {
   typeFor?(rel: string): string;
   /** 异步加载贴图资产（rel → Texture；srgb=true 表示颜色贴图）。引擎注入，未注入则无贴图 */
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
+  /** 实例化模型资产（rel → 模型克隆；未就绪返回 null，调用方渲染占位体）。引擎注入 ModelManager */
+  instantiateModel?(rel: string): THREE.Object3D | null;
+  /** 模型是否已解析就绪（引擎注入 ModelManager；实例复用判断用） */
+  modelReady?(rel: string): boolean;
+  /** 模型实例挂载完成回调（引擎接 AnimationSystem 绑定动画） */
+  onModelInstance?(node: MeshNode, modelRoot: THREE.Object3D): void;
 }
 
 const defaultLookup: MaterialParamsLookup = {
@@ -34,6 +41,10 @@ const defaultLookup: MaterialParamsLookup = {
 
 /** 网格轮廓体子网格名（同步器按名查找/回收；不进入 objectMap） */
 const OUTLINE_CHILD_NAME = "__matOutline";
+/** 模型实例子对象名（source=model 的网格容器下；回收/换源时按名清理） */
+const MODEL_CHILD_NAME = "__modelRoot";
+/** 模型加载中/失败的占位体子网格名 */
+const MODEL_PENDING_NAME = "__modelPending";
 
 /**
  * 拷贝几何并沿顶点外扩 offset（对象空间单位），用作轮廓体的独立几何，避免污染主网格几何。
@@ -235,11 +246,81 @@ export class SceneSynchronizer {
     this.applyTransform(node);
   }
 
+  /** 网格刷新入口：按来源分派（基元 = 几何工厂 + 材质资产；模型 = 实例化克隆） */
   private refreshMesh(mesh: MeshNode, obj: THREE.Mesh): void {
+    if (mesh.source === "model") {
+      this.refreshModelMesh(mesh, obj);
+      return;
+    }
+    // 基元网格：清理可能的模型残留（实例共享模板资源只摘除；占位体/轮廓体释放）
+    this.removeModelChild(obj);
+    this.removeNamedChild(obj, MODEL_PENDING_NAME);
     const geom = buildGeometry(mesh.geometry, mesh.size);
     obj.geometry.dispose();
     obj.geometry = geom;
     this.updateMeshMaterial(mesh, obj);
+  }
+
+  /**
+   * 模型网格刷新：
+   - 容器本身不渲染（空几何），模型克隆挂载为 __modelRoot 子对象；
+   - 引用与就绪状态未变时复用已有实例（属性补丁不重置动画播放），
+     仅回放 onModelInstance 让动画系统应用设置差异；
+   - 模型未就绪（异步加载中/失败）时以线框占位体示意，加载完成由引擎
+     经 refreshModelNodes 重刷替换；
+   - 实例与缓存模板共享几何/材质（userData.sharedResources 标记，
+     回收时只摘除不释放）。
+   */
+  private refreshModelMesh(mesh: MeshNode, obj: THREE.Mesh): void {
+    // 实例复用：同一模型引用且已就绪 → 保留克隆（动画状态连续）
+    const existing = obj.children.find((c) => c.name === MODEL_CHILD_NAME);
+    if (
+      existing &&
+      (existing.userData as { modelRel?: string }).modelRel === mesh.model &&
+      !!mesh.model &&
+      (this.lookup.modelReady?.(mesh.model) ?? false)
+    ) {
+      this.lookup.onModelInstance?.(mesh, existing);
+      return;
+    }
+    // 模型实例与模板共享资源：摘除即可（dispose 由模板统一管理，不逐实例释放）
+    if (existing) obj.remove(existing);
+    this.removeNamedChild(obj, MODEL_PENDING_NAME);
+    this.removeNamedChild(obj, OUTLINE_CHILD_NAME);
+    // 容器几何置空：基元几何/材质不参与模型渲染（材质由模型内嵌）
+    if (obj.geometry) obj.geometry.dispose();
+    obj.geometry = new THREE.BufferGeometry();
+
+    const inst = mesh.model ? (this.lookup.instantiateModel?.(mesh.model) ?? null) : null;
+    if (inst) {
+      inst.name = MODEL_CHILD_NAME;
+      inst.userData.modelRel = mesh.model;
+      inst.userData.sharedResources = true;
+      obj.add(inst);
+      this.lookup.onModelInstance?.(mesh, inst);
+      return;
+    }
+    // 占位体：待加载/失败共用（失败原因经引擎日志输出）
+    const pending = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.5, 0.5),
+      new THREE.MeshBasicMaterial({ color: 0x8a7a3a, wireframe: true }),
+    );
+    pending.name = MODEL_PENDING_NAME;
+    obj.add(pending);
+  }
+
+  /** 按名移除并释放子对象（占位体/轮廓体等自有资源的子对象回收） */
+  private removeNamedChild(obj: THREE.Object3D, name: string): void {
+    const child = obj.children.find((c) => c.name === name);
+    if (!child) return;
+    obj.remove(child);
+    disposeObject3D(child);
+  }
+
+  /** 摘除模型实例（与模板共享几何/材质，不释放资源） */
+  private removeModelChild(obj: THREE.Object3D): void {
+    const child = obj.children.find((c) => c.name === MODEL_CHILD_NAME);
+    if (child) obj.remove(child);
   }
 
   /**
@@ -250,6 +331,17 @@ export class SceneSynchronizer {
     const obj = this.objectMap.get(mesh.id);
     if (!obj) return;
     this.updateMeshMaterial(mesh, obj as THREE.Mesh);
+  }
+
+  /**
+   * 整卡刷新单个网格（几何/材质/模型实例 + 动画重绑）：
+   * 模型加载完成、网格来源/引用切换后由引擎调用。
+   */
+  refreshMeshNode(mesh: MeshNode): void {
+    const obj = this.objectMap.get(mesh.id);
+    if (!obj) return;
+    this.refreshMesh(mesh, obj as THREE.Mesh);
+    this.applyTransform(mesh);
   }
 
   /**

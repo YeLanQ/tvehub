@@ -36,6 +36,8 @@ import { SceneSynchronizer } from "./modules/SceneSynchronizer";
 import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
 import { buildProceduralSkyTexture, buildCubeSkyTexture } from "./modules/skyboxTextures";
 import { MaterialManager } from "../material/MaterialManager";
+import { ModelManager, type ModelFileAccess } from "../mesh";
+import { AnimationSystem } from "../animation";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -43,6 +45,10 @@ export interface EditorEvents extends Record<string, unknown> {
   "gizmo:state": { mode: GizmoMode; space: "local" | "world" };
   /** 材质资产参数变更（保存/刷新后广播；rel 为空串表示全部） */
   "material:changed": { rel: string };
+  /** 模型资产解析状态变更（加载完成/失败/失效后广播；rel 为空串表示全部） */
+  "model:changed": { rel: string };
+  /** 节点动画运行时变化（播放/暂停/图状态切换/参数写入） */
+  "animation:changed": { nodeId: string };
 }
 
 export class EditorEngine {
@@ -56,6 +62,12 @@ export class EditorEngine {
   readonly helperSystem: HelperSystem;
   /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
   readonly materials = new MaterialManager();
+  /** 模型资产缓存/实例化（模型网格按引用克隆渲染；应用层注入文件读取器） */
+  readonly models = new ModelManager();
+  /** 动画系统（模型网格的剪辑播放/骨骼动画/动画图状态机；渲染循环推进） */
+  readonly animation = new AnimationSystem();
+  /** 动画推进时钟（渲染回调里取帧间隔） */
+  private clock = new THREE.Clock();
   /** 贴图二进制读取器（返回 base64；应用层注入项目文件读取） */
   private textureReader: ((rel: string) => Promise<string | null>) | null = null;
   /** 贴图加载缓存（key = "srgb?c|n|rel" → Texture 或 null） */
@@ -123,9 +135,19 @@ export class EditorEngine {
       paramsFor: (rel) => this.materials.paramsFor(rel),
       typeFor: (rel) => this.materials.typeFor(rel),
       loadTexture: (rel, srgb) => this.loadTexture(rel, srgb),
+      instantiateModel: (rel) => this.models.instantiate(rel),
+      modelReady: (rel) => this.models.has(rel),
+      onModelInstance: (node, root) => this.bindNodeAnimation(node, root),
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
     this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
+    // 模型库缓存更新（加载完成/失效）→ 刷新引用该模型的所有网格
+    this.models.onChanged((rel) => {
+      this.refreshModelNodes(rel);
+      this.events.emit("model:changed", { rel });
+    });
+    // 动画运行时变化（播放/图状态/参数）→ 广播给面板刷新
+    this.animation.onChange((nodeId) => this.events.emit("animation:changed", { nodeId }));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -207,6 +229,8 @@ export class EditorEngine {
     if (this.disposed) return;
     this.initGizmo();
     this.renderer.setRenderCb(() => {
+      // 动画推进（剪辑/骨骼/动画图状态机）与渲染同帧
+      this.animation.update(this.clock.getDelta());
       this.gizmo.updateSelectionBox();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
@@ -237,7 +261,9 @@ export class EditorEngine {
     this.gizmo?.dispose();
     this.helperSystem?.dispose();
     this.synchronizer?.dispose();
+    this.animation?.dispose();
     this.materials?.clear();
+    this.models?.clear();
     this.removeViewportClickHandler();
   }
 
@@ -257,6 +283,21 @@ export class EditorEngine {
   setTextureReader(fn: ((rel: string) => Promise<string | null>) | null): void {
     this.textureReader = fn;
     this.textureCache.clear();
+  }
+
+  // ===================== 模型加载（mesh 模块接入） =====================
+
+  /** 注入模型文件访问器（模型二进制 + 同目录清单；应用层按项目根目录封装） */
+  setModelAccess(access: ModelFileAccess | null): void {
+    this.models.setAccess(access);
+    this.models.clear();
+  }
+
+  /** 模型实例挂载后把节点动画数据交给动画系统绑定（mixer/图状态机） */
+  private bindNodeAnimation(node: MeshNode, modelRoot: THREE.Object3D): void {
+    const clips = node.model ? this.models.animationsFor(node.model) : [];
+    this.animation.syncNode(node, modelRoot, clips);
+    this.animation.setSelected(this.selectedId);
   }
 
   /**
@@ -299,6 +340,20 @@ export class EditorEngine {
     applySpawnOffset(node);
     this.run(new AddNodeCommand(this.graph, node));
     this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加模型网格（source=model）：模型资产经 ModelManager 异步解析，
+   * 入图先渲染占位体，加载完成后自动刷新为实例并绑定动画。
+   */
+  addModel(rel: string, parentId?: string): MeshNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createModel(rel, { parentId: parent?.id ?? null });
+    this.run(new AddNodeCommand(this.graph, node));
+    this.select(node.id);
+    // 预取触发 models.onChanged → refreshModelNodes 自动刷新（含广播）
+    if (!this.models.has(rel)) void this.models.preload([rel]);
     return node;
   }
 
@@ -395,6 +450,24 @@ export class EditorEngine {
     this.events.emit("material:changed", { rel: rel ?? "" });
   }
 
+  /**
+   * 模型资产解析完成后：刷新引用该模型的所有网格（实例替换 + 动画重绑）
+   * 并广播 model:changed。rel 为空时刷新全部模型网格。
+   */
+  refreshModelNodes(rel?: string | null): void {
+    for (const node of this.graph.all()) {
+      if (
+        node instanceof MeshNode &&
+        node.source === "model" &&
+        (rel == null || node.model === rel)
+      ) {
+        this.synchronizer.refreshMeshNode(node);
+      }
+    }
+    this.animation.setSelected(this.selectedId);
+    this.events.emit("model:changed", { rel: rel ?? "" });
+  }
+
   private resolveParent(preferred?: string): Node | undefined {
     if (preferred) return this.graph.get(preferred);
     if (this.selectedId) {
@@ -467,6 +540,8 @@ export class EditorEngine {
   private onGraphChange(c: SceneChange): void {
     this.synchronizer.onGraphChange(c, this.graph);
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
+    // 节点子树移除 → 其动画绑定（mixer/骨骼辅助线）一并解除
+    if (c.kind === "remove") this.animation.unbind(c.nodeId);
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -486,12 +561,25 @@ export class EditorEngine {
       const rel = n.material;
       void this.materials.preload([rel]).then(() => this.refreshMaterialNodes(rel));
     }
+    // 同理：尚未解析的模型资产 → 预取后经 models.onChanged 自动刷新网格与动画
+    if (
+      n instanceof MeshNode &&
+      n.source === "model" &&
+      n.model &&
+      !this.models.has(n.model)
+    ) {
+      void this.models.preload([n.model]);
+    }
   }
 
   rebuildAll(): void {
+    // 场景整体重建：先解除全部动画绑定（mixer 指向旧实例），重建时经
+    // onModelInstance 逐节点重新绑定
+    this.animation.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
+    this.animation.setSelected(this.selectedId);
     this.applySkyFromGraph();
   }
 
@@ -638,6 +726,8 @@ export class EditorEngine {
   }
 
   private onSelectionChanged(): void {
+    // 骨骼辅助线跟随选中（仅选中节点的模型显示）
+    this.animation.setSelected(this.selectedId);
     if (!this.previewMode) return;
     this.syncPreviewView();
   }
@@ -766,6 +856,7 @@ export class EditorEngine {
     });
     this.gizmo.setEditorEnabled(vis);
     this.helperSystem.setVisible(vis);
+    this.animation.setOverlayVisible(vis);
   }
 
   // ===================== 视口点击选择 =====================

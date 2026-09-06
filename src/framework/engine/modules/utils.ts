@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import type { TransformSnapshot } from "../../command/commands";
 import type { Vec3 } from "../../prototype/types";
-import type { GeometryKind } from "../../prototype/nodes/MeshNode";
 import type { LightNode } from "../../prototype/nodes/LightNode";
 
 export function snapshotTransform(node: {
@@ -70,32 +69,23 @@ export function findNodeOwner(
   return null;
 }
 
-export function buildGeometry(kind: GeometryKind, size: Vec3): THREE.BufferGeometry {
-  const x = Math.max(0.01, size.x);
-  const y = Math.max(0.01, size.y);
-  const z = Math.max(0.01, size.z);
-  switch (kind) {
-    case "sphere":
-      return new THREE.SphereGeometry(x / 2, 32, 24);
-    case "plane":
-      return new THREE.PlaneGeometry(x, z);
-    case "cylinder":
-      return new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
-    default:
-      return new THREE.BoxGeometry(x, y, z);
-  }
-}
-
 export function emissiveMat(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({ color, wireframe: false });
 }
 
+/** 子树是否为共享资源（模型实例与缓存模板共享几何/材质，不可释放） */
+function isSharedSubtree(o: THREE.Object3D): boolean {
+  return (o.userData as { sharedResources?: boolean }).sharedResources === true;
+}
+
 export function disposeObject3D(obj: THREE.Object3D): void {
-  obj.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
-    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-    else if (mat) mat.dispose();
-  });
+  // 模型实例与缓存模板共享几何/材质（SkeletonUtils.clone 不复制资源）：
+  // 标记 sharedResources 的子树整棵跳过，避免销毁模板资源导致其它实例花屏
+  if (isSharedSubtree(obj)) return;
+  const mesh = obj as THREE.Mesh;
+  if (mesh.geometry) mesh.geometry.dispose();
+  const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+  if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+  else if (mat) mat.dispose();
+  for (const child of [...obj.children]) disposeObject3D(child);
 }

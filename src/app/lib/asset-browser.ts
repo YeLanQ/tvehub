@@ -21,7 +21,7 @@ export const ASSET_TYPE_FILTERS: { id: string; label: string; kinds?: string[] }
   { id: "ts", label: "脚本", kinds: ["ts"] },
   { id: "json", label: "JSON", kinds: ["json"] },
   { id: "tex", label: "纹理", kinds: ["png", "jpg", "jpeg", "webp", "bmp"] },
-  { id: "model", label: "模型", kinds: ["glb", "gltf", "obj"] },
+  { id: "model", label: "模型", kinds: ["glb", "gltf", "fbx", "obj"] },
 ];
 
 /** 资产 kind 是否命中某类型筛选（"all" 或未注册的筛选 id 一律通过） */

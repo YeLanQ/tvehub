@@ -8,7 +8,6 @@ export {
   sameTransform,
   applySpawnOffset,
   findNodeOwner,
-  buildGeometry,
   emissiveMat,
   disposeObject3D,
 } from "./utils";
