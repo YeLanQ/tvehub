@@ -116,10 +116,13 @@ fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
 }
 
 /// 网页运行时代码文件（多文件按文件落盘；单页全部内联进 HTML，不进归档/内联数据
-/// 的场景/资产部分）；入口页 index.html 与多模板附加页 index-<模板>.html 都算运行时代码
+/// 的场景/资产部分）；入口页 index.html 与多模板附加页 index-<模板目录>.html 都算运行时代码。
+/// src/ 前缀 = 编辑器编译后的用户脚本模块（src/**.js，前端随 files 传入；
+/// 相对 import 由 rewrite_module_imports 重写，与 libs 模块同一套加载机制）
 fn is_runtime_code(rel: &str) -> bool {
     rel == "player.mjs"
         || rel.starts_with("libs/")
+        || rel.starts_with("src/")
         || is_entry_page(rel)
 }
 
@@ -422,7 +425,11 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
             var pl = view.getUint32(off, true); off += 4;
             var path = dec.decode(new Uint8Array(buf, off, pl)); off += pl;
             var dl = view.getUint32(off, true); off += 4;
-            if (path === entry || path.lastIndexOf("libs/", 0) === 0)
+            if (
+              path === entry ||
+              path.lastIndexOf("libs/", 0) === 0 ||
+              path.lastIndexOf("src/", 0) === 0
+            )
               code[path] = dec.decode(new Uint8Array(buf, off, dl));
             off += dl;
           }
@@ -975,6 +982,7 @@ mod tests {
         assert!(is_runtime_code("index-single.html"));
         assert!(is_runtime_code("player.mjs"));
         assert!(is_runtime_code("libs/three.module.min.js"));
+        assert!(is_runtime_code("src/main.js"), "用户脚本编译产物按运行时代码处理");
         assert!(!is_runtime_code("assets/materials/Default.mat"));
         assert!(!is_runtime_code("scenes/Main.json"));
         assert!(!is_runtime_code("config.json"));
@@ -1020,6 +1028,13 @@ mod tests {
                 ),
                 ("player.mjs".to_string(), "// player\nimport { b } from \"./libs/b.mjs\";\nconsole.log(b);\n".to_string()),
                 ("libs/b.mjs".to_string(), "export const b = 2;\n".to_string()),
+                ("libs/tve.mjs".to_string(), "export const engine = {};\n".to_string()),
+                // 用户脚本编译产物（src/**.js）：编辑器编译时把 "tve" 裸导入
+                // 重写为相对 libs/tve.mjs 的路径，此处模拟该形态
+                (
+                    "src/main.js".to_string(),
+                    "import { engine } from \"../libs/tve.mjs\";\nengine.log(\"hi\");\n".to_string(),
+                ),
             ])
         };
         let scenes = vec!["assets/Main.scene".to_string()];
@@ -1062,13 +1077,27 @@ mod tests {
                     // 代码在 gzip 归档（base64）里，正文不出现代码原文
                     assert!(!html.contains("export const b = 2"), "gzip 单页代码应进归档而非明文");
                     assert!(!html.contains("tve:libs/b.mjs"), "gzip 单页重写后的代码在归档里");
+                    // 引导脚本从归档提取代码时应包含用户脚本（src/ 前缀）
+                    assert!(
+                        html.contains("path.lastIndexOf(\"src/\", 0) === 0"),
+                        "gzip 单页引导脚本应把 src/ 用户脚本提取进代码表"
+                    );
                 } else {
                     assert!(html.contains("export const b = 2"), "非 gzip 单页代码应以文本内联");
                     assert!(html.contains("tve:libs/b.mjs"), "运行时代码相对 import 应重写为 tve: 说明符");
+                    assert!(
+                        html.contains("\"src/main.js\""),
+                        "用户脚本应进入内联代码表（引导脚本据此构建 import map）"
+                    );
+                    assert!(
+                        html.contains("tve:libs/tve.mjs"),
+                        "用户脚本的 tve 导入应重写为 tve:libs/tve.mjs"
+                    );
                 }
             } else {
                 assert!(out.join("player.mjs").is_file(), "多文件运行时代码按文件落盘");
                 assert!(out.join("libs/b.mjs").is_file());
+                assert!(out.join("src/main.js").is_file(), "用户脚本按文件落盘");
                 assert!(out.join("config.json").is_file());
                 let html = fs::read_to_string(out.join("index.html")).unwrap();
                 assert!(html.contains("src=\"./player.mjs\""), "多文件保留模板脚本标签");

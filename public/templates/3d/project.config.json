@@ -2,6 +2,7 @@
   "version": "0.0.1",
   "description": "",
   "mainScene": "assets/Main.scene",
+  "entryScript": "src/main.ts",
   "designResolution": {
     "width": 1280,
     "height": 720

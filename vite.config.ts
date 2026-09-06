@@ -104,6 +104,11 @@ function templateIndexPlugin(): Plugin {
 export default defineConfig(async () => ({
   plugins: [vue(), templateIndexPlugin()],
 
+  // Monaco 的 editor/ts worker 以 ESM 打包（?worker 导入）
+  worker: {
+    format: "es",
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

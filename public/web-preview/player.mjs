@@ -15,6 +15,7 @@ import { loadMaterialParams } from "./libs/material.mjs";
 import { loadModels } from "./libs/model.mjs";
 import { createAnimations } from "./libs/animation.mjs";
 import { buildSceneTree } from "./libs/nodes.mjs";
+import { createScripts } from "./libs/scripts.mjs";
 import { applyMeshTextures } from "./libs/textures.mjs";
 import { createRenderCamera } from "./libs/camera.mjs";
 import { createStage } from "./libs/stage.mjs";
@@ -98,7 +99,7 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes } = buildSceneTree(rootJson, scene, { materialParams, models });
+  const { cameras, meshes, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）
   {
@@ -144,11 +145,27 @@ async function main() {
 
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
   const animations = createAnimations(meshes, models);
+
+  // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
+  let scripts = { update() {} };
+  try {
+    scripts = await createScripts({
+      nodes,
+      cfg,
+      animations,
+      canvas: renderer.domElement,
+    });
+  } catch (e) {
+    postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
+  }
+
   const clock = new THREE.Clock();
 
   function frame() {
     requestAnimationFrame(frame);
-    animations.update(clock.getDelta());
+    const dt = clock.getDelta();
+    scripts.update(dt);
+    animations.update(dt);
     renderer.render(scene, cam);
   }
   frame();

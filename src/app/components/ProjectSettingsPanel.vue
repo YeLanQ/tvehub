@@ -47,6 +47,13 @@ const projectScenes = computed(() =>
     .map((a) => a.path),
 );
 
+/** 项目内可选用作入口的脚本（src/**.ts） */
+const projectScripts = computed(() =>
+  assetsStore.assets
+    .filter((a) => a.path.startsWith("src/") && a.path.endsWith(".ts") && !a.path.endsWith(".d.ts"))
+    .map((a) => a.path),
+);
+
 function close(): void {
   projectStore.closeSettings();
   draft.value = null;
@@ -126,6 +133,17 @@ onMounted(async () => {
                   <option value="">未设置（默认空）</option>
                   <option v-for="s in projectScenes" :key="s" :value="s">{{ s }}</option>
                 </select>
+              </div>
+              <div class="ps-field">
+                <label for="ps-entry-script">入口脚本</label>
+                <select id="ps-entry-script" v-model="draft.entryScript">
+                  <option value="">无（仅脚本组件运行）</option>
+                  <option v-for="s in projectScripts" :key="s" :value="s">{{ s }}</option>
+                </select>
+                <p class="ps-note">
+                  入口脚本随预览/发布运行（挂载在场景根节点）；节点级行为请在检查器
+                  Components 卡片挂载脚本组件。
+                </p>
               </div>
             </section>
 

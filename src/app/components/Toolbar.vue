@@ -16,7 +16,7 @@ const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
     label: "预览",
     title: "网页预览：导出当前场景为独立网页并在编辑器内嵌预览",
   },
-  { key: "script", label: "脚本", title: "脚本（待接入）" },
+  { key: "script", label: "脚本", title: "脚本工作台：编写 TS 脚本（保存即编译），经组件挂载到节点" },
 ];
 
 const projectName = computed(() => projectStore.projectName ?? "未命名项目");

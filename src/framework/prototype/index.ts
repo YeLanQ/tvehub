@@ -2,7 +2,8 @@ import { PrototypeRegistry, createDefaultRegistry } from "./PrototypeRegistry";
 import type { PrototypeCtor } from "./PrototypeRegistry";
 
 export { Prototype } from "./Prototype";
-export { Node } from "./Node";
+export { Node, parseNodeComponents } from "./Node";
+export type { NodeComponentRef } from "./Node";
 export { Transform, AnchoredTransform } from "./Transform";
 export {
   MeshNode,

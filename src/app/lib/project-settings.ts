@@ -20,6 +20,8 @@ export interface ProjectDraft {
   description: string;
   /** 主场景（工程入口场景，相对项目路径，如 "assets/Main.scene"；空 = 未设置） */
   mainScene: string;
+  /** 入口脚本（脚本模式全局逻辑，如 "src/main.ts"；空 = 无入口脚本） */
+  entryScript: string;
   designWidth: number;
   designHeight: number;
   orientation: Orientation;
@@ -92,6 +94,7 @@ export function defaultDraft(): ProjectDraft {
     version: "0.0.1",
     description: "",
     mainScene: "",
+    entryScript: "",
     designWidth: 1280,
     designHeight: 720,
     orientation: "landscape",
@@ -113,6 +116,7 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
     version: str(cfg.version, d.version),
     description: str(cfg.description, d.description),
     mainScene: str(cfg.mainScene, d.mainScene),
+    entryScript: str(cfg.entryScript, d.entryScript),
     designWidth: num(design.width, d.designWidth),
     designHeight: num(design.height, d.designHeight),
     orientation: cfg.orientation === "portrait" || cfg.orientation === "landscape"
@@ -148,6 +152,7 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
     version: draft.version.trim() || "0.0.1",
     description: draft.description.trim(),
     mainScene: draft.mainScene.trim(),
+    entryScript: draft.entryScript.trim(),
     designResolution: {
       width: clampInt(draft.designWidth, 1, 16384),
       height: clampInt(draft.designHeight, 1, 16384),

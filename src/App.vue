@@ -5,6 +5,7 @@ import { runEditorCommand, type EditorCommand } from "./app/lib/editor-commands"
 import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
 import WebPreviewPanel from "./app/components/WebPreviewPanel.vue";
+import ScriptEditorPanel from "./app/components/ScriptEditorPanel.vue";
 import DockZone from "./app/components/DockZone.vue";
 import FloatingDock from "./app/components/FloatingDock.vue";
 import ContextMenu from "./components/ContextMenu.vue";
@@ -127,9 +128,8 @@ onUnmounted(() => {
             v-if="editorStore.state.viewMode === 'preview'"
             @close="goScene"
           />
-          <div v-if="editorStore.state.viewMode === 'script'" class="center-placeholder mono">
-            脚本模式（待接入）
-          </div>
+          <!-- 脚本模式：TS 脚本工作台（Monaco 编辑 + 保存即编译） -->
+          <ScriptEditorPanel v-if="editorStore.state.viewMode === 'script'" />
         </main>
 
         <div

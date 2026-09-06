@@ -1,0 +1,167 @@
+// ---------------------------------------------------------------------------
+// 脚本宿主：加载用户脚本（编辑器编译后的 src/**.js），按节点 components 数组与
+// config.entryScript 实例化 tve.Component，并驱动生命周期（onStart/onUpdate）。
+//
+// 模块寻址（与构建产物形态对应）：
+// - 文件模式（编辑器预览 / 多文件产物）：按页面地址 new URL(rel, baseURI) 导入；
+// - 单页内联模式（window.__TVE_BUILD_DATA 存在）：bootstrap 已注入 tve:<rel>
+//   import map，直接以裸说明符导入 Blob 模块。
+//
+// 错误隔离：单个脚本加载/实例化/生命周期出错只停用该实例并上报
+// （postLog → 编辑器控制台），不影响渲染与其他脚本。
+// ---------------------------------------------------------------------------
+import { postLog } from "./log.mjs";
+import { Component, getEntity, installRuntime, registerComponent, tickTime } from "./tve.mjs";
+
+/** 源路径（src/**.ts）→ 编译产物路径（src/**.js） */
+function jsPathOf(srcRel) {
+  return srcRel.replace(/\.tsx?$/, ".js");
+}
+
+function errText(e) {
+  return e && e.message ? e.message : String(e);
+}
+
+/** 属性默认值深拷贝（vec3 等对象默认值不与 schema 共享引用） */
+function cloneDefault(v) {
+  if (v && typeof v === "object") return Array.isArray(v) ? [...v] : { ...v };
+  return v;
+}
+
+/** 节点配置的 props 与脚本类 static props 声明的默认值合并（配置优先） */
+function mergeProps(klass, configured) {
+  const out = {};
+  const schema = typeof klass === "function" ? klass.props : null;
+  if (schema && typeof schema === "object") {
+    for (const [key, def] of Object.entries(schema)) {
+      if (def && typeof def === "object" && Object.prototype.hasOwnProperty.call(def, "default")) {
+        out[key] = cloneDefault(def.default);
+      }
+    }
+  }
+  if (configured && typeof configured === "object") Object.assign(out, configured);
+  return out;
+}
+
+/** 生命周期调用（出错 → 停用该实例并上报，不再驱动） */
+function callLifecycle(record, method, ...args) {
+  const fn = record.inst[method];
+  if (typeof fn !== "function") return;
+  try {
+    record.inst[method](...args);
+  } catch (e) {
+    record.dead = true;
+    postLog("error", `[脚本] ${record.script} ${method}() 出错（已停用）: ${errText(e)}`);
+    console.error(e);
+  }
+}
+
+/**
+ * 创建脚本运行时。
+ * @param {object} opts
+ * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
+ * @param {object} opts.cfg 项目配置（entryScript = 入口脚本源路径）
+ * @param {{play,stop,pause,resume}|null} opts.animations 动画控制（engine.animation 转发）
+ * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
+ * @returns {Promise<{update(dt: number): void}>}
+ */
+export async function createScripts({ nodes, cfg, animations, canvas }) {
+  const noop = { update() {} };
+  const rootEntry = nodes.length ? nodes[0] : null;
+  installRuntime({
+    registry: nodes,
+    rootObj: rootEntry ? rootEntry.obj : null,
+    canvas: canvas ?? null,
+    animations: animations ?? null,
+  });
+
+  // 组件引用收集（注册表为文档序：先父后子）
+  const bindings = [];
+  for (const { json, obj } of nodes) {
+    const comps = Array.isArray(json.components) ? json.components : [];
+    for (const c of comps) {
+      if (!c || typeof c !== "object" || c.type !== "script" || c.enabled === false) continue;
+      if (typeof c.script !== "string" || !c.script) continue;
+      bindings.push({ obj, script: c.script, props: c.props });
+    }
+  }
+  const entryRel = typeof cfg.entryScript === "string" ? cfg.entryScript.trim() : "";
+  if (!bindings.length && !entryRel) return noop;
+
+  // 模块缓存（源路径 → Promise<module>；失败缓存避免重复报错）
+  const modules = new Map();
+  function loadModule(srcRel) {
+    let p = modules.get(srcRel);
+    if (!p) {
+      p = (async () => {
+        const jsRel = jsPathOf(srcRel);
+        const spec = window.__TVE_BUILD_DATA
+          ? "tve:" + jsRel
+          : new URL(jsRel, document.baseURI).href;
+        return await import(spec);
+      })();
+      p.catch(() => {});
+      modules.set(srcRel, p);
+    }
+    return p;
+  }
+
+  /** @type {Array<{inst: object, script: string, dead: boolean}>} */
+  const instances = [];
+  const failedScripts = new Set();
+
+  async function instantiate(items) {
+    for (const item of items) {
+      let mod;
+      try {
+        mod = await loadModule(item.script);
+      } catch (e) {
+        if (!failedScripts.has(item.script)) {
+          failedScripts.add(item.script);
+          postLog("error", `[脚本] 加载失败 ${item.script}: ${errText(e)}`);
+        }
+        continue;
+      }
+      const Klass = mod && mod.default;
+      if (typeof Klass !== "function" || !(Klass.prototype instanceof Component)) {
+        if (!failedScripts.has(item.script)) {
+          failedScripts.add(item.script);
+          postLog("error", `[脚本] ${item.script} 缺少默认导出的 Component 子类`);
+        }
+        continue;
+      }
+      const entity = getEntity(item.obj);
+      if (!entity) continue;
+      let inst;
+      try {
+        inst = new Klass(entity, mergeProps(Klass, item.props));
+      } catch (e) {
+        postLog("error", `[脚本] 实例化失败 ${item.script}: ${errText(e)}`);
+        continue;
+      }
+      registerComponent(entity.id, inst);
+      instances.push({ inst, script: item.script, dead: false });
+    }
+  }
+
+  await instantiate(bindings);
+  // 入口脚本挂根节点（脚本模式：全局逻辑）
+  if (entryRel && rootEntry) {
+    await instantiate([{ obj: rootEntry.obj, script: entryRel, props: {} }]);
+  }
+  if (!instances.length) return noop;
+
+  for (const record of instances) callLifecycle(record, "onStart");
+  postLog("info", `[脚本] 已启动 ${instances.length} 个脚本实例`);
+
+  return {
+    /** 每帧驱动：时间推进 + onUpdate（错误实例自动停用） */
+    update(dt) {
+      tickTime(dt);
+      for (const record of instances) {
+        if (record.dead) continue;
+        callLifecycle(record, "onUpdate", dt);
+      }
+    },
+  };
+}

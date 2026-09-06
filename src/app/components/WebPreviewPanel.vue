@@ -10,10 +10,12 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../stores/project";
+import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import { fetchWebPreviewRuntimeTexts } from "../lib/web-preview-runtime";
+import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
 const projectStore = getProjectStore();
@@ -31,7 +33,7 @@ const previewUrl = computed(() =>
   baseUrl.value ? `${baseUrl.value}/index.html` : "",
 );
 
-/** 组装导出文件：仅 WebView 打包的网页运行时 + 项目配置（文本，一次读取）。
+/** 组装导出文件：WebView 打包的网页运行时 + 项目配置 + 用户脚本编译产物（文本）。
  *  scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制由 Rust 直接从磁盘
  *  读取写入导出目录（export_web_preview_from_scene），不再以 base64 过 IPC。 */
 async function buildExportFiles(): Promise<Record<string, string>> {
@@ -42,6 +44,19 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     files["config.json"] = await api.readText(root, "project.config.json");
   } catch {
     files["config.json"] = "{}";
+  }
+  // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
+  try {
+    const scripts = await loadProjectScripts(root);
+    if (scripts.length) {
+      const { files: jsFiles, errors } = await compileProjectScripts(scripts);
+      Object.assign(files, jsFiles);
+      for (const [rel, err] of Object.entries(errors)) {
+        logStore.log("error", `脚本编译失败 ${rel}: ${err}（该脚本不参与预览）`, "preview");
+      }
+    }
+  } catch (e) {
+    logStore.log("warn", `脚本编译跳过: ${e}`, "preview");
   }
   return files;
 }
@@ -65,6 +80,8 @@ async function start(): Promise<void> {
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
+    // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
+    await getScriptsStore().saveAll();
     const files = await buildExportFiles();
     await api.exportWebPreviewFromScene(root, projectStore.sceneRel || "assets/Main.scene", files);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止
@@ -95,6 +112,8 @@ async function refresh(): Promise<void> {
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
+    // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
+    await getScriptsStore().saveAll();
     const files = await buildExportFiles();
     await api.exportWebPreviewFromScene(root, projectStore.sceneRel || "assets/Main.scene", files);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止

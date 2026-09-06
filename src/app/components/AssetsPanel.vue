@@ -34,6 +34,7 @@ import { sanitizeAssetStem } from "../lib/materials";
 import { materialTypeRegistry } from "../../framework/material";
 import { isModelAssetRel } from "../../framework/mesh";
 import { getEditorStore } from "../stores/editor";
+import { getScriptsStore } from "../stores/scripts";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -261,7 +262,13 @@ function onItemDblClick(item: ChildEntry) {
     addModelToScene(item);
     return;
   }
-  // 本项目无 openScene/openTextEditor：双击非目录仅选中并记录日志
+  // 双击 .ts 脚本：切到脚本工作台打开编辑
+  if (item.kind === "ts") {
+    getEditorStore().setViewMode("script");
+    void getScriptsStore().openScript(item.path);
+    return;
+  }
+  // 其余资产：双击仅选中并记录日志
   assetsStore.select(item.path);
   logStore.log("info", `${item.name} (${item.kind})`);
 }
@@ -289,17 +296,31 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
   if (item.kind !== "dir" && isModelAssetRel(item.path)) {
     items.push({ label: "添加到场景", onClick: () => addModelToScene(item) });
   }
+  // 脚本资产：打开脚本工作台编辑
+  if (item.kind === "ts") {
+    items.push({
+      label: "打开脚本",
+      onClick: () => {
+        getEditorStore().setViewMode("script");
+        void getScriptsStore().openScript(item.path);
+      },
+    });
+  }
 
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建场景/材质/子目录（assets/materials 等）；src 为脚本目录不提供
+      // assets 固定根目录内仍可新建场景/材质/子目录（assets/materials 等）
       const sc = sceneCreateItem(item.path);
       if (sc) items.push(sc);
       const mc = materialCreateItem(item.path);
       if (mc) items.push(mc);
       items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path));
+    } else if (!isInternal && item.kind === "dir" && item.path === "src") {
+      // src 固定脚本目录：新建脚本/子目录（脚本经「新建脚本」模板创建）
+      items.push({ label: "新建脚本", onClick: () => void doNewScript(item.path) });
+      items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
     } else if (isInternal && item.kind !== "dir") {
       // 内置文件可「复制到项目」生成项目内可编辑副本
       items.push({ label: "复制到项目", onClick: () => void copyInternalToProject(item) });
@@ -312,12 +333,18 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
     );
     const targetDir = item.kind === "dir" ? item.path : parentOf(item.path);
     if (targetDir != null) {
-      const sc = sceneCreateItem(targetDir);
-      if (sc) items.push(sc);
-      const mc = materialCreateItem(targetDir);
-      if (mc) items.push(mc);
+      if (isSrcDir(targetDir)) {
+        items.push({ label: "新建脚本", onClick: () => void doNewScript(targetDir as string) });
+      } else {
+        const sc = sceneCreateItem(targetDir);
+        if (sc) items.push(sc);
+        const mc = materialCreateItem(targetDir);
+        if (mc) items.push(mc);
+      }
       items.push({ label: "新建目录", onClick: () => void doNewFolder(targetDir) });
-      items.push(menuSeparator(), ...importMenuItems(targetDir));
+      if (!isSrcDir(targetDir)) {
+        items.push(menuSeparator(), ...importMenuItems(targetDir));
+      }
     }
   }
   items.push(menuSeparator());
@@ -341,12 +368,18 @@ function onContentContext(e: MouseEvent) {
   e.stopPropagation();
   const items: CtxMenuItem[] = [];
   if (!isInternalAsset(currentDir.value)) {
-    const sc = sceneCreateItem(currentDir.value);
-    if (sc) items.push(sc);
-    const mc = materialCreateItem(currentDir.value);
-    if (mc) items.push(mc);
+    if (isSrcDir(currentDir.value)) {
+      items.push({ label: "新建脚本", onClick: () => void doNewScript(currentDir.value) });
+    } else {
+      const sc = sceneCreateItem(currentDir.value);
+      if (sc) items.push(sc);
+      const mc = materialCreateItem(currentDir.value);
+      if (mc) items.push(mc);
+    }
     items.push({ label: "新建目录", onClick: () => void doNewFolder(currentDir.value) });
-    items.push(menuSeparator(), ...importMenuItems(currentDir.value));
+    if (!isSrcDir(currentDir.value)) {
+      items.push(menuSeparator(), ...importMenuItems(currentDir.value));
+    }
   }
   items.push(menuSeparator(), { label: "刷新资产", onClick: () => void assetsStore.refresh() });
   openContextMenu(e, items);
@@ -411,6 +444,22 @@ function sceneCreateItem(dir: string): CtxMenuItem | null {
   return { label: "新建场景", onClick: () => void doNewScene(dir) };
 }
 
+/** 新建 TS 脚本（src/ 目录专用；模板创建后切到脚本工作台打开） */
+async function doNewScript(dir: string) {
+  if (!isSrcDir(dir)) {
+    logStore.log("warn", "脚本只能创建在 src 目录内");
+    return;
+  }
+  const name = await prompt({
+    title: "新建脚本",
+    label: `${dir}/（脚本名）`,
+    placeholder: "MyScript",
+    confirmText: "创建",
+  });
+  if (!name?.trim()) return;
+  await getScriptsStore().createScript(name.trim());
+}
+
 /** 新建材质资产（到 dir；类型由工厂注册表提供默认参数；命名按类型名去重，无需弹窗） */
 async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
   const root = projectStore.currentPath;
@@ -461,6 +510,11 @@ async function doRename(item: ChildEntry) {
       finalName = finalName + item.path.slice(dot);
     }
   }
+  // 脚本重命名走 scripts store：同步换标签页缓存并改写场景内组件引用
+  if (item.kind === "ts") {
+    await getScriptsStore().renameScript(item.path, finalName);
+    return;
+  }
   await assetsStore.rename(root, item.path, finalName);
 }
 
@@ -482,7 +536,14 @@ async function doDelete(item: ChildEntry) {
     danger: true,
   });
   if (!ok) return;
-  for (const p of targets) await assetsStore.remove(root, p);
+  for (const p of targets) {
+    // 脚本删除走 scripts store：同步移除场景内组件引用与编辑器标签页
+    if (p.endsWith(".ts") && p.startsWith("src/")) {
+      await getScriptsStore().deleteScript(p);
+      continue;
+    }
+    await assetsStore.remove(root, p);
+  }
   if (multi) {
     selectedPaths.value = [];
     lastAnchor = null;

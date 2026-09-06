@@ -5,6 +5,7 @@
 
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
+import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
@@ -45,6 +46,10 @@ export async function runEditorCommand(cmd: EditorCommand): Promise<void> {
         logStore.log("success", "场景已保存", "toolbar");
       } catch (e) {
         logStore.log("error", `场景保存失败: ${e}`, "toolbar");
+      }
+      // 脚本工作台中的脏脚本一并保存（保存 = 写盘 + 编译）
+      if (editor.state.viewMode === "script") {
+        await getScriptsStore().saveAll();
       }
       break;
     }

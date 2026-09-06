@@ -113,6 +113,7 @@ function createBinding(nodeJson, root, clips) {
     if (!actions.has(name)) actions.set(name, mixer.clipAction(clip));
   }
   return {
+    nodeJson,
     mixer,
     actions,
     clips,
@@ -224,10 +225,12 @@ function evalGraph(b) {
 /**
  * 为场景里的模型网格建立动画绑定：
  * meshes 为 buildSceneTree 收集的 meshNode 列表，模型实例挂在其 __modelRoot 子级
- * （与编辑器 SceneSynchronizer 同名约定）。返回 { update(dt) } 供渲染循环驱动。
+ * （与编辑器 SceneSynchronizer 同名约定）。返回 { update(dt) } 供渲染循环驱动，
+ * 另附 play/stop/pause/resume（按节点 id 寻址，供脚本宿主 engine.animation 转发）。
  */
 export function createAnimations(meshes, models) {
   const bindings = [];
+  const byId = new Map();
   for (const entry of meshes) {
     const json = entry.json;
     if (json.source !== "model" || typeof json.model !== "string" || !json.model) continue;
@@ -237,6 +240,7 @@ export function createAnimations(meshes, models) {
     const b = createBinding(json, root, clips);
     applySettings(b, json);
     bindings.push(b);
+    if (typeof json.id === "string" && json.id) byId.set(json.id, b);
   }
   return {
     /** 每帧推进：mixer 步进 + 图状态机评估过渡 */
@@ -246,6 +250,54 @@ export function createAnimations(meshes, models) {
         if (b.playing) b.mixer.update(dt);
         evalGraph(b);
       }
+    },
+    /**
+     * 播放（单剪辑模式 clip 缺省/未命中取首个剪辑；动画图模式 clip 作为目标
+     * 状态名，缺省回入口状态）。命中返回 true。
+     */
+    play(nodeId, clip) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      if (b.graph) {
+        const stateName =
+          typeof clip === "string" && b.graph.states.some((s) => s.name === clip)
+            ? clip
+            : b.graph.entry;
+        enterGraphState(b, stateName, 0.25);
+        return true;
+      }
+      const name = resolveClipName(b, typeof clip === "string" ? clip : "");
+      if (!name) return false;
+      playClipAction(b, name, parseClipSettings(b.nodeJson?.anim), 0.25);
+      return true;
+    },
+    /** 停止并清空动作（回到初始姿势） */
+    stop(nodeId) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      b.mixer.stopAllAction();
+      b.currentClip = null;
+      b.playing = false;
+      if (b.graph) b.graphState = null;
+      return true;
+    },
+    /** 暂停（保留进度；图状态机暂停评估） */
+    pause(nodeId) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      b.playing = false;
+      return true;
+    },
+    /** 继续播放；无当前剪辑时按节点动画设置重新起播 */
+    resume(nodeId) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      if (b.currentClip) {
+        b.playing = true;
+        return true;
+      }
+      applySettings(b, b.nodeJson ?? {});
+      return b.playing;
     },
   };
 }

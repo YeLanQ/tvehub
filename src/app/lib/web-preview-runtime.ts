@@ -20,6 +20,8 @@ export const WEB_PREVIEW_RUNTIME_FILES = [
   "libs/pak.mjs",
   "libs/model.mjs",
   "libs/animation.mjs",
+  "libs/tve.mjs",
+  "libs/scripts.mjs",
   "libs/loaders/GLTFLoader.js",
   "libs/loaders/FBXLoader.js",
   "libs/loaders/OBJLoader.js",

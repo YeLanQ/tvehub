@@ -25,6 +25,7 @@ export interface AssetsStore {
   importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
   createSceneAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   createMaterialAsset: (root: string, destDir: string, typeKey: string) => Promise<string | null>;
+  createScriptAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -271,6 +272,46 @@ export function getAssetsStore(): AssetsStore {
         return rel;
       } catch (e) {
         logStore.log("error", `新建材质失败: ${e}`);
+        return null;
+      }
+    },
+    async createScriptAsset(root, destDir, stem) {
+      const clean = validateAssetName(stem);
+      if (!clean) {
+        logStore.log("warn", "无效的脚本名（不能含 / \\ : ..）");
+        return null;
+      }
+      // 脚本固定存放 src/（项目固定脚本目录）；destDir 仅接受 src 子目录
+      if (destDir !== "src" && !destDir.startsWith("src/")) {
+        logStore.log("warn", "脚本只能创建在 src 目录内");
+        return null;
+      }
+      const ext = ".ts";
+      let name = clean;
+      let n = 2;
+      while (
+        state.assets.some(
+          (a) => a.path.toLowerCase() === `${destDir}/${name}${ext}`.toLowerCase(),
+        )
+      ) {
+        name = `${clean} ${n++}`;
+      }
+      const rel = `${destDir}/${name}${ext}`;
+      try {
+        // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入）
+        const className = clean
+          .split(/[^A-Za-z0-9]+/)
+          .filter(Boolean)
+          .map((s) => s[0].toUpperCase() + s.slice(1))
+          .join("") || "MyScript";
+        const content = await loadAssetTemplate("script", { CLASS_NAME: className });
+        if (content == null) throw new Error("脚本模板读取失败");
+        await api.writeText(root, rel, content);
+        await store.load(root);
+        logStore.log("success", `已新建脚本: ${rel}`);
+        return rel;
+      } catch (e) {
+        logStore.log("error", `新建脚本失败: ${e}`);
         return null;
       }
     },

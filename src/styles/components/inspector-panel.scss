@@ -191,6 +191,88 @@ select:disabled {
   gap: 2px;
 }
 
+/* ---------- 脚本组件（可增删改） ---------- */
+.inspector .comp-scripts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.inspector .script-comp {
+  padding: 4px 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 12px;
+
+  &.off {
+    opacity: 0.55;
+  }
+}
+
+.inspector .script-comp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inspector .comp-toggle input {
+  margin: 0;
+}
+
+.inspector .script-comp-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inspector .script-missing {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--warn);
+}
+
+.inspector .script-prop {
+  margin-top: 4px;
+
+  > label {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+}
+
+.inspector .prop-string {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.inspector .prop-vec3 {
+  display: flex;
+  gap: 4px;
+}
+
+.inspector .add-script-comp {
+  width: 100%;
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+
+  &:hover:not(:disabled) {
+    color: var(--text);
+  }
+}
+
 .inspector .comp-row {
   display: flex;
   align-items: center;

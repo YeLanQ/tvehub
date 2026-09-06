@@ -5,8 +5,10 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { api, type BuildResult } from "../../lib/api";
 import { WEB_EXPORT_TEMPLATES } from "../../generated/template-registry";
 import { logStore } from "../stores/log";
+import { getScriptsStore } from "../stores/scripts";
 import { saveCurrentSceneToMain } from "./save-scene";
 import { fetchWebPreviewRuntimeTexts, withHtmlTitle } from "./web-preview-runtime";
+import { loadProjectScripts, compileProjectScripts } from "./script-compile";
 
 /** 构建渠道（wechat 为 UI 占位，后端未实现——构建按钮禁用并提示） */
 export interface BuildChannel {
@@ -199,8 +201,24 @@ export async function runBuild(opts: {
   } catch (e) {
     logStore.log("warn", `构建前保存场景失败（按磁盘内容构建）: ${e}`, "build");
   }
+  // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
+  await getScriptsStore().saveAll();
 
   const runtime = await fetchWebPreviewRuntimeTexts();
+  // 用户脚本编译产物（src/**.js）并入运行时文件：Rust 端按运行时代码处理
+  // （多文件落盘 / 单页进内联代码表 / gzip 进归档 / 发布模式参与压缩）
+  try {
+    const scripts = await loadProjectScripts(opts.root);
+    if (scripts.length) {
+      const { files: jsFiles, errors } = await compileProjectScripts(scripts);
+      Object.assign(runtime, jsFiles);
+      for (const [rel, err] of Object.entries(errors)) {
+        logStore.log("error", `脚本编译失败 ${rel}: ${err}（该脚本不参与构建）`, "build");
+      }
+    }
+  } catch (e) {
+    logStore.log("warn", `脚本编译跳过: ${e}`, "build");
+  }
   // 页面骨架用所选导出模板（{{TITLE}} 换页面标题）；player/libs 代码仍取运行时。
   // 首个模板 → index.html，其余 → index-<模板目录>.html；形态必须一致（面板已守卫）
   const templates = await loadExportTemplates();

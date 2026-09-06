@@ -9,13 +9,15 @@ import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, Poin
 import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { clampCameraParam, cameraParamDef, type CameraParamKey } from "../../framework/camera";
+import { nextId } from "../../platform_abstraction/id";
+import type { NodeComponentRef } from "../../framework/prototype/Node";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
   loadMaterialDoc,
   saveMaterialParams,
 } from "../lib/materials";
-import type { JsonRecord } from "../../framework/prototype/types";
+import type { JsonRecord, JsonValue } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
 import { isModelAssetRel } from "../../framework/mesh";
@@ -469,6 +471,57 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
   }, "复制天空材质到项目");
   void assetsStore.load(root);
 }
+
+// ---------------------------------------------------------------------------
+// 脚本组件（Components 卡片）：增删改走 commit → patchNode（可撤销）
+// ---------------------------------------------------------------------------
+
+function onAddScriptComponent(scriptRel: string): void {
+  const n = node.value;
+  if (!n || !scriptRel) return;
+  commit((target) => {
+    const comp: NodeComponentRef = {
+      id: nextId("comp"),
+      type: "script",
+      script: scriptRel,
+      enabled: true,
+      props: {},
+    };
+    target.components = [...target.components, comp];
+  }, "添加脚本组件");
+}
+
+function onRemoveScriptComponent(compId: string): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    target.components = target.components.filter((c) => c.id !== compId);
+  }, "移除脚本组件");
+}
+
+function onToggleScriptComponent(compId: string, enabled: boolean): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    target.components = target.components.map((c) =>
+      c.id === compId ? { ...c, enabled } : c,
+    );
+  }, enabled ? "启用脚本组件" : "停用脚本组件");
+}
+
+function onScriptComponentProp(compId: string, key: string, value: unknown): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    target.components = target.components.map((c) => {
+      if (c.id !== compId) return c;
+      const props = { ...c.props };
+      // 属性值由检查器按脚本声明类型收敛（number/string/boolean/color/vec3）
+      props[key] = value as JsonValue;
+      return { ...c, props };
+    });
+  }, "设置组件属性");
+}
 </script>
 
 <template>
@@ -565,7 +618,14 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">
-        <ComponentsSection :node="node" :rev="revision" />
+        <ComponentsSection
+          :node="node"
+          :rev="revision"
+          @addComponent="onAddScriptComponent"
+          @removeComponent="onRemoveScriptComponent"
+          @toggleComponent="onToggleScriptComponent"
+          @setProp="onScriptComponentProp"
+        />
       </ComponentCard>
     </div>
   </div>

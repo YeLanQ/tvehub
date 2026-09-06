@@ -9,6 +9,8 @@ import { api } from "../../lib/api";
 const TEMPLATE_RELS: Record<string, string> = {
   // 3D 场景：空白场景（含 Root 节点），新建场景资产用
   scene: "internal/templates/EmptyScene.scene",
+  // TS 脚本组件（Component 子类存根），新建脚本用
+  script: "internal/templates/Script.ts",
 };
 
 /** 取某类资产原型的内置模板路径；未注册返回 null */

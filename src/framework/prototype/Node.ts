@@ -3,12 +3,55 @@ import { Prototype } from "./Prototype";
 import { Transform } from "./Transform";
 import { cloneRecord, type JsonRecord, type JsonValue } from "./types";
 
+/**
+ * 节点上的脚本组件引用（组件模式）。
+ * 编辑器只持有数据（检查器增删改、随节点序列化）；实例化与生命周期由
+ * 播放器脚本宿主（web-preview/libs/scripts.mjs）在预览/发布产物中执行。
+ */
+export interface NodeComponentRef {
+  /** 组件实例 id（同节点内唯一） */
+  id: string;
+  /** 组件类型（当前仅脚本组件） */
+  type: "script";
+  /** 脚本源路径（项目内相对路径，如 "src/spin.ts"） */
+  script: string;
+  /** 是否启用（禁用的组件不参与运行） */
+  enabled: boolean;
+  /** 属性值（检查器按脚本 static props 声明渲染编辑） */
+  props: JsonRecord;
+}
+
+/** 组件引用 JSON 收敛（非法项剔除；props 缺省空表） */
+export function parseNodeComponents(value: unknown): NodeComponentRef[] {
+  if (!Array.isArray(value)) return [];
+  const out: NodeComponentRef[] = [];
+  for (const c of value) {
+    if (!c || typeof c !== "object") continue;
+    const rec = c as JsonRecord;
+    if (typeof rec.script !== "string" || !rec.script) continue;
+    out.push({
+      id: typeof rec.id === "string" && rec.id ? rec.id : nextId("comp"),
+      type: "script",
+      script: rec.script,
+      enabled: rec.enabled !== false,
+      props: rec.props && typeof rec.props === "object" ? cloneRecord(rec.props as JsonRecord) : {},
+    });
+  }
+  return out;
+}
+
+/** 组件引用深拷贝（id 重新生成，避免克隆节点后实例 id 重复） */
+function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
+  return list.map((c) => ({ ...c, id: nextId("comp"), props: cloneRecord(c.props) }));
+}
+
 export interface NodeInit {
   id?: string;
   name?: string;
   parentId?: string | null;
   transform?: Transform;
   properties?: JsonRecord;
+  components?: NodeComponentRef[];
 }
 
 /**
@@ -32,6 +75,8 @@ export class Node extends Prototype {
   transform: Transform;
   /** 编辑器扩展的任意属性槽 */
   properties: JsonRecord;
+  /** 脚本组件引用列表（组件模式；编辑态纯数据，运行期由播放器执行） */
+  components: NodeComponentRef[];
 
   constructor(init: NodeInit = {}) {
     super();
@@ -43,6 +88,7 @@ export class Node extends Prototype {
     this.visible = true;
     this.transform = init.transform ? init.transform.clone() : new Transform();
     this.properties = { ...(init.properties ?? {}) };
+    this.components = init.components ? cloneNodeComponents(init.components) : [];
   }
 
   /** 原型模式：克隆节点信息 + 内聚的变换模板 */
@@ -53,6 +99,7 @@ export class Node extends Prototype {
       parentId: null,
       transform: this.transform.clone(),
       properties: cloneRecord(this.properties),
+      components: this.components,
     });
   }
 
@@ -98,6 +145,13 @@ export class Node extends Prototype {
       transform: this.transform.toJSON(),
       properties: cloneRecord(this.properties),
     };
+    // 组件列表非空才写入（旧场景文件保持字节兼容）
+    if (this.components.length) {
+      record.components = this.components.map((c) => ({
+        ...c,
+        props: cloneRecord(c.props),
+      }));
+    }
     this.writeOwnData(record);
     return record;
   }
@@ -113,6 +167,7 @@ export class Node extends Prototype {
       this.transform = Transform.fromJSON(json.transform as JsonRecord);
     }
     this.properties = json.properties ? cloneRecord(json.properties as JsonRecord) : {};
+    this.components = parseNodeComponents(json.components);
     this.readOwnData(json);
   }
 

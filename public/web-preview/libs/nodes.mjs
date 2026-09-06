@@ -10,12 +10,15 @@ import { createMesh } from "./mesh.mjs";
 /**
  * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
  * - cameras：cameraNode 列表（{ json, obj }，供渲染相机取位姿/参数）；
- * - meshes：meshNode 列表（{ json, obj }，供贴图回填/动画绑定遍历）。
+ * - meshes：meshNode 列表（{ json, obj }，供贴图回填/动画绑定遍历）；
+ * - nodes：全部节点列表（{ json, obj }，供脚本宿主/tve SDK 寻址；
+ *   节点对象打 userData.nodeId 标记，灯光实例等内部子对象不带标记）。
  * ctx = { materialParams, models }：.mat 参数表 + 模型实例化缓存。
  */
 export function buildSceneTree(rootJson, scene, ctx) {
   const cameras = [];
   const meshes = [];
+  const nodes = [];
 
   function buildOwn(type, json) {
     switch (type) {
@@ -39,6 +42,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const tr = json.transform || {};
     const obj = buildOwn(type, json);
     obj.name = json.name ?? type;
+    // 节点身份标记（tve SDK 实体寻址用；内部子对象不带）
+    obj.userData.nodeId = typeof json.id === "string" ? json.id : "";
     obj.visible = json.active !== false && json.visible !== false;
 
     const p = vec(tr.position, { x: 0, y: 0, z: 0 });
@@ -51,6 +56,9 @@ export function buildSceneTree(rootJson, scene, ctx) {
 
     if (parent) parent.add(obj);
     else scene.add(obj);
+
+    // 文档序（先父后子）登记全节点注册表
+    nodes.push({ json, obj });
 
     const children = Array.isArray(json.children) ? json.children : [];
     for (const c of children) buildNode(c, obj);
@@ -102,5 +110,5 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   buildNode(rootJson, null);
-  return { cameras, meshes };
+  return { cameras, meshes, nodes };
 }
