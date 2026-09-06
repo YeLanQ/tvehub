@@ -115,8 +115,9 @@ async function parseModel(rel, buffer) {
       return { template: parsed.template, clips: [] };
     }
     const gltf = await new Promise((resolve, reject) => {
+      // GLTFLoader.parse 的二进制分支要求 ArrayBuffer（Uint8Array 会被当作已解析 JSON）
       new GLTFLoader(manager).parse(
-        parsed.glb,
+        parsed.glb.buffer,
         resourcePath,
         (gltf) => resolve(gltf),
         (err) => reject(new Error(`glTF 解析失败: ${String(err ?? "未知错误")}`)),

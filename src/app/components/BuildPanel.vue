@@ -4,10 +4,13 @@
  * - 通用设置：构建场景多选（默认全选）、主场景；
  * - 渠道设置：Web（页面标题/调试模式）；微信小游戏（占位，构建按钮禁用）；
  * - 构建 → Rust 把选中场景 + 引用资产 + 网页运行时打包到 <项目>/build/<渠道>/；
- * - 结果区展示产物信息与缺失资产，支持「打开构建目录」「浏览器预览」。
+ * - 结果区展示产物信息与缺失资产，支持「打开构建目录」；
+ * - 预览复用编辑器「网页预览」的设计：本地静态服务（服务 build/<渠道>）+ 内嵌
+ *   iframe + 在浏览器打开 + 停止。
  * 构建配置归属项目自身（项目根 build.config.json）；重开面板读回配置。
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
 import {
@@ -21,12 +24,11 @@ import {
   resolveExportTemplate,
   runBuild,
   openBuildDir,
-  previewBuildInBrowser,
   type BuildChannel,
   type BuildPrefs,
   type ExportTemplateInfo,
 } from "../lib/build-export";
-import { type BuildResult } from "../../lib/api";
+import { api, type BuildResult } from "../../lib/api";
 import { logStore } from "../stores/log";
 import "../../styles/components/build-panel.scss";
 
@@ -220,11 +222,62 @@ function openDir(): void {
   if (result.value) void openBuildDir(result.value.output_dir);
 }
 
-function previewInBrowser(): void {
+// ---- 预览（复用编辑器「网页预览」的设计：本地静态服务 + iframe + 浏览器打开）----
+const previewBase = ref("");
+const previewLoading = ref(false);
+const previewKey = ref(0);
+const previewUrl = computed(() =>
+  previewBase.value
+    ? `${previewBase.value}/index.html${
+        result.value?.main_scene_name
+          ? `?scene=${encodeURIComponent(result.value.main_scene_name)}`
+          : ""
+      }`
+    : "",
+);
+
+/** 起本地静态服务（服务 build/<渠道>），内嵌 iframe 预览构建产物 */
+async function startPreview(): Promise<void> {
   const root = projectStore.currentPath;
-  if (!root || !result.value) return;
-  void previewBuildInBrowser(root, channel.value, result.value.main_scene_name);
+  if (!root || !result.value || previewLoading.value) return;
+  previewLoading.value = true;
+  try {
+    previewBase.value = await api.startWebPreviewServer(root, `build/${channel.value}`);
+    previewKey.value++;
+    logStore.log("info", `构建预览已启动: ${previewBase.value}/index.html`, "build");
+  } catch (e) {
+    logStore.log("error", `构建预览启动失败: ${e}`, "build");
+  } finally {
+    previewLoading.value = false;
+  }
 }
+
+function refreshPreview(): void {
+  previewKey.value++;
+}
+
+async function openInBrowser(): Promise<void> {
+  if (!previewUrl.value) return;
+  try {
+    await openUrl(previewUrl.value);
+  } catch (e) {
+    logStore.log("error", `打开浏览器失败: ${e}`, "build");
+  }
+}
+
+async function stopPreview(): Promise<void> {
+  try {
+    await api.stopWebPreview();
+  } finally {
+    previewBase.value = "";
+    logStore.log("info", "构建预览服务已停止", "build");
+  }
+}
+
+// 关闭面板即释放预览服务（与编辑器网页预览「离开页签即停」一致）
+onUnmounted(() => {
+  if (previewBase.value) void api.stopWebPreview().catch(() => {});
+});
 
 onMounted(async () => {
   if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
@@ -416,6 +469,22 @@ watch(projectScenes, (next, prev) => {
               </div>
             </div>
           </section>
+          <!-- 预览（复用编辑器网页预览设计：本地静态服务 + 内嵌 iframe） -->
+          <section v-if="previewBase" class="bp-section">
+            <h3 class="bp-section-title">预览</h3>
+            <div class="bp-preview-head">
+              <input class="bp-preview-url mono" readonly :value="previewUrl" title="预览 URL" />
+              <button class="bp-btn" title="重新加载预览" @click="refreshPreview">刷新</button>
+              <button class="bp-btn" title="在默认浏览器中打开" @click="openInBrowser">在浏览器打开</button>
+              <button class="bp-btn" title="停止预览服务" @click="stopPreview">停止</button>
+            </div>
+            <iframe
+              :key="previewKey"
+              :src="previewUrl"
+              class="bp-preview-frame"
+              title="构建预览"
+            ></iframe>
+          </section>
         </div>
       </div>
 
@@ -425,11 +494,11 @@ watch(projectScenes, (next, prev) => {
           打开构建目录
         </button>
         <button
-          :disabled="!result"
-          title="在浏览器中预览构建产物（本地静态服务）"
-          @click="previewInBrowser"
+          :disabled="!result || previewLoading"
+          title="在面板内预览构建产物（本地静态服务）"
+          @click="startPreview"
         >
-          浏览器预览
+          {{ previewBase ? "重新预览" : "预览" }}
         </button>
         <button class="primary" :disabled="!canBuild" @click="doBuild">
           {{ building ? "构建中…" : "开始构建" }}

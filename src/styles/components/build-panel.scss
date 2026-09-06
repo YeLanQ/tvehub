@@ -12,9 +12,9 @@
 }
 
 .bp-modal {
-  width: 720px;
+  width: 960px;
   max-width: calc(100vw - 80px);
-  height: 560px;
+  height: 680px;
   max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
@@ -423,6 +423,43 @@
   font-family: Consolas, monospace;
   line-height: 1.6;
   word-break: break-all;
+}
+
+/* 预览（复用编辑器网页预览设计） */
+.bp-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bp-preview-url {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.bp-preview-frame {
+  width: 100%;
+  height: 240px;
+  background: #101014;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.bp-btn {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bp-btn:hover {
+  background: var(--bg-hover);
 }
 
 /* ---------- 底部 ---------- */

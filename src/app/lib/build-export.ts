@@ -1,7 +1,7 @@
 // 构建导出：渠道清单、构建配置（归属项目，存项目根
 // build.config.json）、打包流程编排。面板组件（BuildPanel.vue）只做 Vue 绑定。
 
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { api, type BuildResult } from "../../lib/api";
 import { WEB_EXPORT_TEMPLATES } from "../../generated/template-registry";
 import { logStore } from "../stores/log";
@@ -227,23 +227,5 @@ export async function openBuildDir(outputDir: string): Promise<void> {
     await openPath(outputDir);
   } catch (e) {
     logStore.log("error", `打开构建目录失败: ${e}`, "build");
-  }
-}
-
-/** 在默认浏览器中预览构建产物（复用本地静态预览服务器，服务 build/<渠道>） */
-export async function previewBuildInBrowser(
-  root: string,
-  channel: BuildChannel["id"],
-  mainSceneName: string,
-): Promise<void> {
-  try {
-    const base = await api.startWebPreviewServer(root, `build/${channel}`);
-    const url = mainSceneName
-      ? `${base}/index.html?scene=${encodeURIComponent(mainSceneName)}`
-      : `${base}/index.html`;
-    await openUrl(url);
-    logStore.log("info", `已在浏览器打开构建预览: ${url}`, "build");
-  } catch (e) {
-    logStore.log("error", `构建预览失败: ${e}`, "build");
   }
 }
