@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * 材质（Material）卡片 —— 参数按材质类型（工厂注册表 MaterialTypeDef）数据驱动渲染：
- *   原理化 PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）
- *   无光照 Unlit（MeshBasicMaterial，基础色/贴图/输出子集）。
+ *   PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）
+ *   Unlit（MeshBasicMaterial，基础色/贴图/输出子集）。
  * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 类型切换；
  * - 中部：当前材质类型的全部参数（颜色用取色器、数值用 NumberField）；
  * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换类型。

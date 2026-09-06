@@ -235,7 +235,7 @@ export function getAssetsStore(): AssetsStore {
         logStore.log("warn", "内置目录与 src 目录不允许新建材质");
         return null;
       }
-      // 显示名 = 类型名（"原理化 PBR"…），目录内去重
+      // 显示名 = 类型名（"PBR"…），目录内去重
       const prefix = destDir ? `${destDir}/` : "";
       let name = def.label;
       let n = 2;

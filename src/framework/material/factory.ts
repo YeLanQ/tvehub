@@ -84,7 +84,7 @@ export function attachTextureChannel(
 }
 
 // ---------------------------------------------------------------------------
-// 原理化 PBR（physical）：three MeshPhysicalMaterial，Blender 原理化 BSDF 映射，
+// PBR（physical）：three MeshPhysicalMaterial，Blender 原理化 BSDF 映射，
 // 参数映射与默认值即材质资产化以来的既有行为（原 SceneSynchronizer 内联实现）。
 // ---------------------------------------------------------------------------
 
@@ -152,7 +152,7 @@ function applyPhysical(
 
 const PHYSICAL_DEF: MaterialTypeDef = {
   key: "physical",
-  label: "原理化 PBR",
+  label: "PBR",
   create: () => new THREE.MeshPhysicalMaterial(),
   matches: (mat) => mat instanceof THREE.MeshPhysicalMaterial,
   paramGroups: MATERIAL_PARAM_GROUPS,
@@ -161,7 +161,7 @@ const PHYSICAL_DEF: MaterialTypeDef = {
 };
 
 // ---------------------------------------------------------------------------
-// 无光照 Unlit（unlit）：three MeshBasicMaterial，不受光照影响（纯色/贴图直出），
+// Unlit（unlit）：three MeshBasicMaterial，不受光照影响（纯色/贴图直出），
 // 适合 UI 面、标志、风格化场景；参数为 PBR 超集的子集，其余字段忽略不写。
 // ---------------------------------------------------------------------------
 
@@ -213,7 +213,7 @@ function applyUnlit(
 
 const UNLIT_DEF: MaterialTypeDef = {
   key: "unlit",
-  label: "无光照 Unlit",
+  label: "Unlit",
   create: () => new THREE.MeshBasicMaterial(),
   matches: (mat) => mat instanceof THREE.MeshBasicMaterial,
   paramGroups: UNLIT_PARAM_GROUPS,

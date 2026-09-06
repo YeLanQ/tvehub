@@ -370,7 +370,7 @@ async function main() {
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
     else geom = new THREE.BoxGeometry(x, y, z);
 
-    // 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退原理化 PBR。
+    // 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退PBR。
     // 透明/裁剪规则与编辑器一致：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪
     const m = materialParams.get(json.material) || MAT_DEFAULTS;
     const f = {
@@ -379,7 +379,7 @@ async function main() {
       wireframe: m.wireframe === true,
     };
     if (m.type === "unlit") {
-      // 无光照 Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
+      // Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
       const mat = new THREE.MeshBasicMaterial({
         color: m.color & 0xffffff,
         opacity: m.opacity,
