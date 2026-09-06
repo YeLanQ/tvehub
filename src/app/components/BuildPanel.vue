@@ -394,7 +394,7 @@ watch(projectScenes, (next, prev) => {
               </div>
               <p class="bp-note">
                 {{ singlePage
-                  ? "单页：场景与资产内联进 index.html（运行时代码保留为 player/libs 文件）。"
+                  ? "单页：场景、资产与全部运行时代码内联进单文件 index.html，产物只有一个 HTML。"
                   : "多文件：场景与资产按相对路径落盘，适合部署到静态服务器。" }}
               </p>
               <div class="bp-field">
@@ -404,7 +404,7 @@ watch(projectScenes, (next, prev) => {
                   <span>
                     {{
                       singlePage
-                        ? "资产 gzip 归档后内联（体积更小）"
+                        ? "资产与运行时代码 gzip 归档后内联（体积更小）"
                         : "场景与资产打包为 assets.gzip 归档"
                     }}
                   </span>

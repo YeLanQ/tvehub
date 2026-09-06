@@ -27,7 +27,7 @@ export const WEB_EXPORT_TEMPLATES: BuiltinWebExportTemplateInfo[] = [
     "id": "web:single",
     "dir": "single",
     "name": "单页构建",
-    "description": "场景与资产内联进 index.html，便于单文件分发",
+    "description": "场景、资产与全部运行时代码内联进单文件 index.html",
     "mode": "single"
   }
 ];

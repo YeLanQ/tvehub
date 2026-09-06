@@ -4,8 +4,9 @@
 //!   （player + three libs，由前端 fetch 传入）打包为可部署的静态网页产物；
 //!   多场景时写入 scenes/<场景名>.json，入口由 config.json 的 mainScene 决定
 //!   （player 支持 ?scene=<场景名> 查询参数切换）；
-//! - 产物形态：多文件（场景/资产按相对路径落盘）或单页（场景/资产内联进 index.html
-//!   的 `window.__TVE_BUILD_DATA`，产物无 assets/、scenes/ 目录；运行时代码文件保留）；
+//! - 产物形态：多文件（场景/资产按相对路径落盘）或单页（场景/资产/运行时代码全部
+//!   内联进 index.html 的 `window.__TVE_BUILD_DATA`，产物无 assets/、scenes/ 目录，
+//!   也没有 player.mjs/libs 文件——只有一个单页 HTML）；
 //! - Gzip 压缩：场景与资产打进单个 gzip 归档（多文件写 assets.gzip；单页 base64 内联），
 //!   运行时用浏览器原生 DecompressionStream 解压并经 fetch 拦截供资产（无需服务器配合）；
 //! - 渠道：web 完整实现；wechat（微信小游戏）为占位渠道，明确报"暂未支持"。
@@ -76,8 +77,8 @@ fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
     name
 }
 
-/// 网页运行时代码文件（多文件/单页均按文件落盘，不进归档/内联数据）；
-/// 入口页 index.html 与多模板附加页 index-<模板>.html 都算运行时代码
+/// 网页运行时代码文件（多文件按文件落盘；单页全部内联进 HTML，不进归档/内联数据
+/// 的场景/资产部分）；入口页 index.html 与多模板附加页 index-<模板>.html 都算运行时代码
 fn is_runtime_code(rel: &str) -> bool {
     rel == "player.mjs"
         || rel.starts_with("libs/")
@@ -295,11 +296,15 @@ fn build_archive_bytes(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String>
     enc.finish().map_err(|e| format!("gzip 压缩失败: {e}"))
 }
 
-/// 单页模式的内联数据脚本：注入 index.html，运行时经 window.__TVE_BUILD_DATA 读取
+/// 单页模式的内联数据脚本：注入 index.html，运行时经 window.__TVE_BUILD_DATA 读取。
+/// 非 gzip 时 code 为运行时代码文本表（player.mjs + libs/*，已重写说明符），
+/// gzip 时代码并入 entries 归档。序列化后把 '<' 转义为 \u003c，
+/// 防止代码文本里的 `</script>` 提前终止内联脚本标签（\u 转义解码后语义不变）
 fn inline_data_script(
     config: serde_json::Map<String, serde_json::Value>,
     entries: &[(String, Vec<u8>)],
     gzip: bool,
+    code: Option<&HashMap<String, String>>,
 ) -> Result<String, String> {
     let mut data = serde_json::Map::new();
     data.insert("config".to_string(), serde_json::Value::Object(config));
@@ -314,12 +319,82 @@ fn inline_data_script(
             .map(|(rel, bytes)| (rel.clone(), serde_json::Value::String(BASE64.encode(bytes))))
             .collect();
         data.insert("assets".to_string(), serde_json::Value::Object(assets));
+        if let Some(code) = code {
+            let map: serde_json::Map<String, serde_json::Value> = code
+                .iter()
+                .map(|(rel, text)| (rel.clone(), serde_json::Value::String(text.clone())))
+                .collect();
+            data.insert("code".to_string(), serde_json::Value::Object(map));
+        }
     }
+    let json = serde_json::Value::Object(data).to_string().replace('<', "\\u003c");
     Ok(format!(
-        "<script>window.__TVE_BUILD_DATA = {};</script>",
-        serde_json::Value::Object(data)
+        "<script>window.__TVE_BUILD_DATA = {json};</script>"
     ))
 }
+
+/// 单页引导脚本：从内联数据取运行时代码（非 gzip 的 code 字段，或 gzip 归档里的
+/// player.mjs/libs/* 条目），为每个模块生成 Blob URL 并注入 import map
+/// （tve:<相对路径> → blob:），最后动态 import 入口 player.mjs。
+/// 必须放在内联数据脚本之后、且页面没有任何模块脚本加载之前执行
+const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
+(function () {
+  var data = window.__TVE_BUILD_DATA;
+  if (!data) return;
+  var entry = "player.mjs";
+  function fail(msg) {
+    console.error(msg);
+    var el = document.getElementById("error");
+    if (el) {
+      el.textContent = "单页运行时加载失败: " + msg;
+      el.classList.add("visible");
+    }
+  }
+  function boot(code) {
+    if (!Object.prototype.hasOwnProperty.call(code, entry))
+      return fail("缺少入口模块 " + entry);
+    var imports = {};
+    for (var rel in code)
+      imports["tve:" + rel] = URL.createObjectURL(
+        new Blob([code[rel]], { type: "text/javascript" })
+      );
+    var map = document.createElement("script");
+    map.type = "importmap";
+    map.textContent = JSON.stringify({ imports: imports });
+    document.head.appendChild(map);
+    import("tve:" + entry).catch(function (e) {
+      fail(e && e.message ? e.message : String(e));
+    });
+  }
+  try {
+    if (data.code) {
+      boot(data.code);
+    } else if (data.pak) {
+      var bin = atob(data.pak), bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      new Response(
+        new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
+      )
+        .arrayBuffer()
+        .then(function (buf) {
+          var view = new DataView(buf), off = 0, dec = new TextDecoder();
+          var count = view.getUint32(off, true); off += 4;
+          var code = {};
+          while (count-- > 0) {
+            var pl = view.getUint32(off, true); off += 4;
+            var path = dec.decode(new Uint8Array(buf, off, pl)); off += pl;
+            var dl = view.getUint32(off, true); off += 4;
+            if (path === entry || path.lastIndexOf("libs/", 0) === 0)
+              code[path] = dec.decode(new Uint8Array(buf, off, dl));
+            off += dl;
+          }
+          boot(code);
+        })
+        .catch(function (e) { fail(String(e)); });
+    }
+  } catch (e) { fail(String(e)); }
+})();
+</script>"#;
 
 /// 构建导出：打包选中场景 + 引用资产 + 网页运行时到 `<项目>/build/web/`。
 /// files 为前端 fetch 传入的网页运行时文本（index.html/player.mjs/libs/*，
@@ -361,6 +436,158 @@ fn is_minifiable_script(rel: &str) -> bool {
     is_runtime_code(rel)
         && (rel.ends_with(".js") || rel.ends_with(".mjs"))
         && !rel.contains(".min.")
+}
+
+/// 单页内联模块的裸说明符前缀：相对 import 重写为 `tve:<产物内路径>`，
+/// 由引导脚本注入的 import map 映射到 Blob URL
+const INLINE_MODULE_PREFIX: &str = "tve:";
+
+fn is_js_word(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// 解析相对说明符（./a、../a）为产物内相对路径；带 ?query/#hash 后缀原样保留。
+/// 返回 (产物内相对路径, 后缀)。
+fn resolve_relative_spec(dir: &str, spec: &str) -> Option<(String, String)> {
+    if !spec.starts_with("./") && !spec.starts_with("../") {
+        return None;
+    }
+    let (path, suffix) = match spec.find(['?', '#']) {
+        Some(i) => (&spec[..i], spec[i..].to_string()),
+        None => (spec, String::new()),
+    };
+    let mut segs: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    for part in path.split('/') {
+        match part {
+            "." | "" => {}
+            ".." => {
+                segs.pop();
+            }
+            p => segs.push(p),
+        }
+    }
+    Some((segs.join("/"), suffix))
+}
+
+/// 单行引号字符串读取：返回 (字符串内容, 结束引号后的字节偏移)；
+/// 起始偏移须指向引号，支持反斜杠转义
+fn read_quoted(text: &str, start: usize) -> Option<(&str, usize)> {
+    let b = text.as_bytes();
+    let quote = *b.get(start)?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let mut k = start + 1;
+    while k < b.len() {
+        if b[k] == b'\\' {
+            k += 2;
+            continue;
+        }
+        if b[k] == quote {
+            return Some((&text[start + 1..k], k + 1));
+        }
+        k += 1;
+    }
+    None
+}
+
+/// 重写一段模块文本：import/export from 的相对说明符与 import("./x") 动态导入，
+/// 解析到已知运行时代码文件时替换为 `tve:<路径>` 裸说明符，其余原样保留
+fn rewrite_specifier_text(
+    text: &str,
+    dir: &str,
+    known: &std::collections::HashSet<String>,
+) -> String {
+    let b = text.as_bytes();
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut i = 0;
+    while i < b.len() {
+        // 关键字起点（词边界）：import / from
+        let kw = if is_js_word(b[i]) && (i == 0 || !is_js_word(b[i - 1])) {
+            if text[i..].starts_with("import") && (i + 6 >= b.len() || !is_js_word(b[i + 6])) {
+                Some((i, 6, true))
+            } else if text[i..].starts_with("from") && (i + 4 >= b.len() || !is_js_word(b[i + 4])) {
+                Some((i, 4, false))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let Some((kw_at, kw_len, is_import)) = kw else {
+            let ch = text[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        };
+
+        // 关键字后跳过空白，定位字符串字面量（静态 from/import 后直接字符串；
+        // 动态 import 后还有一层括号）
+        let mut j = kw_at + kw_len;
+        let skip_ws = |j: &mut usize, b: &[u8]| {
+            while *j < b.len() && (b[*j] as char).is_ascii_whitespace() {
+                *j += 1;
+            }
+        };
+        skip_ws(&mut j, b);
+        if is_import && j < b.len() && b[j] == b'(' {
+            j += 1;
+            skip_ws(&mut j, b);
+        }
+        if let Some((spec, after)) = read_quoted(text, j) {
+            if let Some((rel, suffix)) = resolve_relative_spec(dir, spec) {
+                if known.contains(&rel) {
+                    out.push_str(&text[i..j]);
+                    out.push_str(&text[j..=j]);
+                    out.push_str(INLINE_MODULE_PREFIX);
+                    out.push_str(&rel);
+                    out.push_str(&suffix);
+                    out.push(text.as_bytes()[j] as char);
+                    i = after;
+                    continue;
+                }
+            }
+        }
+
+        // 未命中：整段关键字原样复制，从关键字后继续扫描
+        out.push_str(&text[i..j.min(b.len())]);
+        i = j;
+    }
+    out
+}
+
+/// 单页模式：把运行时代码里的相对 import/export 说明符重写为 `tve:<相对路径>`
+/// 裸说明符（运行时由引导脚本的 import map 映射到 Blob URL 加载）
+fn rewrite_module_imports(code: &mut HashMap<String, String>) {
+    let known: std::collections::HashSet<String> = code.keys().cloned().collect();
+    let rels: Vec<String> = code.keys().cloned().collect();
+    for rel in rels {
+        let dir = match rel.rfind('/') {
+            Some(i) => &rel[..=i],
+            None => "",
+        };
+        let text = code.get_mut(&rel).unwrap();
+        *text = rewrite_specifier_text(text, dir, &known);
+    }
+}
+
+/// 移除入口页里引用 player.mjs 的 <script> 标签（单页模式代码已内联，原标签会 404）
+fn strip_player_script_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<script") {
+        let tail = &rest[start..];
+        let Some(end) = tail.find("</script") else {
+            break;
+        };
+        let seg_end = start + end + "</script".len();
+        if !tail[..end].contains("player.mjs") {
+            result.push_str(&rest[..seg_end]);
+        }
+        rest = &rest[seg_end..];
+    }
+    result.push_str(rest);
+    result
 }
 
 /// 构建导出实现（同步，便于单元测试直接驱动完整流程）
@@ -505,22 +732,45 @@ fn build_export_impl(
     }
 
     // 产物组装
+    let mut code_n = 0usize;
     if single_page {
-        // 单页：数据内联全部入口页（index.html / index-<模板>.html；模板可用
-        // {{BUILD_DATA}} 占位指定注入位置，无占位符时回退注入 </body> 前；
-        // config 不落盘），运行时代码保留为文件
-        let script = inline_data_script(cfg, &entries, gzip)?;
-        for (rel, html) in files.iter_mut() {
-            if is_entry_page(rel) {
-                *html = if html.contains("{{BUILD_DATA}}") {
-                    html.replacen("{{BUILD_DATA}}", &script, 1)
-                } else if html.contains("</body>") {
-                    html.replacen("</body>", &format!("{script}\n</body>"), 1)
-                } else {
-                    format!("{html}\n{script}")
-                };
+        // 单页：运行时代码（player.mjs + libs/*）全部内联进入口页——重写相对 import
+        // 说明符为 tve: 裸说明符；非 gzip 放数据 code 字段，gzip 并入归档；运行时由
+        // 引导脚本生成 Blob URL + import map 动态加载 player.mjs。产物仅剩 HTML。
+        let mut pages: HashMap<String, String> = HashMap::new();
+        let mut code: HashMap<String, String> = HashMap::new();
+        for (rel, text) in files.drain() {
+            if is_entry_page(&rel) {
+                pages.insert(rel, text);
+            } else {
+                code.insert(rel, text);
             }
         }
+        rewrite_module_imports(&mut code);
+        code_n = code.len();
+        let script = if gzip {
+            for (rel, text) in &code {
+                entries.push((rel.clone(), text.clone().into_bytes()));
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            inline_data_script(cfg, &entries, true, None)?
+        } else {
+            inline_data_script(cfg, &entries, false, Some(&code))?
+        };
+        // 数据脚本 + 引导脚本注入全部入口页（模板可用 {{BUILD_DATA}} 占位指定注入
+        // 位置，无占位符时回退注入 </body> 前；config 不落盘）
+        let inject = format!("{script}\n{SINGLE_PAGE_BOOTSTRAP}");
+        for html in pages.values_mut() {
+            let clean = strip_player_script_tags(html);
+            *html = if clean.contains("{{BUILD_DATA}}") {
+                clean.replacen("{{BUILD_DATA}}", &inject, 1)
+            } else if clean.contains("</body>") {
+                clean.replacen("</body>", &format!("{inject}\n</body>"), 1)
+            } else {
+                format!("{clean}\n{inject}")
+            };
+        }
+        files = pages;
     } else {
         files.insert(
             "config.json".to_string(),
@@ -538,7 +788,8 @@ fn build_export_impl(
         .map_err(|e| format!("写入构建产物失败: {e}"))?;
 
     let assets_packed = if single_page || gzip {
-        entries.len()
+        // 单页 + gzip 时归档里含运行时代码条目，不计入资产数
+        entries.len() - if single_page && gzip { code_n } else { 0 }
     } else {
         binaries.len() + packed.len()
     };
@@ -608,15 +859,18 @@ mod tests {
         assert!(!is_runtime_code("index.json"));
     }
 
-    /// 端到端：搭一个最小临时项目（场景 + 材质），跑单页/多文件 × gzip 全部形态，
-    /// 校验产物内容（单页入口页含内联数据、多文件 + gzip 写 assets.gzip）。
+    /// 端到端：搭一个最小临时项目（场景 + 材质 + 依赖 libs 的运行时），跑
+    /// 单页/多文件 × gzip 全部形态，校验产物内容：
+    /// - 单页：产物只剩入口 HTML，运行时代码全部内联（code 字段或 gzip 归档），
+    ///   相对 import 重写为 tve: 裸说明符，模板里的 player.mjs 脚本标签被剥离；
+    /// - 多文件：场景/资产按相对路径落盘（gzip 时写 assets.gzip）。
     #[test]
     fn build_export_end_to_end_all_modes() {
         let base = std::env::temp_dir().join(format!("tve-build-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         let root = base.join("proj");
         fs::create_dir_all(root.join("assets/materials")).unwrap();
-        fs::create_dir_all(root.join("assets/models")).unwrap();
+        fs::create_dir_all(root.join("assets/textures")).unwrap();
         fs::write(
             root.join("project.config.json"),
             r#"{"designResolution":{"width":1280,"height":720},"scaleMode":"fixedauto"}"#,
@@ -627,7 +881,6 @@ mod tests {
             r#"{"$type":"material","name":"M","materialType":"physical","map":"assets/textures/a.png"}"#,
         )
         .unwrap();
-        fs::create_dir_all(root.join("assets/textures")).unwrap();
         fs::write(root.join("assets/textures/a.png"), [1u8, 2, 3, 4]).unwrap();
         fs::write(
             root.join("assets/Main.scene"),
@@ -637,8 +890,14 @@ mod tests {
 
         let runtime_files = |entry: &str| {
             HashMap::from([
-                ("index.html".to_string(), format!("<html><title>t</title><body>{entry}</body></html>")),
-                ("player.mjs".to_string(), "// player".to_string()),
+                (
+                    "index.html".to_string(),
+                    format!(
+                        "<html><title>t</title><body>{entry}<script type=\"module\" src=\"./player.mjs\"></script></body></html>"
+                    ),
+                ),
+                ("player.mjs".to_string(), "// player\nimport { b } from \"./libs/b.mjs\";\nconsole.log(b);\n".to_string()),
+                ("libs/b.mjs".to_string(), "export const b = 2;\n".to_string()),
             ])
         };
         let scenes = vec!["assets/Main.scene".to_string()];
@@ -660,15 +919,34 @@ mod tests {
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
 
             let out = root.join("build/web");
-            assert!(out.join("player.mjs").is_file());
             if single_page {
+                // 单页：产物只剩一个入口 HTML
+                let written: Vec<String> = fs::read_dir(&out)
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect();
+                assert_eq!(written, vec!["index.html".to_string()], "单页产物只有 index.html");
                 let html = fs::read_to_string(out.join("index.html")).unwrap();
                 assert!(html.contains("__TVE_BUILD_DATA"), "单页入口页应内联数据");
-                assert!(html.contains("scenes/Main.json"), "内联数据应包含场景条目");
+                assert!(html.contains("importmap"), "单页入口页应带 Blob/importmap 引导脚本");
+                assert!(html.contains("import(\"tve:\" + entry)"), "引导脚本应动态 import 入口模块");
+                assert!(!html.contains("src=\"./player.mjs\""), "模板里的 player.mjs 脚本标签应被剥离");
                 assert!(!out.join("scenes").exists(), "单页模式不落盘场景文件");
                 assert!(!out.join("config.json").exists(), "单页模式不落盘 config.json");
+                if gzip {
+                    // 代码在 gzip 归档（base64）里，正文不出现代码原文
+                    assert!(!html.contains("export const b = 2"), "gzip 单页代码应进归档而非明文");
+                    assert!(!html.contains("tve:libs/b.mjs"), "gzip 单页重写后的代码在归档里");
+                } else {
+                    assert!(html.contains("export const b = 2"), "非 gzip 单页代码应以文本内联");
+                    assert!(html.contains("tve:libs/b.mjs"), "运行时代码相对 import 应重写为 tve: 说明符");
+                }
             } else {
+                assert!(out.join("player.mjs").is_file(), "多文件运行时代码按文件落盘");
+                assert!(out.join("libs/b.mjs").is_file());
                 assert!(out.join("config.json").is_file());
+                let html = fs::read_to_string(out.join("index.html")).unwrap();
+                assert!(html.contains("src=\"./player.mjs\""), "多文件保留模板脚本标签");
                 if gzip {
                     let pak = fs::read(out.join("assets.gzip")).unwrap();
                     assert_eq!(&pak[..2], &[0x1f, 0x8b]);
@@ -685,6 +963,54 @@ mod tests {
             assert!(result.ok);
         }
         let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 单页说明符重写：相对路径解析（./ ../）、引号/空白变体、未知目标不重写
+    #[test]
+    fn single_page_rewrites_module_imports() {
+        use super::{rewrite_module_imports, rewrite_specifier_text};
+        use std::collections::HashSet;
+        let known: HashSet<String> = [
+            "player.mjs".to_string(),
+            "libs/utils.mjs".to_string(),
+            "libs/loaders/GLTFLoader.js".to_string(),
+        ]
+        .into();
+        // 相对解析：libs/model.mjs 目录下的 ./x 与 ../x
+        assert_eq!(
+            rewrite_specifier_text(
+                "import { a } from \"./utils.mjs\";\nimport * as G from './loaders/GLTFLoader.js';\nimport(\"./utils.mjs\")\n",
+                "libs/",
+                &known
+            ),
+            "import { a } from \"tve:libs/utils.mjs\";\nimport * as G from 'tve:libs/loaders/GLTFLoader.js';\nimport(\"tve:libs/utils.mjs\")\n"
+        );
+        // ../ 上溯：libs/ 下的 ../loaders 解析到根目录（不在已知集，不重写）
+        assert_eq!(
+            rewrite_specifier_text("import '../loaders/GLTFLoader.js';", "libs/", &known),
+            "import '../loaders/GLTFLoader.js';"
+        );
+        // 压缩形态：from"./x" 无空白
+        assert_eq!(
+            rewrite_specifier_text("import{a}from\"./utils.mjs\";", "libs/", &known),
+            "import{a}from\"tve:libs/utils.mjs\";"
+        );
+        // 未知目标 / 裸说明符 / import.meta / 词内匹配不重写
+        assert_eq!(
+            rewrite_specifier_text(
+                "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n",
+                "libs/",
+                &known
+            ),
+            "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n"
+        );
+        // 端到端：player 相对 import 重写
+        let mut code = HashMap::from([
+            ("player.mjs".to_string(), "import { b } from \"./libs/utils.mjs\";\n".to_string()),
+            ("libs/utils.mjs".to_string(), "export const b = 1;\n".to_string()),
+        ]);
+        rewrite_module_imports(&mut code);
+        assert!(code["player.mjs"].contains("\"tve:libs/utils.mjs\""));
     }
 
     /// 发布模式：资产 uid 重命名（.meta uuid 优先/哈希回退）、场景与材质引用重写、

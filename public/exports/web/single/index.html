@@ -46,8 +46,8 @@
   <body>
     <div id="app"></div>
     <div id="error"></div>
-    <!-- 单页构建：场景/资产数据由构建流程注入下方占位处（window.__TVE_BUILD_DATA） -->
+    <!-- 单页构建：场景/资产/运行时代码（player + libs）由构建流程全部内联注入下方
+         占位处（数据脚本 + Blob/importmap 引导脚本），产物只有一个 HTML 文件 -->
     {{BUILD_DATA}}
-    <script type="module" src="./player.mjs"></script>
   </body>
 </html>

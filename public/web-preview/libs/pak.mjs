@@ -42,7 +42,9 @@ export function parseArchive(bytes) {
 }
 
 /** 安装 fetch 拦截：同源相对路径命中内存资产 → Response；其余透传原生 fetch。
- *  命中项每次返回数据副本（Response 消费后不可复用）。 */
+ *  命中项每次返回数据副本（Response 消费后不可复用）。
+ *  key 匹配两次尝试：整段 pathname（服务器根部署）与入口页目录的相对路径
+ *  （子路径部署 / file:// 双击打开——此时 pathname 是完整磁盘路径）。 */
 export function installAssetShim(map) {
   if (window.__tveAssetShimInstalled) return;
   window.__tveAssetShimInstalled = true;
@@ -52,10 +54,15 @@ export function installAssetShim(map) {
       const url = typeof input === "string" ? input : input && input.url;
       if (typeof url === "string" && !init?.body) {
         const u = new URL(url, location.href);
-        if (u.origin === location.origin) {
-          const key = decodeURIComponent(u.pathname).replace(/^\/+/, "");
-          const hit = map.get(key);
-          if (hit) return Promise.resolve(new Response(hit.slice()));
+        if (u.origin === location.origin || u.protocol === "file:") {
+          const path = decodeURIComponent(u.pathname);
+          const keys = [path.replace(/^\/+/, "")];
+          const base = location.pathname.replace(/[^/]*$/, "");
+          if (path.startsWith(base)) keys.push(path.slice(base.length).replace(/^\/+/, ""));
+          for (const key of keys) {
+            const hit = map.get(key);
+            if (hit) return Promise.resolve(new Response(hit.slice()));
+          }
         }
       }
     } catch {
