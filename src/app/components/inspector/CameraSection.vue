@@ -25,8 +25,15 @@ const emit = defineEmits<{
 /** 已注册相机类型（类型下拉选项；特有分组也按当前类型 def 取） */
 const typeOptions = cameraTypeRegistry.list();
 
-/** 当前类型（相机类型决定属性面板渲染哪些特有参数） */
-const typeDef = computed(() => cameraTypeRegistry.getOrDefault(props.node.cameraType));
+/**
+ * 当前类型（相机类型决定属性面板渲染哪些特有参数）。
+ * 节点是普通类实例（非响应式），computed 直接读 node.cameraType 不会建立依赖、
+ * 切换类型后缓存不失效 → 分组停在旧类型；以 rev（面板刷新号）为失效信号。
+ */
+const typeDef = computed(() => {
+  void props.rev;
+  return cameraTypeRegistry.getOrDefault(props.node.cameraType);
+});
 
 function onTypeSelect(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;

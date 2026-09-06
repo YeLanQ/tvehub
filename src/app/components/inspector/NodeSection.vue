@@ -11,6 +11,8 @@ const emit = defineEmits<{
 }>();
 
 const localName = ref("");
+/** 名称输入框是否正在编辑（编辑中不做外部回填，避免打断输入） */
+const editingName = ref(false);
 
 watch(
   () => props.node.id,
@@ -20,10 +22,14 @@ watch(
   { immediate: true }
 );
 
+// 节点是普通类实例（非响应式），直接 watch node.name 永远不会触发；
+// 以 rev（面板刷新号）为信号回填：重命名/撤销/重做后输入框跟随节点名
 watch(
-  () => props.node.name,
-  (v) => {
-    if (localName.value !== v) localName.value = v;
+  () => props.rev,
+  () => {
+    if (!editingName.value && localName.value !== props.node.name) {
+      localName.value = props.node.name;
+    }
   }
 );
 
@@ -37,7 +43,13 @@ function commitName(): void {
 <template>
   <div class="field" :data-rev="rev">
     <label>名称</label>
-    <input v-model="localName" type="text" @change="commitName" />
+    <input
+      v-model="localName"
+      type="text"
+      @focus="editingName = true"
+      @blur="editingName = false"
+      @change="commitName"
+    />
   </div>
   <div class="field">
     <label>ID</label>

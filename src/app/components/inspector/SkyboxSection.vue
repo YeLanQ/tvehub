@@ -27,19 +27,25 @@ const assetsStore = getAssetsStore();
 /** 材质资产选项（与 Material 卡片共用；内置 + 项目全部 .mat） */
 const options = useMaterialAssetOptions(() => assetsStore.assets);
 
-/** 当前类型（固定） */
-const kindLabel = computed(() =>
-  props.node.skyKind === "procedural" ? "程序化天空盒" : "默认立方体天空盒",
-);
+/** 当前类型（固定）。节点是普通类实例（非响应式）：以 rev 为失效信号 */
+const kindLabel = computed(() => {
+  void props.rev;
+  return props.node.skyKind === "procedural" ? "程序化天空盒" : "默认立方体天空盒";
+});
 
 /** 程序化 / 立方体的色项标签（同字段、不同语义命名） */
-const colorLabels = computed<{ top: string; horizon: string; ground: string }>(() =>
-  props.node.skyKind === "procedural"
+const colorLabels = computed<{ top: string; horizon: string; ground: string }>(() => {
+  void props.rev;
+  return props.node.skyKind === "procedural"
     ? { top: "天空顶部色", horizon: "地平线色", ground: "下方地面色" }
-    : { top: "顶面颜色", horizon: "侧面颜色", ground: "底面颜色" },
-);
+    : { top: "顶面颜色", horizon: "侧面颜色", ground: "底面颜色" };
+});
 
-const isInternal = computed(() => isInternalAsset(props.node.material));
+const isInternal = computed(() => {
+  // 切换/复制材质资产后徽标需跟随（node.material 原地修改，靠 rev 失效）
+  void props.rev;
+  return isInternalAsset(props.node.material);
+});
 
 function onSelect(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;

@@ -16,6 +16,8 @@ const emit = defineEmits<{
 }>();
 
 const kindLabel = computed(() => {
+  // 节点是普通类实例（非响应式）：以 rev 为失效信号（灯光类型当前固定，防御性处理）
+  void props.rev;
   const n = props.node;
   if (n instanceof PointLightNode) return "Point Light 点光源";
   if (n instanceof DirectionalLightNode) return "Directional Light 平行光";

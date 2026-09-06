@@ -66,8 +66,15 @@ watch(
   () => syncFromEngine(),
 );
 
-const rel = computed(() => props.node.material);
-const isInternal = computed(() => isInternalAsset(props.node.material));
+const rel = computed(() => {
+  // 节点是普通类实例（非响应式）：以 rev 为失效信号，否则切换/复制材质后徽标停在旧状态
+  void props.rev;
+  return props.node.material;
+});
+const isInternal = computed(() => {
+  void props.rev;
+  return isInternalAsset(props.node.material);
+});
 
 /** 当前类型的参数分组（材质类型决定属性面板渲染哪些参数） */
 const groups = computed<MaterialParamGroup[]>(
@@ -81,7 +88,11 @@ function onSelect(e: Event): void {
 
 function onTypeSelect(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;
-  if (v && v !== matType.value) emit("changeType", v);
+  if (v && v !== matType.value) {
+    // 本地即时切换参数分组（父层写引擎缓存是异步链路；下次 rev 刷新以引擎缓存为准校正）
+    matType.value = v;
+    emit("changeType", v);
+  }
 }
 
 // —— 通用参数读写（按 defs 渲染，避免每个参数手写控件）——
