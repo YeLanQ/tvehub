@@ -15,6 +15,7 @@ use std::path::Path;
 
 /// 项目信息返回给前端
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectInfo {
     pub path: String,
     pub name: String,

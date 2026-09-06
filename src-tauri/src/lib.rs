@@ -35,6 +35,7 @@ fn build_main_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Resul
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct RecentProject {
     path: String,
     name: String,
