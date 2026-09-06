@@ -7,12 +7,14 @@ import path from "node:path";
 const host = process.env.TAURI_DEV_HOST;
 
 /**
- * 模板注册表插件：扫描 public/templates/ 下含 template.json 的目录，
- * 把模板元信息（id/名称/描述/kind/文件清单）生成到 src/generated/template-registry.ts。
- * 开发服务器启动/模板文件变化时自动重建，构建时（buildStart）同样生成 ——
- * 前端直接 import 该模块（模板列表零 fetch 依赖），模板目录下新增模板即自动注册。
+ * 模板注册表插件：扫描 public/templates/（项目模板）与 public/exports/web/
+ * （web 导出模板）下含 template.json 的目录，把模板元信息生成到
+ * src/generated/template-registry.ts。开发服务器启动/模板文件变化时自动重建，
+ * 构建（buildStart）时同样生成 —— 前端直接 import 该模块（模板列表零 fetch 依赖），
+ * 模板目录下新增模板即自动注册。
  */
 const TEMPLATE_ROOT = "public/templates";
+const WEB_EXPORT_ROOT = "public/exports/web";
 const REGISTRY_PATH = "src/generated/template-registry.ts";
 
 interface TplMeta {
@@ -20,6 +22,7 @@ interface TplMeta {
   description?: string;
   kind?: string;
   files?: string[];
+  mode?: string;
 }
 
 function readTplMeta(dir: string): TplMeta {
@@ -53,10 +56,24 @@ function generateTemplateRegistry() {
     };
   });
 
+  // web 导出模板：mode 决定产物形态（multi=多文件 / single=单页），非法值回退 multi
+  const webExportTemplates = listTemplateDirs(WEB_EXPORT_ROOT).map((dir) => {
+    const m = readTplMeta(path.join(WEB_EXPORT_ROOT, dir));
+    return {
+      id: `web:${dir}`,
+      dir,
+      name: m.name ?? dir,
+      description: m.description ?? "",
+      mode: m.mode === "single" ? "single" : "multi",
+    };
+  });
+
   const content =
     `// 由 vite.config.ts 模板索引插件自动生成（模板目录变化时重建；请勿手动编辑）\n` +
     `export interface BuiltinProjectTemplateInfo { id: string; dir: string; name: string; description: string; kind: string; files: string[]; }\n` +
-    `export const PROJECT_TEMPLATES: BuiltinProjectTemplateInfo[] = ${JSON.stringify(projectTemplates, null, 2)};\n`;
+    `export const PROJECT_TEMPLATES: BuiltinProjectTemplateInfo[] = ${JSON.stringify(projectTemplates, null, 2)};\n` +
+    `export interface BuiltinWebExportTemplateInfo { id: string; dir: string; name: string; description: string; mode: "multi" | "single"; }\n` +
+    `export const WEB_EXPORT_TEMPLATES: BuiltinWebExportTemplateInfo[] = ${JSON.stringify(webExportTemplates, null, 2)};\n`;
   fs.mkdirSync(path.dirname(REGISTRY_PATH), { recursive: true });
   fs.writeFileSync(REGISTRY_PATH, content);
 }
@@ -69,8 +86,10 @@ function templateIndexPlugin(): Plugin {
     },
     configureServer(server) {
       generateTemplateRegistry();
-      const abs = path.resolve(TEMPLATE_ROOT);
-      if (fs.existsSync(abs)) server.watcher.add(abs);
+      for (const root of [TEMPLATE_ROOT, WEB_EXPORT_ROOT]) {
+        const abs = path.resolve(root);
+        if (fs.existsSync(abs)) server.watcher.add(abs);
+      }
       const onChange = (file: string) => {
         if (file.includes("template.json")) generateTemplateRegistry();
       };

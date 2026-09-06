@@ -1,7 +1,7 @@
 // 构建期：把编辑器内置资源（public/internal/…）打包进二进制，
 // 运行时由 exe 启动时提取到其同级 public/internal（免安装便携），
 // 开发（debug）则直接读取仓库 public/internal。
-// 归档格式（与 LQEN 一致）：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]，
+// 归档格式：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]，
 // 其中 path 以 "internal/" 为前缀（如 "internal/materials/Default.mat"）。
 
 use std::fs::File;

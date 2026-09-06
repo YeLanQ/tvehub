@@ -3,6 +3,7 @@
 #![recursion_limit = "512"]
 
 mod asset_protocol;
+mod build;
 mod internal;
 mod preview;
 mod project;
@@ -461,7 +462,7 @@ pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 
 // ---------------------------------------------------------------------------
 // 内置资源目录（public/internal）：开发读仓库目录；生产读 build.rs 打包、
-// 启动时释放到 exe 同级 public/internal（与 LQEN 一致，不做清单/内嵌硬编码）。
+// 启动时释放到 exe 同级 public/internal。
 // ---------------------------------------------------------------------------
 
 fn exe_dir() -> PathBuf {
@@ -479,7 +480,7 @@ fn builtin_root(kind: &str) -> PathBuf {
     exe_dir().join("public").join(kind)
 }
 
-/// LQEN 式内置资源根目录（internal）
+/// 内置资源根目录（internal）
 pub(crate) fn internal_root() -> PathBuf {
     builtin_root("internal")
 }
@@ -617,6 +618,7 @@ pub fn run() {
             preview::export_web_preview_from_scene,
             preview::start_web_preview_server,
             preview::stop_web_preview,
+            build::build_export,
             internal::read_internal_asset,
             internal::read_internal_binary,
             internal::scan_internal_assets,

@@ -26,6 +26,8 @@ export interface ProjectStore {
   projectName: string | null;
   /** 项目设置面板是否打开 */
   settingsOpen: boolean;
+  /** 构建导出面板是否打开 */
+  buildOpen: boolean;
   /** 编辑器渲染后端（读取项目 project.config.json 的 renderer 字段） */
   rendererBackend: RendererBackend;
   /** 编辑器抗锯齿（MSAA 采样数：0=无，2/4/8；读取项目配置） */
@@ -45,6 +47,8 @@ export interface ProjectStore {
   setSceneRel: (rel: string) => void;
   openSettings: () => void;
   closeSettings: () => void;
+  openBuild: () => void;
+  closeBuild: () => void;
   addRecent: (project: RecentProject) => void;
   removeRecent: (path: string) => void;
   clearRecent: () => void;
@@ -75,6 +79,7 @@ export function getProjectStore(): ProjectStore {
     currentPath: null as string | null,
     projectName: null as string | null,
     settingsOpen: false,
+    buildOpen: false,
     rendererBackend: "webgl" as RendererBackend,
     antiAliasing: 2,
     hdrMode: "ldr" as "hdr" | "ldr",
@@ -187,6 +192,9 @@ export function getProjectStore(): ProjectStore {
     get settingsOpen() {
       return state.settingsOpen;
     },
+    get buildOpen() {
+      return state.buildOpen;
+    },
     get rendererBackend() {
       return state.rendererBackend;
     },
@@ -230,6 +238,13 @@ export function getProjectStore(): ProjectStore {
     },
     closeSettings() {
       state.settingsOpen = false;
+    },
+    openBuild() {
+      if (!state.currentPath || state.view !== "editor") return;
+      state.buildOpen = true;
+    },
+    closeBuild() {
+      state.buildOpen = false;
     },
     addRecent(project) {
       state.recent = [

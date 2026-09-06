@@ -35,26 +35,32 @@ fn write_export(
     files: HashMap<String, String>,
     binaries: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
-    let root_path = PathBuf::from(root);
-    if !root_path.is_dir() {
-        return Err(format!("项目目录不存在: '{}'", root_path.display()));
-    }
-    let out = root_path.join(".tmp").join("web-preview");
+    let out = PathBuf::from(root).join(".tmp").join("web-preview");
+    write_export_dir(&out, files, binaries)
+}
+
+/// 清空并重建 `out` 导出目录，写入文本与二进制产物（预览/构建导出共用）
+pub(crate) fn write_export_dir(
+    out: &Path,
+    files: HashMap<String, String>,
+    binaries: &HashMap<String, Vec<u8>>,
+) -> Result<(), String> {
     if out.exists() {
-        fs::remove_dir_all(&out).map_err(|e| format!("清理旧预览产物失败: {}", e))?;
+        fs::remove_dir_all(out).map_err(|e| format!("清理旧导出产物失败: {}", e))?;
     }
-    fs::create_dir_all(&out).map_err(|e| format!("创建预览目录失败: {}", e))?;
+    fs::create_dir_all(out).map_err(|e| format!("创建导出目录失败: {}", e))?;
 
     for (rel, content) in &files {
-        write_export_file(&out, rel, content.as_bytes())?;
+        write_export_file(out, rel, content.as_bytes())?;
     }
     for (rel, bytes) in binaries {
-        write_export_file(&out, rel, bytes)?;
+        write_export_file(out, rel, bytes)?;
     }
     Ok(())
 }
 
-fn write_export_file(out: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+/// 写入单个导出文件（路径守卫：拒绝绝对路径/反斜杠/越界段）
+pub(crate) fn write_export_file(out: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
     if rel.is_empty()
         || Path::new(rel).is_absolute()
         || rel.contains('\\')
@@ -70,7 +76,7 @@ fn write_export_file(out: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> 
 }
 
 /// 读取资产二进制（internal/… → 内置目录；其余 → 项目根沙箱内）
-fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String> {
     if rel == "internal" || rel.starts_with("internal/") {
         let sub = rel.strip_prefix("internal/").unwrap_or("");
         if sub.is_empty()
@@ -88,6 +94,85 @@ fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String> {
 
 /// 材质文档引用的贴图字段（.mat JSON 内为相对路径字符串）
 const TEXTURE_FIELDS: [&str; 5] = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
+
+/// 收集单个场景引用的全部资产（材质/贴图/模型），写入 files（文本）与 binaries
+/// （二进制）；跨场景共用同一 map 以去重。返回缺失（读取失败被跳过）的资产相对路径。
+/// - .mat 材质文本随导出（缺失跳过，player 回退默认参数）；
+/// - 材质引用的贴图二进制（缺失跳过，player 回退无贴图）；
+/// - 模型资产（glb/gltf/fbx/obj）二进制随导出——player 按同相对路径 fetch 后解析回放
+///   （含内嵌动画）；缺失项跳过（player 渲染空组并告警）；
+/// - .gltf（JSON 文本）外部引用的 buffers[].uri / images[].uri 指向模型同目录
+///   文件（.bin/贴图），一并随拷，保持与编辑器“同目录资源”解析规则一致。
+pub(crate) fn collect_scene_assets(
+    root_path: &Path,
+    scene_text: &str,
+    files: &mut HashMap<String, String>,
+    binaries: &mut HashMap<String, Vec<u8>>,
+) -> Vec<String> {
+    let mut missing = Vec::new();
+    let scene_json: serde_json::Value =
+        serde_json::from_str(scene_text).unwrap_or(serde_json::Value::Null);
+
+    let mut mat_refs = Vec::new();
+    crate::scene::migrate::collect_material_refs(&scene_json, &mut mat_refs);
+    for rel in &mat_refs {
+        let Ok(text) = crate::scene::material::read_material_text(root_path, rel) else {
+            missing.push(rel.clone());
+            continue;
+        };
+        files.insert(rel.clone(), text.clone());
+        // 材质引用的贴图二进制（缺失跳过，player 回退无贴图）
+        if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
+            for field in TEXTURE_FIELDS {
+                if let Some(tex) = doc.get(field).and_then(|v| v.as_str()) {
+                    if !tex.is_empty() && !binaries.contains_key(tex) {
+                        match read_asset_bytes(root_path, tex) {
+                            Ok(bytes) => {
+                                binaries.insert(tex.to_string(), bytes);
+                            }
+                            Err(_) => missing.push(tex.to_string()),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut model_refs = Vec::new();
+    crate::scene::migrate::collect_model_refs(&scene_json, &mut model_refs);
+    for rel in &model_refs {
+        let Ok(bytes) = read_asset_bytes(root_path, rel) else {
+            missing.push(rel.clone());
+            continue;
+        };
+        if rel.to_ascii_lowercase().ends_with(".gltf") {
+            if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                for key in ["buffers", "images"] {
+                    let Some(items) = doc.get(key).and_then(|v| v.as_array()) else {
+                        continue;
+                    };
+                    for item in items {
+                        let Some(uri) = item.get("uri").and_then(|v| v.as_str()) else {
+                            continue;
+                        };
+                        if let Some(sibling) = gltf_sibling_rel(rel, uri) {
+                            if sibling != *rel && !binaries.contains_key(&sibling) {
+                                match read_asset_bytes(root_path, &sibling) {
+                                    Ok(b) => {
+                                        binaries.insert(sibling, b);
+                                    }
+                                    Err(_) => missing.push(sibling),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        binaries.insert(rel.clone(), bytes);
+    }
+    missing
+}
 
 /// 从当前场景导出网页预览产物：
 /// - files 由前端提供网页运行时（index.html / player.mjs / libs/* 模块与 three 运行时 / config.json，
@@ -110,64 +195,8 @@ pub async fn export_web_preview_from_scene(
     let mut files = files;
     files.insert("scene.json".to_string(), scene_text.clone());
 
-    // 场景引用的 .mat 材质资产随导出（internal 内置内容 / assets 项目文件）；
-    // 缺失项跳过（player 回退默认参数）
-    let scene_json: serde_json::Value = serde_json::from_str(&scene_text).unwrap_or(serde_json::Value::Null);
-    let mut mat_refs = Vec::new();
-    crate::scene::migrate::collect_material_refs(&scene_json, &mut mat_refs);
     let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
-    for rel in &mat_refs {
-        let Ok(text) = crate::scene::material::read_material_text(&root_path, rel) else {
-            continue;
-        };
-        files.insert(rel.clone(), text.clone());
-        // 材质引用的贴图二进制（缺失跳过，player 回退无贴图）
-        if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
-            for field in TEXTURE_FIELDS {
-                if let Some(tex) = doc.get(field).and_then(|v| v.as_str()) {
-                    if !tex.is_empty() && !binaries.contains_key(tex) {
-                        if let Ok(bytes) = read_asset_bytes(&root_path, tex) {
-                            binaries.insert(tex.to_string(), bytes);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 场景引用的模型资产（glb/gltf/fbx/obj）二进制随导出——player 按同相对路径
-    // fetch 后解析回放（含内嵌动画）；缺失项跳过（player 渲染空组并告警）。
-    // .gltf（JSON 文本）外部引用的 buffers[].uri / images[].uri 指向模型同目录
-    // 文件（.bin/贴图），一并随拷，保持与编辑器“同目录资源”解析规则一致。
-    let mut model_refs = Vec::new();
-    crate::scene::migrate::collect_model_refs(&scene_json, &mut model_refs);
-    for rel in &model_refs {
-        let Ok(bytes) = read_asset_bytes(&root_path, rel) else {
-            continue;
-        };
-        if rel.to_ascii_lowercase().ends_with(".gltf") {
-            if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                for key in ["buffers", "images"] {
-                    let Some(items) = doc.get(key).and_then(|v| v.as_array()) else {
-                        continue;
-                    };
-                    for item in items {
-                        let Some(uri) = item.get("uri").and_then(|v| v.as_str()) else {
-                            continue;
-                        };
-                        if let Some(sibling) = gltf_sibling_rel(rel, uri) {
-                            if sibling != *rel && !binaries.contains_key(&sibling) {
-                                if let Ok(b) = read_asset_bytes(&root_path, &sibling) {
-                                    binaries.insert(sibling, b);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        binaries.insert(rel.clone(), bytes);
-    }
+    collect_scene_assets(&root_path, &scene_text, &mut files, &mut binaries);
 
     write_export(&root, files, &binaries)
 }
@@ -202,15 +231,21 @@ fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// 启动网页预览服务器（服务 `<root>/.tmp/web-preview`），返回可内嵌的 base URL。
-/// 已存在服务器时先停止旧服务器（端口与目录都会切换）。
+/// 启动网页预览服务器（服务项目内指定目录），返回可内嵌的 base URL。
+/// dir 缺省服务 `<root>/.tmp/web-preview`（编辑器内嵌预览）；构建面板传
+/// "build/web" 预览构建产物。已存在服务器时先停止旧服务器（端口与目录都会切换）。
 #[tauri::command]
 pub async fn start_web_preview_server(
     state: tauri::State<'_, PreviewServerState>,
     root: String,
+    dir: Option<String>,
 ) -> Result<String, String> {
     let root_path = PathBuf::from(&root);
-    let out = root_path.join(".tmp").join("web-preview");
+    let rel = dir.unwrap_or_else(|| ".tmp/web-preview".to_string());
+    if rel.contains('\\') || rel.split('/').any(|s| s == ".." || s.is_empty()) {
+        return Err(format!("非法的服务目录: '{rel}'"));
+    }
+    let out = root_path.join(rel);
     if !out.is_dir() {
         return Err(format!("预览产物目录不存在，请先导出: '{}'", out.display()));
     }

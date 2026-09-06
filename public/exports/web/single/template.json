@@ -1,0 +1,5 @@
+{
+  "name": "单页构建",
+  "description": "场景与资产内联进 index.html，便于单文件分发",
+  "mode": "single"
+}

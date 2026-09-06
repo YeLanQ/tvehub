@@ -3,7 +3,7 @@
 // 与编辑器预览渲染的差异：无网格/辅助线/gizmo，运行在独立 iframe 页面里。
 // 实现按职责拆分在同目录 libs/ 下（three 运行时 + 各功能模块），此处只做装配。
 import * as THREE from "./libs/three.module.min.js";
-import { fail, postLog } from "./libs/log.mjs";
+import { fail, postLog, setLogForwarding } from "./libs/log.mjs";
 import { matColor, mixHexColor } from "./libs/utils.mjs";
 import {
   SKY_DEFAULTS,
@@ -18,22 +18,60 @@ import { buildSceneTree } from "./libs/nodes.mjs";
 import { applyMeshTextures } from "./libs/textures.mjs";
 import { createRenderCamera } from "./libs/camera.mjs";
 import { createStage } from "./libs/stage.mjs";
+import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "./libs/pak.mjs";
 
 const app = document.getElementById("app");
 
 async function main() {
+  // 构建产物可把 config/场景/资产内联进 index.html（window.__TVE_BUILD_DATA，
+  // 单页模式），否则按文件读取（多文件产物与编辑器内嵌预览一致）
+  const inline = window.__TVE_BUILD_DATA ?? null;
+
   // 项目配置（渲染合成/抗锯齿；缺省按编辑器 LDR 默认）
   let cfg = {};
-  try {
-    const r = await fetch("./config.json");
-    if (r.ok) cfg = await r.json();
-  } catch {
-    /* 无配置也允许预览 */
+  if (inline && inline.config) {
+    cfg = inline.config;
+  } else {
+    try {
+      const r = await fetch("./config.json");
+      if (r.ok) cfg = await r.json();
+    } catch {
+      /* 无配置也允许预览 */
+    }
   }
 
+  // 发布构建（debug=false）关闭日志转发（编辑器内嵌预览默认转发）
+  if (cfg.debug === false) setLogForwarding(false);
+
+  // 资产来源优先级：内联 gzip 包（单页+gzip）→ 内联资产表（单页）→
+  // assets.gzip 归档（多文件+gzip）→ 磁盘文件（多文件/编辑器预览）。
+  // 归档命中后安装 fetch 拦截，场景/材质/贴图/模型仍按相对路径 fetch。
+  if (inline && inline.pak) {
+    installAssetShim(parseArchive(await gunzip(base64ToBytes(inline.pak))));
+  } else if (inline && inline.assets) {
+    const map = new Map();
+    for (const [rel, b64] of Object.entries(inline.assets)) map.set(rel, base64ToBytes(b64));
+    installAssetShim(map);
+  } else if (!inline) {
+    try {
+      const r = await fetch("./assets.gzip");
+      if (r.ok) installAssetShim(parseArchive(await gunzip(new Uint8Array(await r.arrayBuffer()))));
+    } catch {
+      /* 无归档则按文件读取 */
+    }
+  }
+
+  // 场景文件：编辑器内嵌预览固定 ./scene.json；构建产物按 config.scenes 列表
+  // 选择（?scene=<场景名> 查询参数 > cfg.mainScene > 首个场景）
+  const sceneUrl = (() => {
+    if (!Array.isArray(cfg.scenes) || cfg.scenes.length === 0) return "./scene.json";
+    const wanted = new URLSearchParams(location.search).get("scene") || cfg.mainScene;
+    const pick = cfg.scenes.find((s) => s && s.name === wanted) || cfg.scenes[0];
+    return "./" + String(pick.file || "scene.json");
+  })();
   const sceneData = await (async () => {
-    const r = await fetch("./scene.json");
-    if (!r.ok) throw new Error("读取 scene.json 失败: HTTP " + r.status);
+    const r = await fetch(sceneUrl);
+    if (!r.ok) throw new Error("读取场景文件失败: HTTP " + r.status);
     return r.json();
   })();
 

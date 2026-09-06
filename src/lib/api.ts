@@ -39,7 +39,7 @@ export const api = {
   createFolder: (root: string, rel: string) => invoke<string>("create_folder", { root, rel }),
   /** 读取编辑器内置资源（internal/…，只读；内容编译期内嵌） */
   readInternalAsset: (rel: string) => invoke<string>("read_internal_asset", { rel }),
-  /** 扫描内置资源目录（internal/…），返回以 "internal/" 为根的资产条目（LQEN 同款：真实目录运行时扫描） */
+  /** 扫描内置资源目录（internal/…），返回以 "internal/" 为根的资产条目（真实目录运行时扫描） */
   scanInternalAssets: () => invoke<AssetEntry[]>("scan_internal_assets"),
   /** 读取内置二进制资源（internal/…，如贴图；复制内置资产到项目等一次性操作用），返回 base64 */
   readInternalBinary: (rel: string) => invoke<string>("read_internal_binary", { rel }),
@@ -74,8 +74,42 @@ export const api = {
   pickImportFiles: (title?: string) => invoke<string[]>("pick_import_files", { title }),
   /** 导入选择对话框：多选文件夹（资产面板「导入目录」） */
   pickImportFolders: (title?: string) => invoke<string[]>("pick_import_folders", { title }),
-  /** 启动网页预览本地静态服务（服务 <root>/.tmp/web-preview），返回 base URL */
-  startWebPreviewServer: (root: string) => invoke<string>("start_web_preview_server", { root }),
+  /** 启动网页预览本地静态服务（服务 <root>/.tmp/web-preview，dir 可指定其他产物目录如
+   *  "build/web"），返回 base URL */
+  startWebPreviewServer: (root: string, dir?: string) =>
+    invoke<string>("start_web_preview_server", { root, dir }),
   /** 停止网页预览本地静态服务（释放端口） */
   stopWebPreview: () => invoke<void>("stop_web_preview"),
+  /** 构建导出：打包选中场景 + 引用资产 + 网页运行时到 <root>/build/<channel>/
+   *  （files 为前端 fetch 的网页运行时文本；场景与资产由后端直读磁盘） */
+  buildExport: (args: {
+    root: string;
+    channel: string;
+    scenes: string[];
+    mainScene: string;
+    title: string;
+    debug: boolean;
+    /** 产物形态：true = 单页（数据内联 index.html）/ false = 多文件 */
+    singlePage: boolean;
+    /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
+    gzip: boolean;
+    files: Record<string, string>;
+  }) => invoke<BuildResult>("build_export", args),
 };
+
+/** 构建导出结果（与 Rust build::BuildResult 对应） */
+export interface BuildResult {
+  ok: boolean;
+  channel: string;
+  /** 输出目录绝对路径 */
+  output_dir: string;
+  /** 主场景项目相对路径 */
+  main_scene: string;
+  main_scene_name: string;
+  scenes: { name: string; rel: string; file: string }[];
+  single_page: boolean;
+  gzip: boolean;
+  assets_packed: number;
+  missing: string[];
+  message: string;
+}

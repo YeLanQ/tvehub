@@ -8,7 +8,7 @@ const FRUSTUM_COLOR = 0x55bbff;
 const RAY_COLOR = 0xffcf5c;
 
 /**
- * 相机辅助线（视锥线框，参照 LQEN drawCameraHelper）：
+ * 相机辅助线（视锥线框）：
  * - 近/远平面矩形由相机类型工厂推导（cameraTypeRegistry → frustumHalfSize）：
  *   透视按真实 fov/near/far 推导（近小远大），正交恒为 orthoSize（长方体）；
  *   取景宽高比 = 项目设计分辨率（designWidth/designHeight），未配置时回退视口宽高比，

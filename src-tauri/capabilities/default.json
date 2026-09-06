@@ -12,6 +12,9 @@
     "core:window:allow-inner-size",
     "core:window:allow-scale-factor",
     "opener:default",
-    "opener:allow-open-path"
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    }
   ]
 }

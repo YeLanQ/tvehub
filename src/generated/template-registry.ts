@@ -14,3 +14,20 @@ export const PROJECT_TEMPLATES: BuiltinProjectTemplateInfo[] = [
     ]
   }
 ];
+export interface BuiltinWebExportTemplateInfo { id: string; dir: string; name: string; description: string; mode: "multi" | "single"; }
+export const WEB_EXPORT_TEMPLATES: BuiltinWebExportTemplateInfo[] = [
+  {
+    "id": "web:multi",
+    "dir": "multi",
+    "name": "多文件构建",
+    "description": "场景与资产按相对路径落盘，适合部署到静态服务器",
+    "mode": "multi"
+  },
+  {
+    "id": "web:single",
+    "dir": "single",
+    "name": "单页构建",
+    "description": "场景与资产内联进 index.html，便于单文件分发",
+    "mode": "single"
+  }
+];

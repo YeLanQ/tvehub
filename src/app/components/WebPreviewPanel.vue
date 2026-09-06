@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 网页预览（内嵌 iframe，参照 LQEN WebPreviewPanel）：
+ * 网页预览：
  * - 进入时先保存当前场景 → 从 public/web-preview 读取网页运行产物（three 运行时 +
  *   player），连同 scene.json / project.config.json 一起经 Rust export_web_preview
  *   写入 <项目>/.tmp/web-preview 并启动本地静态服务；
@@ -13,37 +13,10 @@ import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
+import { fetchWebPreviewRuntimeTexts } from "../lib/web-preview-runtime";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
 const projectStore = getProjectStore();
-
-/** public/web-preview 下的网页运行产物（随编辑器一起打包，离线可用）：
- *  入口 index.html + player.mjs，其余依赖模块与 three 运行时都在 libs/ 下 */
-const RUNTIME_FILES = [
-  "index.html",
-  "player.mjs",
-  "libs/three.core.min.js",
-  "libs/three.module.min.js",
-  "libs/utils.mjs",
-  "libs/log.mjs",
-  "libs/sky.mjs",
-  "libs/material.mjs",
-  "libs/mesh.mjs",
-  "libs/nodes.mjs",
-  "libs/textures.mjs",
-  "libs/camera.mjs",
-  "libs/stage.mjs",
-  "libs/model.mjs",
-  "libs/animation.mjs",
-  "libs/loaders/GLTFLoader.js",
-  "libs/loaders/FBXLoader.js",
-  "libs/loaders/OBJLoader.js",
-  "libs/loaders/SkeletonUtils.js",
-  "libs/loaders/BufferGeometryUtils.js",
-  "libs/loaders/fflate.module.js",
-  "libs/loaders/NURBSCurve.js",
-  "libs/loaders/NURBSUtils.js",
-];
 
 const phase = ref<"idle" | "starting" | "ok" | "error">("idle");
 const baseUrl = ref("");
@@ -58,23 +31,11 @@ const previewUrl = computed(() =>
   baseUrl.value ? `${baseUrl.value}/index.html` : "",
 );
 
-/** 读取网页运行产物文本（相对 public 根） */
-async function fetchRuntimeTexts(): Promise<Record<string, string>> {
-  const files: Record<string, string> = {};
-  for (const rel of RUNTIME_FILES) {
-    const url = `/web-preview/${rel}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`读取预览运行时失败: ${url} (${res.status})`);
-    files[rel] = await res.text();
-  }
-  return files;
-}
-
 /** 组装导出文件：仅 WebView 打包的网页运行时 + 项目配置（文本，一次读取）。
  *  scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制由 Rust 直接从磁盘
  *  读取写入导出目录（export_web_preview_from_scene），不再以 base64 过 IPC。 */
 async function buildExportFiles(): Promise<Record<string, string>> {
-  const files = await fetchRuntimeTexts();
+  const files = await fetchWebPreviewRuntimeTexts();
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
   try {

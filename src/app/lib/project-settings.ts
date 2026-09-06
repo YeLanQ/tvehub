@@ -1,5 +1,4 @@
 // 项目设置（Project Settings）逻辑：草稿模型、常用分辨率预设、保存流程。
-// 与 LQEN 的 project-settings.ts 对应（精简为当前 3D 编辑器可用的字段），
 // 配置写入项目根目录 project.config.json；面板只做 Vue 绑定，本模块无组件依赖。
 
 import { api } from "../../lib/api";

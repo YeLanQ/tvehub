@@ -2,7 +2,6 @@
 import { computed } from "vue";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
-import { logStore } from "../stores/log";
 import { runEditorCommand } from "../lib/editor-commands";
 import "../../styles/components/toolbar.scss";
 
@@ -43,7 +42,11 @@ function setViewMode(mode: ViewMode): void {
       <span class="project-gear" title="项目设置">⚙</span>
     </div>
 
-    <button class="toolbar-build" title="构建（占位）" @click="logStore.log('info', '构建功能待接入', 'toolbar')">
+    <button
+      class="toolbar-build"
+      title="构建导出：把场景打包为可部署产物"
+      @click="projectStore.openBuild()"
+    >
       构建
     </button>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 项目设置面板（参考 LQEN EditorView 的项目设置弹窗；Unity Project Settings 风格）：
+ * 项目设置面板：
  * 左侧分类标签栏 + 右侧内容页。配置写入项目根 project.config.json。
  * 通过点击工具栏“项目信息”打开（projectStore.openSettings）。
  */

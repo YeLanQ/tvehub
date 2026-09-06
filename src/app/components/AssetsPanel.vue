@@ -594,7 +594,7 @@ async function moveAssetsToDir(paths: string[], destDir: string) {
 }
 
 // ---------------------------------------------------------------------------
-// 资产导入（参考 LQEN）：按钮（文件/目录多选）+ 窗口级拖放导入
+// 资产导入：按钮（文件/目录多选）+ 窗口级拖放导入
 // ---------------------------------------------------------------------------
 const panelEl = ref<HTMLElement | null>(null);
 const dragOver = ref(false);

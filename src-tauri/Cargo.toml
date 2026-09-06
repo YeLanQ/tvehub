@@ -25,4 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["v4"] }
 rfd = "0.14"
+# 构建导出：资产 gzip 归档（flate2 纯 rust 后端）与内联 base64
+flate2 = "1"
+base64 = "0.22"
 
