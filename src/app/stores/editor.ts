@@ -270,6 +270,8 @@ export async function reloadEditorScene(root: string, rel: string): Promise<void
       if (!engine.isDisposed()) await applySceneLoadResult(engine, fallback);
     }
     store.markSaved();
+    // 切换场景后回到场景编辑视图：若当前处于预览/脚本工作台，自动关闭（预览面板随之卸载并停服）
+    if (store.state.viewMode !== "scene") store.setViewMode("scene");
     logStore.log("info", "场景已切换", "engine");
   } catch (e) {
     logStore.log("error", `打开场景失败: ${e}`, "engine");
