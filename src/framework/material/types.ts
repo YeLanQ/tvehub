@@ -71,6 +71,8 @@ export type MaterialParamKey =
   | "opacity"
   | "alphaClipThreshold"
   | "wireframe"
+  | "toonSteps"
+  | "toonShadowStrength"
   | TextureParamKey;
 
 /** PBR 材质参数（three MeshPhysicalMaterial 可映射的全部标量/颜色/贴图项） */
@@ -135,6 +137,10 @@ export interface MaterialParams {
   alphaClipThreshold: number;
   /** 线框（渲染工具项） */
   wireframe: boolean;
+  /** 卡通明暗档数（Toon Steps）：漫反射灰阶条分几档，2..6 */
+  toonSteps: number;
+  /** 卡通阴影强度（Toon Shadow）：0..1，最暗档亮度 = 1 − toonShadowStrength */
+  toonShadowStrength: number;
   // —— 贴图通道（相对路径；空串 = 无）——
   /** 基础色贴图（Base Color） */
   map: string;
@@ -190,6 +196,9 @@ export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
   opacity: 1,
   alphaClipThreshold: 0.5,
   wireframe: false,
+  // 卡通参数默认值（其它类型忽略；切到 toon 时生效）
+  toonSteps: 3,
+  toonShadowStrength: 0.6,
   // 贴图通道默认空（无贴图）
   map: "",
   metalnessMap: "",
@@ -285,6 +294,8 @@ export function materialParamsFrom(v: unknown): MaterialParams {
     opacity: unit(o.opacity, d.opacity),
     alphaClipThreshold: unit(o.alphaClipThreshold, d.alphaClipThreshold),
     wireframe: bool(o.wireframe, d.wireframe),
+    toonSteps: Math.max(2, Math.min(6, Math.round(num(o.toonSteps, d.toonSteps)))),
+    toonShadowStrength: unit(o.toonShadowStrength, d.toonShadowStrength),
     map: typeof o.map === "string" ? o.map : "",
     metalnessMap: typeof o.metalnessMap === "string" ? o.metalnessMap : "",
     roughnessMap: typeof o.roughnessMap === "string" ? o.roughnessMap : "",
@@ -313,6 +324,7 @@ export function clampMaterialParam(key: MaterialParamKey, value: number): number
     case "iridescence":
     case "opacity":
     case "alphaClipThreshold":
+    case "toonShadowStrength":
       return Math.max(0, Math.min(1, value));
     case "ior":
     case "iridescenceIOR":
@@ -329,6 +341,8 @@ export function clampMaterialParam(key: MaterialParamKey, value: number): number
     case "sheenColor":
     case "attenuationColor":
       return value & 0xffffff;
+    case "toonSteps":
+      return Math.max(2, Math.min(6, Math.round(value)));
     default:
       return value;
   }
@@ -346,6 +360,8 @@ export function materialParamMax(key: MaterialParamKey): number {
       return 100;
     case "attenuationDistance":
       return 10;
+    case "toonSteps":
+      return 6;
     default:
       return 1;
   }

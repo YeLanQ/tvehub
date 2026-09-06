@@ -89,6 +89,8 @@ export function serializeMaterialFile(doc: MaterialDoc): string {
     opacity: p.opacity,
     alphaClipThreshold: p.alphaClipThreshold,
     wireframe: p.wireframe,
+    toonSteps: p.toonSteps,
+    toonShadowStrength: p.toonShadowStrength,
     map: p.map,
     metalnessMap: p.metalnessMap,
     roughnessMap: p.roughnessMap,

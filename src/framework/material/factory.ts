@@ -10,10 +10,15 @@
 import * as THREE from "three";
 import {
   DEFAULT_MATERIAL_PARAMS,
+  type MaterialParamKey,
   type MaterialParams,
   type TextureParamKey,
 } from "./types";
-import { MATERIAL_PARAM_GROUPS, type MaterialParamGroup } from "./defs";
+import {
+  MATERIAL_PARAM_GROUPS,
+  materialParamDef,
+  type MaterialParamGroup,
+} from "./defs";
 
 /** 默认材质类型 key（.mat 缺失/未知 materialType 时的回退） */
 export const DEFAULT_MATERIAL_TYPE = "physical";
@@ -221,11 +226,145 @@ const UNLIT_DEF: MaterialTypeDef = {
   apply: applyUnlit,
 };
 
-/** 默认材质类型注册表（physical + unlit；新类型在此追加一行 register） */
+// ---------------------------------------------------------------------------
+// Toon（toon）：three MeshToonMaterial，cel shading 风格。
+// 明暗档位由 gradientMap 灰阶渐变条决定（shader 只按红通道分档）：
+// three 要求 NearestFilter + 关闭 mipmap + NoColorSpace。渐变条按
+// toonSteps 档数与 toonShadowStrength（最暗档亮度 = 1 − strength）程序化生成，
+// 以 (steps:strength) 签名为 key 缓存于材质 userData，参数变化才重建并释放旧图。
+// 其余字段（physical 的金属度/粗糙度等）为超集保留、此类型忽略不写。
+// ---------------------------------------------------------------------------
+
+/** 渐变条签名缓存 key（材质 userData；防每帧重复生成） */
+const TOON_GRAD_KEY = "__toonGradKey";
+
+/** 生成卡通灰阶渐变条 DataTexture：n 列灰阶（暗→亮），满足 MeshToonMaterial 约束 */
+function makeToonGradientTexture(steps: number, shadowStrength: number): THREE.DataTexture {
+  const n = Math.max(2, Math.min(6, Math.round(steps)));
+  const darkest = Math.max(0, Math.min(1, 1 - shadowStrength));
+  const data = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    // 首档 = 最暗（1 − strength），末档 = 亮部 1，中间线性过渡
+    const v = darkest + (i / (n - 1)) * (1 - darkest);
+    const byte = Math.round(Math.max(0, Math.min(1, v)) * 255);
+    data[i * 4] = byte;
+    data[i * 4 + 1] = byte;
+    data[i * 4 + 2] = byte;
+    data[i * 4 + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, n, 1);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const TOON_PARAM_GROUPS: MaterialParamGroup[] = [
+  {
+    title: "贴图（Textures）",
+    defs: (["map", "normalMap", "emissiveMap"] as MaterialParamKey[]).map((k) =>
+      materialParamDef(k),
+    ),
+  },
+  {
+    title: "基础（Base）",
+    defs: [materialParamDef("color")],
+  },
+  {
+    title: "卡通明暗（Toon）",
+    defs: [
+      { key: "toonSteps", label: "明暗档数", en: "Toon Steps", kind: "number", step: 1 },
+      {
+        key: "toonShadowStrength",
+        label: "阴影强度",
+        en: "Shadow Strength",
+        kind: "number",
+        step: 0.01,
+      },
+    ],
+  },
+  {
+    title: "自发光（Emission）",
+    enableKey: "emissionEnabled",
+    enableLabel: "启用自发光",
+    defs: [materialParamDef("emissive"), materialParamDef("emissiveIntensity")],
+  },
+  {
+    title: "输出（Output）",
+    defs: [
+      materialParamDef("opacity"),
+      materialParamDef("alphaClipThreshold"),
+      materialParamDef("wireframe"),
+    ],
+  },
+];
+
+function applyToon(
+  mat: THREE.Material,
+  params: MaterialParams,
+  loader?: MaterialTextureLoader,
+): void {
+  const m = mat as THREE.MeshToonMaterial;
+  m.color.setHex(params.color);
+  // 渐变条：签名一致时复用已有纹理，避免反复重建（重建前释放旧 GPU 纹理）
+  const sig = `${Math.round(params.toonSteps)}:${params.toonShadowStrength.toFixed(3)}`;
+  const userData = m.userData as Record<string, unknown>;
+  if (userData[TOON_GRAD_KEY] !== sig) {
+    if (m.gradientMap) m.gradientMap.dispose();
+    m.gradientMap = makeToonGradientTexture(params.toonSteps, params.toonShadowStrength);
+    userData[TOON_GRAD_KEY] = sig;
+  }
+  const emissionOn = params.emissionEnabled;
+  m.emissive.setHex(emissionOn ? params.emissive : 0x000000);
+  m.emissiveIntensity = emissionOn ? params.emissiveIntensity : 1;
+  // 混合模式与 physical/unlit 同规则：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪
+  m.transparent =
+    params.opacity < 0.999 || (params.map !== "" && params.alphaClipThreshold <= 0.0001);
+  m.alphaTest =
+    params.map !== "" && params.alphaClipThreshold > 0.0001 ? params.alphaClipThreshold : 0;
+  m.wireframe = params.wireframe;
+  m.needsUpdate = true;
+  attachTextureChannel(loader, params, "map", true, (t) => {
+    m.map = t;
+    m.needsUpdate = true;
+  });
+  attachTextureChannel(loader, params, "emissiveMap", true, (t) => {
+    m.emissiveMap = params.emissionEnabled ? t : null;
+    m.needsUpdate = true;
+  });
+  attachTextureChannel(loader, params, "normalMap", false, (t) => {
+    m.normalMap = t;
+    if (t) m.normalScale.set(1, 1);
+    m.needsUpdate = true;
+  });
+}
+
+const TOON_DEF: MaterialTypeDef = {
+  key: "toon",
+  label: "Toon",
+  create: () => {
+    const mat = new THREE.MeshToonMaterial();
+    // 类型切换 dispose 该材质时，顺带释放其渐变条纹理（Material.dispose 不释放贴图）
+    mat.addEventListener("dispose", () => {
+      mat.gradientMap?.dispose();
+      mat.gradientMap = null;
+    });
+    return mat;
+  },
+  matches: (mat) => mat instanceof THREE.MeshToonMaterial,
+  paramGroups: TOON_PARAM_GROUPS,
+  defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
+  apply: applyToon,
+};
+
+/** 默认材质类型注册表（physical + unlit + toon；新类型在此追加一行 register） */
 export function createDefaultMaterialTypeRegistry(): MaterialTypeRegistry {
   const registry = new MaterialTypeRegistry();
   registry.register(PHYSICAL_DEF);
   registry.register(UNLIT_DEF);
+  registry.register(TOON_DEF);
   return registry;
 }
 

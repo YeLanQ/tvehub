@@ -66,6 +66,8 @@ const MAT_DEFAULTS = {
   opacity: 1,
   alphaClipThreshold: 0.5,
   wireframe: false,
+  toonSteps: 3,
+  toonShadowStrength: 0.6,
 };
 
 // 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致）
@@ -79,6 +81,29 @@ function matColor(v, fb) {
     if (/^[0-9a-fA-F]{6}$/.test(s)) return parseInt(s, 16) & 0xffffff;
   }
   return fb;
+}
+
+/** 卡通灰阶渐变条 DataTexture（n 列灰阶 暗→亮；与编辑器算法一致）。
+ * MeshToonMaterial 约束：NearestFilter + 关 mipmap + NoColorSpace，shader 只取红通道分档。 */
+function makeToonGradient(steps, shadowStrength) {
+  const n = Math.max(2, Math.min(6, Math.round(num(steps, 3))));
+  const darkest = Math.max(0, Math.min(1, 1 - num(shadowStrength, 0.6)));
+  const data = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const v = darkest + (i / (n - 1)) * (1 - darkest);
+    const byte = Math.round(Math.max(0, Math.min(1, v)) * 255);
+    data[i * 4] = byte;
+    data[i * 4 + 1] = byte;
+    data[i * 4 + 2] = byte;
+    data[i * 4 + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, n, 1);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function skyHex(c) {
@@ -291,8 +316,11 @@ async function main() {
       const m = materialParams.get(entry.json.material);
       if (!m) continue;
       const basicOnly = mat.type === "MeshBasicMaterial"; // unlit：只支持基础色贴图 map
+      const isToon = mat.type === "MeshToonMaterial"; // toon：无金属/粗糙通道
       for (const [field, srgb] of TEXTURE_CHANNELS) {
         if (basicOnly && field !== "map") continue;
+        if (isToon && (field === "metalnessMap" || field === "roughnessMap")) continue;
+        if (isToon && field === "emissiveMap" && !m.emissionEnabled) continue;
         const rel = m[field];
         if (!rel) continue;
         const tex = await loadImageTex(rel, srgb);
@@ -378,6 +406,21 @@ async function main() {
       alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
       wireframe: m.wireframe === true,
     };
+    if (m.type === "toon") {
+      // Toon → MeshToonMaterial（cel shading；color/map/emissive/法线 + 灰阶渐变条分档）
+      const on = m.emissionEnabled === true;
+      const mat = new THREE.MeshToonMaterial({
+        color: m.color & 0xffffff,
+        emissive: on ? m.emissive & 0xffffff : 0x000000,
+        emissiveIntensity: on ? m.emissiveIntensity : 1,
+        gradientMap: makeToonGradient(m.toonSteps, m.toonShadowStrength),
+        opacity: m.opacity,
+        transparent: f.transparent,
+        alphaTest: f.alphaTest,
+        wireframe: f.wireframe,
+      });
+      return new THREE.Mesh(geom, mat);
+    }
     if (m.type === "unlit") {
       // Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
       const mat = new THREE.MeshBasicMaterial({
@@ -484,6 +527,7 @@ async function main() {
             ior: Math.max(1, Math.min(2.333, num(j.ior, MAT_DEFAULTS.ior))),
             emissive: matColor(j.emissive, MAT_DEFAULTS.emissive),
             emissiveIntensity: Math.max(0, Math.min(10, num(j.emissiveIntensity, MAT_DEFAULTS.emissiveIntensity))),
+            emissionEnabled: j.emissionEnabled === true,
             clearcoat: u01(j.clearcoat, MAT_DEFAULTS.clearcoat),
             clearcoatRoughness: u01(j.clearcoatRoughness, MAT_DEFAULTS.clearcoatRoughness),
             sheen: u01(j.sheen, MAT_DEFAULTS.sheen),
@@ -500,6 +544,8 @@ async function main() {
             opacity: u01(j.opacity, MAT_DEFAULTS.opacity),
             alphaClipThreshold: u01(j.alphaClipThreshold, MAT_DEFAULTS.alphaClipThreshold),
             wireframe: j.wireframe === true,
+            toonSteps: Math.max(2, Math.min(6, Math.round(num(j.toonSteps, MAT_DEFAULTS.toonSteps)))),
+            toonShadowStrength: u01(j.toonShadowStrength, MAT_DEFAULTS.toonShadowStrength),
             map: typeof j.map === "string" ? j.map : "",
             metalnessMap: typeof j.metalnessMap === "string" ? j.metalnessMap : "",
             roughnessMap: typeof j.roughnessMap === "string" ? j.roughnessMap : "",
