@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { nextTick, ref, watch } from "vue";
 import {
   ctxMenu,
   closeContextMenu,
@@ -7,17 +7,26 @@ import {
 } from "../lib/editor/context-menu";
 import "../styles/components/context-menu.scss";
 
-const rootEl = ref<HTMLElement | null>(null);
-const subEl = ref<HTMLElement | null>(null);
-const pos = reactive({ x: 0, y: 0 });
-const subPos = reactive({ x: 0, y: 0 });
-const subIndex = ref<number | null>(null);
+/** 一层菜单：items 内容 + 当前所处的视口锚点 */
+interface MenuLevel {
+  items: CtxMenuItem[];
+  x: number;
+  y: number;
+}
 
-const subItems = computed<CtxMenuItem[]>(() => {
-  if (subIndex.value == null) return [];
-  const item = ctxMenu.items[subIndex.value];
-  return item?.children ?? [];
-});
+// levels[0] 为根菜单，后续每层对应一个已展开的子菜单（由 hover 链驱动）
+const levels = ref<MenuLevel[]>([]);
+const levelEls: HTMLElement[] = [];
+
+function bindLevelEl(i: number) {
+  return (el: unknown) => {
+    if (el instanceof HTMLElement) levelEls[i] = el;
+  };
+}
+
+function hasChildren(item: CtxMenuItem): boolean {
+  return !!item.children && item.children.length > 0;
+}
 
 function clampRect(el: HTMLElement, p: { x: number; y: number }, margin = 8) {
   const r = el.getBoundingClientRect();
@@ -31,46 +40,60 @@ function clampRect(el: HTMLElement, p: { x: number; y: number }, margin = 8) {
   p.y = y;
 }
 
+async function clampLevel(i: number) {
+  await nextTick();
+  const lv = levels.value[i];
+  const el = levelEls[i];
+  if (lv && el) clampRect(el, lv);
+}
+
 watch(
-  () => ctxMenu.open,
-  async (open) => {
-    if (!open) return;
-    subIndex.value = null;
-    pos.x = ctxMenu.x;
-    pos.y = ctxMenu.y;
-    await nextTick();
-    if (rootEl.value) clampRect(rootEl.value, pos);
+  () => [ctxMenu.open, ctxMenu.x, ctxMenu.y, ctxMenu.items],
+  async () => {
+    if (!ctxMenu.open) {
+      levels.value = [];
+      return;
+    }
+    levels.value = [{ items: ctxMenu.items, x: ctxMenu.x, y: ctxMenu.y }];
+    await clampLevel(0);
   },
 );
 
-watch(subIndex, async (idx) => {
-  if (idx == null) return;
-  await nextTick();
-  if (subEl.value) clampRect(subEl.value, subPos);
-});
+function openChild(level: number, item: CtxMenuItem, el: HTMLElement) {
+  const r = el.getBoundingClientRect();
+  // 展开/切换子菜单：仅保留到当前层，再追加新的下一层
+  levels.value = [
+    ...levels.value.slice(0, level + 1),
+    { items: item.children!, x: r.right - 2, y: r.top },
+  ];
+  void clampLevel(level + 1);
+}
 
-function enterItem(i: number, target: EventTarget | null) {
-  const item = ctxMenu.items[i];
+function enterItem(level: number, item: CtxMenuItem, target: EventTarget | null) {
   const el = target as HTMLElement | null;
-  if (el && item.children && item.children.length > 0) {
-    const r = el.getBoundingClientRect();
-    subPos.x = r.right - 2;
-    subPos.y = r.top;
-    subIndex.value = i;
-  } else {
-    subIndex.value = null;
+  if (el && hasChildren(item)) {
+    openChild(level, item, el);
+  } else if (levels.value.length > level + 1) {
+    // 移到无子级的项上：收起其后所有层级
+    levels.value = levels.value.slice(0, level + 1);
   }
 }
 
-function run(item: CtxMenuItem) {
+function run(item: CtxMenuItem, level: number, target: EventTarget | null) {
   if (item.disabled || item.separator) return;
+  if (!item.onClick) {
+    // 无动作的子菜单父项：点击展开其子菜单而不是收起整个菜单
+    const el = target as HTMLElement | null;
+    if (el && hasChildren(item)) openChild(level, item, el);
+    return;
+  }
   closeContextMenu();
   item.onClick?.();
 }
 
 function onWindowMouseDown(e: MouseEvent) {
-  const t = e.target as Node | null;
-  if (rootEl.value?.contains(t) || subEl.value?.contains(t)) return;
+  const t = e.target as Element | null;
+  if (t && t.closest?.(".ctx-menu")) return;
   closeContextMenu();
 }
 
@@ -117,12 +140,15 @@ watch(
   <Teleport to="body">
     <div v-if="ctxMenu.open" class="ctx-layer">
       <div
-        ref="rootEl"
+        v-for="(lv, L) in levels"
+        :key="L"
+        :ref="bindLevelEl(L)"
         class="ctx-menu"
+        :class="{ 'ctx-sub': L > 0 }"
         role="menu"
-        :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
+        :style="{ left: lv.x + 'px', top: lv.y + 'px' }"
       >
-        <template v-for="(item, i) in ctxMenu.items" :key="i">
+        <template v-for="(item, i) in lv.items" :key="i">
           <div v-if="item.separator" class="ctx-sep"></div>
           <div v-else-if="item.header" class="ctx-header">{{ item.label }}</div>
           <div
@@ -131,36 +157,12 @@ watch(
             :class="{ disabled: item.disabled, danger: item.danger }"
             role="menuitem"
             :tabindex="-1"
-            @mouseenter="enterItem(i, $event.currentTarget)"
-            @click="run(item)"
+            @mouseenter="enterItem(L, item, $event.currentTarget)"
+            @click="run(item, L, $event.currentTarget)"
           >
             <span class="ctx-label">{{ item.label }}</span>
             <span v-if="item.shortcut" class="ctx-shortcut">{{ item.shortcut }}</span>
-            <span v-if="item.children && item.children.length > 0" class="ctx-arrow">▸</span>
-          </div>
-        </template>
-      </div>
-
-      <div
-        v-if="subItems.length > 0"
-        ref="subEl"
-        class="ctx-menu ctx-sub"
-        role="menu"
-        :style="{ left: subPos.x + 'px', top: subPos.y + 'px' }"
-      >
-        <template v-for="(item, i) in subItems" :key="i">
-          <div v-if="item.separator" class="ctx-sep"></div>
-          <div v-else-if="item.header" class="ctx-header">{{ item.label }}</div>
-          <div
-            v-else
-            class="ctx-item"
-            :class="{ disabled: item.disabled, danger: item.danger }"
-            role="menuitem"
-            :tabindex="-1"
-            @click="run(item)"
-          >
-            <span class="ctx-label">{{ item.label }}</span>
-            <span v-if="item.shortcut" class="ctx-shortcut">{{ item.shortcut }}</span>
+            <span v-if="hasChildren(item)" class="ctx-arrow">▸</span>
           </div>
         </template>
       </div>

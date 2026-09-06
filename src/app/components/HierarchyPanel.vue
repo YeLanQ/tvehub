@@ -156,30 +156,34 @@ function createAddItems(parentId: string): CtxMenuItem[] {
     label: s.name,
     onClick: () => addNodeTo(parentId, `script:${s.rel}`),
   }));
-  return [
-    { label: "网格", header: true },
-    ...geometryItems,
-    menuSeparator(),
-    { label: "灯光", header: true },
-    { label: "Point Light", onClick: () => addNodeTo(parentId, "light:point") },
-    { label: "Directional Light", onClick: () => addNodeTo(parentId, "light:directional") },
-    { label: "Spot Light", onClick: () => addNodeTo(parentId, "light:spot") },
-    { label: "Ambient", onClick: () => addNodeTo(parentId, "light:ambient") },
-    menuSeparator(),
-    { label: "Camera", onClick: () => addNodeTo(parentId, "camera") },
-    { label: "Group", onClick: () => addNodeTo(parentId, "group") },
-    menuSeparator(),
-    { label: "天空盒", header: true },
-    { label: "Procedural Skybox", onClick: () => addNodeTo(parentId, "skybox:procedural") },
-    { label: "Cube Skybox", onClick: () => addNodeTo(parentId, "skybox:cube") },
-    ...(scriptNodeItems.length
-      ? [
-          menuSeparator(),
-          { label: "脚本节点", header: true },
-          ...scriptNodeItems,
-        ]
-      : []),
-  ];
+  const items: CtxMenuItem[] = [];
+  items.push({ label: "网格", children: geometryItems });
+  items.push(menuSeparator());
+  items.push({
+    label: "灯光",
+    children: [
+      { label: "Point Light", onClick: () => addNodeTo(parentId, "light:point") },
+      { label: "Directional Light", onClick: () => addNodeTo(parentId, "light:directional") },
+      { label: "Spot Light", onClick: () => addNodeTo(parentId, "light:spot") },
+      { label: "Ambient", onClick: () => addNodeTo(parentId, "light:ambient") },
+    ],
+  });
+  items.push(menuSeparator());
+  items.push({ label: "Camera", onClick: () => addNodeTo(parentId, "camera") });
+  items.push({ label: "Group", onClick: () => addNodeTo(parentId, "group") });
+  items.push(menuSeparator());
+  items.push({
+    label: "天空盒",
+    children: [
+      { label: "Procedural Skybox", onClick: () => addNodeTo(parentId, "skybox:procedural") },
+      { label: "Cube Skybox", onClick: () => addNodeTo(parentId, "skybox:cube") },
+    ],
+  });
+  if (scriptNodeItems.length) {
+    items.push(menuSeparator());
+    items.push({ label: "脚本节点", children: scriptNodeItems });
+  }
+  return items;
 }
 
 function deleteNodes(targetIds: string[]): void {
