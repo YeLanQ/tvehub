@@ -57,7 +57,8 @@ async function buildExportFiles(): Promise<{ files: Record<string, string>; bina
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
   const files = await fetchRuntimeTexts();
-  const sceneText = await api.readText(root, "assets/Main.scene");
+  const sceneRel = projectStore.sceneRel || "assets/Main.scene";
+  const sceneText = await api.readText(root, sceneRel);
   files["scene.json"] = sceneText;
   try {
     files["config.json"] = await api.readText(root, "project.config.json");

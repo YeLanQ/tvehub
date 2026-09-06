@@ -211,6 +211,31 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   return mountTask;
 }
 
+/** 打开/切换项目内 .scene 资产：把场景文本重载进已挂载的引擎（无需重进编辑器） */
+export async function reloadEditorScene(root: string, text: string): Promise<void> {
+  const store = getEditorStore() as EditorStore & { markMounted: () => void };
+  const engine = store.engine;
+  if (!store.state.mounted || engine.isDisposed()) return;
+  // 旧版场景：先迁移内嵌材质 → 再预取材质 → 替换场景图
+  let migrated = text;
+  try {
+    migrated = await migrateLegacySceneText(root, text);
+  } catch (e) {
+    logStore.log("warn", `旧场景材质迁移失败（按原内容加载）: ${e}`, "engine");
+  }
+  if (engine.isDisposed()) return;
+  let refs: string[] = [];
+  try {
+    refs = collectMeshMaterialRefs(JSON.parse(migrated));
+  } catch {
+    /* 保留空引用集合 */
+  }
+  if (refs.length) await engine.materials.preload(refs);
+  if (engine.isDisposed()) return;
+  loadSceneFromJson(engine, migrated);
+  logStore.log("info", "场景已切换", "engine");
+}
+
 export function disposeEditor(): void {
   mountTask = null;
   if (!singleton) return;

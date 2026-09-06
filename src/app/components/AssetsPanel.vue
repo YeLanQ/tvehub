@@ -241,6 +241,17 @@ function onItemDblClick(item: ChildEntry) {
     navigate(item.path);
     return;
   }
+  // 双击 .scene 资产：切换当前打开场景（重载引擎场景，层级/视口随之更新）
+  if (item.kind === "scene") {
+    if (isInternalAsset(item.path)) {
+      logStore.log("warn", "内置目录不存在可打开的工程场景");
+      return;
+    }
+    void projectStore.openScene(item.path).then((ok) => {
+      if (!ok) logStore.log("error", `打开场景失败: ${item.path}`, "engine");
+    });
+    return;
+  }
   // 本项目无 openScene/openTextEditor：双击非目录仅选中并记录日志
   assetsStore.select(item.path);
   logStore.log("info", `${item.name} (${item.kind})`);

@@ -37,7 +37,7 @@ function setViewMode(mode: ViewMode): void {
       @click="projectStore.settingsOpen ? projectStore.closeSettings() : projectStore.openSettings()"
     >
       <span class="project-name">{{ projectName }}</span>
-      <span class="scene-name mono">assets/Main.scene</span>
+      <span class="scene-name mono">{{ projectStore.sceneRel }}</span>
       <span class="project-gear" title="项目设置">⚙</span>
     </div>
 
