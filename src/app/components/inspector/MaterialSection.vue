@@ -15,7 +15,9 @@ import {
   colorToHexString,
   materialParamMax,
   parseColorHex,
+  type MaterialEnableKey,
   type MaterialParamDef,
+  type MaterialParamGroup,
   type MaterialParamKey,
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
@@ -28,7 +30,7 @@ const props = defineProps<{ node: MeshNode; rev?: number }>();
 
 const emit = defineEmits<{
   setMaterial: [rel: string];
-  editParam: [field: MaterialParamKey, value: number | boolean | string];
+  editParam: [field: MaterialParamKey | MaterialEnableKey, value: number | boolean | string];
   copyToProject: [];
 }>();
 
@@ -79,8 +81,8 @@ function colorValue(key: MaterialParamKey): string {
   return typeof v === "number" ? colorToHexString(v) : "#000000";
 }
 
-function boolValue(key: MaterialParamKey): boolean {
-  return paramValue(key) === true;
+function boolValue(key: MaterialParamKey | MaterialEnableKey): boolean {
+  return (local as unknown as Record<string, unknown>)[key] === true;
 }
 
 function onColorEdit(def: MaterialParamDef, e: Event): void {
@@ -99,6 +101,17 @@ function onBoolEdit(def: MaterialParamDef, e: Event): void {
   const v = (e.target as HTMLInputElement).checked;
   (local as unknown as Record<string, unknown>)[def.key] = v;
   emit("editParam", def.key, v);
+}
+
+function onEnableEdit(key: MaterialEnableKey, e: Event): void {
+  const v = (e.target as HTMLInputElement).checked;
+  (local as unknown as Record<string, unknown>)[key] = v;
+  emit("editParam", key, v);
+}
+
+/** 分组是否启用：无开关的分组恒为启用；有开关的分组由开关值决定 */
+function groupEnabled(group: MaterialParamGroup): boolean {
+  return !group.enableKey || boolValue(group.enableKey);
 }
 
 function paramMax(key: MaterialParamKey): number {
@@ -175,7 +188,18 @@ const groups = MATERIAL_PARAM_GROUPS;
     <div v-else class="hint">参数写入 .mat 资产文件，引用该材质的所有网格同步更新。</div>
 
     <template v-for="group in groups" :key="group.title">
-      <div class="mat-group">{{ group.title }}</div>
+      <div class="mat-group">
+        <span class="mat-group-title">{{ group.title }}</span>
+        <label v-if="group.enableKey" class="mat-enable" @click.stop>
+          <input
+            type="checkbox"
+            :checked="boolValue(group.enableKey)"
+            :disabled="isInternal"
+            @change="(e) => onEnableEdit(group.enableKey!, e)"
+          />
+          <span>{{ group.enableLabel }}</span>
+        </label>
+      </div>
       <template v-for="def in group.defs" :key="def.key">
         <!-- 颜色 -->
         <div v-if="def.kind === 'color'" class="field">
@@ -183,7 +207,7 @@ const groups = MATERIAL_PARAM_GROUPS;
           <input
             type="color"
             :value="colorValue(def.key)"
-            :disabled="isInternal"
+            :disabled="isInternal || !groupEnabled(group)"
             @input="(e) => onColorEdit(def, e)"
             @change="(e) => onColorEdit(def, e)"
           />
@@ -196,7 +220,7 @@ const groups = MATERIAL_PARAM_GROUPS;
             :step="def.step ?? 0.01"
             :min="0"
             :max="paramMax(def.key)"
-            :disabled="isInternal"
+            :disabled="isInternal || !groupEnabled(group)"
             :title="def.en"
             @commit="(v) => onNumberEdit(def, v)"
           />
@@ -245,12 +269,34 @@ const groups = MATERIAL_PARAM_GROUPS;
 
 <style scoped>
 .mat-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-dim, #999);
   border-top: 1px solid var(--border, #333);
   padding: 6px 0 2px;
   margin-top: 4px;
+}
+.mat-group-title {
+  flex: 1 1 auto;
+}
+.mat-enable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text, #ddd);
+  cursor: pointer;
+}
+.mat-enable input {
+  margin: 0;
+}
+.mat-enable input:disabled + span {
+  color: var(--text-dim, #999);
 }
 .mat-meta {
   display: flex;

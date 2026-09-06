@@ -1,7 +1,7 @@
 // 材质参数面板定义（Blender 原理化 BSDF 分组/命名风格）：
 // 供 MaterialSection 渲染全部可调参数；名称与 Blender 节点属性一致，
 // 并映射到 three MeshPhysicalMaterial 的属性（见 types.ts）。
-import type { MaterialParamKey } from "./types";
+import type { MaterialEnableKey, MaterialParamKey } from "./types";
 
 export type MaterialParamKind = "number" | "color" | "bool" | "texture";
 
@@ -18,6 +18,10 @@ export interface MaterialParamDef {
 export interface MaterialParamGroup {
   /** 分组标题（Blender 风格分组） */
   title: string;
+  /** 启用开关（对应 MaterialParams 中的 boolean 字段；未勾选时该分组参数不生效） */
+  enableKey?: MaterialEnableKey;
+  /** 启用开关的显示文案 */
+  enableLabel?: string;
   defs: MaterialParamDef[];
 }
 
@@ -56,6 +60,8 @@ export const MATERIAL_PARAM_GROUPS: MaterialParamGroup[] = [
   },
   {
     title: "自发光（Emission）",
+    enableKey: "emissionEnabled",
+    enableLabel: "启用自发光",
     defs: [
       { key: "emissive", label: "发射颜色", en: "Emission Color", kind: "color" },
       {
@@ -69,6 +75,8 @@ export const MATERIAL_PARAM_GROUPS: MaterialParamGroup[] = [
   },
   {
     title: "清漆（Clearcoat）",
+    enableKey: "clearcoatEnabled",
+    enableLabel: "启用清漆",
     defs: [
       { key: "clearcoat", label: "清漆权重", en: "Coat Weight", kind: "number", step: 0.01 },
       {
@@ -82,6 +90,8 @@ export const MATERIAL_PARAM_GROUPS: MaterialParamGroup[] = [
   },
   {
     title: "光泽（Sheen）",
+    enableKey: "sheenEnabled",
+    enableLabel: "启用光泽",
     defs: [
       { key: "sheen", label: "光泽权重", en: "Sheen Weight", kind: "number", step: 0.01 },
       { key: "sheenColor", label: "光泽着色", en: "Sheen Color", kind: "color" },
@@ -96,6 +106,8 @@ export const MATERIAL_PARAM_GROUPS: MaterialParamGroup[] = [
   },
   {
     title: "透射（Transmission）",
+    enableKey: "transmissionEnabled",
+    enableLabel: "启用透射",
     defs: [
       { key: "transmission", label: "透射权重", en: "Transmission", kind: "number", step: 0.01 },
       { key: "thickness", label: "透射厚度", en: "Thickness", kind: "number", step: 0.1 },

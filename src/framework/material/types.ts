@@ -26,6 +26,25 @@ export type TextureParamKey =
   | "normalMap"
   | "emissiveMap";
 
+/** 需显式勾选启用才生效的效果分组开关（自发光/清漆/光泽/透射） */
+export type MaterialEnableKey =
+  | "emissionEnabled"
+  | "clearcoatEnabled"
+  | "sheenEnabled"
+  | "transmissionEnabled";
+
+/** 判断字段是否为效果分组启用开关 */
+export function isMaterialEnableKey(
+  key: MaterialParamKey | MaterialEnableKey,
+): key is MaterialEnableKey {
+  return (
+    key === "emissionEnabled" ||
+    key === "clearcoatEnabled" ||
+    key === "sheenEnabled" ||
+    key === "transmissionEnabled"
+  );
+}
+
 /** 可被编辑的材质参数字段名（标准 PBR 参数 + 贴图通道 + 工具项） */
 export type MaterialParamKey =
   | "color"
@@ -72,16 +91,22 @@ export interface MaterialParams {
   emissive: number;
   /** 发射强度（Emission Strength）0..10 */
   emissiveIntensity: number;
+  /** 自发光启用开关：false 时忽略 emissive/emissiveIntensity/emissiveMap */
+  emissionEnabled: boolean;
   /** 清漆权重（Coat Weight）0..1 */
   clearcoat: number;
   /** 清漆粗糙度（Coat Roughness）0..1 */
   clearcoatRoughness: number;
+  /** 清漆启用开关：false 时忽略 clearcoat/clearcoatRoughness */
+  clearcoatEnabled: boolean;
   /** 光泽权重（Sheen Weight）0..1 */
   sheen: number;
   /** 光泽着色（Sheen Color） */
   sheenColor: number;
   /** 光泽粗糙度（Sheen Roughness）0..1 */
   sheenRoughness: number;
+  /** 光泽启用开关：false 时忽略 sheen/sheenColor/sheenRoughness */
+  sheenEnabled: boolean;
   /** 透射权重（Transmission Weight）0..1 */
   transmission: number;
   /** 透射厚度（Thickness）0..100 */
@@ -90,6 +115,8 @@ export interface MaterialParams {
   attenuationColor: number;
   /** 衰减距离（Attenuation Distance）0..10 */
   attenuationDistance: number;
+  /** 透射启用开关：false 时忽略 transmission/thickness/attenuationColor/attenuationDistance */
+  transmissionEnabled: boolean;
   /** 各向异性（Anisotropic）0..1 */
   anisotropy: number;
   /** 各向异性旋转（Anisotropic Rotation）0..1 */
@@ -143,15 +170,19 @@ export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
   ior: 1.5,
   emissive: 0x000000,
   emissiveIntensity: 1,
+  emissionEnabled: false,
   clearcoat: 0,
   clearcoatRoughness: 0,
+  clearcoatEnabled: false,
   sheen: 0,
   sheenColor: 0xffffff,
   sheenRoughness: 0.5,
+  sheenEnabled: false,
   transmission: 0,
   thickness: 0,
   attenuationColor: 0xffffff,
   attenuationDistance: 0,
+  transmissionEnabled: false,
   anisotropy: 0,
   anisotropyRotation: 0,
   iridescence: 0,
@@ -234,15 +265,19 @@ export function materialParamsFrom(v: unknown): MaterialParams {
     ior: Math.max(1, Math.min(2.333, num(o.ior, d.ior))),
     emissive: parseColorHex(o.emissive, d.emissive),
     emissiveIntensity: Math.max(0, Math.min(10, num(o.emissiveIntensity, d.emissiveIntensity))),
+    emissionEnabled: bool(o.emissionEnabled, d.emissionEnabled),
     clearcoat: unit(o.clearcoat, d.clearcoat),
     clearcoatRoughness: unit(o.clearcoatRoughness, d.clearcoatRoughness),
+    clearcoatEnabled: bool(o.clearcoatEnabled, d.clearcoatEnabled),
     sheen: unit(o.sheen, d.sheen),
     sheenColor: parseColorHex(o.sheenColor, d.sheenColor),
     sheenRoughness: unit(o.sheenRoughness, d.sheenRoughness),
+    sheenEnabled: bool(o.sheenEnabled, d.sheenEnabled),
     transmission: unit(o.transmission, d.transmission),
     thickness: Math.max(0, Math.min(100, num(o.thickness, d.thickness))),
     attenuationColor: parseColorHex(o.attenuationColor, d.attenuationColor),
     attenuationDistance: Math.max(0, Math.min(10, num(o.attenuationDistance, d.attenuationDistance))),
+    transmissionEnabled: bool(o.transmissionEnabled, d.transmissionEnabled),
     anisotropy: unit(o.anisotropy, d.anisotropy),
     anisotropyRotation: unit(o.anisotropyRotation, d.anisotropyRotation),
     iridescence: unit(o.iridescence, d.iridescence),

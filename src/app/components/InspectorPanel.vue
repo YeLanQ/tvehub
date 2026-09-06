@@ -6,8 +6,8 @@ import { getAssetsStore } from "../stores/assets";
 import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
-import type { MaterialParams, MaterialParamKey } from "../../framework/material";
-import { clampMaterialParam, materialFileStem } from "../../framework/material";
+import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
+import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
@@ -150,7 +150,7 @@ async function onSetMaterial(rel: string): Promise<void> {
 
 /** 修改当前材质资产的某个 PBR 参数/贴图：即时更新缓存（面板/视口立刻同步），文件写盘防抖 */
 async function onMaterialEdit(
-  field: MaterialParamKey,
+  field: MaterialParamKey | MaterialEnableKey,
   value: number | boolean | string,
 ): Promise<void> {
   const n = node.value;
@@ -177,6 +177,8 @@ async function onMaterialEdit(
   const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
   if (field === "wireframe") {
     params.wireframe = value === true;
+  } else if (isMaterialEnableKey(field)) {
+    (params as unknown as Record<string, unknown>)[field] = value === true;
   } else if (typeof value === "string") {
     // 贴图通道：存项目资产相对路径（空串 = 无贴图）
     (params as unknown as Record<string, unknown>)[field] = value;

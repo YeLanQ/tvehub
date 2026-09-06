@@ -194,17 +194,21 @@ export class SceneSynchronizer {
     mat.specularIntensity = params.specularIntensity;
     mat.specularColor.setHex(params.specularColor);
     mat.ior = params.ior;
-    mat.emissive.setHex(params.emissive);
-    mat.emissiveIntensity = params.emissiveIntensity;
-    mat.clearcoat = params.clearcoat;
-    mat.clearcoatRoughness = params.clearcoatRoughness;
-    mat.sheen = params.sheen;
-    mat.sheenColor.setHex(params.sheenColor);
-    mat.sheenRoughness = params.sheenRoughness;
-    mat.transmission = params.transmission;
-    mat.thickness = params.thickness;
-    mat.attenuationColor.setHex(params.attenuationColor);
-    mat.attenuationDistance = params.attenuationDistance;
+    // 效果分组由启用开关控制：未勾选启用时相关参数强制为中性值（不产生可见效果）
+    const emissionOn = params.emissionEnabled;
+    mat.emissive.setHex(emissionOn ? params.emissive : 0x000000);
+    mat.emissiveIntensity = emissionOn ? params.emissiveIntensity : 1;
+    mat.clearcoat = params.clearcoatEnabled ? params.clearcoat : 0;
+    mat.clearcoatRoughness = params.clearcoatEnabled ? params.clearcoatRoughness : 0;
+    mat.sheen = params.sheenEnabled ? params.sheen : 0;
+    mat.sheenColor.setHex(params.sheenEnabled ? params.sheenColor : 0x000000);
+    mat.sheenRoughness = params.sheenEnabled ? params.sheenRoughness : 0;
+    mat.transmission = params.transmissionEnabled ? params.transmission : 0;
+    mat.thickness = params.transmissionEnabled ? params.thickness : 0;
+    mat.attenuationColor.setHex(
+      params.transmissionEnabled ? params.attenuationColor : 0xffffff,
+    );
+    mat.attenuationDistance = params.transmissionEnabled ? params.attenuationDistance : 0;
     mat.anisotropy = params.anisotropy;
     mat.anisotropyRotation = params.anisotropyRotation;
     mat.iridescence = params.iridescence;
@@ -224,7 +228,7 @@ export class SceneSynchronizer {
       mat.needsUpdate = true;
     });
     this.attachMap(params, "emissiveMap", true, (t) => {
-      mat.emissiveMap = t;
+      mat.emissiveMap = params.emissionEnabled ? t : null;
       mat.needsUpdate = true;
     });
     this.attachMap(params, "metalnessMap", false, (t) => {

@@ -7,6 +7,7 @@ export {
   cloneMaterialParams,
   colorToHexString,
   isInternalMaterialRel,
+  isMaterialEnableKey,
   materialFileName,
   materialFileStem,
   materialParamMax,
@@ -14,7 +15,7 @@ export {
   isTextureParamKey,
   parseColorHex,
 } from "./types";
-export type { MaterialParams, MaterialParamKey, TextureParamKey } from "./types";
+export type { MaterialParams, MaterialParamKey, TextureParamKey, MaterialEnableKey } from "./types";
 export { MATERIAL_PARAM_GROUPS, materialParamDef } from "./defs";
 export type { MaterialParamDef, MaterialParamGroup, MaterialParamKind } from "./defs";
 export { defaultMaterialDoc, parseMaterialFile, serializeMaterialFile } from "./materialFile";
