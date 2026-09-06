@@ -48,8 +48,15 @@ export function modelDirOf(rel: string): string {
   return i > 0 ? rel.slice(0, i) : "";
 }
 
-/** 已解析模型的可描述信息（UI 展示：剪辑列表 / 是否含骨骼动画） */
+/** 模型内嵌材质摘要（只读展示：名称 + three 材质类型标签） */
+export interface ModelMaterialInfo {
+  name: string;
+  type: string;
+}
+
+/** 已解析模型的可描述信息（UI 展示：剪辑列表 / 是否含骨骼动画 / 内嵌材质清单） */
 export interface ModelMeta {
   clips: string[];
   hasSkeleton: boolean;
+  materials: ModelMaterialInfo[];
 }

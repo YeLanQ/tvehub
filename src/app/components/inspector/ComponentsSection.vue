@@ -31,6 +31,10 @@ const modelMeta = computed(() => {
       <span class="comp-label">Material</span>
       <span class="comp-type mono">Mat</span>
     </div>
+    <div v-else-if="modelMeta && modelMeta.materials.length > 0" class="comp-row">
+      <span class="comp-label">Material</span>
+      <span class="comp-type mono">内嵌 × {{ modelMeta.materials.length }}</span>
+    </div>
     <div v-if="modelMeta?.hasSkeleton" class="comp-row">
       <span class="comp-label">Skinned Mesh</span>
       <span class="comp-type mono">骨骼</span>

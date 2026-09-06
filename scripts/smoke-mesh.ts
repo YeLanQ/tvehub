@@ -109,6 +109,10 @@ await models.preload(["assets/models/role.glb"]);
 ok(models.has("assets/models/role.glb"), "GLB 解析就绪");
 const meta = models.metaFor("assets/models/role.glb");
 ok(meta !== null && meta.clips.length === 1 && !meta.hasSkeleton, "剪辑清单（1 个，无骨骼）");
+ok(
+  meta !== null && meta.materials.length === 1 && meta.materials[0].name === "Body" && meta.materials[0].type === "PBR",
+  "内嵌材质清单（名称 + 类型标签）",
+);
 const instA = models.instantiate("assets/models/role.glb");
 const instB = models.instantiate("assets/models/role.glb");
 ok(instA !== null && instB !== null && instA.uuid !== instB.uuid, "实例化产出独立克隆");
@@ -192,14 +196,16 @@ void main().catch((e) => {
 });
 
 // ---------------------------------------------------------------------------
-// 构造最小动画 GLB（二进制）：单节点 Arm + rotation 动画（0→1s）
+// 构造最小 GLB（二进制）：单节点 Arm + 三角形网格（PBR 材质 Body）+ rotation 动画
 // ---------------------------------------------------------------------------
 function buildMinimalAnimatedGlb(): Uint8Array {
   const json = {
     asset: { version: "2.0" },
     scene: 0,
     scenes: [{ nodes: [0] }],
-    nodes: [{ name: "Arm", rotation: [0, 0, 0, 1] }],
+    nodes: [{ name: "Arm", mesh: 0, rotation: [0, 0, 0, 1] }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 2 }, material: 0 }] }],
+    materials: [{ name: "Body", pbrMetallicRoughness: { baseColorFactor: [0.8, 0.2, 0.2, 1] } }],
     animations: [
       {
         channels: [{ sampler: 0, target: { node: 0, path: "rotation" } }],
@@ -209,14 +215,18 @@ function buildMinimalAnimatedGlb(): Uint8Array {
     accessors: [
       { componentType: 5126, count: 2, type: "SCALAR", min: [0], max: [1], bufferView: 0, byteOffset: 0 },
       { componentType: 5126, count: 2, type: "VEC4", bufferView: 0, byteOffset: 8 },
+      { componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0], bufferView: 0, byteOffset: 40 },
     ],
-    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 40 }],
-    buffers: [{ byteLength: 40 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 76 }],
+    buffers: [{ byteLength: 76 }],
   };
   const bin = new Float32Array([
     0, 1, // input: t=0, t=1
     0, 0, 0, 1, // output[0]: identity
     0, 0, 1, 0, // output[1]: 180° around Z
+    0, 0, 0, // POSITION[0]
+    1, 0, 0, // POSITION[1]
+    0.5, 1, 0, // POSITION[2]
   ]);
   const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
   const binBytes = new Uint8Array(bin.buffer);

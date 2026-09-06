@@ -12,7 +12,7 @@
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { logger } from "../../platform_abstraction/logger";
-import { modelDirOf, modelExtOf, type ModelMeta } from "./types";
+import { modelDirOf, modelExtOf, type ModelMaterialInfo, type ModelMeta } from "./types";
 import { modelLoaderRegistry, type ModelLoadContext } from "./loaders";
 
 /** 应用层注入的文件访问（base64 二进制 + 同目录清单；与纹理读取器同构） */
@@ -37,6 +37,7 @@ interface ModelEntry {
   clips: THREE.AnimationClip[];
   clipNames: string[];
   hasSkeleton: boolean;
+  materials: ModelMaterialInfo[];
   error: string | null;
 }
 
@@ -79,11 +80,11 @@ export class ModelManager {
     return this.cache.get(rel)?.status === "ready";
   }
 
-  /** 取缓存条目信息（未加载返回 null；UI 展示剪辑/骨骼用） */
+  /** 取缓存条目信息（未加载返回 null；UI 展示剪辑/骨骼/材质用） */
   metaFor(rel: string): ModelMeta | null {
     const e = this.cache.get(rel);
     if (!e || e.status !== "ready") return null;
-    return { clips: [...e.clipNames], hasSkeleton: e.hasSkeleton };
+    return { clips: [...e.clipNames], hasSkeleton: e.hasSkeleton, materials: [...e.materials] };
   }
 
   /** 模型内嵌动画剪辑名列表（未加载/无动画返回空；UI 下拉用） */
@@ -133,6 +134,7 @@ export class ModelManager {
           clips: [],
           clipNames: [],
           hasSkeleton: false,
+          materials: [],
           error: String(e instanceof Error ? e.message : e),
         });
         logger.warn(`[model] 模型加载失败 ${rel}: ${String(e)}`);
@@ -182,6 +184,7 @@ export class ModelManager {
     data.object.traverse((o) => {
       if ((o as THREE.SkinnedMesh).isSkinnedMesh) hasSkeleton = true;
     });
+    const materials = collectMaterials(data.object);
 
     this.cache.set(rel, {
       rel,
@@ -190,6 +193,7 @@ export class ModelManager {
       clips: data.clips,
       clipNames: data.clips.map((c) => c.name || "clip"),
       hasSkeleton,
+      materials,
       error: null,
     });
     logger.info(`[model] 模型已加载 ${rel}（${data.clips.length} 个动画剪辑${hasSkeleton ? "，含骨骼" : ""}）`);
@@ -247,4 +251,40 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes.buffer;
+}
+
+/** three 材质类型 → 可读标签（材质摘要展示用） */
+function materialTypeLabel(m: THREE.Material): string {
+  switch (m.type) {
+    case "MeshStandardMaterial":
+    case "MeshPhysicalMaterial":
+      return "PBR";
+    case "MeshBasicMaterial":
+      return "Unlit";
+    case "MeshToonMaterial":
+      return "Toon";
+    case "MeshPhongMaterial":
+      return "Phong";
+    case "MeshLambertMaterial":
+      return "Lambert";
+    default:
+      return m.type.replace(/^Mesh|Material$/g, "") || m.type;
+  }
+}
+
+/** 收集模型内嵌材质清单（按材质实例去重，保持出现顺序） */
+function collectMaterials(root: THREE.Object3D): ModelMaterialInfo[] {
+  const out: ModelMaterialInfo[] = [];
+  const seen = new Set<THREE.Material>();
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (!m || seen.has(m)) continue;
+      seen.add(m);
+      out.push({ name: m.name || "（未命名）", type: materialTypeLabel(m) });
+    }
+  });
+  return out;
 }

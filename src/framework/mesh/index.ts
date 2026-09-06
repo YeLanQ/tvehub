@@ -6,7 +6,7 @@ export {
   modelFileName,
   modelFileStem,
 } from "./types";
-export type { MeshSourceKind, ModelExt, ModelMeta } from "./types";
+export type { MeshSourceKind, ModelExt, ModelMeta, ModelMaterialInfo } from "./types";
 export {
   GeometryRegistry,
   buildGeometry,

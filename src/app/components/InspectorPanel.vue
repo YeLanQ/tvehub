@@ -25,6 +25,7 @@ import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
 import MaterialSection from "./inspector/MaterialSection.vue";
+import ModelMaterialSection from "./inspector/ModelMaterialSection.vue";
 import AnimationSection from "./inspector/AnimationSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
@@ -39,6 +40,23 @@ const { state, engine } = store;
 
 const node = computed<Node | undefined>(() => store.nodeById(state.selectedId ?? undefined));
 const revision = computed(() => store.revision());
+
+/**
+ * 模型网格的解析信息（剪辑/骨骼/内嵌材质）。
+ * 以 revision 为失效信号：切换来源、模型异步加载完成（model:changed）、
+ * 属性补丁都会 bump，属性卡片据此按模型内容显隐。
+ */
+const modelMeta = computed(() => {
+  void revision.value;
+  const n = node.value;
+  return n instanceof MeshNode && n.source === "model" && n.model
+    ? engine.models.metaFor(n.model)
+    : null;
+});
+/** 模型是否携带动画剪辑（决定 Animation 卡片与动画组件行） */
+const modelHasClips = computed(() => (modelMeta.value?.clips.length ?? 0) > 0);
+/** 模型是否携带内嵌材质（决定 Material 卡片显示内嵌清单） */
+const modelHasMaterials = computed(() => (modelMeta.value?.materials.length ?? 0) > 0);
 
 /** 进入编辑器/切换项目后同步一次资产列表（材质下拉需要 assets/materials 内容） */
 onMounted(() => {
@@ -491,6 +509,7 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
         <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
       </ComponentCard>
 
+      <!-- 材质卡片：基元 = .mat 资产编辑；模型 = 内嵌材质清单（按模型内容显隐） -->
       <ComponentCard
         v-if="node instanceof MeshNode && node.source === 'primitive'"
         title="Material"
@@ -505,8 +524,20 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
           @copyToProject="onMaterialCopyToProject"
         />
       </ComponentCard>
+      <ComponentCard
+        v-else-if="node instanceof MeshNode && modelHasMaterials"
+        title="Material"
+        :open="true"
+      >
+        <ModelMaterialSection :node="node" :rev="revision" />
+      </ComponentCard>
 
-      <ComponentCard v-if="node instanceof MeshNode && node.source === 'model'" title="Animation" :open="true">
+      <!-- 动画卡片：模型携带动画剪辑时显示（静态模型不出卡片） -->
+      <ComponentCard
+        v-if="node instanceof MeshNode && node.source === 'model' && modelHasClips"
+        title="Animation"
+        :open="true"
+      >
         <AnimationSection
           :node="node"
           :rev="revision"
