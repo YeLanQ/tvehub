@@ -11,8 +11,9 @@
 //!   运行时用浏览器原生 DecompressionStream 解压并经 fetch 拦截供资产（无需服务器配合）；
 //! - Gzip 资源地址：非空时多文件模式的 gzip 归档由运行时从 <地址>/assets.gzip 拉取
 //!   （产物内仍生成归档，供上传 CDN；地址写入 config 的 gzipBase），留空按本地读取；
-//! - Three CDN 地址：CDN 模式启用且地址非空时，three.js 运行时不内嵌进产物，经
-//!   import map（多文件）或内联 cdnImports（单页）从 <地址>/libs/ 在线加载，留空仍内嵌；
+//! - Three CDN 地址：CDN 模式启用且地址非空时，three.js 运行时不内嵌进产物，
+//!   代码里指向 three 的相对 import 直接重写为 CDN 绝对 URL（import map 拦截不了
+//!   相对说明符，必须改写模块文本；多文件与单页同一套机制），留空仍内嵌；
 //! - 渠道：web 完整实现；wechat（微信小游戏）为占位渠道，明确报"暂未支持"。
 //!
 //! 复用 preview.rs 的资产收集（collect_scene_assets）与文件写入（write_export_dir），
@@ -335,21 +336,16 @@ fn build_archive_bytes(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String>
 
 /// 单页模式的内联数据脚本：注入 index.html，运行时经 window.__TVE_BUILD_DATA 读取。
 /// 非 gzip 时 code 为运行时代码文本表（player.mjs + libs/*，已重写说明符），
-/// gzip 时代码并入 entries 归档。cdn_imports 非空时（CDN 模式）写入 cdnImports
-/// （tve: 说明符 → 资源地址 URL，引导脚本合并进 import map）。序列化后把 '<'
-/// 转义为 \u003c，防止代码文本里的 `</script>` 提前终止内联脚本标签（\u 转义解码后语义不变）
+/// gzip 时代码并入 entries 归档。序列化后把 '<' 转义为 \u003c，
+/// 防止代码文本里的 `</script>` 提前终止内联脚本标签（\u 转义解码后语义不变）
 fn inline_data_script(
     config: serde_json::Map<String, serde_json::Value>,
     entries: &[(String, Vec<u8>)],
     gzip: bool,
     code: Option<&HashMap<String, String>>,
-    cdn_imports: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<String, String> {
     let mut data = serde_json::Map::new();
     data.insert("config".to_string(), serde_json::Value::Object(config));
-    if let Some(imports) = cdn_imports {
-        data.insert("cdnImports".to_string(), serde_json::Value::Object(imports));
-    }
     if gzip {
         data.insert(
             "pak".to_string(),
@@ -396,8 +392,6 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
     if (!Object.prototype.hasOwnProperty.call(code, entry))
       return fail("缺少入口模块 " + entry);
     var imports = {};
-    if (data.cdnImports)
-      for (var k in data.cdnImports) imports[k] = data.cdnImports[k];
     for (var rel in code)
       imports["tve:" + rel] = URL.createObjectURL(
         new Blob([code[rel]], { type: "text/javascript" })
@@ -544,11 +538,13 @@ fn read_quoted(text: &str, start: usize) -> Option<(&str, usize)> {
 }
 
 /// 重写一段模块文本：import/export from 的相对说明符与 import("./x") 动态导入，
-/// 解析到已知运行时代码文件时替换为 `tve:<路径>` 裸说明符，其余原样保留
+/// 解析（相对本模块目录）到 remap 表内的产物相对路径时替换为其映射的说明符
+/// （单页内联模块 → `tve:<路径>` 裸说明符；CDN 模式的 three → 绝对 URL），
+/// 其余原样保留
 fn rewrite_specifier_text(
     text: &str,
     dir: &str,
-    known: &std::collections::HashSet<String>,
+    remap: &HashMap<String, String>,
 ) -> String {
     let b = text.as_bytes();
     let mut out = String::with_capacity(text.len() + 32);
@@ -588,11 +584,10 @@ fn rewrite_specifier_text(
         }
         if let Some((spec, after)) = read_quoted(text, j) {
             if let Some((rel, suffix)) = resolve_relative_spec(dir, spec) {
-                if known.contains(&rel) {
+                if let Some(to) = remap.get(&rel) {
                     out.push_str(&text[i..j]);
                     out.push_str(&text[j..=j]);
-                    out.push_str(INLINE_MODULE_PREFIX);
-                    out.push_str(&rel);
+                    out.push_str(to);
                     out.push_str(&suffix);
                     out.push(text.as_bytes()[j] as char);
                     i = after;
@@ -610,10 +605,19 @@ fn rewrite_specifier_text(
 
 /// 单页模式：把运行时代码里的相对 import/export 说明符重写为 `tve:<相对路径>`
 /// 裸说明符（运行时由引导脚本的 import map 映射到 Blob URL 加载）；
-/// extra_known 为需重写但不在代码表里的说明符（CDN 模式的 three 运行时文件）
-fn rewrite_module_imports(code: &mut HashMap<String, String>, extra_known: &[&str]) {
-    let mut known: std::collections::HashSet<String> = code.keys().cloned().collect();
-    known.extend(extra_known.iter().map(|s| s.to_string()));
+/// extra_remap 为代码表之外的补充映射（CDN 模式的 three 运行时 → 绝对 URL，
+/// blob 模块无法解析相对 import，须一并改写）
+fn rewrite_module_imports(
+    code: &mut HashMap<String, String>,
+    extra_remap: &HashMap<String, String>,
+) {
+    let mut remap: HashMap<String, String> = code
+        .keys()
+        .map(|rel| (rel.clone(), format!("{INLINE_MODULE_PREFIX}{rel}")))
+        .collect();
+    for (k, v) in extra_remap {
+        remap.insert(k.clone(), v.clone());
+    }
     let rels: Vec<String> = code.keys().cloned().collect();
     for rel in rels {
         let dir = match rel.rfind('/') {
@@ -621,8 +625,16 @@ fn rewrite_module_imports(code: &mut HashMap<String, String>, extra_known: &[&st
             None => "",
         };
         let text = code.get_mut(&rel).unwrap();
-        *text = rewrite_specifier_text(text, dir, &known);
+        *text = rewrite_specifier_text(text, dir, &remap);
     }
+}
+
+/// Three CDN 说明符映射表：产物内 three 相对路径 → CDN 绝对 URL（两种产物形态共用）
+fn three_cdn_remap(three_base: &str) -> HashMap<String, String> {
+    THREE_RUNTIME_FILES
+        .iter()
+        .map(|rel| (rel.to_string(), three_cdn_url(three_base, rel)))
+        .collect()
 }
 
 /// 移除入口页里引用 player.mjs 的 <script> 标签（单页模式代码已内联，原标签会 404）
@@ -644,30 +656,28 @@ fn strip_player_script_tags(html: &str) -> String {
     result
 }
 
-/// 入口页注入 CDN import map：多文件模式下运行时代码里 three 的相对说明符
-/// 解析到的同源 URL 映射到资源地址下的同名文件。import map 必须位于首个
-/// <script> 之前（模块脚本加载前生效）
-fn inject_import_map(html: &str, base: &str) -> String {
-    let mut imports = serde_json::Map::new();
-    for rel in THREE_RUNTIME_FILES {
-        imports.insert(
-            format!("./{rel}"),
-            serde_json::Value::String(three_cdn_url(base, rel)),
-        );
+/// 运行时脚本里指向 three 的相对 import 重写为 CDN 绝对 URL（import map 拦截不了
+/// 相对说明符，必须改写模块文本）。覆盖 player.mjs 与 libs/ 下全部 .js/.mjs
+/// （loaders 的 ../three、libs 模块的 ./three、player 的 ./libs/three 统一经
+/// 目录相对解析命中映射）；入口页与非脚本文件不动
+fn rewrite_runtime_three_imports(files: &mut HashMap<String, String>, remap: &HashMap<String, String>) {
+    let rels: Vec<String> = files
+        .keys()
+        .filter(|rel| {
+            is_runtime_code(rel)
+                && !is_entry_page(rel)
+                && (rel.ends_with(".js") || rel.ends_with(".mjs"))
+        })
+        .cloned()
+        .collect();
+    for rel in rels {
+        let dir = match rel.rfind('/') {
+            Some(i) => &rel[..=i],
+            None => "",
+        };
+        let text = files.get_mut(&rel).unwrap();
+        *text = rewrite_specifier_text(text, dir, remap);
     }
-    let tag = format!(
-        "<script type=\"importmap\">{}</script>",
-        serde_json::Value::Object(imports)
-    );
-    if let Some(i) = html.find("<script") {
-        let mut out = String::with_capacity(html.len() + tag.len() + 1);
-        out.push_str(&html[..i]);
-        out.push_str(&tag);
-        out.push('\n');
-        out.push_str(&html[i..]);
-        return out;
-    }
-    format!("{tag}\n{html}")
 }
 
 /// 构建导出实现（同步，便于单元测试直接驱动完整流程）
@@ -719,8 +729,8 @@ fn build_export_impl(
     if !files.contains_key("index.html") {
         return Err("网页运行时缺少 index.html".to_string());
     }
-    // CDN 模式：three.js 运行时不内嵌（多文件经入口页 import map、单页经内联
-    // cdnImports 从资源地址在线加载）；其余 libs/ 模块仍内嵌
+    // CDN 模式：three.js 运行时不内嵌，代码里指向 three 的相对 import 在产物
+    // 组装阶段统一重写为 CDN 绝对 URL；其余 libs/ 模块仍内嵌
     if cdn_active {
         for rel in THREE_RUNTIME_FILES {
             files.remove(rel);
@@ -848,37 +858,20 @@ fn build_export_impl(
                 code.insert(rel, text);
             }
         }
-        // CDN 模式下 three 已从代码表移除，但其相对说明符仍需重写为 tve: 裸说明符
-        // （blob URL 模块无法解析相对 import），由引导脚本经 cdnImports 映射到资源地址
-        rewrite_module_imports(
-            &mut code,
-            if cdn_active {
-                &THREE_RUNTIME_FILES
-            } else {
-                &[]
-            },
-        );
+        // 说明符重写：代码表内 → tve: 裸说明符（blob 模块解析不了相对 import）；
+        // CDN 模式下 three 不在代码表，其相对说明符直接重写为 CDN 绝对 URL
+        let cdn_remap = three_cdn_remap(&three_base);
+        let empty_remap: HashMap<String, String> = HashMap::new();
+        rewrite_module_imports(&mut code, if cdn_active { &cdn_remap } else { &empty_remap });
         code_n = code.len();
-        let cdn_imports = if cdn_active {
-            let mut m = serde_json::Map::new();
-            for rel in THREE_RUNTIME_FILES {
-                m.insert(
-                    format!("{INLINE_MODULE_PREFIX}{rel}"),
-                    serde_json::Value::String(three_cdn_url(&three_base, rel)),
-                );
-            }
-            Some(m)
-        } else {
-            None
-        };
         let script = if gzip {
             for (rel, text) in &code {
                 entries.push((rel.clone(), text.clone().into_bytes()));
             }
             entries.sort_by(|a, b| a.0.cmp(&b.0));
-            inline_data_script(cfg, &entries, true, None, cdn_imports)?
+            inline_data_script(cfg, &entries, true, None)?
         } else {
-            inline_data_script(cfg, &entries, false, Some(&code), cdn_imports)?
+            inline_data_script(cfg, &entries, false, Some(&code))?
         };
         // 数据脚本 + 引导脚本注入全部入口页（模板可用 {{BUILD_DATA}} 占位指定注入
         // 位置，无占位符时回退注入 </body> 前；config 不落盘）
@@ -904,15 +897,10 @@ fn build_export_impl(
             let pak = build_archive_bytes(&entries)?;
             binaries.insert("assets.gzip".to_string(), pak);
         }
-        // Three CDN 模式：入口页注入 import map，把运行时代码解析到同源 three 的说明符
-        // 映射到 Three CDN 地址下的同名文件（地址指向包含构建文件的目录，如官方
-        // CDN 版本目录；three 内部对 three.core 的相对 import 随远端 URL 解析）
+        // Three CDN 模式：把运行时脚本里解析到同源 three 的相对 import 直接重写为
+        // CDN 绝对 URL（three 内部对 three.core 的相对 import 随远端模块自身 URL 解析）
         if cdn_active {
-            for (rel, text) in files.iter_mut() {
-                if is_entry_page(rel) {
-                    *text = inject_import_map(text, &three_base);
-                }
-            }
+            rewrite_runtime_three_imports(&mut files, &three_cdn_remap(&three_base));
         }
     }
 
@@ -1106,30 +1094,31 @@ mod tests {
     #[test]
     fn single_page_rewrites_module_imports() {
         use super::{rewrite_module_imports, rewrite_specifier_text};
-        use std::collections::HashSet;
-        let known: HashSet<String> = [
-            "player.mjs".to_string(),
-            "libs/utils.mjs".to_string(),
-            "libs/loaders/GLTFLoader.js".to_string(),
-        ]
-        .into();
+        let remap = HashMap::from([
+            ("player.mjs".to_string(), "tve:player.mjs".to_string()),
+            ("libs/utils.mjs".to_string(), "tve:libs/utils.mjs".to_string()),
+            (
+                "libs/loaders/GLTFLoader.js".to_string(),
+                "tve:libs/loaders/GLTFLoader.js".to_string(),
+            ),
+        ]);
         // 相对解析：libs/model.mjs 目录下的 ./x 与 ../x
         assert_eq!(
             rewrite_specifier_text(
                 "import { a } from \"./utils.mjs\";\nimport * as G from './loaders/GLTFLoader.js';\nimport(\"./utils.mjs\")\n",
                 "libs/",
-                &known
+                &remap
             ),
             "import { a } from \"tve:libs/utils.mjs\";\nimport * as G from 'tve:libs/loaders/GLTFLoader.js';\nimport(\"tve:libs/utils.mjs\")\n"
         );
-        // ../ 上溯：libs/ 下的 ../loaders 解析到根目录（不在已知集，不重写）
+        // ../ 上溯：libs/ 下的 ../loaders 解析到根目录（不在映射表，不重写）
         assert_eq!(
-            rewrite_specifier_text("import '../loaders/GLTFLoader.js';", "libs/", &known),
+            rewrite_specifier_text("import '../loaders/GLTFLoader.js';", "libs/", &remap),
             "import '../loaders/GLTFLoader.js';"
         );
         // 压缩形态：from"./x" 无空白
         assert_eq!(
-            rewrite_specifier_text("import{a}from\"./utils.mjs\";", "libs/", &known),
+            rewrite_specifier_text("import{a}from\"./utils.mjs\";", "libs/", &remap),
             "import{a}from\"tve:libs/utils.mjs\";"
         );
         // 未知目标 / 裸说明符 / import.meta / 词内匹配不重写
@@ -1137,17 +1126,29 @@ mod tests {
             rewrite_specifier_text(
                 "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n",
                 "libs/",
-                &known
+                &remap
             ),
             "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n"
         );
-        // 端到端：player 相对 import 重写
+        // 端到端：player 相对 import 重写为 tve:；extra_remap（CDN three）直接替换为 URL
         let mut code = HashMap::from([
-            ("player.mjs".to_string(), "import { b } from \"./libs/utils.mjs\";\n".to_string()),
+            (
+                "player.mjs".to_string(),
+                "import { b } from \"./libs/utils.mjs\";\nimport * as T from \"./libs/three.module.min.js\";\n".to_string(),
+            ),
             ("libs/utils.mjs".to_string(), "export const b = 1;\n".to_string()),
         ]);
-        rewrite_module_imports(&mut code, &[]);
+        let extra = HashMap::from([(
+            "libs/three.module.min.js".to_string(),
+            "https://c.com/three.js/0.185.1/three.module.min.js".to_string(),
+        )]);
+        rewrite_module_imports(&mut code, &extra);
         assert!(code["player.mjs"].contains("\"tve:libs/utils.mjs\""));
+        assert!(
+            code["player.mjs"]
+                .contains("\"https://c.com/three.js/0.185.1/three.module.min.js\""),
+            "three 相对 import 直接重写为 CDN 绝对 URL"
+        );
     }
 
     /// 发布模式：资产 uid 重命名（.meta uuid 优先/哈希回退）、场景与材质引用重写、
@@ -1342,7 +1343,8 @@ mod tests {
             .unwrap()
         };
 
-        // 多文件 + Three CDN：three 文件不落盘，入口页注入 import map 指向 CDN 地址；
+        // 多文件 + Three CDN：three 文件不落盘，运行时脚本里指向 three 的相对
+        // import 直接重写为 CDN 绝对 URL（import map 拦截不了相对说明符）；
         // 未填 gzip 资源地址时 config 不带 gzipBase
         let result = run(false, false, true, "", three_cdn);
         let out = root.join("build/web");
@@ -1350,12 +1352,18 @@ mod tests {
         assert!(!out.join("libs/three.module.min.js").exists(), "three.module 不内嵌");
         assert!(!out.join("libs/three.core.min.js").exists(), "three.core 不内嵌");
         assert!(out.join("libs/b.mjs").is_file(), "其余 libs 模块仍内嵌");
-        let html = fs::read_to_string(out.join("index.html")).unwrap();
-        assert!(html.contains("<script type=\"importmap\">"), "入口页注入 import map");
+        let player = fs::read_to_string(out.join("player.mjs")).unwrap();
         assert!(
-            html.contains(&format!("{three_cdn}/three.module.min.js")),
-            "import map 指向 Three CDN 地址"
+            player.contains(&format!("\"{three_cdn}/three.module.min.js\"")),
+            "player 的 three import 重写为 CDN URL"
         );
+        let helper = fs::read_to_string(out.join("libs/b.mjs")).unwrap();
+        assert!(
+            helper.contains(&format!("\"{three_cdn}/three.module.min.js\"")),
+            "libs 模块的 three import 重写为 CDN URL"
+        );
+        let html = fs::read_to_string(out.join("index.html")).unwrap();
+        assert!(!html.contains("importmap"), "不再注入 import map");
         let cfg: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(out.join("config.json")).unwrap()).unwrap();
         assert!(cfg.get("gzipBase").is_none(), "未填 gzip 地址时不写 gzipBase");
@@ -1368,24 +1376,30 @@ mod tests {
         assert!(!result.cdn);
         assert!(out.join("libs/three.module.min.js").is_file(), "CDN 关闭时 three 内嵌");
         assert!(out.join("assets.gzip").is_file());
-        let html = fs::read_to_string(out.join("index.html")).unwrap();
-        assert!(!html.contains("importmap"), "CDN 关闭时不注入 import map");
+        let player = fs::read_to_string(out.join("player.mjs")).unwrap();
+        assert!(
+            player.contains("\"./libs/three.module.min.js\""),
+            "CDN 关闭时说明符保持相对路径"
+        );
         let cfg: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(out.join("config.json")).unwrap()).unwrap();
         assert_eq!(cfg["gzipBase"], gzip_cdn);
 
-        // 单页 + Three CDN（gzip 两种形态）：three 不内联，代码说明符重写为 tve: 且由
-        // cdnImports 映射到 CDN 地址
+        // 单页 + Three CDN（gzip 两种形态）：three 不内联，代码内模块说明符重写为
+        // tve:，指向 three 的说明符直接重写为 CDN 绝对 URL（不再需要 cdnImports）
         for gzip in [false, true] {
             let result = run(true, gzip, true, "", three_cdn);
             assert!(result.cdn);
             let html = fs::read_to_string(root.join("build/web/index.html")).unwrap();
-            assert!(html.contains("cdnImports"), "内联 cdnImports 映射表");
-            assert!(html.contains("tve:libs/three.module.min.js"), "tve: 说明符映射");
-            assert!(html.contains(&format!("{three_cdn}/three.core.min.js")));
+            assert!(!html.contains("cdnImports"), "不再内联 cdnImports 映射表");
             assert!(!html.contains("THREEMODULE_FAKE"), "three 源码不内联");
             if !gzip {
                 assert!(html.contains("tve:libs/b.mjs"), "其余模块仍内联并重写说明符");
+                // 代码内联为 JSON 字符串，URL 前的引号被转义为 \"，只断言 URL 本身
+                assert!(
+                    html.contains(&format!("{three_cdn}/three.module.min.js")),
+                    "three import 直接重写为 CDN URL"
+                );
             }
         }
 
@@ -1394,12 +1408,11 @@ mod tests {
         // /assets.gzip 结尾时 config 原样保留（运行时拼接去重）
         let result = run(false, false, true, "", "cdn.example.com/tve/libs");
         assert!(result.cdn);
-        let html = fs::read_to_string(root.join("build/web/index.html")).unwrap();
+        let player = fs::read_to_string(root.join("build/web/player.mjs")).unwrap();
         assert!(
-            html.contains("https://cdn.example.com/tve/libs/three.module.min.js"),
+            player.contains("https://cdn.example.com/tve/libs/three.module.min.js"),
             "无协议地址补 https:// 且不重复 libs"
         );
-        assert!(!html.contains("/libs/libs/"), "不重复拼接 libs 前缀");
         let _ = run(false, true, false, "https://res.example.com/pkg/assets.gzip", "");
         let cfg: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(root.join("build/web/config.json")).unwrap(),
@@ -1408,17 +1421,16 @@ mod tests {
         assert_eq!(cfg["gzipBase"], "https://res.example.com/pkg/assets.gzip");
 
         // 官方 CDN 版本目录（无 libs/ 前缀）：URL 直接指向目录下的构建文件，
-        // 不追加产物内的 libs/ 目录前缀（cdnjs 0.185.1 与内嵌运行时同名同版本）；
-        // import map 的键仍是同源 ./libs/ 路径（须与代码解析结果一致才会命中）
+        // 不追加产物内的 libs/ 目录前缀（cdnjs 0.185.1 与内嵌运行时同名同版本）
         let three_official = "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1";
         let _ = run(false, false, true, "", three_official);
-        let html = fs::read_to_string(root.join("build/web/index.html")).unwrap();
+        let player = fs::read_to_string(root.join("build/web/player.mjs")).unwrap();
         assert!(
-            html.contains(&format!("{three_official}/three.module.min.js")),
+            player.contains(&format!("\"{three_official}/three.module.min.js\"")),
             "官方 CDN 版本目录直接拼接文件名"
         );
         assert!(
-            !html.contains(&format!("{three_official}/libs/")),
+            !player.contains(&format!("\"{three_official}/libs/")),
             "映射 URL 不追加产物内 libs/ 前缀"
         );
 

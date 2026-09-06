@@ -79,6 +79,9 @@ const selectedTemplate = computed(() =>
 );
 const singlePage = computed(() => selectedTemplate.value?.mode === "single");
 
+/** CDN 模式已勾选但地址为空：不生效（three.js 仍内嵌），显式提示避免误解 */
+const cdnMissingBase = computed(() => cdn.value && !cdnBase.value.trim());
+
 /** 勾选/取消导出模板（可多选）；勾选与已选形态不同的模板时自动切换为仅选中它
  *  （多文件与单页不能混选——直接替换选择，避免"勾选被静默拒绝→选择为空→构建按钮
  *  一直禁用"的陷阱） */
@@ -470,6 +473,9 @@ watch(projectScenes, (next, prev) => {
                   >，需与运行时同版本）或自建 CDN 上传产物 <code>libs/</code>
                   内两个文件后的目录。非空时 three.js
                   在线加载、不再内嵌（需允许跨域）；<strong>留空则仍内嵌 three.js</strong>。
+                </p>
+                <p v-if="cdnMissingBase" class="bp-warn">
+                  地址为空：CDN 模式不会生效，本次构建仍将内嵌 three.js。
                 </p>
               </div>
               <div class="bp-field">
