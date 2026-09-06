@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
 // 材质参数解析器缓存（引擎同步渲染用的“材质库”）。
-// 只负责“按引用路径 → 内存参数”的解析与缓存；内容来源（内置/项目文件）
-// 由应用层注入的文本读取器提供（MaterialTextFetcher）。
+// 只负责“按引用路径 → 内存材质文档（类型 + 参数）”的解析与缓存；内容来源
+// （内置/项目文件）由应用层注入的文本读取器提供（MaterialTextFetcher）。
 // ---------------------------------------------------------------------------
 
 import {
   DEFAULT_MATERIAL_PARAMS,
   cloneMaterialParams,
+  materialFileStem,
   type MaterialParams,
 } from "./types";
+import { DEFAULT_MATERIAL_TYPE } from "./factory";
 import { parseMaterialFile } from "./materialFile";
 
 /** 按材质资产相对路径读取其 .mat 文本；不存在/失败返回 null */
@@ -17,8 +19,15 @@ export type MaterialTextFetcher = (rel: string) => Promise<string | null>;
 /** 材质参数变更回调（编辑保存后引擎据此刷新外观） */
 export type MaterialChangeListener = (rel: string) => void;
 
+/** 缓存条目：材质文档（名称 + 类型 + 参数） */
+interface CachedMaterialDoc {
+  name: string;
+  type: string;
+  params: MaterialParams;
+}
+
 export class MaterialManager {
-  private cache = new Map<string, MaterialParams>();
+  private cache = new Map<string, CachedMaterialDoc>();
   private loading = new Set<string>();
   private fetcher: MaterialTextFetcher | null = null;
   private listeners = new Set<MaterialChangeListener>();
@@ -47,12 +56,26 @@ export class MaterialManager {
    */
   paramsFor(rel: string): MaterialParams {
     const cached = this.cache.get(rel);
-    return cached ? cloneMaterialParams(cached) : cloneMaterialParams(DEFAULT_MATERIAL_PARAMS);
+    return cached ? cloneMaterialParams(cached.params) : cloneMaterialParams(DEFAULT_MATERIAL_PARAMS);
   }
 
-  /** 直接写入缓存（编辑保存后由应用层调用，触发变更回调） */
-  cachePut(rel: string, params: MaterialParams): void {
-    this.cache.set(rel, cloneMaterialParams(params));
+  /**
+   * 取材质类型（注册表 key）：已缓存返回文件声明的类型；
+   * 未解析/缺失回退默认类型（physical）。
+   */
+  typeFor(rel: string): string {
+    return this.cache.get(rel)?.type ?? DEFAULT_MATERIAL_TYPE;
+  }
+
+  /** 直接写入缓存（编辑保存后由应用层调用，触发变更回调）。
+   * type 缺省时沿用已缓存类型（参数编辑不改类型）；未缓存回退默认类型。 */
+  cachePut(rel: string, params: MaterialParams, type?: string): void {
+    const prev = this.cache.get(rel);
+    this.cache.set(rel, {
+      name: prev?.name ?? materialFileStem(rel),
+      type: type ?? prev?.type ?? DEFAULT_MATERIAL_TYPE,
+      params: cloneMaterialParams(params),
+    });
     this.notify(rel);
   }
 
@@ -72,7 +95,7 @@ export class MaterialManager {
         if (text != null) {
           const doc = parseMaterialFile(text);
           if (doc) {
-            this.cache.set(rel, cloneMaterialParams(doc.params));
+            this.cache.set(rel, doc);
             loaded++;
           }
         }
@@ -93,7 +116,7 @@ export class MaterialManager {
       if (text == null) return false;
       const doc = parseMaterialFile(text);
       if (!doc) return false;
-      this.cache.set(rel, cloneMaterialParams(doc.params));
+      this.cache.set(rel, doc);
       this.notify(rel);
       return true;
     } catch {

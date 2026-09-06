@@ -12,7 +12,7 @@ import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
   listProjectMaterialRels,
-  loadMaterialParams,
+  loadMaterialDoc,
   saveMaterialParams,
 } from "../lib/materials";
 import type { JsonRecord } from "../../framework/prototype/types";
@@ -46,10 +46,16 @@ onMounted(() => {
 // 300ms 防抖合并，避免拖拽/连续输入时每条都跨 IPC 写盘造成的延迟与乱序覆盖。
 // ---------------------------------------------------------------------------
 let materialDirtyTimer: ReturnType<typeof setTimeout> | null = null;
-let materialDirty: { root: string; rel: string; name: string; params: MaterialParams } | null = null;
+let materialDirty: {
+  root: string;
+  rel: string;
+  name: string;
+  type: string;
+  params: MaterialParams;
+} | null = null;
 
 function persistMaterialNow(d: NonNullable<typeof materialDirty>): void {
-  saveMaterialParams(d.root, d.rel, d.name, d.params).catch((e) =>
+  saveMaterialParams(d.root, d.rel, d.name, d.params, d.type).catch((e) =>
     logStore.log("error", `保存材质 ${d.rel} 失败: ${e}`, "engine"),
   );
 }
@@ -62,12 +68,19 @@ function flushMaterialPersist(): void {
   if (d) persistMaterialNow(d);
 }
 
-function scheduleMaterialPersist(rel: string, params: MaterialParams): void {
+function scheduleMaterialPersist(rel: string, params: MaterialParams, type?: string): void {
   const root = projectStore.currentPath;
   if (!root) return;
   // 连续编辑中切到另一份材质时，先把上一份落盘，避免被覆盖丢失
   if (materialDirty && materialDirty.rel !== rel) flushMaterialPersist();
-  materialDirty = { root, rel, name: materialFileStem(rel), params: { ...params } };
+  // 类型缺省时取引擎缓存的当前类型（参数编辑不改类型；类型切换显式传入）
+  materialDirty = {
+    root,
+    rel,
+    name: materialFileStem(rel),
+    type: type ?? engine.materials.typeFor(rel),
+    params: { ...params },
+  };
   if (materialDirtyTimer) clearTimeout(materialDirtyTimer);
   materialDirtyTimer = setTimeout(() => {
     materialDirtyTimer = null;
@@ -194,6 +207,36 @@ async function onMaterialEdit(
   scheduleMaterialPersist(rel, params);
 }
 
+/** 切换当前材质资产的类型（physical/unlit…）：改写 .mat 并按新类型重建视口材质 */
+async function onMaterialChangeType(type: string): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode) || !type) return;
+  const root = projectStore.currentPath;
+  if (!root) {
+    logStore.log("error", "未打开项目，无法切换材质类型", "engine");
+    return;
+  }
+  let rel = n.material;
+  if (isInternalAsset(rel)) {
+    // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再切换类型
+    const taken = await listProjectMaterialRels(root);
+    const dup = await duplicateMaterialToProject(root, rel, n.name, taken);
+    if (!dup) {
+      logStore.log("error", "复制内置材质到项目失败", "engine");
+      return;
+    }
+    mutateNode(n, (m) => {
+      (m as MeshNode).material = dup;
+    }, "复制材质到项目");
+    rel = dup;
+  }
+  if (materialDirty) flushMaterialPersist(); // 类型变更前先落盘旧的参数修改
+  const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
+  // 写入新类型并广播：引用该材质的网格按新类型重建 three 材质（类型不符 → 工厂重建）
+  engine.materials.cachePut(rel, params, type);
+  scheduleMaterialPersist(rel, params, type);
+}
+
 /** 复制当前材质为项目资产并绑定到本节点（内置材质转可编辑 / 生成独立副本） */
 async function onMaterialCopyToProject(): Promise<void> {
   const n = node.value;
@@ -207,10 +250,10 @@ async function onMaterialCopyToProject(): Promise<void> {
     logStore.log("error", "复制材质资产失败", "engine");
     return;
   }
-  // 复制完成后先把新副本参数入缓存，再切换引用：面板/视口不经过默认灰
+  // 复制完成后先把新副本文档（类型 + 参数）入缓存，再切换引用：面板/视口不经过默认灰
   if (root) {
-    const dupParams = await loadMaterialParams(root, dup);
-    if (dupParams) engine.materials.cachePut(dup, dupParams);
+    const dupDoc = await loadMaterialDoc(root, dup);
+    if (dupDoc) engine.materials.cachePut(dup, dupDoc.params, dupDoc.type);
   }
   mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
   if (root) engine.refreshMaterialNodes(dup);
@@ -382,6 +425,7 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
           :rev="revision"
           @setMaterial="onSetMaterial"
           @editParam="onMaterialEdit"
+          @changeType="onMaterialChangeType"
           @copyToProject="onMaterialCopyToProject"
         />
       </ComponentCard>

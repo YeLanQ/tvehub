@@ -22,4 +22,12 @@ export { defaultMaterialDoc, parseMaterialFile, serializeMaterialFile } from "./
 export type { MaterialDoc } from "./materialFile";
 export { MaterialManager } from "./MaterialManager";
 export type { MaterialChangeListener, MaterialTextFetcher } from "./MaterialManager";
+export {
+  DEFAULT_MATERIAL_TYPE,
+  MaterialTypeRegistry,
+  attachTextureChannel,
+  createDefaultMaterialTypeRegistry,
+  materialTypeRegistry,
+} from "./factory";
+export type { MaterialTypeDef, MaterialTextureLoader } from "./factory";
 export { collectMeshMaterialRefs } from "./collect";

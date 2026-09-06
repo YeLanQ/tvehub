@@ -13,10 +13,16 @@ import { degToRad } from "../../prototype/types";
 import { disposeObject3D, buildGeometry } from "./utils";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
+import {
+  DEFAULT_MATERIAL_TYPE,
+  materialTypeRegistry,
+} from "../../material/factory";
 
 /** 材质参数查询（EditorEngine 注入 MaterialManager） */
 export interface MaterialParamsLookup {
   paramsFor(rel: string): MaterialParams;
+  /** 材质类型查询（注册表 key；未注入回退默认类型 physical） */
+  typeFor?(rel: string): string;
   /** 异步加载贴图资产（rel → Texture；srgb=true 表示颜色贴图）。引擎注入，未注入则无贴图 */
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
 }
@@ -177,95 +183,22 @@ export class SceneSynchronizer {
   }
 
   /**
-   * 按材质引用路径把 three 材质对齐到 PBR 资产参数。
-   * 使用 MeshPhysicalMaterial（Blender 原理化 BSDF 可映射的 three PBR 材质），
-   * 覆盖全部标量/颜色参数。
+   * 按材质引用路径把 three 材质对齐到资产（类型 + 参数）：
+   * 类型经工厂注册表解析（.mat 的 materialType 字段），类型不符时重建材质实例，
+   * 参数应用规则由类型定义提供（MaterialTypeDef.apply）。
    */
   private updateMeshMaterial(mesh: MeshNode, obj: THREE.Mesh): void {
-    let mat = obj.material as THREE.MeshPhysicalMaterial;
-    if (!(mat instanceof THREE.MeshPhysicalMaterial)) {
-      mat = new THREE.MeshPhysicalMaterial();
+    const rel = mesh.material;
+    const typeKey = this.lookup.typeFor?.(rel) ?? DEFAULT_MATERIAL_TYPE;
+    const def = materialTypeRegistry.getOrDefault(typeKey);
+    const params = this.lookup.paramsFor(rel);
+    let mat: THREE.Material | undefined = obj.material as THREE.Material | undefined;
+    if (!mat || !def.matches(mat)) {
+      mat?.dispose();
+      mat = def.create();
       obj.material = mat;
     }
-    const params = this.lookup.paramsFor(mesh.material);
-    mat.color.setHex(params.color);
-    mat.metalness = params.metalness;
-    mat.roughness = params.roughness;
-    mat.specularIntensity = params.specularIntensity;
-    mat.specularColor.setHex(params.specularColor);
-    mat.ior = params.ior;
-    // 效果分组由启用开关控制：未勾选启用时相关参数强制为中性值（不产生可见效果）
-    const emissionOn = params.emissionEnabled;
-    mat.emissive.setHex(emissionOn ? params.emissive : 0x000000);
-    mat.emissiveIntensity = emissionOn ? params.emissiveIntensity : 1;
-    mat.clearcoat = params.clearcoatEnabled ? params.clearcoat : 0;
-    mat.clearcoatRoughness = params.clearcoatEnabled ? params.clearcoatRoughness : 0;
-    mat.sheen = params.sheenEnabled ? params.sheen : 0;
-    mat.sheenColor.setHex(params.sheenEnabled ? params.sheenColor : 0x000000);
-    mat.sheenRoughness = params.sheenEnabled ? params.sheenRoughness : 0;
-    mat.transmission = params.transmissionEnabled ? params.transmission : 0;
-    mat.thickness = params.transmissionEnabled ? params.thickness : 0;
-    mat.attenuationColor.setHex(
-      params.transmissionEnabled ? params.attenuationColor : 0xffffff,
-    );
-    mat.attenuationDistance = params.transmissionEnabled ? params.attenuationDistance : 0;
-    mat.anisotropy = params.anisotropy;
-    mat.anisotropyRotation = params.anisotropyRotation;
-    mat.iridescence = params.iridescence;
-    mat.iridescenceIOR = params.iridescenceIOR;
-    mat.opacity = params.opacity;
-    // 混合模式：opacity<1 → 半透明；贴图裁剪阈值>0 → alphaTest 裁剪；
-    // 有贴图但阈值为 0 → 贴图 alpha 走混合透明
-    mat.transparent =
-      params.opacity < 0.999 || (params.map !== "" && params.alphaClipThreshold <= 0.0001);
-    mat.alphaTest =
-      params.map !== "" && params.alphaClipThreshold > 0.0001 ? params.alphaClipThreshold : 0;
-    mat.wireframe = params.wireframe;
-    mat.needsUpdate = true;
-    // 贴图通道（异步加载后赋值）
-    this.attachMap(params, "map", true, (t) => {
-      mat.map = t;
-      mat.needsUpdate = true;
-    });
-    this.attachMap(params, "emissiveMap", true, (t) => {
-      mat.emissiveMap = params.emissionEnabled ? t : null;
-      mat.needsUpdate = true;
-    });
-    this.attachMap(params, "metalnessMap", false, (t) => {
-      mat.metalnessMap = t;
-      mat.needsUpdate = true;
-    });
-    this.attachMap(params, "roughnessMap", false, (t) => {
-      mat.roughnessMap = t;
-      mat.needsUpdate = true;
-    });
-    this.attachMap(params, "normalMap", false, (t) => {
-      mat.normalMap = t;
-      if (t) mat.normalScale.set(1, 1);
-      mat.needsUpdate = true;
-    });
-  }
-
-  /** 按贴图通道字段异步装载并回填材质（无加载器/空引用则清空该通道） */
-  private attachMap(
-    params: MaterialParams,
-    key: "map" | "metalnessMap" | "roughnessMap" | "normalMap" | "emissiveMap",
-    srgb: boolean,
-    assign: (tex: THREE.Texture | null) => void,
-  ): void {
-    const loader = this.lookup.loadTexture;
-    const rel = params[key];
-    if (!rel) {
-      assign(null);
-      return;
-    }
-    if (!loader) {
-      assign(null);
-      return;
-    }
-    void loader(rel, srgb).then((tex) => {
-      assign(tex);
-    });
+    def.apply(mat, params, this.lookup);
   }
 
   private refreshLight(light: LightNode, obj: THREE.Object3D): void {

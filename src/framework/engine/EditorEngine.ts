@@ -109,6 +109,7 @@ export class EditorEngine {
     this.factory = createNodeFactory(createDefaultRegistry());
     this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
       paramsFor: (rel) => this.materials.paramsFor(rel),
+      typeFor: (rel) => this.materials.typeFor(rel),
       loadTexture: (rel, srgb) => this.loadTexture(rel, srgb),
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观

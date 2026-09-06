@@ -5,24 +5,28 @@
 //     "$type": "material",
 //     "$ver": 1,
 //     "name": "Default",
-//     "color": "#9aa4b2",      // 也接受 RGB hex number
+//     "materialType": "physical",  // 材质类型（工厂注册表 key；缺失 = physical）
+//     "color": "#9aa4b2",          // 也接受 RGB hex number
 //     "metalness": 0.1,
 //     "roughness": 0.75,
 //     "emissive": "#000000",
 //     "wireframe": false
 //   }
+// 参数按超集存储：类型未暴露的字段原样保留（切回支持该字段的类型时恢复生效）。
 // ---------------------------------------------------------------------------
 
 import {
-  DEFAULT_MATERIAL_PARAMS,
   materialParamsFrom,
   colorToHexString,
   type MaterialParams,
 } from "./types";
+import { DEFAULT_MATERIAL_TYPE, materialTypeRegistry } from "./factory";
 
 /** 解析后的材质资产文档 */
 export interface MaterialDoc {
   name: string;
+  /** 材质类型（注册表 key；未知 key 渲染时回退 physical） */
+  type: string;
   params: MaterialParams;
 }
 
@@ -41,8 +45,12 @@ export function parseMaterialFile(text: string): MaterialDoc | null {
   const o = json as Record<string, unknown>;
   if (o.$type !== MAGIC_TYPE) return null;
   const name = typeof o.name === "string" && o.name.trim() ? o.name.trim() : "Material";
+  const type =
+    typeof o.materialType === "string" && o.materialType.trim()
+      ? o.materialType.trim()
+      : DEFAULT_MATERIAL_TYPE;
   const params = materialParamsFrom(o);
-  return { name, params };
+  return { name, type, params };
 }
 
 /** 把材质文档序列化为 .mat 文本（颜色写为 "#rrggbb" 便于人工阅读/编辑） */
@@ -52,6 +60,7 @@ export function serializeMaterialFile(doc: MaterialDoc): string {
     $type: MAGIC_TYPE,
     $ver: MAGIC_VER,
     name: doc.name,
+    materialType: doc.type || DEFAULT_MATERIAL_TYPE,
     color: colorToHexString(p.color),
     metalness: p.metalness,
     roughness: p.roughness,
@@ -89,7 +98,8 @@ export function serializeMaterialFile(doc: MaterialDoc): string {
   return JSON.stringify(json, null, 2);
 }
 
-/** 材质文档默认构造（参数取默认值） */
-export function defaultMaterialDoc(name: string): MaterialDoc {
-  return { name, params: { ...DEFAULT_MATERIAL_PARAMS } };
+/** 材质文档默认构造：参数取该类型工厂默认值；类型未注册回退默认类型 */
+export function defaultMaterialDoc(name: string, type = DEFAULT_MATERIAL_TYPE): MaterialDoc {
+  const def = materialTypeRegistry.getOrDefault(type);
+  return { name, type: def.key, params: def.defaultParams() };
 }

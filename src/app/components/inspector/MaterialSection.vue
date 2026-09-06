@@ -1,19 +1,19 @@
 <script setup lang="ts">
 /**
- * 材质（Material）卡片 —— 参数面向 three 的 PBR 材质（MeshPhysicalMaterial），
- * 与 Blender「原理化 BSDF」节点属性对应并按分组全量暴露（见 framework/material/defs）：
- *   基础 Base / 高光 Specular / 自发光 Emission / 清漆 Clearcoat /
- *   光泽 Sheen / 透射 Transmission / 高级 Advanced。
- * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）；
- * - 中部：当前材质资产的全部 PBR 参数（颜色用取色器、数值用 NumberField）；
- * - 内置材质只读，先「复制到项目材质」后才能编辑参数。
+ * 材质（Material）卡片 —— 参数按材质类型（工厂注册表 MaterialTypeDef）数据驱动渲染：
+ *   原理化 PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）
+ *   无光照 Unlit（MeshBasicMaterial，基础色/贴图/输出子集）。
+ * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 类型切换；
+ * - 中部：当前材质类型的全部参数（颜色用取色器、数值用 NumberField）；
+ * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换类型。
  */
-import { computed, reactive, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import {
-  MATERIAL_PARAM_GROUPS,
+  DEFAULT_MATERIAL_TYPE,
   colorToHexString,
   materialParamMax,
+  materialTypeRegistry,
   parseColorHex,
   type MaterialEnableKey,
   type MaterialParamDef,
@@ -31,6 +31,7 @@ const props = defineProps<{ node: MeshNode; rev?: number }>();
 const emit = defineEmits<{
   setMaterial: [rel: string];
   editParam: [field: MaterialParamKey | MaterialEnableKey, value: number | boolean | string];
+  changeType: [type: string];
   copyToProject: [];
 }>();
 
@@ -40,12 +41,19 @@ const assetsStore = getAssetsStore();
 /** 材质资产选项（内置 + 项目；与 Skybox 等共用同一实现） */
 const options = useMaterialAssetOptions(() => assetsStore.assets);
 
+/** 已注册材质类型（类型下拉选项；渲染分组也按当前类型 def 取） */
+const typeOptions = materialTypeRegistry.list();
+
 /** 本地镜像：展示源。切换材质/参数被编辑后由 syncFromEngine 刷新 */
 const local = reactive({ ...editorStore.engine.materials.paramsFor(props.node.material) });
+/** 当前材质类型（随资产切换/类型变更同步） */
+const matType = ref(DEFAULT_MATERIAL_TYPE);
 
 function syncFromEngine(): void {
-  const p = editorStore.engine.materials.paramsFor(props.node?.material ?? "");
+  const rel = props.node?.material ?? "";
+  const p = editorStore.engine.materials.paramsFor(rel);
   Object.assign(local, p);
+  matType.value = editorStore.engine.materials.typeFor(rel);
 }
 
 watch(
@@ -61,9 +69,19 @@ watch(
 const rel = computed(() => props.node.material);
 const isInternal = computed(() => isInternalAsset(props.node.material));
 
+/** 当前类型的参数分组（材质类型决定属性面板渲染哪些参数） */
+const groups = computed<MaterialParamGroup[]>(
+  () => materialTypeRegistry.getOrDefault(matType.value).paramGroups,
+);
+
 function onSelect(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;
   if (v && v !== props.node.material) emit("setMaterial", v);
+}
+
+function onTypeSelect(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value;
+  if (v && v !== matType.value) emit("changeType", v);
 }
 
 // —— 通用参数读写（按 defs 渲染，避免每个参数手写控件）——
@@ -152,7 +170,6 @@ function onTextureEdit(def: MaterialParamDef, e: Event): void {
   emit("editParam", def.key, v);
 }
 
-const groups = MATERIAL_PARAM_GROUPS;
 </script>
 
 <template>
@@ -167,6 +184,23 @@ const groups = MATERIAL_PARAM_GROUPS;
           <option v-if="options.project.length === 0" value="" disabled>（assets/materials 下暂无材质）</option>
           <option v-for="o in options.project" :key="o.rel" :value="o.rel">{{ o.name }}</option>
         </optgroup>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>材质类型</label>
+      <select
+        :value="matType"
+        :disabled="isInternal"
+        :title="isInternal ? '内置材质类型固定；请先复制到项目材质' : '切换后改写材质资产并重建视口材质'"
+        @change="onTypeSelect"
+      >
+        <option
+          v-if="!typeOptions.some((d) => d.key === matType)"
+          :value="matType"
+          disabled
+        >{{ matType }}（未注册类型）</option>
+        <option v-for="def in typeOptions" :key="def.key" :value="def.key">{{ def.label }}</option>
       </select>
     </div>
 

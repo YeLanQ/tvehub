@@ -31,6 +31,7 @@ import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { sanitizeAssetStem } from "../lib/materials";
+import { materialTypeRegistry } from "../../framework/material";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -269,9 +270,11 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建场景/子目录（assets/materials 等）；src 为脚本目录不提供
+      // assets 固定根目录内仍可新建场景/材质/子目录（assets/materials 等）；src 为脚本目录不提供
       const sc = sceneCreateItem(item.path);
       if (sc) items.push(sc);
+      const mc = materialCreateItem(item.path);
+      if (mc) items.push(mc);
       items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path));
     } else if (isInternal && item.kind !== "dir") {
@@ -288,6 +291,8 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
     if (targetDir != null) {
       const sc = sceneCreateItem(targetDir);
       if (sc) items.push(sc);
+      const mc = materialCreateItem(targetDir);
+      if (mc) items.push(mc);
       items.push({ label: "新建目录", onClick: () => void doNewFolder(targetDir) });
       items.push(menuSeparator(), ...importMenuItems(targetDir));
     }
@@ -315,6 +320,8 @@ function onContentContext(e: MouseEvent) {
   if (!isInternalAsset(currentDir.value)) {
     const sc = sceneCreateItem(currentDir.value);
     if (sc) items.push(sc);
+    const mc = materialCreateItem(currentDir.value);
+    if (mc) items.push(mc);
     items.push({ label: "新建目录", onClick: () => void doNewFolder(currentDir.value) });
     items.push(menuSeparator(), ...importMenuItems(currentDir.value));
   }
@@ -332,6 +339,8 @@ function onBlankContext(e: MouseEvent) {
   if (!isInternalAsset(currentDir.value)) {
     const sc = sceneCreateItem("assets");
     if (sc) items.push(sc);
+    const mc = materialCreateItem("assets");
+    if (mc) items.push(mc);
     items.push({ label: "新建目录", onClick: () => void doNewFolder("assets") });
     items.push(menuSeparator(), ...importMenuItems("assets"));
   }
@@ -377,6 +386,31 @@ async function doNewScene(dir: string) {
 function sceneCreateItem(dir: string): CtxMenuItem | null {
   if (!importAllowedDir(dir)) return null;
   return { label: "新建场景", onClick: () => void doNewScene(dir) };
+}
+
+/** 新建材质资产（到 dir；类型由工厂注册表提供默认参数；命名按类型名去重，无需弹窗） */
+async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir)
+      ? "src 目录不允许新建材质"
+      : "内置目录只读，不允许新建材质");
+    return;
+  }
+  await assetsStore.createMaterialAsset(root, dir, typeKey);
+}
+
+/** 目录允许时的“新建材质”子菜单（二级列出已注册材质类型；null 表示不提供） */
+function materialCreateItem(dir: string): CtxMenuItem | null {
+  if (!importAllowedDir(dir)) return null;
+  return {
+    label: "新建材质",
+    children: materialTypeRegistry.list().map((def) => ({
+      label: def.label,
+      onClick: () => void doNewMaterial(dir, def.key),
+    })),
+  };
 }
 
 async function doCopy(item: ChildEntry) {

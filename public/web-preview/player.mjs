@@ -41,6 +41,7 @@ const D2R = Math.PI / 180;
 
 // 材质参数兜底：与编辑器内置 internal/materials/Default.mat（含 PBR 默认）一致
 const MAT_DEFAULTS = {
+  type: "physical",
   color: 0x9aa4b2,
   metalness: 0.1,
   roughness: 0.75,
@@ -289,7 +290,9 @@ async function main() {
       if (!mat) continue;
       const m = materialParams.get(entry.json.material);
       if (!m) continue;
+      const basicOnly = mat.type === "MeshBasicMaterial"; // unlit：只支持基础色贴图 map
       for (const [field, srgb] of TEXTURE_CHANNELS) {
+        if (basicOnly && field !== "map") continue;
         const rel = m[field];
         if (!rel) continue;
         const tex = await loadImageTex(rel, srgb);
@@ -367,8 +370,25 @@ async function main() {
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
     else geom = new THREE.BoxGeometry(x, y, z);
 
-    // 材质按 .mat 资产引用解析（缺失回退默认参数）；three PBR（Principled 可映射项）
+    // 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退原理化 PBR。
+    // 透明/裁剪规则与编辑器一致：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪
     const m = materialParams.get(json.material) || MAT_DEFAULTS;
+    const f = {
+      transparent: m.opacity < 0.999 || (!!m.map && !(m.alphaClipThreshold > 0.0001)),
+      alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
+      wireframe: m.wireframe === true,
+    };
+    if (m.type === "unlit") {
+      // 无光照 Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
+      const mat = new THREE.MeshBasicMaterial({
+        color: m.color & 0xffffff,
+        opacity: m.opacity,
+        transparent: f.transparent,
+        alphaTest: f.alphaTest,
+        wireframe: f.wireframe,
+      });
+      return new THREE.Mesh(geom, mat);
+    }
     const mat = new THREE.MeshPhysicalMaterial({
       color: m.color & 0xffffff,
       metalness: m.metalness,
@@ -392,10 +412,9 @@ async function main() {
       iridescence: m.iridescence,
       iridescenceIOR: m.iridescenceIOR,
       opacity: m.opacity,
-      transparent:
-        m.opacity < 0.999 || (m.map && !(m.alphaClipThreshold > 0.0001)),
-      alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
-      wireframe: m.wireframe === true,
+      transparent: f.transparent,
+      alphaTest: f.alphaTest,
+      wireframe: f.wireframe,
     });
     return new THREE.Mesh(geom, mat);
   }
@@ -456,6 +475,7 @@ async function main() {
         if (r.ok) {
           const j = await r.json();
           materialParams.set(rel, {
+            type: typeof j.materialType === "string" && j.materialType ? j.materialType : "physical",
             color: matColor(j.color, MAT_DEFAULTS.color),
             metalness: u01(j.metalness, MAT_DEFAULTS.metalness),
             roughness: u01(j.roughness, MAT_DEFAULTS.roughness),

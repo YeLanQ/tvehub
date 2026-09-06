@@ -2,6 +2,7 @@
   "$type": "material",
   "$ver": 1,
   "name": "Default",
+  "materialType": "physical",
   "color": "#9aa4b2",
   "metalness": 0.1,
   "roughness": 0.75,

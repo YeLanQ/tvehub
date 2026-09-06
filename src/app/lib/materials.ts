@@ -8,11 +8,15 @@ import { isInternalAsset } from "../../lib/internal-assets";
 import {
   DEFAULT_MATERIAL_PARAMS,
   DEFAULT_MATERIAL_REL,
+  DEFAULT_MATERIAL_TYPE,
   MATERIAL_EXT,
+  defaultMaterialDoc,
   materialFileStem,
   materialParamsFrom,
+  materialTypeRegistry,
   parseMaterialFile,
   serializeMaterialFile,
+  type MaterialDoc,
   type MaterialParams,
 } from "../../framework/material";
 
@@ -30,25 +34,34 @@ export async function readMaterialText(
   }
 }
 
+/** 读取并解析材质文档（类型 + 参数；失败返回 null） */
+export async function loadMaterialDoc(
+  root: string | null,
+  rel: string,
+): Promise<MaterialDoc | null> {
+  const text = await readMaterialText(root, rel);
+  if (text == null) return null;
+  return parseMaterialFile(text);
+}
+
 /** 读取并解析材质参数（失败返回 null） */
 export async function loadMaterialParams(
   root: string | null,
   rel: string,
 ): Promise<MaterialParams | null> {
-  const text = await readMaterialText(root, rel);
-  if (text == null) return null;
-  const doc = parseMaterialFile(text);
+  const doc = await loadMaterialDoc(root, rel);
   return doc ? doc.params : null;
 }
 
-/** 写入材质资产（项目 assets/…）；失败抛错由调用方处理 */
+/** 写入材质资产（项目 assets/…）；type 缺省为默认类型；失败抛错由调用方处理 */
 export async function saveMaterialParams(
   root: string,
   rel: string,
   name: string,
   params: MaterialParams,
+  type = DEFAULT_MATERIAL_TYPE,
 ): Promise<void> {
-  const content = serializeMaterialFile({ name, params });
+  const content = serializeMaterialFile({ name, type, params });
   await api.writeText(root, rel, content);
 }
 
@@ -62,18 +75,26 @@ export async function listProjectMaterialRels(root: string): Promise<string[]> {
   }
 }
 
-/** 把引用路径的材质复制为项目材质资产（internal → assets/materials），返回新相对路径 */
+/** 把引用路径的材质复制为项目材质资产（internal → assets/materials），返回新相对路径。
+ * 类型与参数随源文档保留（unlit 复制后仍是 unlit）。 */
 export async function duplicateMaterialToProject(
   root: string,
   srcRel: string,
   preferName: string,
   taken: string[],
 ): Promise<string | null> {
-  const params = (await loadMaterialParams(root, srcRel)) ?? { ...DEFAULT_MATERIAL_PARAMS };
+  const doc = (await loadMaterialDoc(root, srcRel)) ?? defaultMaterialDoc(materialFileStem(srcRel));
   const name = sanitizeAssetStem(preferName || materialFileStem(srcRel));
   const rel = suggestMaterialRel(taken, name);
-  await saveMaterialParams(root, rel, name, params);
+  await saveMaterialParams(root, rel, name, doc.params, doc.type);
   return rel;
+}
+
+/** 生成新建材质的 .mat 文件内容（显示名 + 该类型的工厂默认参数）。
+ * typeKey 未注册时回退默认类型。目录选择与命名去重由调用方（assets store）处理。 */
+export function buildMaterialContent(name: string, typeKey: string): string {
+  const def = materialTypeRegistry.getOrDefault(typeKey);
+  return serializeMaterialFile({ name, type: def.key, params: def.defaultParams() });
 }
 
 /** 资产名规范化（去掉扩展名与非法字符；空值回退 "Material"） */

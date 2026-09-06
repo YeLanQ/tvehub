@@ -1,7 +1,9 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
+import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
 import { loadAssetTemplate } from "../lib/asset-templates";
+import { buildMaterialContent } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { logStore } from "./log";
 
@@ -20,6 +22,7 @@ export interface AssetsStore {
   moveTo: (root: string, rel: string, destDir: string) => Promise<string | null>;
   importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
   createSceneAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
+  createMaterialAsset: (root: string, destDir: string, typeKey: string) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -223,6 +226,36 @@ export function getAssetsStore(): AssetsStore {
         return rel;
       } catch (e) {
         logStore.log("error", `新建场景失败: ${e}`);
+        return null;
+      }
+    },
+    async createMaterialAsset(root, destDir, typeKey) {
+      const def = materialTypeRegistry.getOrDefault(typeKey);
+      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+        logStore.log("warn", "内置目录与 src 目录不允许新建材质");
+        return null;
+      }
+      // 显示名 = 类型名（"原理化 PBR"…），目录内去重
+      const prefix = destDir ? `${destDir}/` : "";
+      let name = def.label;
+      let n = 2;
+      while (
+        state.assets.some(
+          (a) => a.path.toLowerCase() === `${prefix}${name}${MATERIAL_EXT}`.toLowerCase(),
+        )
+      ) {
+        name = `${def.label} ${n++}`;
+      }
+      const rel = `${prefix}${name}${MATERIAL_EXT}`;
+      try {
+        // 材质默认参数以工厂注册表为单一来源（不走模板文件，避免两处维护）
+        const content = buildMaterialContent(name, def.key);
+        await api.writeText(root, rel, content);
+        await store.load(root);
+        logStore.log("success", `已新建材质: ${rel}`);
+        return rel;
+      } catch (e) {
+        logStore.log("error", `新建材质失败: ${e}`);
         return null;
       }
     },
