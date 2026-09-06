@@ -6,6 +6,7 @@ mod asset_protocol;
 mod build;
 mod internal;
 mod js_minify;
+mod model_bin;
 mod preview;
 mod project;
 mod scene;

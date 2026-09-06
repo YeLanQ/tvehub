@@ -128,6 +128,8 @@ export interface BuildResult {
   single_page: boolean;
   gzip: boolean;
   release: boolean;
+  /** 发布模式转为 LQENBIN1 .bin 的模型（项目相对路径） */
+  bin_converted: string[];
   assets_packed: number;
   missing: string[];
   message: string;

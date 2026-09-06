@@ -53,7 +53,53 @@ function resolveSiblingUrl(modelDir, url) {
   return `./${parts.join("/")}`;
 }
 
-/** 按扩展名解析模型二进制 → { template, clips }（与编辑器 loaders.ts 同一套规则） */
+/**
+ * 发布模式 .bin 模型（LQENBIN1 容器：8 字节魔数 + u32 kind + u32 len + payload）解包：
+ * - kind=1：payload 为原始 GLB 字节（含内嵌材质/动画）→ 交 GLTFLoader；
+ * - kind=0：payload 为 OBJ 顶点网格（u32 verts/norms/uvs/faces + f32 数组 + u32 索引）
+ *   → 重建 BufferGeometry（无法线时 computeVertexNormals，默认材质）。
+ */
+function parseBinModel(buffer) {
+  const u8 = new Uint8Array(buffer);
+  if (u8.length < 28) throw new Error(".bin 模型数据不完整");
+  const magic = String.fromCharCode(u8[0], u8[1], u8[2], u8[3], u8[4], u8[5], u8[6], u8[7]);
+  if (magic !== "LQENBIN1") throw new Error(".bin 模型魔数不匹配");
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const kind = dv.getUint32(8, true);
+  if (kind === 1) {
+    return { kind: 1, glb: u8.slice(16) }; // slice 拷贝出独立 buffer（offset=0）
+  }
+  if (kind === 0) {
+    const verts = dv.getUint32(12, true);
+    const norms = dv.getUint32(16, true);
+    const uvs = dv.getUint32(20, true);
+    const faces = dv.getUint32(24, true);
+    let off = 28;
+    const pos = new Float32Array(u8.buffer, u8.byteOffset + off, verts * 3);
+    off += verts * 12;
+    const hasNorms = norms > 0;
+    const nor = hasNorms ? new Float32Array(u8.buffer, u8.byteOffset + off, norms * 3) : null;
+    off += norms * 12;
+    const hasUvs = uvs > 0;
+    const uv = hasUvs ? new Float32Array(u8.buffer, u8.byteOffset + off, uvs * 2) : null;
+    off += uvs * 8;
+    const idx = new Uint32Array(u8.buffer, u8.byteOffset + off, faces * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    if (nor) geometry.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+    if (uv) geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+    if (!hasNorms) geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xffffff }));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return { kind: 0, template: mesh };
+  }
+  throw new Error("不支持的 .bin 模型 kind: " + kind);
+}
+
+/** 按扩展名解析模型二进制 → { template, clips }（与编辑器 loaders.ts 同一套规则）；
+ *  发布模式的 .bin先解包：kind=1 走 GLTFLoader，kind=0 直接重建网格 */
 async function parseModel(rel, buffer) {
   const ext = rel.includes(".") ? rel.split(".").pop().toLowerCase() : "";
   const dir = modelDirOf(rel);
@@ -63,6 +109,21 @@ async function parseModel(rel, buffer) {
     return resolved ?? url;
   });
   const resourcePath = dir ? `${dir}/` : "";
+  if (ext === "bin") {
+    const parsed = parseBinModel(buffer);
+    if (parsed.kind === 0) {
+      return { template: parsed.template, clips: [] };
+    }
+    const gltf = await new Promise((resolve, reject) => {
+      new GLTFLoader(manager).parse(
+        parsed.glb,
+        resourcePath,
+        (gltf) => resolve(gltf),
+        (err) => reject(new Error(`glTF 解析失败: ${String(err ?? "未知错误")}`)),
+      );
+    });
+    return { template: gltf.scene, clips: gltf.animations ?? [] };
+  }
   if (ext === "glb" || ext === "gltf") {
     const gltf = await new Promise((resolve, reject) => {
       new GLTFLoader(manager).parse(

@@ -55,6 +55,8 @@ pub struct BuildResult {
     pub gzip: bool,
     /// 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩
     pub release: bool,
+    /// 发布模式转为 LQENBIN1 .bin 的模型（项目相对路径）
+    pub bin_converted: Vec<String>,
     pub assets_packed: usize,
     pub missing: Vec<String>,
     pub message: String,
@@ -97,17 +99,16 @@ fn fallback_uid(rel: &str) -> String {
     format!("{h:016x}")
 }
 
-/// uid 新相对路径：保留目录与扩展名，仅换文件名（player 按扩展名分派解析器）
-fn uid_rel(rel: &str, uid: &str) -> String {
-    let (dir, file) = match rel.rfind('/') {
-        Some(i) => (&rel[..=i], &rel[i + 1..]),
-        None => ("", rel),
+/// uid 新相对路径：保留目录，替换扩展名（发布模式模型统一 .bin）
+fn uid_rel_ext(rel: &str, uid: &str, ext: &str) -> String {
+    let dir = match rel.rfind('/') {
+        Some(i) => &rel[..=i],
+        None => "",
     };
-    let ext = match file.rfind('.') {
-        Some(_) => format!(".{}", file.rsplit('.').next().unwrap_or("")),
-        None => String::new(),
-    };
-    format!("{dir}{uid}{ext}")
+    if ext.is_empty() {
+        return format!("{dir}{uid}");
+    }
+    format!("{dir}{uid}.{ext}")
 }
 
 /// 项目资产的 .meta uuid（internal 内置资产无 .meta，返回 None 走哈希回退）
@@ -166,14 +167,15 @@ fn rewrite_mat_text(text: &str, renames: &HashMap<String, String>) -> String {
     v.to_string()
 }
 
-/// 发布模式处理：为打包资产分配 uid（.meta uuid 优先，否则路径哈希；保留目录与
-/// 扩展名）、重写场景与材质引用、场景/材质 JSON 紧凑化。返回重命名表。
+/// 发布模式处理：模型二进制化（LQENBIN1）+ 资产 uid 重命名（.meta uuid 优先，否则
+/// 路径哈希）+ 重写场景与材质引用 + 场景/材质 JSON 紧凑化。返回重命名表。
 /// 场景 JSON 文件名保持不变（config.scenes 按名引用，是产物公开入口）。
 fn apply_release(
     root_path: &Path,
     files: &mut HashMap<String, String>,
     binaries: &mut HashMap<String, Vec<u8>>,
     scene_texts: &mut [(String, String)],
+    bin_converted: &mut Vec<String>,
 ) -> HashMap<String, String> {
     let mut renames: HashMap<String, String> = HashMap::new();
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -188,24 +190,59 @@ fn apply_release(
         uid
     };
 
-    // 重命名表（运行时代码与入口页除外）
+    // 模型二进制化（LQENBIN1）：glb/gltf/obj → <uid>.bin；被内联的外部兄弟文件
+    // （.gltf 的 .bin/贴图）从产物剔除（未被他处引用时）
+    let mut inlined_sibs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut model_bins: HashMap<String, Vec<u8>> = HashMap::new(); // 旧 rel → LQENBIN1 字节
+    let mut model_rels: Vec<String> = binaries
+        .keys()
+        .filter(|k| is_model_ext(k))
+        .cloned()
+        .collect();
+    model_rels.sort();
+    for rel in &model_rels {
+        if let Some((bin, inlined)) = crate::model_bin::convert_model_to_bin(rel, binaries) {
+            model_bins.insert(rel.clone(), bin);
+            for s in inlined {
+                inlined_sibs.insert(s);
+            }
+        }
+    }
+
+    // 重命名表（运行时代码与入口页除外；被内联兄弟不打包；模型目标扩展名 .bin）
     let asset_rels: Vec<String> = files
         .keys()
         .chain(binaries.keys())
-        .filter(|rel| !is_runtime_code(rel))
+        .filter(|rel| !is_runtime_code(rel) && !inlined_sibs.contains(*rel))
         .cloned()
         .collect();
     for rel in asset_rels {
-        let new_rel = uid_rel(&rel, &uid_for(&rel));
+        let target_ext = if model_bins.contains_key(&rel) {
+            "bin".to_string()
+        } else {
+            rel_ext(&rel)
+        };
+        let new_rel = uid_rel_ext(&rel, &uid_for(&rel), &target_ext);
         renames.insert(rel, new_rel);
     }
+    bin_converted.extend(model_bins.keys().cloned());
 
-    // 键重命名
+    // 被内联兄弟：若未被他处材质文本引用则移除（不进产物）
+    for s in &inlined_sibs {
+        let mat_refs_it = files.values().any(|t| t.contains(s));
+        if !mat_refs_it {
+            binaries.remove(s);
+            files.remove(s);
+        }
+    }
+
+    // 键重命名 + 模型字节替换为 LQENBIN1
     for (old, new) in &renames {
         if let Some(v) = files.remove(old) {
             files.insert(new.clone(), v);
         }
         if let Some(v) = binaries.remove(old) {
+            let v = model_bins.get(old).cloned().unwrap_or(v);
             binaries.insert(new.clone(), v);
         }
     }
@@ -226,6 +263,21 @@ fn apply_release(
     }
 
     renames
+}
+
+fn is_model_ext(rel: &str) -> bool {
+    matches!(
+        rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
+        "glb" | "gltf" | "obj"
+    )
+}
+
+fn rel_ext(rel: &str) -> String {
+    let file = rel.rsplit('/').next().unwrap_or(rel);
+    match file.rfind('.') {
+        Some(_) => file.rsplit('.').next().unwrap_or("").to_ascii_lowercase(),
+        None => String::new(),
+    }
 }
 
 /// 归档帧格式：u32 条数(LE) + 每条 [u32 pathLen][path][u32 dataLen][data]，整体 gzip
@@ -378,9 +430,16 @@ fn build_export_impl(
         packed[i].file = file.clone();
     }
 
-    // 发布模式：资源 uid 重命名 + 场景/材质引用重写 + JSON 压缩
+    // 发布模式：模型二进制化（LQENBIN1）+ 资源 uid 重命名 + 场景/材质引用重写 + JSON 压缩
+    let mut bin_converted: Vec<String> = Vec::new();
     if release {
-        apply_release(&root_path, &mut files, &mut binaries, &mut scene_texts);
+        apply_release(
+            &root_path,
+            &mut files,
+            &mut binaries,
+            &mut scene_texts,
+            &mut bin_converted,
+        );
     }
 
     // config = 项目配置（设计分辨率/缩放模式/渲染合成等，player 舞台直接消费）
@@ -485,6 +544,14 @@ fn build_export_impl(
     };
     let output_dir = out.display().to_string();
     let missing_n = missing.len();
+    let bin_n = bin_converted.len();
+    let mut message = String::from("构建完成");
+    if bin_n > 0 {
+        message.push_str(&format!("，模型→.bin {bin_n} 个"));
+    }
+    if missing_n > 0 {
+        message.push_str(&format!("（{} 项缺失资产被跳过）", missing_n));
+    }
     Ok(BuildResult {
         ok: true,
         channel,
@@ -495,13 +562,10 @@ fn build_export_impl(
         single_page,
         gzip,
         release,
+        bin_converted,
         assets_packed,
         missing: missing.clone(),
-        message: if missing_n > 0 {
-            format!("构建完成（{} 项缺失资产被跳过）", missing_n)
-        } else {
-            "构建完成".to_string()
-        },
+        message,
     })
 }
 
@@ -624,7 +688,7 @@ mod tests {
     }
 
     /// 发布模式：资产 uid 重命名（.meta uuid 优先/哈希回退）、场景与材质引用重写、
-    /// JSON 紧凑化；未发布模式保持原名。
+    /// JSON 紧凑化、模型二进制化（LQENBIN1，.gltf 外部兄弟内联剔除）。
     #[test]
     fn build_export_release_renames_and_rewrites() {
         let base = std::env::temp_dir().join(format!("tve-build-rel-{}", std::process::id()));
@@ -632,6 +696,7 @@ mod tests {
         let root = base.join("proj");
         fs::create_dir_all(root.join("assets/materials")).unwrap();
         fs::create_dir_all(root.join("assets/textures")).unwrap();
+        fs::create_dir_all(root.join("assets/models")).unwrap();
 
         // 材质有 .meta（uuid 重命名）；贴图无 .meta（路径哈希回退）
         fs::write(
@@ -645,12 +710,27 @@ mod tests {
         .unwrap();
         fs::write(root.join("assets/materials/M.mat.meta"), r#"{"uuid":"11111111-2222-3333-4444-555555555555"}"#).unwrap();
         fs::write(root.join("assets/textures/a.png"), [9u8; 8]).unwrap();
+
+        // 模型：glb（kind1 包装）/ gltf（外部 .bin+贴图内联）/ obj（kind0 网格）
+        fs::write(root.join("assets/models/cube.glb"), b"glTFfake-glb-bytes").unwrap();
+        fs::write(
+            root.join("assets/models/tree.gltf"),
+            r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"tree.bin","byteLength":4}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":4}],"images":[{"uri":"tree.png"}]}"#,
+        ).unwrap();
+        fs::write(root.join("assets/models/tree.gltf.meta"), r#"{"uuid":"99999999-8888-7777-6666-555555555555"}"#).unwrap();
+        fs::write(root.join("assets/models/tree.bin"), [1u8, 2, 3, 4]).unwrap();
+        fs::write(root.join("assets/models/tree.png"), [7u8; 4]).unwrap();
+        fs::write(root.join("assets/models/rock.obj"), "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+
         let scene = r#"{
   "type": "scene",
   "root": {
     "type": "node",
     "children": [
-      { "type": "meshNode", "source": "primitive", "material": "assets/materials/M.mat" }
+      { "type": "meshNode", "source": "primitive", "material": "assets/materials/M.mat" },
+      { "type": "meshNode", "source": "model", "model": "assets/models/tree.gltf", "material": "assets/materials/M.mat" },
+      { "type": "meshNode", "source": "model", "model": "assets/models/cube.glb" },
+      { "type": "meshNode", "source": "model", "model": "assets/models/rock.obj" }
     ]
   }
 }"#;
@@ -715,6 +795,31 @@ mod tests {
         assert!(!helper_min.contains(" = 1;"), "libs 脚本空白已压缩");
         let three_min = fs::read_to_string(out.join("libs/three.module.min.js")).unwrap();
         assert!(three_min.contains("/*already minified*/"), "*.min.* 不重复压缩");
+
+        // 模型二进制化：glb → kind1；gltf → 自包含 glb → kind1（兄弟文件剔除）；obj → kind0
+        assert!(!out.join("assets/models/cube.glb").exists(), "glb 原名不保留");
+        assert!(!out.join("assets/models/tree.gltf").exists());
+        assert!(!out.join("assets/models/rock.obj").exists());
+        assert!(!out.join("assets/models/tree.bin").exists(), "gltf 外部 .bin 已内联剔除");
+        assert!(!out.join("assets/models/tree.png").exists(), "gltf 外部贴图已内联剔除");
+        let cube_bin = fs::read(out.join("assets/models/").join(format!("{}.bin", fallback_uid("assets/models/cube.glb")))).unwrap();
+        assert_eq!(&cube_bin[0..8], b"LQENBIN1");
+        assert_eq!(u32::from_le_bytes(cube_bin[8..12].try_into().unwrap()), 1, "glb → kind1");
+        assert_eq!(&cube_bin[16..20], b"glTF", "kind1 payload 为原始 GLB");
+        let tree_bin = fs::read(out.join("assets/models/99999999-8888-7777-6666-555555555555.bin")).unwrap();
+        assert_eq!(&tree_bin[0..8], b"LQENBIN1");
+        assert_eq!(u32::from_le_bytes(tree_bin[8..12].try_into().unwrap()), 1, "gltf → 自包含 glb → kind1");
+        assert_eq!(&tree_bin[16..20], b"glTF");
+        // 内嵌 .bin 数据（[1,2,3,4]）出现在自包含 GLB 的 BIN chunk 中
+        assert!(tree_bin.windows(4).any(|w| w == [1, 2, 3, 4]));
+        let rock_bin = fs::read(out.join("assets/models/").join(format!("{}.bin", fallback_uid("assets/models/rock.obj")))).unwrap();
+        assert_eq!(u32::from_le_bytes(rock_bin[8..12].try_into().unwrap()), 0, "obj → kind0 网格");
+        assert_eq!(u32::from_le_bytes(rock_bin[24..28].try_into().unwrap()), 1, "1 个三角面");
+        // 场景引用重写为 .bin 路径
+        assert!(scene_text.contains(&format!("assets/models/{}.bin", fallback_uid("assets/models/cube.glb"))));
+        assert!(scene_text.contains("assets/models/99999999-8888-7777-6666-555555555555.bin"));
+        assert!(!scene_text.contains("tree.gltf") && !scene_text.contains("rock.obj"));
+        assert_eq!(result.bin_converted.len(), 3, "三个模型均转换");
         let _ = fs::remove_dir_all(&base);
     }
 }

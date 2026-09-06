@@ -402,6 +402,8 @@ watch(projectScenes, (next, prev) => {
               <div class="bp-result-line bp-muted">
                 {{ result.single_page ? "单页" : "多文件" }}{{ result.gzip ? " · gzip" : "" }}{{
                   result.release ? " · 发布" : ""
+                }}{{
+                  result.bin_converted.length ? ` · 模型→bin ${result.bin_converted.length}` : ""
                 }}
                 · 场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景
                 {{ result.main_scene_name || result.main_scene || "—" }}

@@ -204,7 +204,7 @@ pub async fn export_web_preview_from_scene(
 
 /// .gltf 内外部引用（buffers[].uri / images[].uri）→ 模型同目录的资产相对路径。
 /// data:/绝对地址、反斜杠与越出资产根（..）的引用返回 None（跳过不拷贝）。
-fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
+pub(crate) fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
     if uri.is_empty() || uri.contains('\\') || uri.contains("://") || uri.starts_with("data:") {
         return None;
     }
