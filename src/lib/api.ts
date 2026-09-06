@@ -41,25 +41,39 @@ export const api = {
   readInternalAsset: (rel: string) => invoke<string>("read_internal_asset", { rel }),
   /** 扫描内置资源目录（internal/…），返回以 "internal/" 为根的资产条目（LQEN 同款：真实目录运行时扫描） */
   scanInternalAssets: () => invoke<AssetEntry[]>("scan_internal_assets"),
-  /** 读取内置二进制资源（internal/…，如贴图），返回 base64 */
+  /** 读取内置二进制资源（internal/…，如贴图；复制内置资产到项目等一次性操作用），返回 base64 */
   readInternalBinary: (rel: string) => invoke<string>("read_internal_binary", { rel }),
-  /** 读取项目内二进制文件（纹理等图片），返回 base64 文本 */
-  readAssetBinary: (root: string, rel: string) =>
-    invoke<string>("read_asset_binary", { root, rel }),
   /** 写入项目内二进制文件（base64 内容；复制内置贴图到项目等用） */
   writeAssetBinary: (root: string, rel: string, contentB64: string) =>
     invoke<void>("write_asset_binary", { root, rel, contentB64 }),
+  /** 更新 asset:// 协议的当前项目根（打开项目时必须先调用；null = 关闭项目） */
+  setCurrentProjectRoot: (root: string | null) =>
+    invoke<void>("set_current_project_root", { root }),
+  /** 读取并解析 .mat 材质资产（internal/项目路由与解析均在后端；缺失返回 null） */
+  materialRead: (root: string, rel: string) =>
+    invoke<{ name: string; materialType: string; params: Record<string, unknown> } | null>(
+      "material_read",
+      { root, rel },
+    ),
+  /** 序列化并写入材质资产（后端持有 .mat 格式；自动补 .meta） */
+  materialWrite: (
+    root: string,
+    rel: string,
+    name: string,
+    materialType: string,
+    params: Record<string, unknown>,
+  ) => invoke<void>("material_write", { root, rel, name, materialType, params }),
+  /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */
+  materialDuplicate: (root: string, srcRel: string, preferName: string) =>
+    invoke<string>("material_duplicate", { root, srcRel, preferName }),
+  /** 从当前场景导出网页预览产物（scene.json/.mat/贴图由后端直接读盘写入；
+   *  files 仅为 WebView 打包的网页运行时 + config.json 文本） */
+  exportWebPreviewFromScene: (root: string, sceneRel: string, files: Record<string, string>) =>
+    invoke<void>("export_web_preview_from_scene", { root, sceneRel, files }),
   /** 导入选择对话框：多选文件（资产面板「导入」） */
   pickImportFiles: (title?: string) => invoke<string[]>("pick_import_files", { title }),
   /** 导入选择对话框：多选文件夹（资产面板「导入目录」） */
   pickImportFolders: (title?: string) => invoke<string[]>("pick_import_folders", { title }),
-  /** 导出网页预览产物（相对路径 → 内容）到 <root>/.tmp/web-preview（不启停服务器）；
-   *  binaries 为相对路径 → base64 的二进制资产（贴图等） */
-  exportWebPreview: (
-    root: string,
-    files: Record<string, string>,
-    binaries?: Record<string, string>,
-  ) => invoke<void>("export_web_preview", { root, files, binaries: binaries ?? {} }),
   /** 启动网页预览本地静态服务（服务 <root>/.tmp/web-preview），返回 base URL */
   startWebPreviewServer: (root: string) => invoke<string>("start_web_preview_server", { root }),
   /** 停止网页预览本地静态服务（释放端口） */

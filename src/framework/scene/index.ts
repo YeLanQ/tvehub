@@ -1,6 +1,16 @@
-export { SceneGraph } from "./SceneGraph";
-export type { SceneChange, SceneChangeKind } from "./SceneGraph";
-export { ScenePrototype } from "./ScenePrototype";
+export { SceneClient, HistoryView } from "./SceneClient";
+export type {
+  GraphLike,
+  SceneChange,
+  SceneChangeKind,
+  SceneChangedEvent,
+  SceneHistoryState,
+  SceneTransport,
+  TransformSnapshot,
+  MoveTarget,
+  HistoryEvents,
+} from "./SceneClient";
+export { ScenePrototype, createDefaultMetadata, createDefaultSettings } from "./ScenePrototype";
 export type {
   SceneMetadata,
   SceneRenderingSettings,

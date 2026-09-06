@@ -18,10 +18,8 @@ export {
 export type { MaterialParams, MaterialParamKey, TextureParamKey, MaterialEnableKey } from "./types";
 export { MATERIAL_PARAM_GROUPS, materialParamDef } from "./defs";
 export type { MaterialParamDef, MaterialParamGroup, MaterialParamKind } from "./defs";
-export { defaultMaterialDoc, parseMaterialFile, serializeMaterialFile } from "./materialFile";
-export type { MaterialDoc } from "./materialFile";
 export { MaterialManager } from "./MaterialManager";
-export type { MaterialChangeListener, MaterialTextFetcher } from "./MaterialManager";
+export type { MaterialChangeListener, MaterialDoc, MaterialDocFetcher } from "./MaterialManager";
 export {
   DEFAULT_MATERIAL_TYPE,
   MaterialTypeRegistry,
@@ -30,4 +28,3 @@ export {
   materialTypeRegistry,
 } from "./factory";
 export type { MaterialTypeDef, MaterialTextureLoader, OutlineConfig } from "./factory";
-export { collectMeshMaterialRefs } from "./collect";

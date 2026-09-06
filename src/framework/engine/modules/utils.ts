@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { TransformSnapshot } from "../../command/commands";
+import type { TransformSnapshot } from "../../scene/SceneClient";
 import type { Vec3 } from "../../prototype/types";
 import type { LightNode } from "../../prototype/nodes/LightNode";
 

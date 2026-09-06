@@ -18,8 +18,6 @@ export interface ProjectStore {
   recent: RecentProject[];
   view: "home" | "editor";
   loading: boolean;
-  /** 当前打开项目的主场景 JSON 文本（打开/切换场景时更新） */
-  sceneJson: string | null;
   /** 当前打开场景的相对路径（默认 assets/Main.scene；双击 .scene 资产切换） */
   sceneRel: string;
   /** 当前打开项目的根路径（资产扫描用） */
@@ -73,7 +71,6 @@ export function getProjectStore(): ProjectStore {
     recent: [] as RecentProject[],
     view: "home" as "home" | "editor",
     loading: false,
-    sceneJson: null as string | null,
     currentSceneRel: DEFAULT_SCENE_REL as string,
     currentPath: null as string | null,
     projectName: null as string | null,
@@ -178,9 +175,6 @@ export function getProjectStore(): ProjectStore {
     get loading() {
       return state.loading;
     },
-    get sceneJson() {
-      return state.sceneJson;
-    },
     get sceneRel() {
       return state.currentSceneRel;
     },
@@ -264,6 +258,8 @@ export function getProjectStore(): ProjectStore {
       state.loading = true;
       try {
         const info = await invoke<RecentProject>("open_project", { path });
+        // asset:// 协议的项目根必须先于任何资产请求就位（模型/贴图直读依赖）
+        await api.setCurrentProjectRoot(info.path);
         await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
         await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
@@ -288,6 +284,7 @@ export function getProjectStore(): ProjectStore {
           templateId,
           files,
         });
+        await api.setCurrentProjectRoot(info.path);
         await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
         await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
@@ -312,15 +309,9 @@ export function getProjectStore(): ProjectStore {
         return null;
       }
     },
-    async loadScene(path, rel = DEFAULT_SCENE_REL) {
-      try {
-        const text = await api.readText(path, rel);
-        state.sceneJson = text;
-        state.currentSceneRel = rel;
-      } catch (e) {
-        console.error("Failed to read project scene:", e);
-        state.sceneJson = null;
-      }
+    async loadScene(_path, rel = DEFAULT_SCENE_REL) {
+      // 场景内容由后端会话持有（scene_open 读盘/迁移/建图）；这里只记录当前场景指针
+      state.currentSceneRel = rel;
     },
     async openScene(rel) {
       const root = state.currentPath;
@@ -329,20 +320,13 @@ export function getProjectStore(): ProjectStore {
         console.warn("不能打开内置/脚本路径作为场景:", rel);
         return false;
       }
-      try {
-        const text = await api.readText(root, rel);
-        state.sceneJson = text;
-        state.currentSceneRel = rel;
-        // 编辑器已挂载：直接把场景重载进引擎（层级/视口切换），无需重进编辑器
-        if (state.view === "editor") {
-          const { reloadEditorScene } = await import("../stores/editor");
-          await reloadEditorScene(root, text);
-        }
-        return true;
-      } catch (e) {
-        console.error("打开场景失败:", rel, e);
-        return false;
+      state.currentSceneRel = rel;
+      // 编辑器已挂载：后端重装会话 + 镜像重建（层级/视口切换），无需重进编辑器
+      if (state.view === "editor") {
+        const { reloadEditorScene } = await import("../stores/editor");
+        await reloadEditorScene(root, rel);
       }
+      return true;
     },
   };
 

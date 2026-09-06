@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
-import type { SceneGraph, SceneChange } from "../../scene/SceneGraph";
+import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import { createNodeHelper } from "./helpers/createNodeHelper";
 import type { HelperContext, NodeHelper } from "./helpers/types";
 
@@ -40,7 +40,7 @@ export class HelperSystem {
   }
 
   /** 全量重建（场景替换/加载后调用） */
-  rebuildAll(graph: SceneGraph, objectMap: Map<string, THREE.Object3D>): void {
+  rebuildAll(graph: GraphLike, objectMap: Map<string, THREE.Object3D>): void {
     this.clearAll();
     for (const node of graph.all()) {
       if (createNodeHelper(node)) this.ensureEntry(node, objectMap);
@@ -48,7 +48,7 @@ export class HelperSystem {
   }
 
   /** 图事件增量维护 */
-  onGraphChange(c: SceneChange, graph: SceneGraph, objectMap: Map<string, THREE.Object3D>): void {
+  onGraphChange(c: SceneChange, graph: GraphLike, objectMap: Map<string, THREE.Object3D>): void {
     if (c.kind === "add") {
       const node = graph.get(c.nodeId);
       if (node) this.ensureEntry(node, objectMap);

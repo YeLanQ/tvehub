@@ -1,37 +1,12 @@
-// 场景保存工具：把当前编辑器场景图写回当前打开的场景文件（默认 assets/Main.scene）。
-// 读取上次场景文件内容（保留 metadata/settings 等），仅替换 root 为引擎场景图序列化结果。
+// 场景保存工具：后端持有权威状态，序列化（保留 metadata/settings 信封）与
+// 写盘（含 .meta 保障、脏标记清除）全部在 Rust 侧完成，前端只触发命令。
 
-import { invoke } from "@tauri-apps/api/core";
-import { getProjectStore } from "../stores/project";
-import { getEditorStore } from "../stores/editor";
-
-/** 默认主场景相对路径（打开项目时加载；之后保存到当前打开场景） */
-export const MAIN_SCENE_REL = "assets/Main.scene";
+import { sceneApi } from "../../lib/scene-api";
 
 /**
- * 保存当前场景到当前打开的场景文件（sceneRel，缺省 assets/Main.scene）。
- * @throws 未打开项目或写入失败时抛错
+ * 保存当前场景到当前打开的场景文件（sceneRel）。
+ * @throws 未打开场景或写入失败时抛错（后端错误信息透传）
  */
 export async function saveCurrentSceneToMain(): Promise<void> {
-  const projectStore = getProjectStore();
-  const path = projectStore.currentPath;
-  if (!path) throw new Error("尚未打开项目，无法保存场景");
-
-  let data: unknown = null;
-  try {
-    data = JSON.parse(projectStore.sceneJson ?? "");
-  } catch {
-    data = null;
-  }
-  const out: Record<string, unknown> = {
-    ...(data && typeof data === "object" ? (data as object) : {}),
-  };
-  // 场景图为空时（无根节点）不覆盖 root，避免把有效场景写成空场景丢失内容。
-  const rootJson = getEditorStore().engine.graph.toJSON();
-  if (rootJson) out.root = rootJson;
-  await invoke("write_text", {
-    root: path,
-    rel: projectStore.sceneRel || MAIN_SCENE_REL,
-    content: JSON.stringify(out, null, 2),
-  });
+  await sceneApi.save();
 }

@@ -15,12 +15,12 @@ import { logger } from "../../platform_abstraction/logger";
 import { modelDirOf, modelExtOf, type ModelMaterialInfo, type ModelMeta } from "./types";
 import { modelLoaderRegistry, type ModelLoadContext } from "./loaders";
 
-/** 应用层注入的文件访问（base64 二进制 + 同目录清单；与纹理读取器同构） */
+/** 应用层注入的文件访问（asset:// 协议直读；与纹理读取器同构） */
 export interface ModelFileAccess {
-  /** 读取二进制资产，返回 base64 文本；不存在/失败返回 null */
-  readBinary(rel: string): Promise<string | null>;
-  /** 列出目录内的资产相对路径（外部贴图/.bin 预读用） */
-  listDir(dir: string): Promise<string[]>;
+  /** 读取二进制资产为 ArrayBuffer；不存在/失败返回 null */
+  readBinary(rel: string): Promise<ArrayBuffer | null>;
+  /** 资产相对路径 → 可请求 URL（模型同目录外部资源按需解析；无项目时 null） */
+  urlFor(rel: string): string | null;
 }
 
 /** 模型资产变更回调（加载完成后引擎据此刷新引用节点） */
@@ -40,21 +40,6 @@ interface ModelEntry {
   materials: ModelMaterialInfo[];
   error: string | null;
 }
-
-/** 可能被模型引用的外部资源扩展名（预读为 data URL 供 URL 修饰器同步命中） */
-const SIBLING_EXTS = new Set([
-  "png", "jpg", "jpeg", "webp", "gif", "bmp", "bin",
-]);
-
-const SIBLING_MIME: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif",
-  bmp: "image/bmp",
-  bin: "application/octet-stream",
-};
 
 export class ModelManager {
   private cache = new Map<string, ModelEntry>();
@@ -146,7 +131,7 @@ export class ModelManager {
     return loaded;
   }
 
-  /** 解析单个模型：读文件 → 预读同目录外部资源 → 加载器解析 → 记录模板 */
+  /** 解析单个模型：经协议取文件字节 → URL 修饰器映射外部资源 → 加载器解析 → 记录模板 */
   private async loadOne(rel: string): Promise<boolean> {
     const access = this.access;
     if (!access) return false;
@@ -154,19 +139,16 @@ export class ModelManager {
     const def = ext ? modelLoaderRegistry.resolveByExt(ext) : null;
     if (!def) throw new Error(`不支持的模型格式: ${rel}（支持 ${modelLoaderRegistry.list().map((d) => d.label).join("/")}）`);
 
-    const b64 = await access.readBinary(rel);
-    if (!b64) throw new Error("模型文件读取失败（不存在或为空）");
-    const buffer = base64ToArrayBuffer(b64);
+    const buffer = await access.readBinary(rel);
+    if (!buffer) throw new Error("模型文件读取失败（不存在或为空）");
 
-    // 预读同目录可能被引用的外部资源 → 虚拟 URL 表（URL 修饰器需同步返回）
+    // 外部资源（贴图/.bin）按需加载：把加载器给出的相对地址解析到模型同目录的
+    // asset:// URL，由浏览器直接向 Rust 流式请求（不再预读整个目录为 base64 data URL）
     const dir = modelDirOf(rel);
-    const vfs = await this.preloadSiblings(access, dir);
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
-      // 相对资源名（最后一个路径段）→ data URL；未命中放行原地址（加载器自行报缺资源）
-      const name = decodeURIComponent(url.split(/[\\/]/).pop() ?? "").split("?")[0];
-      const hit = vfs.get(name);
-      return hit ?? url;
+      const resolved = resolveSiblingRel(dir, url);
+      return (resolved && access.urlFor(resolved)) ?? url;
     });
 
     const ctx: ModelLoadContext = { manager, resourcePath: dir ? `${dir}/` : "" };
@@ -201,33 +183,6 @@ export class ModelManager {
     return true;
   }
 
-  /** 预读目录内可能被引用的外部资源（图片/.bin）为 data URL 表 */
-  private async preloadSiblings(
-    access: ModelFileAccess,
-    dir: string,
-  ): Promise<Map<string, string>> {
-    const vfs = new Map<string, string>();
-    if (!dir) return vfs;
-    try {
-      const files = await access.listDir(dir);
-      const targets = files.filter((f) => {
-        const dot = f.lastIndexOf(".");
-        if (dot < 0) return false;
-        return SIBLING_EXTS.has(f.slice(dot + 1).toLowerCase());
-      });
-      for (const f of targets) {
-        const name = f.split("/").pop()!;
-        const dot = name.lastIndexOf(".");
-        const mime = SIBLING_MIME[name.slice(dot + 1).toLowerCase()] ?? "application/octet-stream";
-        const b64 = await access.readBinary(f);
-        if (b64) vfs.set(name, `data:${mime};base64,${b64}`);
-      }
-    } catch {
-      // 清单读取失败：模型内嵌资源仍可解析，外部资源缺失由加载器报错
-    }
-    return vfs;
-  }
-
   /** 丢弃单个缓存（资产被改动/删除后调用；引用节点回退占位体） */
   invalidate(rel: string): void {
     this.cache.delete(rel);
@@ -245,12 +200,25 @@ export class ModelManager {
   }
 }
 
-/** base64 → ArrayBuffer（模型加载器吃二进制） */
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
+/**
+ * 把加载器给出的资源地址解析为「模型同目录资产」的相对路径。
+ * 绝对地址（http/data/blob 等）与无法归一化的地址返回 null（调用方放行原地址）；
+ * 相对地址按 POSIX 规则归一化（支持子目录与 ../ 回溯，越出资产根由后端沙箱拦截）。
+ */
+function resolveSiblingRel(modelDir: string, url: string): string | null {
+  const raw = url.split("?")[0];
+  if (!raw || /^(https?:|data:|blob:|file:)/i.test(raw)) return null;
+  const rel = decodeURIComponent(raw).replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!rel || /^[a-zA-Z]:/.test(rel)) return null;
+  const joined = modelDir ? `${modelDir}/${rel}` : rel;
+  const parts: string[] = [];
+  for (const seg of joined.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") parts.pop();
+    else parts.push(seg);
+  }
+  if (!parts.length) return null;
+  return parts.join("/");
 }
 
 /** three 材质类型 → 可读标签（材质摘要展示用） */

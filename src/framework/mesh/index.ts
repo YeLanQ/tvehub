@@ -22,4 +22,3 @@ export {
 export type { ModelLoadContext, ModelLoaderDef, LoadedModelData } from "./loaders";
 export { ModelManager } from "./ModelManager";
 export type { ModelFileAccess, ModelChangeListener } from "./ModelManager";
-export { collectMeshModelRefs } from "./collect";

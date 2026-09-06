@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { disposeEditor, mountEditor, getEditorStore } from "../stores/editor";
-import { getProjectStore } from "../stores/project";
 import "../../styles/components/viewport.scss";
 
 const host = ref<HTMLDivElement | null>(null);
 
 const store = getEditorStore();
-const projectStore = getProjectStore();
 const { state, engine } = store;
 
 function setMode(mode: "translate" | "rotate" | "scale"): void {
@@ -54,7 +52,7 @@ interface AssetItem {
 }
 
 onMounted(() => {
-  if (host.value) mountEditor(host.value, projectStore.sceneJson);
+  if (host.value) mountEditor(host.value);
 });
 
 onBeforeUnmount(() => {

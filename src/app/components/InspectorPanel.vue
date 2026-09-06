@@ -12,12 +12,11 @@ import { clampCameraParam, cameraParamDef, type CameraParamKey } from "../../fra
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
-  listProjectMaterialRels,
   loadMaterialDoc,
   saveMaterialParams,
 } from "../lib/materials";
 import type { JsonRecord } from "../../framework/prototype/types";
-import type { TransformSnapshot } from "../../framework/command/commands";
+import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
 import { isModelAssetRel } from "../../framework/mesh";
 import ComponentCard from "./ComponentCard.vue";
@@ -266,8 +265,7 @@ async function onMaterialEdit(
   let rel = n.material;
   if (isInternalAsset(rel)) {
     // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再修改
-    const taken = await listProjectMaterialRels(root);
-    const dup = await duplicateMaterialToProject(root, rel, n.name, taken);
+    const dup = await duplicateMaterialToProject(root, rel, n.name);
     if (!dup) {
       logStore.log("error", "复制内置材质到项目失败", "engine");
       return;
@@ -309,8 +307,7 @@ async function onMaterialChangeType(type: string): Promise<void> {
   let rel = n.material;
   if (isInternalAsset(rel)) {
     // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再切换类型
-    const taken = await listProjectMaterialRels(root);
-    const dup = await duplicateMaterialToProject(root, rel, n.name, taken);
+    const dup = await duplicateMaterialToProject(root, rel, n.name);
     if (!dup) {
       logStore.log("error", "复制内置材质到项目失败", "engine");
       return;
@@ -334,8 +331,7 @@ async function onMaterialCopyToProject(): Promise<void> {
   const root = projectStore.currentPath;
   if (!root) return;
   if (materialDirty) flushMaterialPersist(); // 复制前先把未落盘的修改写入源文件
-  const taken = await listProjectMaterialRels(root);
-  const dup = await duplicateMaterialToProject(root, n.material, n.name, taken);
+  const dup = await duplicateMaterialToProject(root, n.material, n.name);
   if (!dup) {
     logStore.log("error", "复制材质资产失败", "engine");
     return;
@@ -463,8 +459,7 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
   if (!n || !(n instanceof SkyboxNode)) return;
   const root = projectStore.currentPath;
   if (!root) return;
-  const taken = await listProjectMaterialRels(root);
-  const dup = await duplicateMaterialToProject(root, n.material, n.name, taken);
+  const dup = await duplicateMaterialToProject(root, n.material, n.name);
   if (!dup) {
     logStore.log("error", "复制天空盒材质资产失败", "engine");
     return;

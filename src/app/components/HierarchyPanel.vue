@@ -4,7 +4,7 @@ import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
 import type { GeometryKind, LightKind, SkyboxKind } from "../../framework/prototype/derived/Primitives";
 import { geometryRegistry } from "../../framework/mesh";
-import type { MoveTarget } from "../../framework/command/commands";
+import type { MoveTarget } from "../../framework/scene/SceneClient";
 import {
   CAMERA_ICON_PATHS,
   MESH_ICON_PATHS,

@@ -6,6 +6,8 @@
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
+import { sceneApi } from "../../lib/scene-api";
+import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "./save-scene";
 import { confirm } from "./confirm";
 
@@ -76,6 +78,9 @@ export async function runEditorCommand(cmd: EditorCommand): Promise<void> {
         }
       }
       project.setView("home");
+      // 关闭后端场景会话与 asset:// 协议项目根（下次打开项目时重建）
+      void sceneApi.close().catch(() => {});
+      void api.setCurrentProjectRoot(null).catch(() => {});
       break;
     }
   }

@@ -1,38 +1,36 @@
 // ---------------------------------------------------------------------------
 // 材质参数解析器缓存（引擎同步渲染用的“材质库”）。
-// 只负责“按引用路径 → 内存材质文档（类型 + 参数）”的解析与缓存；内容来源
-// （内置/项目文件）由应用层注入的文本读取器提供（MaterialTextFetcher）。
+// 只负责“按引用路径 → 内存材质文档（类型 + 参数）”的缓存；读取与 .mat 解析
+// 在后端完成（material_read），应用层注入文档读取器（MaterialDocFetcher）。
 // ---------------------------------------------------------------------------
 
 import {
   DEFAULT_MATERIAL_PARAMS,
   cloneMaterialParams,
-  materialFileStem,
   type MaterialParams,
 } from "./types";
 import { DEFAULT_MATERIAL_TYPE } from "./factory";
-import { parseMaterialFile } from "./materialFile";
 
-/** 按材质资产相对路径读取其 .mat 文本；不存在/失败返回 null */
-export type MaterialTextFetcher = (rel: string) => Promise<string | null>;
-
-/** 材质参数变更回调（编辑保存后引擎据此刷新外观） */
-export type MaterialChangeListener = (rel: string) => void;
-
-/** 缓存条目：材质文档（名称 + 类型 + 参数） */
-interface CachedMaterialDoc {
+/** 解析后的材质文档（后端 material_read 返回形态） */
+export interface MaterialDoc {
   name: string;
   type: string;
   params: MaterialParams;
 }
 
+/** 按材质资产相对路径读取解析后的材质文档；不存在/失败返回 null */
+export type MaterialDocFetcher = (rel: string) => Promise<MaterialDoc | null>;
+
+/** 材质参数变更回调（编辑保存后引擎据此刷新外观） */
+export type MaterialChangeListener = (rel: string) => void;
+
 export class MaterialManager {
-  private cache = new Map<string, CachedMaterialDoc>();
+  private cache = new Map<string, MaterialDoc>();
   private loading = new Set<string>();
-  private fetcher: MaterialTextFetcher | null = null;
+  private fetcher: MaterialDocFetcher | null = null;
   private listeners = new Set<MaterialChangeListener>();
 
-  setFetcher(f: MaterialTextFetcher | null): void {
+  setFetcher(f: MaterialDocFetcher | null): void {
     this.fetcher = f;
   }
 
@@ -72,7 +70,7 @@ export class MaterialManager {
   cachePut(rel: string, params: MaterialParams, type?: string): void {
     const prev = this.cache.get(rel);
     this.cache.set(rel, {
-      name: prev?.name ?? materialFileStem(rel),
+      name: prev?.name ?? rel.split("/").pop()?.replace(/\.[^.]+$/, "") ?? rel,
       type: type ?? prev?.type ?? DEFAULT_MATERIAL_TYPE,
       params: cloneMaterialParams(params),
     });
@@ -83,7 +81,7 @@ export class MaterialManager {
     this.cache.delete(rel);
   }
 
-  /** 预取一组材质引用并解析入缓存（失败项静默跳过，渲染回退默认参数） */
+  /** 预取一组材质引用并入缓存（失败项静默跳过，渲染回退默认参数） */
   async preload(rels: string[]): Promise<number> {
     if (!this.fetcher) return 0;
     let loaded = 0;
@@ -91,13 +89,10 @@ export class MaterialManager {
       if (!rel || this.cache.has(rel) || this.loading.has(rel)) continue;
       this.loading.add(rel);
       try {
-        const text = await this.fetcher(rel);
-        if (text != null) {
-          const doc = parseMaterialFile(text);
-          if (doc) {
-            this.cache.set(rel, doc);
-            loaded++;
-          }
+        const doc = await this.fetcher(rel);
+        if (doc) {
+          this.cache.set(rel, doc);
+          loaded++;
         }
       } catch {
         // 读取失败：保持默认参数
@@ -112,9 +107,7 @@ export class MaterialManager {
   async reload(rel: string): Promise<boolean> {
     if (!this.fetcher) return false;
     try {
-      const text = await this.fetcher(rel);
-      if (text == null) return false;
-      const doc = parseMaterialFile(text);
+      const doc = await this.fetcher(rel);
       if (!doc) return false;
       this.cache.set(rel, doc);
       this.notify(rel);

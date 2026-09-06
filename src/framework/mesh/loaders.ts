@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // 模型加载器工厂（注册表模式）：
 // - 每种模型格式对应一个 ModelLoaderDef：扩展名集合 + 解析函数；
-// - 输入是 ArrayBuffer（应用层把模型文件读成 base64 后转回二进制），
+// - 输入是 ArrayBuffer（应用层经 asset:// 协议直读二进制），
 //   模型引用的外部资源（贴图/.bin）经 ctx.manager 的 URL 修饰器解析为
-//   同目录文件的 data URL（由 ModelManager 预读注入，见 ModelManager）；
+//   同目录文件的 asset:// URL（浏览器按需向 Rust 流式请求，见 ModelManager）；
 // - 需要新格式（如 .dae/.ply）时：写一个 def 并在 createDefaultModelLoaderRegistry
 //   里 register 一行即可。
 // ---------------------------------------------------------------------------

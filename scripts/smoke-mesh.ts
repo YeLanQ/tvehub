@@ -99,11 +99,11 @@ ok(evalCondition(1, { param: "go", op: "==", value: 1 }) && !evalCondition(true,
 // —— 5. 模型加载（最小 GLB：单节点 + 单旋转动画剪辑）——
 console.log("[5] ModelManager + GLB");
 const glb = buildMinimalAnimatedGlb();
-const glbB64 = Buffer.from(glb).toString("base64");
+const glbBuffer = glb.slice().buffer as ArrayBuffer;
 const models = new ModelManager();
 models.setAccess({
-  readBinary: async (rel) => (rel === "assets/models/role.glb" ? glbB64 : null),
-  listDir: async () => [],
+  readBinary: async (rel) => (rel === "assets/models/role.glb" ? glbBuffer : null),
+  urlFor: () => null,
 });
 await models.preload(["assets/models/role.glb"]);
 ok(models.has("assets/models/role.glb"), "GLB 解析就绪");

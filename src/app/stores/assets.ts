@@ -3,7 +3,6 @@ import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
 import { loadAssetTemplate } from "../lib/asset-templates";
-import { buildMaterialContent } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { remapAssetPath } from "../lib/asset-paths";
 import { syncMainSceneAfterMove } from "../lib/project-settings";
@@ -265,9 +264,8 @@ export function getAssetsStore(): AssetsStore {
       }
       const rel = `${prefix}${name}${MATERIAL_EXT}`;
       try {
-        // 材质默认参数以工厂注册表为单一来源（不走模板文件，避免两处维护）
-        const content = buildMaterialContent(name, def.key);
-        await api.writeText(root, rel, content);
+        // 材质默认参数以工厂注册表为单一来源；.mat 序列化/落盘由后端完成
+        await api.materialWrite(root, rel, name, def.key, def.defaultParams() as unknown as Record<string, unknown>);
         await store.load(root);
         logStore.log("success", `已新建材质: ${rel}`);
         return rel;

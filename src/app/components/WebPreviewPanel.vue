@@ -12,8 +12,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
-import { isInternalAsset } from "../../lib/internal-assets";
-import { collectMeshMaterialRefs } from "../../framework/material";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
@@ -52,64 +50,19 @@ async function fetchRuntimeTexts(): Promise<Record<string, string>> {
   return files;
 }
 
-/** 组装导出文件：运行时 + 当前场景 + 项目配置 + 场景引用的材质资产（含贴图二进制） */
-async function buildExportFiles(): Promise<{ files: Record<string, string>; binaries: Record<string, string> }> {
+/** 组装导出文件：仅 WebView 打包的网页运行时 + 项目配置（文本，一次读取）。
+ *  scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制由 Rust 直接从磁盘
+ *  读取写入导出目录（export_web_preview_from_scene），不再以 base64 过 IPC。 */
+async function buildExportFiles(): Promise<Record<string, string>> {
+  const files = await fetchRuntimeTexts();
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
-  const files = await fetchRuntimeTexts();
-  const sceneRel = projectStore.sceneRel || "assets/Main.scene";
-  const sceneText = await api.readText(root, sceneRel);
-  files["scene.json"] = sceneText;
   try {
     files["config.json"] = await api.readText(root, "project.config.json");
   } catch {
     files["config.json"] = "{}";
   }
-  // 场景引用的 .mat 材质资产随导出一起写入（internal 内置内容 / assets 项目文件），
-  // 网页运行时按引用相对路径 fetch。读取失败跳过：player 回退默认参数。
-  let refs: string[] = [];
-  try {
-    refs = collectMeshMaterialRefs(JSON.parse(sceneText));
-  } catch {
-    /* 场景解析失败时仅导出默认产物 */
-  }
-  const matRels: string[] = [];
-  for (const rel of refs) {
-    try {
-      const text = isInternalAsset(rel)
-        ? await api.readInternalAsset(rel)
-        : await api.readText(root, rel);
-      files[rel] = text;
-      matRels.push(rel);
-    } catch {
-      /* 缺失材质：player 侧回退默认材质参数 */
-    }
-  }
-  // 材质引用的贴图资产（Base/Metalness/Roughness/Normal/Emission）以二进制导出
-  const binaries: Record<string, string> = {};
-  const textureFields = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
-  const texRels = new Set<string>();
-  for (const rel of matRels) {
-    try {
-      const doc = JSON.parse(files[rel]) as Record<string, unknown>;
-      for (const f of textureFields) {
-        const v = doc[f];
-        if (typeof v === "string" && v) texRels.add(v);
-      }
-    } catch {
-      /* 忽略无法解析的材质 */
-    }
-  }
-  for (const trel of texRels) {
-    try {
-      binaries[trel] = isInternalAsset(trel)
-        ? await api.readInternalBinary(trel)
-        : await api.readAssetBinary(root, trel);
-    } catch {
-      /* 贴图缺失：player 回退无贴图 */
-    }
-  }
-  return { files, binaries };
+  return files;
 }
 
 /** 导出并启动（首次进入 / 重试） */
@@ -125,14 +78,14 @@ async function start(): Promise<void> {
   errorText.value = "";
   hint.value = "正在导出并启动网页预览…";
   try {
-    // 预览内容与编辑器一致：导出前把当前编辑场景落盘
+    // 预览内容与编辑器一致：导出前把当前编辑场景落盘（后端导出按磁盘内容读取）
     try {
       await saveCurrentSceneToMain();
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
-    const { files, binaries } = await buildExportFiles();
-    await api.exportWebPreview(root, files, binaries);
+    const files = await buildExportFiles();
+    await api.exportWebPreviewFromScene(root, projectStore.sceneRel || "assets/Main.scene", files);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止
     // 导出成功后再单独启动服务器（两步分离避免竞态拉起）
     const url = await api.startWebPreviewServer(root);
@@ -161,8 +114,8 @@ async function refresh(): Promise<void> {
     } catch (e) {
       logStore.log("warn", `预览前保存场景失败（按磁盘内容导出）: ${e}`, "preview");
     }
-    const { files, binaries } = await buildExportFiles();
-    await api.exportWebPreview(root, files, binaries);
+    const files = await buildExportFiles();
+    await api.exportWebPreviewFromScene(root, projectStore.sceneRel || "assets/Main.scene", files);
     if (seq !== runSeq) return; // 期间被 stop/离开页签终止
     // 服务器保持运行、按需读盘；重新导出完成后重载 iframe 即看到最新内容
     frameKey.value++;

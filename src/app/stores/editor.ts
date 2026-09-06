@@ -1,13 +1,12 @@
 import { computed, readonly, reactive } from "vue";
 import { EditorEngine } from "../../framework/engine/EditorEngine";
-import { setupStarterScene } from "../../framework/engine/starterScene";
-import { loadSceneFromJson } from "../../framework/engine/loadScene";
-import { collectMeshMaterialRefs, DEFAULT_MATERIAL_REL } from "../../framework/material";
-import { collectMeshModelRefs } from "../../framework/mesh";
+import { buildStarterSceneDoc } from "../../framework/engine/starterScene";
+import { DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { Node } from "../../framework/prototype/Node";
-import { api } from "../../lib/api";
-import { isInternalAsset } from "../../lib/internal-assets";
-import { readMaterialText, migrateLegacySceneText } from "../lib/materials";
+import type { JsonRecord } from "../../framework/prototype/types";
+import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
+import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
+import { loadMaterialDoc } from "../lib/materials";
 import { logStore } from "./log";
 import { getProjectStore } from "./project";
 
@@ -168,7 +167,7 @@ export function getEditorStore(): EditorStore {
   return store;
 }
 
-export function mountEditor(container: HTMLElement, sceneJson?: string | null): Promise<void> {
+export function mountEditor(container: HTMLElement): Promise<void> {
   const store = getEditorStore() as EditorStore & { markMounted: () => void };
   if (store.state.mounted) return Promise.resolve();
   if (!mountTask) {
@@ -181,77 +180,53 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
         width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
         height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
       };
-      // 材质资产内容来源：内置 internal/… 走内置读取；项目 assets/… 读项目文件
-      engine.materials.setFetcher(root ? (rel) => readMaterialText(root, rel) : null);
-      // 贴图来源：internal/… 走内置二进制读取；项目 assets/… 读项目文件
-      engine.setTextureReader(
-        root
-          ? async (rel) =>
-              isInternalAsset(rel)
-                ? await api.readInternalBinary(rel).catch(() => null)
-                : await api.readAssetBinary(root, rel).catch(() => null)
-          : null,
-      );
-      // 模型来源：与贴图同构（二进制 + 同目录清单，清单直接扫盘保证新鲜）
+      // 材质资产来源：后端 material_read（internal/项目路由 + .mat 解析均在 Rust）
+      engine.materials.setFetcher(root ? (rel) => loadMaterialDoc(root, rel) : null);
+      // 贴图来源：asset:// 协议直读（internal/… 与项目资产统一走协议 URL）
+      engine.setTextureResolver(root ? (rel) => (rel ? assetUrl(rel) : null) : null);
+      // 模型来源：与贴图同构（协议 URL + 按需流式外部资源，无预读）
       engine.setModelAccess(
         root
           ? {
-              readBinary: async (rel) =>
-                isInternalAsset(rel)
-                  ? await api.readInternalBinary(rel).catch(() => null)
-                  : await api.readAssetBinary(root, rel).catch(() => null),
-              listDir: async (dir) => {
-                try {
-                  const entries = await api.scanAssets(root);
-                  const prefix = dir ? `${dir}/` : "";
-                  return entries
-                    .filter((a) => a.kind !== "dir" && a.path.startsWith(prefix))
-                    .map((a) => a.path);
-                } catch {
-                  return [];
-                }
-              },
+              readBinary: (rel) => fetchAssetBinary(rel),
+              urlFor: (rel) => assetUrl(rel),
             }
           : null,
       );
+      // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
+      engine.setSceneTransport(sceneApi.transport());
+      await engine.bindSceneEvents(sceneApi.subscribe);
       await engine.mount(container, {
         renderer: projectStore.rendererBackend,
         antialias: projectStore.antiAliasing,
         hdrMode: projectStore.hdrMode,
       });
-      // 挂载期间被销毁（如就绪前点击“关闭”返回首页）→ 不再装载场景/重建
+      // 挂载期间被销毁（如就绪前点击"关闭"返回首页）→ 不再装载场景/重建
       if (engine.isDisposed()) return;
-      if (sceneJson) {
-        // 旧版场景：先把内嵌材质参数迁移为项目材质资产（internal 默认无需生成）
-        let text = sceneJson;
-        if (root) {
-          try {
-            text = await migrateLegacySceneText(root, sceneJson);
-          } catch (e) {
-            logStore.log("warn", `旧场景材质迁移失败（按默认材质加载）: ${e}`, "engine");
-          }
-        }
-        if (engine.isDisposed()) return;
-        // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）
-        let sceneData: unknown = null;
+      // 场景装载：后端读盘 + 旧格式迁移 + 建图（历史清零），返回规范 doc 与引用清单
+      const sceneRel = projectStore.sceneRel;
+      let loaded = false;
+      if (root && sceneRel) {
         try {
-          sceneData = JSON.parse(text);
-        } catch {
-          /* 解析失败时按空引用集合处理，装载期会回退初始场景 */
+          const result = await sceneApi.open(root, sceneRel);
+          if (engine.isDisposed()) return;
+          loaded = await applySceneLoadResult(engine, result);
+        } catch (e) {
+          logStore.log("warn", `场景打开失败（回退初始场景）: ${e}`, "engine");
         }
-        const matRefs = sceneData ? collectMeshMaterialRefs(sceneData) : [];
-        if (matRefs.length) await engine.materials.preload(matRefs);
-        const modelRefs = sceneData ? collectMeshModelRefs(sceneData) : [];
-        if (modelRefs.length) await engine.models.preload(modelRefs);
-        if (engine.isDisposed()) return;
-        // 空/损坏场景（含旧版 "empty" 魔法标记）解析失败时回退到初始场景，避免白屏报错
-        if (!loadSceneFromJson(engine, text)) {
-          setupStarterScene(engine);
-        }
-      } else {
+      }
+      if (!loaded && !engine.isDisposed()) {
+        // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话；
+        // 携带保存目标，新项目首次保存时创建场景文件）
         await engine.materials.preload([DEFAULT_MATERIAL_REL]);
         if (engine.isDisposed()) return;
-        setupStarterScene(engine);
+        const result = await sceneApi.loadDoc(
+          buildStarterSceneDoc(engine.factory),
+          root ?? undefined,
+          sceneRel || undefined,
+        );
+        if (engine.isDisposed()) return;
+        await applySceneLoadResult(engine, result);
       }
       store.markMounted();
       store.markSaved();
@@ -261,34 +236,44 @@ export function mountEditor(container: HTMLElement, sceneJson?: string | null): 
   return mountTask;
 }
 
-/** 打开/切换项目内 .scene 资产：把场景文本重载进已挂载的引擎（无需重进编辑器） */
-export async function reloadEditorScene(root: string, text: string): Promise<void> {
+/**
+ * 应用后端装载结果：预取引用（材质/模型）→ 镜像重建 → 历史状态同步。
+ * 返回是否装载了有效根节点（false = 空场景，调用方回退初始场景）。
+ */
+async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResult): Promise<boolean> {
+  const doc = result.doc as { root?: JsonRecord | null };
+  const rootJson = doc.root ?? null;
+  if (!rootJson || (rootJson as { type?: string }).type === "empty") return false;
+  // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）
+  if (result.materialRefs.length) await engine.materials.preload(result.materialRefs);
+  if (result.modelRefs.length) await engine.models.preload(result.modelRefs);
+  engine.applySceneDocRoot(rootJson);
+  engine.graph.history.update(result.history);
+  return true;
+}
+
+/** 打开/切换项目内 .scene 资产：后端 scene_open 重装会话 + 镜像重建（无需重进编辑器） */
+export async function reloadEditorScene(root: string, rel: string): Promise<void> {
   const store = getEditorStore() as EditorStore & { markMounted: () => void };
   const engine = store.engine;
   if (!store.state.mounted || engine.isDisposed()) return;
-  // 旧版场景：先迁移内嵌材质 → 再预取材质 → 替换场景图
-  let migrated = text;
   try {
-    migrated = await migrateLegacySceneText(root, text);
+    const result = await sceneApi.open(root, rel);
+    if (engine.isDisposed()) return;
+    const ok = await applySceneLoadResult(engine, result);
+    if (!ok && !engine.isDisposed()) {
+      const fallback = await sceneApi.loadDoc(
+        buildStarterSceneDoc(engine.factory),
+        root,
+        rel,
+      );
+      if (!engine.isDisposed()) await applySceneLoadResult(engine, fallback);
+    }
+    store.markSaved();
+    logStore.log("info", "场景已切换", "engine");
   } catch (e) {
-    logStore.log("warn", `旧场景材质迁移失败（按原内容加载）: ${e}`, "engine");
+    logStore.log("error", `打开场景失败: ${e}`, "engine");
   }
-  if (engine.isDisposed()) return;
-  let matRefs: string[] = [];
-  let modelRefs: string[] = [];
-  try {
-    const sceneData: unknown = JSON.parse(migrated);
-    matRefs = collectMeshMaterialRefs(sceneData);
-    modelRefs = collectMeshModelRefs(sceneData);
-  } catch {
-    /* 保留空引用集合 */
-  }
-  if (matRefs.length) await engine.materials.preload(matRefs);
-  if (modelRefs.length) await engine.models.preload(modelRefs);
-  if (engine.isDisposed()) return;
-  loadSceneFromJson(engine, migrated);
-  store.markSaved();
-  logStore.log("info", "场景已切换", "engine");
 }
 
 export function disposeEditor(): void {
@@ -297,4 +282,6 @@ export function disposeEditor(): void {
   // dispose 幂等且容错：即便引擎仍在异步 mount 中也能安全销毁（跳过未初始化的模块）
   singleton.engine.dispose();
   singleton = null;
+  // 后端会话一并关闭（清空权威图与历史；下次进入编辑器重新 scene_open）
+  void sceneApi.close().catch(() => {});
 }

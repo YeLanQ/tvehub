@@ -29,18 +29,13 @@ struct PreviewServer {
     handle: Option<thread::JoinHandle<()>>,
 }
 
-/// 把文件写入 `<root>/.tmp/web-preview`（先清空旧产物）。只负责写产物，
-/// 不启停服务器 —— 启动/停止分别由 start_web_preview_server / stop_web_preview 负责，
-/// 避免导出与停止并发时产生“导出完成后又拉起服务器”的竞态。
-/// files：相对路径 → 文本内容（index.html / player.mjs / three.*.min.js / scene.json / config.json）。
-/// binaries：相对路径 → base64（贴图等二进制资产；解码后写入，供 player 按相对路径 fetch）。
-#[tauri::command]
-pub async fn export_web_preview(
-    root: String,
-    files: Option<HashMap<String, String>>,
-    binaries: Option<HashMap<String, String>>,
+/// 清空并重建导出目录，写入文本与二进制产物（路径守卫：拒绝绝对路径/越界段）
+fn write_export(
+    root: &str,
+    files: HashMap<String, String>,
+    binaries: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
-    let root_path = PathBuf::from(&root);
+    let root_path = PathBuf::from(root);
     if !root_path.is_dir() {
         return Err(format!("项目目录不存在: '{}'", root_path.display()));
     }
@@ -50,40 +45,96 @@ pub async fn export_web_preview(
     }
     fs::create_dir_all(&out).map_err(|e| format!("创建预览目录失败: {}", e))?;
 
-    let files = files.unwrap_or_default();
     for (rel, content) in &files {
-        if rel.is_empty()
-            || Path::new(rel).is_absolute()
-            || rel.contains('\\')
-            || rel.split('/').any(|s| s == "..")
-        {
-            return Err(format!("非法预览文件相对路径: {rel}"));
-        }
-        let target = out.join(rel);
-        if let Some(parent_dir) = target.parent() {
-            fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
-        }
-        fs::write(&target, content.as_bytes())
-            .map_err(|e| format!("写入预览文件失败 '{}': {}", rel, e))?;
+        write_export_file(&out, rel, content.as_bytes())?;
     }
-    // 二进制贴图资产：解码 base64 后写为真实文件
-    let binaries = binaries.unwrap_or_default();
-    for (rel, b64) in &binaries {
-        if rel.is_empty()
-            || Path::new(rel).is_absolute()
-            || rel.contains('\\')
-            || rel.split('/').any(|s| s == "..")
-        {
-            return Err(format!("非法预览二进制相对路径: {rel}"));
-        }
-        let bytes = crate::base64_decode(b64).map_err(|e| format!("解码二进制失败 '{}': {}", rel, e))?;
-        let target = out.join(rel);
-        if let Some(parent_dir) = target.parent() {
-            fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
-        }
-        fs::write(&target, &bytes).map_err(|e| format!("写入预览二进制失败 '{}': {}", rel, e))?;
+    for (rel, bytes) in binaries {
+        write_export_file(&out, rel, bytes)?;
     }
     Ok(())
+}
+
+fn write_export_file(out: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+    if rel.is_empty()
+        || Path::new(rel).is_absolute()
+        || rel.contains('\\')
+        || rel.split('/').any(|s| s == "..")
+    {
+        return Err(format!("非法预览文件相对路径: {rel}"));
+    }
+    let target = out.join(rel);
+    if let Some(parent_dir) = target.parent() {
+        fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&target, bytes).map_err(|e| format!("写入预览文件失败 '{}': {}", rel, e))
+}
+
+/// 读取资产二进制（internal/… → 内置目录；其余 → 项目根沙箱内）
+fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String> {
+    if rel == "internal" || rel.starts_with("internal/") {
+        let sub = rel.strip_prefix("internal/").unwrap_or("");
+        if sub.is_empty()
+            || sub.contains('\\')
+            || sub.split('/').any(|s| s == ".." || s.is_empty())
+        {
+            return Err(format!("非法内置资源相对路径: {rel}"));
+        }
+        let path = crate::internal_root().join(sub);
+        return fs::read(&path).map_err(|e| format!("读取内置资源失败 '{rel}': {e}"));
+    }
+    let path = crate::project::resolve_in_root(root, rel)?;
+    fs::read(&path).map_err(|e| format!("读取文件失败 '{rel}': {e}"))
+}
+
+/// 材质文档引用的贴图字段（.mat JSON 内为相对路径字符串）
+const TEXTURE_FIELDS: [&str; 5] = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
+
+/// 从当前场景导出网页预览产物：
+/// - files 由前端提供网页运行时（index.html / player.mjs / three.*.min.js / config.json，
+///   属 WebView 打包资源，前端 fetch 一次传入）；
+/// - scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制全部由 Rust 直接
+///   从磁盘读取写入导出目录——大贴图不再以 base64 形式穿过 IPC（旧导出的主要负载）。
+#[tauri::command]
+pub async fn export_web_preview_from_scene(
+    root: String,
+    scene_rel: String,
+    files: HashMap<String, String>,
+) -> Result<(), String> {
+    let root_path = PathBuf::from(&root);
+
+    // 场景文本（调用方预览前已保存，读盘保证与导出一致）
+    let scene_text = crate::project::resolve_in_root(&root_path, &scene_rel)
+        .and_then(|p| fs::read_to_string(&p).map_err(|e| e.to_string()))
+        .map_err(|e| format!("读取场景失败 '{scene_rel}': {e}"))?;
+    let mut files = files;
+    files.insert("scene.json".to_string(), scene_text.clone());
+
+    // 场景引用的 .mat 材质资产随导出（internal 内置内容 / assets 项目文件）；
+    // 缺失项跳过（player 回退默认参数）
+    let scene_json: serde_json::Value = serde_json::from_str(&scene_text).unwrap_or(serde_json::Value::Null);
+    let mut mat_refs = Vec::new();
+    crate::scene::migrate::collect_material_refs(&scene_json, &mut mat_refs);
+    let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
+    for rel in &mat_refs {
+        let Ok(text) = crate::scene::material::read_material_text(&root_path, rel) else {
+            continue;
+        };
+        files.insert(rel.clone(), text.clone());
+        // 材质引用的贴图二进制（缺失跳过，player 回退无贴图）
+        if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
+            for field in TEXTURE_FIELDS {
+                if let Some(tex) = doc.get(field).and_then(|v| v.as_str()) {
+                    if !tex.is_empty() && !binaries.contains_key(tex) {
+                        if let Ok(bytes) = read_asset_bytes(&root_path, tex) {
+                            binaries.insert(tex.to_string(), bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    write_export(&root, files, &binaries)
 }
 
 /// 启动网页预览服务器（服务 `<root>/.tmp/web-preview`），返回可内嵌的 base URL。

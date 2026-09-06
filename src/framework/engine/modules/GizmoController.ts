@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import type { TransformSnapshot } from "../../command/commands";
+import type { TransformSnapshot } from "../../scene/SceneClient";
 import { radToDeg } from "../../prototype/types";
 import { sameTransform } from "./utils";
 

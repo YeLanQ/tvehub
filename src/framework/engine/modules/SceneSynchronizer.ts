@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
-import type { SceneGraph, SceneChange } from "../../scene/SceneGraph";
+import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import {
   MeshNode,
   LightNode,
@@ -126,7 +126,7 @@ export class SceneSynchronizer {
     return this.objectMap;
   }
 
-  rebuildAll(graph: SceneGraph): void {
+  rebuildAll(graph: GraphLike): void {
     this.objectMap.forEach((o: THREE.Object3D) => {
       o.parent?.remove(o);
       disposeObject3D(o);
@@ -137,7 +137,7 @@ export class SceneSynchronizer {
     graph.all().forEach((n: Node) => this.refreshNode(n));
   }
 
-  onGraphChange(c: SceneChange, graph: SceneGraph): void {
+  onGraphChange(c: SceneChange, graph: GraphLike): void {
     const node = graph.get(c.nodeId);
     switch (c.kind) {
       case "add":
@@ -178,7 +178,7 @@ export class SceneSynchronizer {
     if (!this.objectMap.has(node.id)) this.createObjectOnly(node);
   }
 
-  private syncRecursively(node: Node, graph: SceneGraph): void {
+  private syncRecursively(node: Node, graph: GraphLike): void {
     this.ensureObject(node);
     this.attachParent(node);
     node.childIds.forEach((cid) => {
@@ -196,7 +196,7 @@ export class SceneSynchronizer {
     if (obj.parent !== host) host.add(obj);
   }
 
-  private disposeMapped(id: string, _graph: SceneGraph): void {
+  private disposeMapped(id: string, _graph: GraphLike): void {
     const rootObj = this.objectMap.get(id);
     if (!rootObj) return;
     // 不依赖 graph 遍历：SceneGraph.remove 在 emit "remove" 前已把节点从图中删除，

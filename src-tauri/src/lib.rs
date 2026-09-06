@@ -1,13 +1,17 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+// （serde_json::json! 构建大对象（材质参数超集）需要更高的宏递归上限）
+#![recursion_limit = "512"]
+
+mod asset_protocol;
 mod internal;
 mod preview;
 mod project;
+mod scene;
 mod trash;
 
 use project::{AssetEntry, MetaEntry, ProjectInfo};
 use trash::move_to_trash;
 use serde::Serialize;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use tauri::Manager;
@@ -133,11 +137,6 @@ fn push_recent(app: &tauri::AppHandle, path: &str) {
     save_recent(app, &list);
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 /// 打开项目
 #[tauri::command]
 async fn open_project(app: tauri::AppHandle, path: String) -> Result<ProjectInfo, String> {
@@ -188,16 +187,6 @@ async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<()
     list.retain(|p| p != &path);
     save_recent(&app, &list);
     Ok(())
-}
-
-/// 读取项目主场景（assets/Main.scene）的原始 JSON 内容
-#[tauri::command]
-async fn read_project_scene(path: String) -> Result<String, String> {
-    let scene_path = PathBuf::from(&path).join("assets").join("Main.scene");
-    if !scene_path.exists() {
-        return Err(format!("场景文件不存在: {}", scene_path.display()));
-    }
-    fs::read_to_string(&scene_path).map_err(|e| format!("读取场景失败: {}", e))
 }
 
 /// 选择项目文件夹
@@ -393,14 +382,6 @@ async fn write_asset_binary(root: String, rel: String, content_b64: String) -> R
     std::fs::write(&p, bytes).map_err(|e| format!("写入二进制失败 '{}': {}", rel, e))
 }
 
-/// 读取项目内二进制文件，以 base64 文本返回（纹理等图片资产用）
-#[tauri::command]
-async fn read_asset_binary(root: String, rel: String) -> Result<String, String> {
-    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
-    let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败 '{}': {}", rel, e))?;
-    Ok(base64_encode(&bytes))
-}
-
 /// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）
 #[tauri::command]
 async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
@@ -565,6 +546,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(preview::PreviewServerState::default())
+        .manage(asset_protocol::AssetProtocolState::default())
+        .manage(scene::SceneSession::default())
+        // asset:// 协议：模型/贴图等二进制资产由 WebView 直读 Rust（替代 base64 过 IPC）
+        .register_uri_scheme_protocol("asset", |ctx, request| {
+            use tauri::Manager;
+            let state = ctx.app_handle().state::<asset_protocol::AssetProtocolState>();
+            asset_protocol::handle_asset_protocol(&state, request)
+        })
         .menu(build_main_menu)
         .on_menu_event(|app, event| {
             // 原生菜单/快捷键 → 统一命令事件（前端 runEditorCommand 消费）
@@ -580,7 +569,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             open_project,
             create_project,
             list_recent_projects,
@@ -592,7 +580,6 @@ pub fn run() {
             pick_import_folders,
             get_default_project_dir,
             set_default_project_dir,
-            read_project_scene,
             scan_assets,
             scan_asset_db,
             read_text,
@@ -607,14 +594,32 @@ pub fn run() {
             rename_asset,
             create_folder,
             append_debug_log,
-            read_asset_binary,
             write_asset_binary,
+            asset_protocol::set_current_project_root,
+            scene::scene_open,
+            scene::scene_load_doc,
+            scene::scene_add_node,
+            scene::scene_remove_nodes,
+            scene::scene_reparent_nodes,
+            scene::scene_rename,
+            scene::scene_set_transform,
+            scene::scene_patch_node,
+            scene::scene_undo,
+            scene::scene_redo,
+            scene::scene_history_state,
+            scene::scene_dirty,
+            scene::scene_doc,
+            scene::scene_save,
+            scene::scene_close,
+            scene::material::material_read,
+            scene::material::material_write,
+            scene::material::material_duplicate,
+            preview::export_web_preview_from_scene,
+            preview::start_web_preview_server,
+            preview::stop_web_preview,
             internal::read_internal_asset,
             internal::read_internal_binary,
             internal::scan_internal_assets,
-            preview::export_web_preview,
-            preview::start_web_preview_server,
-            preview::stop_web_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
