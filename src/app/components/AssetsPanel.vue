@@ -258,7 +258,9 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建子目录（assets/materials 等）；src 为脚本目录不提供
+      // assets 固定根目录内仍可新建场景/子目录（assets/materials 等）；src 为脚本目录不提供
+      const sc = sceneCreateItem(item.path);
+      if (sc) items.push(sc);
       items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path));
     } else if (isInternal && item.kind !== "dir") {
@@ -271,10 +273,12 @@ function onItemContext(e: MouseEvent, item: ChildEntry) {
       { label: "重命名", onClick: () => void doRename(item) },
       { label: "删除", danger: true, onClick: () => void doDelete(item) },
     );
-    const parentDir = item.kind === "dir" ? item.path : parentOf(item.path);
-    if (parentDir != null) {
-      items.push({ label: "新建目录", onClick: () => void doNewFolder(parentDir) });
-      items.push(menuSeparator(), ...importMenuItems(parentDir));
+    const targetDir = item.kind === "dir" ? item.path : parentOf(item.path);
+    if (targetDir != null) {
+      const sc = sceneCreateItem(targetDir);
+      if (sc) items.push(sc);
+      items.push({ label: "新建目录", onClick: () => void doNewFolder(targetDir) });
+      items.push(menuSeparator(), ...importMenuItems(targetDir));
     }
   }
   items.push(menuSeparator());
@@ -298,6 +302,8 @@ function onContentContext(e: MouseEvent) {
   e.stopPropagation();
   const items: CtxMenuItem[] = [];
   if (!isInternalAsset(currentDir.value)) {
+    const sc = sceneCreateItem(currentDir.value);
+    if (sc) items.push(sc);
     items.push({ label: "新建目录", onClick: () => void doNewFolder(currentDir.value) });
     items.push(menuSeparator(), ...importMenuItems(currentDir.value));
   }
@@ -305,7 +311,7 @@ function onContentContext(e: MouseEvent) {
   openContextMenu(e, items);
 }
 
-/** 左栏（树）空白区右键：默认位置新建目录/导入 + 刷新 */
+/** 左栏（树）空白区右键：默认位置新建场景/目录 + 导入 + 刷新 */
 function onBlankContext(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (t?.closest(".asset-row, input, select, button, textarea")) return;
@@ -313,6 +319,8 @@ function onBlankContext(e: MouseEvent) {
   e.stopPropagation();
   const items: CtxMenuItem[] = [];
   if (!isInternalAsset(currentDir.value)) {
+    const sc = sceneCreateItem("assets");
+    if (sc) items.push(sc);
     items.push({ label: "新建目录", onClick: () => void doNewFolder("assets") });
     items.push(menuSeparator(), ...importMenuItems("assets"));
   }
@@ -332,6 +340,32 @@ async function doNewFolder(dir: string) {
   if (!name) return;
   const rel = `${dir}/${name}`;
   await assetsStore.createFolder(root, rel);
+}
+
+/** 新建 3D 场景资产（到 dir；src/内置目录不允许） */
+async function doNewScene(dir: string) {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir)
+      ? "src 目录不允许新建场景"
+      : "内置目录只读，不允许新建场景");
+    return;
+  }
+  const name = await prompt({
+    title: "新建场景",
+    label: dir || "项目根",
+    initial: "NewScene",
+    confirmText: "创建",
+  });
+  if (!name) return;
+  await assetsStore.createSceneAsset(root, dir, name);
+}
+
+/** 目录允许时的“新建场景”菜单项（null 表示不提供） */
+function sceneCreateItem(dir: string): CtxMenuItem | null {
+  if (!importAllowedDir(dir)) return null;
+  return { label: "新建场景", onClick: () => void doNewScene(dir) };
 }
 
 async function doCopy(item: ChildEntry) {

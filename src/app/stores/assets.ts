@@ -1,6 +1,7 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
+import { loadAssetTemplate } from "../lib/asset-templates";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { logStore } from "./log";
 
@@ -18,6 +19,7 @@ export interface AssetsStore {
   remove: (root: string, rel: string) => Promise<boolean>;
   moveTo: (root: string, rel: string, destDir: string) => Promise<string | null>;
   importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
+  createSceneAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -181,6 +183,47 @@ export function getAssetsStore(): AssetsStore {
       } catch (e) {
         logStore.log("error", `导入失败: ${e}`);
         return false;
+      }
+    },
+    async createSceneAsset(root, destDir, stem) {
+      const clean = validateAssetName(stem);
+      if (!clean) {
+        logStore.log("warn", "无效的场景名（不能含 / \\ : ..）");
+        return null;
+      }
+      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+        logStore.log("warn", "内置目录与 src 目录不允许新建场景");
+        return null;
+      }
+      const ext = ".scene";
+      let name = clean;
+      let n = 2;
+      const prefix = destDir ? `${destDir}/` : "";
+      while (
+        state.assets.some(
+          (a) => a.path.toLowerCase() === `${prefix}${name}${ext}`.toLowerCase(),
+        )
+      ) {
+        name = `${clean} ${n++}`;
+      }
+      const rel = `${prefix}${name}${ext}`;
+      try {
+        // 场景原型不内嵌代码：读 internal/templates 模板 + 数据注入
+        const now = new Date().toISOString();
+        const rootId = `node_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+        const content = await loadAssetTemplate("scene", {
+          SCENE_NAME: name,
+          NOW: now,
+          ROOT_ID: rootId,
+        });
+        if (content == null) throw new Error("场景模板读取失败");
+        await api.writeText(root, rel, content);
+        await store.load(root);
+        logStore.log("success", `已新建场景: ${rel}`);
+        return rel;
+      } catch (e) {
+        logStore.log("error", `新建场景失败: ${e}`);
+        return null;
       }
     },
     async readText(root, rel) {

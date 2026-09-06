@@ -1,0 +1,41 @@
+{
+  "type": "scene",
+  "metadata": {
+    "name": "{{SCENE_NAME}}",
+    "version": { "major": 1, "minor": 0, "patch": 0 },
+    "createdAt": "{{NOW}}",
+    "modifiedAt": "{{NOW}}",
+    "description": "",
+    "tags": []
+  },
+  "settings": {
+    "rendering": {
+      "backgroundColor": 4408878,
+      "fogEnabled": false,
+      "fogColor": 0,
+      "fogNear": 1,
+      "fogFar": 100,
+      "ambientIntensity": 0.3,
+      "ambientColor": 16777215
+    },
+    "physics": {
+      "gravity": { "x": 0, "y": -9.81, "z": 0 },
+      "physicsEnabled": false
+    }
+  },
+  "root": {
+    "type": "node",
+    "id": "{{ROOT_ID}}",
+    "name": "Root",
+    "parentId": null,
+    "childIds": [],
+    "active": true,
+    "visible": true,
+    "transform": {
+      "position": { "x": 0, "y": 0, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 1, "y": 1, "z": 1 }
+    },
+    "properties": {}
+  }
+}
