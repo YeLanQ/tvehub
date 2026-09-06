@@ -11,7 +11,7 @@ import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
  * - cube：六面纯色 CubeTexture（顶=top / 四面=horizon / 底=ground），
  *   作为 scene.background 的默认立方体贴图天空。
  *
- * 网页预览运行时（public/web-preview/player.mjs）按同一算法复刻，保证表现一致。
+ * 网页预览运行时（public/web-preview/libs/sky.mjs）按同一算法复刻，保证表现一致。
  */
 
 /** 天空颜色三元组（RGB hex number） */

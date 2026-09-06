@@ -17,12 +17,22 @@ import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
 const projectStore = getProjectStore();
 
-/** public/web-preview 下的网页运行产物（随编辑器一起打包，离线可用） */
+/** public/web-preview 下的网页运行产物（随编辑器一起打包，离线可用）：
+ *  入口 index.html + player.mjs，其余依赖模块与 three 运行时都在 libs/ 下 */
 const RUNTIME_FILES = [
   "index.html",
   "player.mjs",
-  "three.core.min.js",
-  "three.module.min.js",
+  "libs/three.core.min.js",
+  "libs/three.module.min.js",
+  "libs/utils.mjs",
+  "libs/log.mjs",
+  "libs/sky.mjs",
+  "libs/material.mjs",
+  "libs/mesh.mjs",
+  "libs/nodes.mjs",
+  "libs/textures.mjs",
+  "libs/camera.mjs",
+  "libs/stage.mjs",
 ];
 
 const phase = ref<"idle" | "starting" | "ok" | "error">("idle");

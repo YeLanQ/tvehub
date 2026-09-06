@@ -90,7 +90,7 @@ fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String> {
 const TEXTURE_FIELDS: [&str; 5] = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
 
 /// 从当前场景导出网页预览产物：
-/// - files 由前端提供网页运行时（index.html / player.mjs / three.*.min.js / config.json，
+/// - files 由前端提供网页运行时（index.html / player.mjs / libs/* 模块与 three 运行时 / config.json，
 ///   属 WebView 打包资源，前端 fetch 一次传入）；
 /// - scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制全部由 Rust 直接
 ///   从磁盘读取写入导出目录——大贴图不再以 base64 形式穿过 IPC（旧导出的主要负载）。

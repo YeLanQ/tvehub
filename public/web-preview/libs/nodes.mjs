@@ -1,0 +1,105 @@
+// 场景树构建：按导出的 scene.json 递归生成 three 对象并挂到场景。
+// - meshNode → createMesh（mesh.mjs）；
+// - 灯光节点 → Group + 真实 Light（方向光/聚光灯附加本地 -Z 目标点）；
+// - cameraNode → Group（记录世界位姿供渲染相机选用）；
+// - 其余 → Group。
+import * as THREE from "./three.module.min.js";
+import { num, vec, D2R } from "./utils.mjs";
+import { createMesh } from "./mesh.mjs";
+
+/**
+ * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
+ * - cameras：cameraNode 列表（{ json, obj }，供渲染相机取位姿/参数）；
+ * - meshes：meshNode 列表（{ json, obj }，供贴图回填遍历材质）。
+ */
+export function buildSceneTree(rootJson, scene, materialParams) {
+  const cameras = [];
+  const meshes = [];
+
+  function buildOwn(type, json) {
+    switch (type) {
+      case "meshNode":
+        return createMesh(json, materialParams);
+      case "pointLightNode":
+        return wrapLight(json, "point");
+      case "directionalLightNode":
+        return wrapLight(json, "directional");
+      case "spotLightNode":
+        return wrapLight(json, "spot");
+      case "ambientLightNode":
+        return wrapLight(json, "ambient");
+      default:
+        return new THREE.Group();
+    }
+  }
+
+  function buildNode(json, parent) {
+    const type = json.type;
+    const tr = json.transform || {};
+    const obj = buildOwn(type, json);
+    obj.name = json.name ?? type;
+    obj.visible = json.active !== false && json.visible !== false;
+
+    const p = vec(tr.position, { x: 0, y: 0, z: 0 });
+    const r = vec(tr.rotation, { x: 0, y: 0, z: 0 });
+    const s = vec(tr.scale, { x: 1, y: 1, z: 1 });
+    obj.position.set(num(p.x, 0), num(p.y, 0), num(p.z, 0));
+    obj.rotation.order = "XYZ";
+    obj.rotation.set(num(r.x, 0) * D2R, num(r.y, 0) * D2R, num(r.z, 0) * D2R);
+    obj.scale.set(num(s.x, 1), num(s.y, 1), num(s.z, 1));
+
+    if (parent) parent.add(obj);
+    else scene.add(obj);
+
+    const children = Array.isArray(json.children) ? json.children : [];
+    for (const c of children) buildNode(c, obj);
+
+    if (type === "cameraNode") cameras.push({ json, obj });
+    if (type === "meshNode") meshes.push({ json, obj });
+    return obj;
+  }
+
+  function wrapLight(json, kind) {
+    const group = new THREE.Group();
+    const color = num(json.lightColor, 0xffffff) & 0xffffff;
+    const intensity = num(json.intensity, 1);
+    let light;
+    if (kind === "ambient") {
+      light = new THREE.AmbientLight(color, intensity);
+    } else if (kind === "directional") {
+      const dl = new THREE.DirectionalLight(color, intensity);
+      dl.castShadow = json.castShadow === true;
+      light = dl;
+    } else if (kind === "spot") {
+      const sl = new THREE.SpotLight(
+        color,
+        intensity,
+        num(json.distance, 0),
+        num(json.angle, 45) * D2R,
+        num(json.penumbra, 0.2),
+        num(json.decay, 2),
+      );
+      sl.castShadow = json.castShadow === true;
+      light = sl;
+    } else {
+      light = new THREE.PointLight(
+        color,
+        intensity,
+        num(json.distance, 0),
+        num(json.decay, 2),
+      );
+    }
+    group.add(light);
+    // 方向光/聚光灯：光照方向 = 节点本地 -Z（目标点随组旋转）
+    if (kind === "directional" || kind === "spot") {
+      const target = new THREE.Object3D();
+      target.position.set(0, 0, -1);
+      group.add(target);
+      light.target = target;
+    }
+    return group;
+  }
+
+  buildNode(rootJson, null);
+  return { cameras, meshes };
+}

@@ -3,7 +3,7 @@
 // - 每种材质类型对应一个 MaterialTypeDef：three 材质构造、参数→属性映射、
 //   UI 参数分组、默认参数都收敛在类型定义内；
 // - 需要新材质类型时：写一个 MaterialTypeDef 并在 createDefaultMaterialTypeRegistry
-//   里 register 一行即可（同步更新网页预览 player.mjs 的同名分支）；
+//   里 register 一行即可（同步更新网页预览 libs/material.mjs / libs/mesh.mjs 的同名分支）；
 // - .mat 资产的 materialType 字段（缺省 physical）→ 注册表查找类型定义。
 // ---------------------------------------------------------------------------
 
