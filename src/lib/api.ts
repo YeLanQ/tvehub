@@ -93,6 +93,8 @@ export const api = {
     singlePage: boolean;
     /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
     gzip: boolean;
+    /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
+    release: boolean;
     files: Record<string, string>;
   }) => invoke<BuildResult>("build_export", args),
   /** 扫描 exe 旁 public 目录下的用户自定义模板
@@ -125,6 +127,7 @@ export interface BuildResult {
   scenes: { name: string; rel: string; file: string }[];
   single_page: boolean;
   gzip: boolean;
+  release: boolean;
   assets_packed: number;
   missing: string[];
   message: string;

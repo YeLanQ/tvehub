@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
@@ -53,6 +53,8 @@ pub struct BuildResult {
     pub single_page: bool,
     /// 资产是否 gzip 归档
     pub gzip: bool,
+    /// 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩
+    pub release: bool,
     pub assets_packed: usize,
     pub missing: Vec<String>,
     pub message: String,
@@ -83,6 +85,147 @@ fn is_runtime_code(rel: &str) -> bool {
 /// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html
 fn is_entry_page(rel: &str) -> bool {
     rel == "index.html" || (rel.starts_with("index-") && rel.ends_with(".html"))
+}
+
+/// fnv1a64 → 16 位十六进制（无 .meta 资产的确定性 uid，路径稳定）
+fn fallback_uid(rel: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in rel.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// uid 新相对路径：保留目录与扩展名，仅换文件名（player 按扩展名分派解析器）
+fn uid_rel(rel: &str, uid: &str) -> String {
+    let (dir, file) = match rel.rfind('/') {
+        Some(i) => (&rel[..=i], &rel[i + 1..]),
+        None => ("", rel),
+    };
+    let ext = match file.rfind('.') {
+        Some(_) => format!(".{}", file.rsplit('.').next().unwrap_or("")),
+        None => String::new(),
+    };
+    format!("{dir}{uid}{ext}")
+}
+
+/// 项目资产的 .meta uuid（internal 内置资产无 .meta，返回 None 走哈希回退）
+fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
+    if rel.starts_with("internal/") {
+        return None;
+    }
+    let text = fs::read_to_string(
+        crate::project::resolve_in_root(root_path, &format!("{rel}.meta")).ok()?,
+    )
+    .ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("uuid")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 递归重写 JSON 里 meshNode 的 material/model 资产引用
+fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
+    match v {
+        serde_json::Value::Array(items) => {
+            for i in items {
+                rewrite_scene_refs(i, renames);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                if (k == "material" || k == "model") && val.is_string() {
+                    if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
+                        *val = serde_json::Value::String(new.clone());
+                    }
+                } else {
+                    rewrite_scene_refs(val, renames);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 重写 .mat JSON 里贴图字段引用；parse 成功则同时紧凑化（发布模式 JSON 压缩）
+fn rewrite_mat_text(text: &str, renames: &HashMap<String, String>) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return text.to_string();
+    };
+    if let serde_json::Value::Object(map) = &mut v {
+        for (k, val) in map.iter_mut() {
+            if crate::preview::TEXTURE_FIELDS.contains(&k.as_str()) && val.is_string() {
+                if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
+                    *val = serde_json::Value::String(new.clone());
+                }
+            }
+        }
+    }
+    v.to_string()
+}
+
+/// 发布模式处理：为打包资产分配 uid（.meta uuid 优先，否则路径哈希；保留目录与
+/// 扩展名）、重写场景与材质引用、场景/材质 JSON 紧凑化。返回重命名表。
+/// 场景 JSON 文件名保持不变（config.scenes 按名引用，是产物公开入口）。
+fn apply_release(
+    root_path: &Path,
+    files: &mut HashMap<String, String>,
+    binaries: &mut HashMap<String, Vec<u8>>,
+    scene_texts: &mut [(String, String)],
+) -> HashMap<String, String> {
+    let mut renames: HashMap<String, String> = HashMap::new();
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut uid_for = |rel: &str| -> String {
+        let base = || meta_uuid(root_path, rel).unwrap_or_else(|| fallback_uid(rel));
+        let mut uid = base();
+        let mut n = 2;
+        while !used.insert(uid.clone()) {
+            uid = format!("{}-{n}", base());
+            n += 1;
+        }
+        uid
+    };
+
+    // 重命名表（运行时代码与入口页除外）
+    let asset_rels: Vec<String> = files
+        .keys()
+        .chain(binaries.keys())
+        .filter(|rel| !is_runtime_code(rel))
+        .cloned()
+        .collect();
+    for rel in asset_rels {
+        let new_rel = uid_rel(&rel, &uid_for(&rel));
+        renames.insert(rel, new_rel);
+    }
+
+    // 键重命名
+    for (old, new) in &renames {
+        if let Some(v) = files.remove(old) {
+            files.insert(new.clone(), v);
+        }
+        if let Some(v) = binaries.remove(old) {
+            binaries.insert(new.clone(), v);
+        }
+    }
+
+    // 场景引用重写 + JSON 紧凑化
+    for (_, text) in scene_texts.iter_mut() {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) {
+            rewrite_scene_refs(&mut v, &renames);
+            *text = v.to_string();
+        }
+    }
+
+    // 材质贴图引用重写 + 紧凑化
+    for (rel, text) in files.iter_mut() {
+        if rel.ends_with(".mat") {
+            *text = rewrite_mat_text(text, &renames);
+        }
+    }
+
+    renames
 }
 
 /// 归档帧格式：u32 条数(LE) + 每条 [u32 pathLen][path][u32 dataLen][data]，整体 gzip
@@ -139,6 +282,7 @@ pub async fn build_export(
     debug: bool,
     single_page: bool,
     gzip: bool,
+    release: bool,
     files: HashMap<String, String>,
 ) -> Result<BuildResult, String> {
     build_export_impl(
@@ -150,11 +294,13 @@ pub async fn build_export(
         debug,
         single_page,
         gzip,
+        release,
         files,
     )
 }
 
 /// 构建导出实现（同步，便于单元测试直接驱动完整流程）
+#[allow(clippy::too_many_arguments)]
 fn build_export_impl(
     root: String,
     channel: String,
@@ -164,8 +310,10 @@ fn build_export_impl(
     debug: bool,
     single_page: bool,
     gzip: bool,
+    release: bool,
     files: HashMap<String, String>,
 ) -> Result<BuildResult, String> {
+    let _ = title; // 产物清单已移除；保留参数与前端配置对齐
     if !SUPPORTED_CHANNELS.contains(&channel.as_str()) {
         return Err(format!("构建渠道 '{channel}' 暂未支持"));
     }
@@ -216,6 +364,11 @@ fn build_export_impl(
     }
     for (i, (file, _)) in scene_texts.iter().enumerate() {
         packed[i].file = file.clone();
+    }
+
+    // 发布模式：资源 uid 重命名 + 场景/材质引用重写 + JSON 压缩
+    if release {
+        apply_release(&root_path, &mut files, &mut binaries, &mut scene_texts);
     }
 
     // config = 项目配置（设计分辨率/缩放模式/渲染合成等，player 舞台直接消费）
@@ -320,6 +473,7 @@ fn build_export_impl(
         scenes: packed,
         single_page,
         gzip,
+        release,
         assets_packed,
         missing: missing.clone(),
         message: if missing_n > 0 {
@@ -332,7 +486,9 @@ fn build_export_impl(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_archive_bytes, build_export_impl, is_runtime_code, scene_entry_name};
+    use super::{
+        build_archive_bytes, build_export_impl, fallback_uid, is_runtime_code, scene_entry_name,
+    };
     use std::collections::HashMap;
     use std::fs;
 
@@ -413,6 +569,7 @@ mod tests {
                 false,
                 single_page,
                 gzip,
+                false,
                 runtime_files(entry),
             )
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
@@ -442,6 +599,84 @@ mod tests {
             }
             assert!(result.ok);
         }
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 发布模式：资产 uid 重命名（.meta uuid 优先/哈希回退）、场景与材质引用重写、
+    /// JSON 紧凑化；未发布模式保持原名。
+    #[test]
+    fn build_export_release_renames_and_rewrites() {
+        let base = std::env::temp_dir().join(format!("tve-build-rel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("proj");
+        fs::create_dir_all(root.join("assets/materials")).unwrap();
+        fs::create_dir_all(root.join("assets/textures")).unwrap();
+
+        // 材质有 .meta（uuid 重命名）；贴图无 .meta（路径哈希回退）
+        fs::write(
+            root.join("assets/materials/M.mat"),
+            r#"{
+  "$type": "material",
+  "map": "assets/textures/a.png",
+  "normalMap": "assets/textures/a.png"
+}"#,
+        )
+        .unwrap();
+        fs::write(root.join("assets/materials/M.mat.meta"), r#"{"uuid":"11111111-2222-3333-4444-555555555555"}"#).unwrap();
+        fs::write(root.join("assets/textures/a.png"), [9u8; 8]).unwrap();
+        let scene = r#"{
+  "type": "scene",
+  "root": {
+    "type": "node",
+    "children": [
+      { "type": "meshNode", "source": "primitive", "material": "assets/materials/M.mat" }
+    ]
+  }
+}"#;
+        fs::write(root.join("assets/Main.scene"), scene).unwrap();
+
+        let run = |release: bool| {
+            build_export_impl(
+                root.display().to_string(),
+                "web".into(),
+                vec!["assets/Main.scene".into()],
+                "assets/Main.scene".into(),
+                "T".into(),
+                false,
+                false,
+                false,
+                release,
+                HashMap::from([
+                    ("index.html".to_string(), "<html></html>".to_string()),
+                    ("player.mjs".to_string(), "// p".to_string()),
+                ]),
+            )
+            .unwrap()
+        };
+
+        // 未发布：原名 + 保留缩进
+        run(false);
+        let out = root.join("build/web");
+        assert!(out.join("assets/materials/M.mat").is_file());
+        let scene_text = fs::read_to_string(out.join("scenes/Main.json")).unwrap();
+        assert!(scene_text.contains("assets/materials/M.mat"));
+        assert!(scene_text.contains('\n'), "未发布保留原格式");
+
+        // 发布：uuid 文件名 + 引用重写 + JSON 紧凑
+        let result = run(true);
+        assert!(result.release);
+        let out = root.join("build/web");
+        assert!(!out.join("assets/materials/M.mat").exists(), "原名文件应已重命名");
+        let mat_rel = "assets/materials/11111111-2222-3333-4444-555555555555.mat";
+        assert!(out.join(&mat_rel).is_file(), "uuid 文件名（.meta uuid）");
+        let scene_text = fs::read_to_string(out.join("scenes/Main.json")).unwrap();
+        assert!(scene_text.contains(mat_rel), "场景材质引用已重写");
+        assert!(!scene_text.contains('\n'), "场景 JSON 已紧凑化");
+        let mat_text = fs::read_to_string(out.join(mat_rel)).unwrap();
+        assert!(!mat_text.contains("assets/textures/a.png"), "贴图引用已重写");
+        let fallback = fallback_uid("assets/textures/a.png");
+        assert!(out.join(format!("assets/textures/{fallback}.png")).is_file(), "无 .meta 走路径哈希 uid");
+        assert!(mat_text.contains(&fallback), "材质贴图引用重写为哈希 uid");
         let _ = fs::remove_dir_all(&base);
     }
 }

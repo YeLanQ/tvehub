@@ -93,7 +93,8 @@ pub(crate) fn read_asset_bytes(root: &Path, rel: &str) -> Result<Vec<u8>, String
 }
 
 /// 材质文档引用的贴图字段（.mat JSON 内为相对路径字符串）
-const TEXTURE_FIELDS: [&str; 5] = ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
+pub(crate) const TEXTURE_FIELDS: [&str; 5] =
+    ["map", "metalnessMap", "roughnessMap", "normalMap", "emissiveMap"];
 
 /// 收集单个场景引用的全部资产（材质/贴图/模型），写入 files（文本）与 binaries
 /// （二进制）；跨场景共用同一 map 以去重。返回缺失（读取失败被跳过）的资产相对路径。

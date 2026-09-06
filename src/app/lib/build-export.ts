@@ -115,6 +115,8 @@ export interface BuildPrefs {
   templates: string[];
   /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
   gzip: boolean;
+  /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
+  release: boolean;
 }
 
 /** 项目根下的构建配置文件（与 project.config.json 同级同风格） */
@@ -136,6 +138,7 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
         ? cfg.templates.filter((s) => typeof s === "string")
         : [defaultExportTemplateId()],
       gzip: cfg.gzip === true,
+      release: cfg.release === true,
     };
   } catch {
     return null;
@@ -153,6 +156,7 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     debug: prefs.debug,
     templates: prefs.templates,
     gzip: prefs.gzip,
+    release: prefs.release,
   };
   await api.writeText(root, BUILD_CONFIG_REL, JSON.stringify(next, null, 2));
 }
@@ -168,6 +172,8 @@ export async function runBuild(opts: {
   /** 导出模板 id 列表（首个生成 index.html，其余生成 index-<模板>.html） */
   templates: string[];
   gzip: boolean;
+  /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
+  release: boolean;
 }): Promise<BuildResult> {
   // 产物内容与编辑器一致：构建前把当前编辑场景落盘（后端按磁盘内容读取）
   try {
@@ -201,6 +207,7 @@ export async function runBuild(opts: {
     debug: opts.debug,
     singlePage: resolved[0].mode === "single",
     gzip: opts.gzip,
+    release: opts.release,
     files: runtime,
   });
   logStore.log("success", `构建完成: ${result.output_dir}`, "build");

@@ -54,6 +54,16 @@ const buildError = ref("");
 const exportTemplates = ref<ExportTemplateInfo[]>(BUILTIN_EXPORT_TEMPLATES);
 /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联 gzip 包） */
 const gzip = ref(false);
+/** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
+const release = ref(false);
+
+// 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）
+watch(release, (v) => {
+  if (v) debug.value = false;
+});
+watch(debug, (v) => {
+  if (v) release.value = false;
+});
 
 /** 当前选中模板与产物形态（由首个选中模板的 mode 推导） */
 const selectedTemplate = computed(() =>
@@ -134,6 +144,9 @@ async function restoreState(): Promise<void> {
       selectedTemplates.value = [defaultExportTemplateId()];
     }
     gzip.value = prefs.gzip;
+    release.value = prefs.release;
+    // 兼容旧配置（两者曾可同时为 true）：发布模式优先
+    if (release.value) debug.value = false;
   } else {
     channel.value = "web";
     selectedScenes.value = [...scenes];
@@ -142,6 +155,7 @@ async function restoreState(): Promise<void> {
     debug.value = true;
     selectedTemplates.value = [defaultExportTemplateId()];
     gzip.value = false;
+    release.value = false;
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -163,6 +177,7 @@ async function persistPrefs(): Promise<void> {
     debug: debug.value,
     templates: selectedTemplates.value,
     gzip: gzip.value,
+    release: release.value,
   };
   try {
     await saveBuildPrefs(projectStore.currentPath, prefs);
@@ -186,6 +201,7 @@ async function doBuild(): Promise<void> {
       debug: debug.value,
       templates: selectedTemplates.value,
       gzip: gzip.value,
+      release: release.value,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -346,10 +362,17 @@ watch(projectScenes, (next, prev) => {
                 <input id="bp-title" v-model="title" placeholder="项目名" />
               </div>
               <div class="bp-field">
+                <label for="bp-release">发布模式</label>
+                <label class="bp-check">
+                  <input id="bp-release" v-model="release" type="checkbox" />
+                  <span>资源按 uuid 重命名并重写引用、压缩 JSON（与调试模式互斥）</span>
+                </label>
+              </div>
+              <div class="bp-field">
                 <label for="bp-debug">调试模式</label>
                 <label class="bp-check">
                   <input id="bp-debug" v-model="debug" type="checkbox" />
-                  <span>保留运行日志转发（正式发布可关闭）</span>
+                  <span>保留运行日志转发（与发布模式互斥）</span>
                 </label>
               </div>
             </template>
@@ -377,8 +400,10 @@ watch(projectScenes, (next, prev) => {
                 </span>
               </div>
               <div class="bp-result-line bp-muted">
-                {{ result.single_page ? "单页" : "多文件" }}{{ result.gzip ? " · gzip" : "" }} ·
-                场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景
+                {{ result.single_page ? "单页" : "多文件" }}{{ result.gzip ? " · gzip" : "" }}{{
+                  result.release ? " · 发布" : ""
+                }}
+                · 场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景
                 {{ result.main_scene_name || result.main_scene || "—" }}
               </div>
               <div v-if="result.missing.length" class="bp-missing">
