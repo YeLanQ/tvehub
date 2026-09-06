@@ -29,5 +29,5 @@ export {
   createDefaultMaterialTypeRegistry,
   materialTypeRegistry,
 } from "./factory";
-export type { MaterialTypeDef, MaterialTextureLoader } from "./factory";
+export type { MaterialTypeDef, MaterialTextureLoader, OutlineConfig } from "./factory";
 export { collectMeshMaterialRefs } from "./collect";

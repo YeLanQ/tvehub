@@ -68,6 +68,9 @@ const MAT_DEFAULTS = {
   wireframe: false,
   toonSteps: 3,
   toonShadowStrength: 0.6,
+  outlineEnabled: false,
+  outlineColor: 0x000000,
+  outlineWidth: 0.02,
 };
 
 // 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致）
@@ -104,6 +107,59 @@ function makeToonGradient(steps, shadowStrength) {
   tex.colorSpace = THREE.NoColorSpace;
   tex.needsUpdate = true;
   return tex;
+}
+
+/** 拷贝几何并沿顶点外扩 offset（对象空间单位）作为轮廓体几何；无法线则返回未外扩克隆。
+ * 外扩方向取“焊接平均法线”（同位置多面重复顶点法线按位置合并平均），避免硬边处
+ * 各面沿自身法线外扩把轮廓撕开（连接处断开）。 */
+function displacedGeometry(geom, offset) {
+  const pos = geom.getAttribute("position");
+  const nor = geom.getAttribute("normal");
+  const out = geom.clone();
+  if (!pos || !nor || pos.count !== nor.count) return out;
+  const pa = pos.array;
+  const na = nor.array;
+  const count = pos.count;
+  const slotOf = new Map();
+  const ax = [];
+  const ay = [];
+  const az = [];
+  const keyOf = (i) =>
+    `${Math.round(pa[i * 3] * 1e4)}_${Math.round(pa[i * 3 + 1] * 1e4)}_${Math.round(pa[i * 3 + 2] * 1e4)}`;
+  for (let i = 0; i < count; i++) {
+    const key = keyOf(i);
+    let s = slotOf.get(key);
+    if (s === undefined) {
+      s = ax.length;
+      slotOf.set(key, s);
+      ax.push(na[i * 3]);
+      ay.push(na[i * 3 + 1]);
+      az.push(na[i * 3 + 2]);
+    } else {
+      ax[s] += na[i * 3];
+      ay[s] += na[i * 3 + 1];
+      az[s] += na[i * 3 + 2];
+    }
+  }
+  const moved = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const s = slotOf.get(keyOf(i));
+    const len = Math.hypot(ax[s], ay[s], az[s]);
+    const oi = i * 3;
+    if (len < 1e-6) {
+      moved[oi] = pa[oi];
+      moved[oi + 1] = pa[oi + 1];
+      moved[oi + 2] = pa[oi + 2];
+    } else {
+      const o = offset / len;
+      moved[oi] = pa[oi] + ax[s] * o;
+      moved[oi + 1] = pa[oi + 1] + ay[s] * o;
+      moved[oi + 2] = pa[oi + 2] + az[s] * o;
+    }
+  }
+  out.setAttribute("position", new THREE.BufferAttribute(moved, 3));
+  out.computeBoundingSphere();
+  return out;
 }
 
 function skyHex(c) {
@@ -419,7 +475,22 @@ async function main() {
         alphaTest: f.alphaTest,
         wireframe: f.wireframe,
       });
-      return new THREE.Mesh(geom, mat);
+      const mesh = new THREE.Mesh(geom, mat);
+      if (m.outlineEnabled === true) {
+        // 轮廓体：沿法线外扩（宽度×包围半径）、只渲染背面的纯色子网格
+        if (!geom.boundingSphere) geom.computeBoundingSphere();
+        const radius = geom.boundingSphere ? geom.boundingSphere.radius : 1;
+        const outline = new THREE.Mesh(
+          displacedGeometry(geom, m.outlineWidth * radius),
+          new THREE.MeshBasicMaterial({
+            color: (m.outlineColor & 0xffffff) || 0x000000,
+            side: THREE.BackSide,
+          }),
+        );
+        outline.name = "__matOutline";
+        mesh.add(outline);
+      }
+      return mesh;
     }
     if (m.type === "unlit") {
       // Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
@@ -546,6 +617,9 @@ async function main() {
             wireframe: j.wireframe === true,
             toonSteps: Math.max(2, Math.min(6, Math.round(num(j.toonSteps, MAT_DEFAULTS.toonSteps)))),
             toonShadowStrength: u01(j.toonShadowStrength, MAT_DEFAULTS.toonShadowStrength),
+            outlineEnabled: j.outlineEnabled === true,
+            outlineColor: matColor(j.outlineColor, MAT_DEFAULTS.outlineColor),
+            outlineWidth: Math.max(0, Math.min(0.1, num(j.outlineWidth, MAT_DEFAULTS.outlineWidth))),
             map: typeof j.map === "string" ? j.map : "",
             metalnessMap: typeof j.metalnessMap === "string" ? j.metalnessMap : "",
             roughnessMap: typeof j.roughnessMap === "string" ? j.roughnessMap : "",

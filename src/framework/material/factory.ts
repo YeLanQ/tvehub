@@ -44,6 +44,18 @@ export interface MaterialTypeDef {
   defaultParams(): MaterialParams;
   /** 把参数应用到 three 材质实例（含贴图通道异步回填） */
   apply(mat: THREE.Material, params: MaterialParams, loader?: MaterialTextureLoader): void;
+  /**
+   * 可选“轮廓体”能力（法线外扩描边，由同步器为网格挂子渲染体）：
+   * 返回 null 表示该类型无轮廓或未启用；否则给出轮廓颜色与外扩宽度
+   * （宽度为相对对象包围半径的比例，渲染端放大几何时换算）。
+   */
+  outlineFor?(params: MaterialParams): OutlineConfig | null;
+}
+
+/** 轮廓体配置（法线外扩描边：颜色 + 相对对象包围半径的宽度） */
+export interface OutlineConfig {
+  color: number;
+  width: number;
 }
 
 /** 材质类型注册表：key → 类型定义 */
@@ -292,6 +304,26 @@ const TOON_PARAM_GROUPS: MaterialParamGroup[] = [
     defs: [materialParamDef("emissive"), materialParamDef("emissiveIntensity")],
   },
   {
+    title: "轮廓（Outline）",
+    enableKey: "outlineEnabled",
+    enableLabel: "启用轮廓",
+    defs: [
+      {
+        key: "outlineColor",
+        label: "轮廓颜色",
+        en: "Outline Color",
+        kind: "color",
+      },
+      {
+        key: "outlineWidth",
+        label: "轮廓宽度",
+        en: "Outline Width",
+        kind: "number",
+        step: 0.001,
+      },
+    ],
+  },
+  {
     title: "输出（Output）",
     defs: [
       materialParamDef("opacity"),
@@ -357,6 +389,10 @@ const TOON_DEF: MaterialTypeDef = {
   paramGroups: TOON_PARAM_GROUPS,
   defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
   apply: applyToon,
+  outlineFor: (params) =>
+    params.outlineEnabled
+      ? { color: params.outlineColor, width: params.outlineWidth }
+      : null,
 };
 
 /** 默认材质类型注册表（physical + unlit + toon；新类型在此追加一行 register） */

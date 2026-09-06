@@ -26,12 +26,13 @@ export type TextureParamKey =
   | "normalMap"
   | "emissiveMap";
 
-/** 需显式勾选启用才生效的效果分组开关（自发光/清漆/光泽/透射） */
+/** 需显式勾选启用才生效的效果分组开关（自发光/清漆/光泽/透射/轮廓） */
 export type MaterialEnableKey =
   | "emissionEnabled"
   | "clearcoatEnabled"
   | "sheenEnabled"
-  | "transmissionEnabled";
+  | "transmissionEnabled"
+  | "outlineEnabled";
 
 /** 判断字段是否为效果分组启用开关 */
 export function isMaterialEnableKey(
@@ -41,7 +42,8 @@ export function isMaterialEnableKey(
     key === "emissionEnabled" ||
     key === "clearcoatEnabled" ||
     key === "sheenEnabled" ||
-    key === "transmissionEnabled"
+    key === "transmissionEnabled" ||
+    key === "outlineEnabled"
   );
 }
 
@@ -73,6 +75,8 @@ export type MaterialParamKey =
   | "wireframe"
   | "toonSteps"
   | "toonShadowStrength"
+  | "outlineColor"
+  | "outlineWidth"
   | TextureParamKey;
 
 /** PBR 材质参数（three MeshPhysicalMaterial 可映射的全部标量/颜色/贴图项） */
@@ -141,6 +145,12 @@ export interface MaterialParams {
   toonSteps: number;
   /** 卡通阴影强度（Toon Shadow）：0..1，最暗档亮度 = 1 − toonShadowStrength */
   toonShadowStrength: number;
+  /** 轮廓描边启用开关：false 时忽略 outlineColor/outlineWidth（仅 toon 生效） */
+  outlineEnabled: boolean;
+  /** 轮廓颜色（Outline Color；默认黑） */
+  outlineColor: number;
+  /** 轮廓宽度（Outline Width）：法线外扩量 = 值 × 对象包围半径（相对大小，0..0.1） */
+  outlineWidth: number;
   // —— 贴图通道（相对路径；空串 = 无）——
   /** 基础色贴图（Base Color） */
   map: string;
@@ -199,6 +209,10 @@ export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
   // 卡通参数默认值（其它类型忽略；切到 toon 时生效）
   toonSteps: 3,
   toonShadowStrength: 0.6,
+  // 轮廓描边默认关闭；开启后默认黑边（宽度为对象包围半径的比例）
+  outlineEnabled: false,
+  outlineColor: 0x000000,
+  outlineWidth: 0.02,
   // 贴图通道默认空（无贴图）
   map: "",
   metalnessMap: "",
@@ -296,6 +310,9 @@ export function materialParamsFrom(v: unknown): MaterialParams {
     wireframe: bool(o.wireframe, d.wireframe),
     toonSteps: Math.max(2, Math.min(6, Math.round(num(o.toonSteps, d.toonSteps)))),
     toonShadowStrength: unit(o.toonShadowStrength, d.toonShadowStrength),
+    outlineEnabled: bool(o.outlineEnabled, d.outlineEnabled),
+    outlineColor: parseColorHex(o.outlineColor, d.outlineColor),
+    outlineWidth: Math.max(0, Math.min(0.1, num(o.outlineWidth, d.outlineWidth))),
     map: typeof o.map === "string" ? o.map : "",
     metalnessMap: typeof o.metalnessMap === "string" ? o.metalnessMap : "",
     roughnessMap: typeof o.roughnessMap === "string" ? o.roughnessMap : "",
@@ -335,11 +352,14 @@ export function clampMaterialParam(key: MaterialParamKey, value: number): number
       return Math.max(0, Math.min(100, value));
     case "attenuationDistance":
       return Math.max(0, Math.min(10, value));
+    case "outlineWidth":
+      return Math.max(0, Math.min(0.1, value));
     case "color":
     case "specularColor":
     case "emissive":
     case "sheenColor":
     case "attenuationColor":
+    case "outlineColor":
       return value & 0xffffff;
     case "toonSteps":
       return Math.max(2, Math.min(6, Math.round(value)));
@@ -362,6 +382,8 @@ export function materialParamMax(key: MaterialParamKey): number {
       return 10;
     case "toonSteps":
       return 6;
+    case "outlineWidth":
+      return 0.1;
     default:
       return 1;
   }

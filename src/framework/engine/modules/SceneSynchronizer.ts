@@ -16,6 +16,7 @@ import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/typ
 import {
   DEFAULT_MATERIAL_TYPE,
   materialTypeRegistry,
+  type MaterialTypeDef,
 } from "../../material/factory";
 
 /** 材质参数查询（EditorEngine 注入 MaterialManager） */
@@ -30,6 +31,75 @@ export interface MaterialParamsLookup {
 const defaultLookup: MaterialParamsLookup = {
   paramsFor: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
 };
+
+/** 网格轮廓体子网格名（同步器按名查找/回收；不进入 objectMap） */
+const OUTLINE_CHILD_NAME = "__matOutline";
+
+/**
+ * 拷贝几何并沿顶点外扩 offset（对象空间单位），用作轮廓体的独立几何，避免污染主网格几何。
+ * 外扩方向为“焊接平均法线”：同一位置的顶点（硬边/角点处属于多个面的重复顶点）先按位置
+ * 合并、累加各面法线取平均再归一化，避免每面沿自身面法线外扩时在棱角撕开缝隙导致轮廓
+ * 连接处断开。无法线属性时返回未外扩的克隆。
+ */
+function outlineGeometryFrom(
+  base: THREE.BufferGeometry,
+  offset: number,
+): THREE.BufferGeometry {
+  const pos = base.getAttribute("position");
+  const nor = base.getAttribute("normal");
+  const out = base.clone();
+  if (!pos || !nor || pos.count !== nor.count) return out;
+  const pa = pos.array as Float32Array;
+  const na = nor.array as Float32Array;
+  const count = pos.count;
+  // —— 第一遍：按位置焊接顶点，累加同位置各面法线 ——
+  const slotOf = new Map<string, number>();
+  const ax: number[] = [];
+  const ay: number[] = [];
+  const az: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const key = `${Math.round(pa[i * 3] * 1e4)}_${Math.round(pa[i * 3 + 1] * 1e4)}_${
+      Math.round(pa[i * 3 + 2] * 1e4)
+    }`;
+    let s = slotOf.get(key);
+    if (s === undefined) {
+      s = ax.length;
+      slotOf.set(key, s);
+      ax.push(na[i * 3]);
+      ay.push(na[i * 3 + 1]);
+      az.push(na[i * 3 + 2]);
+    } else {
+      ax[s] += na[i * 3];
+      ay[s] += na[i * 3 + 1];
+      az[s] += na[i * 3 + 2];
+    }
+  }
+  // —— 第二遍：按焊接平均法线外扩（平均法线退化时原地不动，避免撕裂/NaN） ——
+  const moved = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const key = `${Math.round(pa[i * 3] * 1e4)}_${Math.round(pa[i * 3 + 1] * 1e4)}_${
+      Math.round(pa[i * 3 + 2] * 1e4)
+    }`;
+    const s = slotOf.get(key) as number;
+    const len = Math.hypot(ax[s], ay[s], az[s]);
+    const oi = i * 3;
+    if (len < 1e-6) {
+      moved[oi] = pa[oi];
+      moved[oi + 1] = pa[oi + 1];
+      moved[oi + 2] = pa[oi + 2];
+    } else {
+      const nx = ax[s] / len;
+      const ny = ay[s] / len;
+      const nz = az[s] / len;
+      moved[oi] = pa[oi] + nx * offset;
+      moved[oi + 1] = pa[oi + 1] + ny * offset;
+      moved[oi + 2] = pa[oi + 2] + nz * offset;
+    }
+  }
+  out.setAttribute("position", new THREE.BufferAttribute(moved, 3));
+  out.computeBoundingSphere();
+  return out;
+}
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
@@ -199,6 +269,50 @@ export class SceneSynchronizer {
       obj.material = mat;
     }
     def.apply(mat, params, this.lookup);
+    this.syncOutlineMesh(obj, def, params);
+  }
+
+  /**
+   * 网格轮廓体（法线外扩描边，仅类型定义提供 outlineFor 时可用，如 toon）：
+   * 启用时给网格挂一个沿法线外扩、只渲染背面（BackSide）的纯色子网格；关闭或
+   * 类型不支持时移除。宽度按对象包围半径相对化（跟随缩放保持比例），几何为主
+   * 网格的独立外扩副本，主几何/尺寸变化时重建。
+   */
+  private syncOutlineMesh(obj: THREE.Mesh, def: MaterialTypeDef, params: MaterialParams): void {
+    const want = def.outlineFor?.(params) ?? null;
+    let outline = obj.children.find((c) => c.name === OUTLINE_CHILD_NAME) as
+      | THREE.Mesh
+      | undefined;
+    if (!want) {
+      if (outline) {
+        obj.remove(outline);
+        (outline.geometry as THREE.BufferGeometry | undefined)?.dispose();
+        (outline.material as THREE.Material | undefined)?.dispose();
+      }
+      return;
+    }
+    if (!outline) {
+      outline = new THREE.Mesh(
+        new THREE.BufferGeometry(),
+        new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide }),
+      );
+      outline.name = OUTLINE_CHILD_NAME;
+      obj.add(outline);
+    }
+    const base = obj.geometry as THREE.BufferGeometry | undefined;
+    if (!base) return;
+    // 外扩量 = 参数宽度 × 对象包围半径：宽度语义相对对象大小，缩放时粗细基本不变
+    if (!base.boundingSphere) base.computeBoundingSphere();
+    const radius = base.boundingSphere?.radius ?? 1;
+    const sig = `${want.width}:${radius}`;
+    const meta = outline.userData as Record<string, unknown>;
+    if (meta.outlineSrc !== base || meta.outlineSig !== sig) {
+      if (outline.geometry) outline.geometry.dispose();
+      outline.geometry = outlineGeometryFrom(base, want.width * radius);
+      meta.outlineSrc = base;
+      meta.outlineSig = sig;
+    }
+    (outline.material as THREE.MeshBasicMaterial).color.setHex(want.color & 0xffffff);
   }
 
   private refreshLight(light: LightNode, obj: THREE.Object3D): void {
