@@ -212,6 +212,38 @@ async fn pick_project_folder() -> Result<Option<String>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// 导入资产：多选文件对话框（资产面板「导入」用）
+#[tauri::command]
+async fn pick_import_files(title: Option<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .set_title(title.unwrap_or_else(|| "选择要导入的文件".into()))
+            .pick_files()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 导入资产：多选文件夹对话框（资产面板「导入目录」用）
+#[tauri::command]
+async fn pick_import_folders(title: Option<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .set_title(title.unwrap_or_else(|| "选择要导入的文件夹".into()))
+            .pick_folders()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// 重命名项目
 #[tauri::command]
 async fn rename_project(path: String, new_name: String) -> Result<ProjectInfo, String> {
@@ -555,6 +587,8 @@ pub fn run() {
             rename_project,
             trash_path,
             pick_project_folder,
+            pick_import_files,
+            pick_import_folders,
             get_default_project_dir,
             set_default_project_dir,
             read_project_scene,

@@ -49,6 +49,10 @@ export const api = {
   /** 写入项目内二进制文件（base64 内容；复制内置贴图到项目等用） */
   writeAssetBinary: (root: string, rel: string, contentB64: string) =>
     invoke<void>("write_asset_binary", { root, rel, contentB64 }),
+  /** 导入选择对话框：多选文件（资产面板「导入」） */
+  pickImportFiles: (title?: string) => invoke<string[]>("pick_import_files", { title }),
+  /** 导入选择对话框：多选文件夹（资产面板「导入目录」） */
+  pickImportFolders: (title?: string) => invoke<string[]>("pick_import_folders", { title }),
   /** 导出网页预览产物（相对路径 → 内容）到 <root>/.tmp/web-preview（不启停服务器）；
    *  binaries 为相对路径 → base64 的二进制资产（贴图等） */
   exportWebPreview: (

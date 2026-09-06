@@ -17,6 +17,7 @@ export interface AssetsStore {
   duplicate: (root: string, rel: string) => Promise<string | null>;
   remove: (root: string, rel: string) => Promise<boolean>;
   moveTo: (root: string, rel: string, destDir: string) => Promise<string | null>;
+  importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -159,6 +160,27 @@ export function getAssetsStore(): AssetsStore {
       } catch (e) {
         logStore.log("error", `移动失败: ${e}`);
         return null;
+      }
+    },
+    async importPaths(root, destDir, sourcePaths) {
+      if (!sourcePaths.length) return false;
+      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+        logStore.log("warn", "内置目录与 src 目录不允许导入资产（脚本用「新建脚本」创建）");
+        return false;
+      }
+      try {
+        const imported = await api.importAssets(root, destDir, sourcePaths);
+        await store.load(root);
+        logStore.log(
+          "success",
+          imported.length > 1
+            ? `已导入 ${imported.length} 个资产到 ${destDir || "项目根"}`
+            : `已导入资产: ${imported[0] ?? ""}`,
+        );
+        return true;
+      } catch (e) {
+        logStore.log("error", `导入失败: ${e}`);
+        return false;
       }
     },
     async readText(root, rel) {

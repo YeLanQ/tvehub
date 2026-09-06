@@ -147,7 +147,16 @@ async function doRename() {
     confirmText: "重命名",
   });
   if (!newName || newName === props.node.name) return;
-  await assetsStore.rename(root, props.node.path, newName);
+  // 文件重命名：新名未带后缀时自动补原扩展名（目录不补；隐藏文件 .env 等也不补）
+  let finalName = newName;
+  if (props.node.kind !== "dir") {
+    const slash = props.node.path.lastIndexOf("/");
+    const dot = props.node.path.lastIndexOf(".");
+    if (dot > slash && dot > 0 && !finalName.includes(".")) {
+      finalName = finalName + props.node.path.slice(dot);
+    }
+  }
+  await assetsStore.rename(root, props.node.path, finalName);
 }
 
 async function doDelete() {
