@@ -43,6 +43,8 @@ export interface ProjectStore {
   setDesignSize: (width: number, height: number) => void;
   setView: (view: "home" | "editor") => void;
   setProjectName: (name: string | null) => void;
+  /** 场景资产被移动/重命名后改写当前打开场景指针（保存仍写到新路径） */
+  setSceneRel: (rel: string) => void;
   openSettings: () => void;
   closeSettings: () => void;
   addRecent: (project: RecentProject) => void;
@@ -108,6 +110,64 @@ export function getProjectStore(): ProjectStore {
     }
   }
 
+  /** 读取 project.config.json 中配置的主场景（缺失/损坏/指向非法路径时返回空串） */
+  async function readConfiguredMainScene(root: string): Promise<string> {
+    try {
+      const cfg = JSON.parse(await api.readText(root, "project.config.json")) as Record<
+        string,
+        unknown
+      >;
+      const rel = cfg.mainScene;
+      if (typeof rel !== "string" || !rel.trim()) return "";
+      if (rel.startsWith("internal/") || rel === "src" || rel.startsWith("src/")) return "";
+      return rel.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  /** 探测项目内文件当前是否可读（候选场景存在性检查） */
+  async function isReadable(root: string, rel: string): Promise<boolean> {
+    try {
+      await api.readText(root, rel);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 解析打开/新建项目时要加载的场景：
+   * 1. project.config.json 的 mainScene（文件仍存在时优先）；
+   * 2. 默认 assets/Main.scene；
+   * 3. 资产扫描到的第一个 .scene（主场景被移动/重命名后仍能找回，避免保存时在旧路径重建）。
+   * 全部不存在时返回默认路径：保持旧行为，首次保存时创建项目的第一个场景。
+   */
+  async function resolveInitialSceneRel(root: string): Promise<string> {
+    const candidates = [await readConfiguredMainScene(root), DEFAULT_SCENE_REL];
+    try {
+      const scenes = await api.scanAssets(root);
+      candidates.push(
+        ...scenes
+          .filter(
+            (a) =>
+              a.kind === "scene" &&
+              !a.path.endsWith("/") &&
+              a.path !== "src" &&
+              !a.path.startsWith("src/"),
+          )
+          .map((a) => a.path)
+          .sort(),
+      );
+    } catch {
+      /* 扫描失败时仅尝试已配置/默认候选 */
+    }
+    for (const rel of [...new Set(candidates)]) {
+      if (rel && (await isReadable(root, rel))) return rel;
+    }
+    return DEFAULT_SCENE_REL;
+  }
+
   const store: ProjectStore = {
     get recent() {
       return state.recent;
@@ -167,6 +227,9 @@ export function getProjectStore(): ProjectStore {
     setProjectName(name) {
       state.projectName = name;
     },
+    setSceneRel(rel) {
+      state.currentSceneRel = rel;
+    },
     openSettings() {
       if (!state.currentPath || state.view !== "editor") return;
       state.settingsOpen = true;
@@ -201,7 +264,7 @@ export function getProjectStore(): ProjectStore {
       state.loading = true;
       try {
         const info = await invoke<RecentProject>("open_project", { path });
-        await store.loadScene(info.path, DEFAULT_SCENE_REL);
+        await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
         await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);
@@ -225,7 +288,7 @@ export function getProjectStore(): ProjectStore {
           templateId,
           files,
         });
-        await store.loadScene(info.path, DEFAULT_SCENE_REL);
+        await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
         await loadProjectRenderConfig(info.path);
         state.currentPath = info.path;
         store.setProjectName(info.name);

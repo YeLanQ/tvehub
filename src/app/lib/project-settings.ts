@@ -5,6 +5,7 @@
 import { api } from "../../lib/api";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
+import { remapAssetPath } from "./asset-paths";
 
 /** 项目设置配置文件（相对项目根） */
 export const PROJECT_CONFIG_REL = "project.config.json";
@@ -166,4 +167,25 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   const h = clampInt(draft.designHeight, 1, 16384);
   p.setDesignSize(w, h);
   logStore.log("success", "已保存项目设置", "toolbar");
+}
+
+/**
+ * 资产移动/重命名后同步主场景配置：project.config.json 的 mainScene
+ * 指向被移动资产（或其内部）时改写为新路径，避免配置指向已不存在的文件。
+ */
+export async function syncMainSceneAfterMove(
+  root: string,
+  fromRel: string,
+  toRel: string,
+): Promise<void> {
+  try {
+    const text = await api.readText(root, PROJECT_CONFIG_REL);
+    const cfg = JSON.parse(text) as Record<string, unknown>;
+    const next = remapAssetPath(String(cfg.mainScene ?? ""), fromRel, toRel);
+    if (next == null) return;
+    cfg.mainScene = next;
+    await api.writeText(root, PROJECT_CONFIG_REL, JSON.stringify(cfg, null, 2));
+  } catch {
+    /* 配置缺失/损坏时跳过同步（打开项目时有场景回退解析） */
+  }
 }

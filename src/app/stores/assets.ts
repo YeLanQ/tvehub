@@ -5,6 +5,9 @@ import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
 import { loadAssetTemplate } from "../lib/asset-templates";
 import { buildMaterialContent } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
+import { remapAssetPath } from "../lib/asset-paths";
+import { syncMainSceneAfterMove } from "../lib/project-settings";
+import { getProjectStore } from "./project";
 import { logStore } from "./log";
 
 export interface AssetsStore {
@@ -48,6 +51,18 @@ export function suggestAssetName(assets: AssetEntry[], base: string, stem: strin
 }
 
 let singleton: AssetsStore | null = null;
+
+/**
+ * 移动/重命名资产后跟随改写场景引用：
+ * 当前打开场景（sceneRel）就是被移动文件或位于被移动目录内时指向新路径，
+ * 让后续保存写入新位置而不是在旧路径重建文件；mainScene 配置同理同步。
+ */
+async function followSceneMove(root: string, fromRel: string, toRel: string): Promise<void> {
+  const projectStore = getProjectStore();
+  const next = remapAssetPath(projectStore.sceneRel, fromRel, toRel);
+  if (next) projectStore.setSceneRel(next);
+  await syncMainSceneAfterMove(root, fromRel, toRel);
+}
 
 export function getAssetsStore(): AssetsStore {
   if (singleton) return singleton;
@@ -117,6 +132,7 @@ export function getAssetsStore(): AssetsStore {
       }
       try {
         const r = await api.renameAsset(root, rel, newName);
+        await followSceneMove(root, rel, r);
         await store.load(root);
         return r;
       } catch (e) {
@@ -160,6 +176,7 @@ export function getAssetsStore(): AssetsStore {
       }
       try {
         const r = await api.moveAsset(root, rel, destDir);
+        await followSceneMove(root, rel, r);
         await store.load(root);
         return r;
       } catch (e) {
