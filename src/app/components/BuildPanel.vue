@@ -5,7 +5,7 @@
  * - 渠道设置：Web（页面标题/调试模式）；微信小游戏（占位，构建按钮禁用）；
  * - 构建 → Rust 把选中场景 + 引用资产 + 网页运行时打包到 <项目>/build/<渠道>/；
  * - 结果区展示产物信息与缺失资产，支持「打开构建目录」「浏览器预览」。
- * 构建配置归属项目自身（项目根 build.config.json）；重开面板读回配置与 pack-manifest 结果。
+ * 构建配置归属项目自身（项目根 build.config.json）；重开面板读回配置。
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { getProjectStore } from "../stores/project";
@@ -13,8 +13,10 @@ import { getAssetsStore } from "../stores/assets";
 import {
   BUILD_CHANNELS,
   BUILD_CONFIG_REL,
+  BUILTIN_EXPORT_TEMPLATES,
   defaultExportTemplateId,
   loadBuildPrefs,
+  loadExportTemplates,
   saveBuildPrefs,
   resolveExportTemplate,
   runBuild,
@@ -22,10 +24,10 @@ import {
   previewBuildInBrowser,
   type BuildChannel,
   type BuildPrefs,
+  type ExportTemplateInfo,
 } from "../lib/build-export";
-import { api, type BuildResult } from "../../lib/api";
+import { type BuildResult } from "../../lib/api";
 import { logStore } from "../stores/log";
-import { WEB_EXPORT_TEMPLATES } from "../../generated/template-registry";
 import "../../styles/components/build-panel.scss";
 
 const projectStore = getProjectStore();
@@ -43,14 +45,44 @@ const selectedScenes = ref<string[]>([]);
 const mainScene = ref("");
 const title = ref("");
 const debug = ref(true);
-/** 导出模板 id（模板 mode 决定产物形态：multi=多文件 / single=单页） */
-const template = ref(defaultExportTemplateId());
+/** 选中的导出模板 id 列表（可多选：首个生成 index.html，其余生成 index-<模板>.html；
+ *  多文件与单页模板不能混选） */
+const selectedTemplates = ref<string[]>([defaultExportTemplateId()]);
+/** 构建错误（面板内直接可见，不再只写控制台） */
+const buildError = ref("");
+/** 导出模板（内置 + exe 旁自定义合并列表；onMounted 异步补全） */
+const exportTemplates = ref<ExportTemplateInfo[]>(BUILTIN_EXPORT_TEMPLATES);
 /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联 gzip 包） */
 const gzip = ref(false);
 
-/** 当前选中模板与产物形态（由模板 mode 推导） */
-const selectedTemplate = computed(() => resolveExportTemplate(template.value));
+/** 当前选中模板与产物形态（由首个选中模板的 mode 推导） */
+const selectedTemplate = computed(() =>
+  resolveExportTemplate(selectedTemplates.value[0], exportTemplates.value),
+);
 const singlePage = computed(() => selectedTemplate.value?.mode === "single");
+
+/** 勾选/取消导出模板（可多选）；勾选与已选形态不同的模板时自动切换为仅选中它
+ *  （多文件与单页不能混选——直接替换选择，避免"勾选被静默拒绝→选择为空→构建按钮
+ *  一直禁用"的陷阱） */
+function toggleTemplate(id: string, checked: boolean): void {
+  const tpl = resolveExportTemplate(id, exportTemplates.value);
+  if (!tpl) return;
+  const set = new Set(selectedTemplates.value);
+  if (checked) {
+    const firstSel = resolveExportTemplate(selectedTemplates.value[0], exportTemplates.value);
+    if (firstSel && firstSel.mode !== tpl.mode) {
+      selectedTemplates.value = [tpl.id];
+      logStore.log("info", `已切换导出模板为「${tpl.name}」（多文件与单页不能混选）`, "build");
+      return;
+    }
+    set.add(id);
+  } else {
+    set.delete(id);
+  }
+  selectedTemplates.value = exportTemplates.value
+    .filter((t) => set.has(t.id))
+    .map((t) => t.id);
+}
 
 const building = ref(false);
 const result = ref<BuildResult | null>(null);
@@ -60,7 +92,11 @@ const currentChannel = computed(
   () => BUILD_CHANNELS.find((c) => c.id === channel.value) ?? BUILD_CHANNELS[0],
 );
 const canBuild = computed(
-  () => currentChannel.value.supported && selectedScenes.value.length > 0 && !building.value,
+  () =>
+    currentChannel.value.supported &&
+    selectedScenes.value.length > 0 &&
+    selectedTemplates.value.length > 0 &&
+    !building.value,
 );
 /** 输出目录预览：<项目>/build/<渠道> */
 const outputDirPreview = computed(() => {
@@ -91,7 +127,12 @@ async function restoreState(): Promise<void> {
     mainScene.value = prefs.mainScene;
     title.value = prefs.title;
     debug.value = prefs.debug;
-    template.value = resolveExportTemplate(prefs.template)?.id ?? defaultExportTemplateId();
+    selectedTemplates.value = exportTemplates.value
+      .filter((t) => prefs.templates.includes(t.id))
+      .map((t) => t.id);
+    if (!selectedTemplates.value.length) {
+      selectedTemplates.value = [defaultExportTemplateId()];
+    }
     gzip.value = prefs.gzip;
   } else {
     channel.value = "web";
@@ -99,7 +140,7 @@ async function restoreState(): Promise<void> {
     mainScene.value = "";
     title.value = "";
     debug.value = true;
-    template.value = defaultExportTemplateId();
+    selectedTemplates.value = [defaultExportTemplateId()];
     gzip.value = false;
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
@@ -109,36 +150,8 @@ async function restoreState(): Promise<void> {
         : (selectedScenes.value[0] ?? "");
   }
   if (!title.value.trim()) title.value = projectStore.projectName ?? "";
-
   result.value = null;
-  resultSource.value = null;
-  if (!root) return;
-  // 尝试读回上次构建的自描述清单（无则保持"未构建"）
-  void (async () => {
-    try {
-      const text = await api.readText(root, `build/${channel.value}/pack-manifest.json`);
-      const m = JSON.parse(text) as Record<string, unknown>;
-      const name = (v: unknown) => (typeof v === "string" ? v : "");
-      result.value = {
-        ok: true,
-        channel: name(m.channel) || channel.value,
-        output_dir: `${root}\\build\\${name(m.channel) || channel.value}`,
-        main_scene: name(m.main_scene),
-        main_scene_name: name(m.main_scene_name),
-        scenes: Array.isArray(m.scenes)
-          ? (m.scenes as BuildResult["scenes"])
-          : [],
-        single_page: m.singlePage === true,
-        gzip: m.gzip === true,
-        assets_packed: typeof m.assets_packed === "number" ? m.assets_packed : 0,
-        missing: Array.isArray(m.missing) ? (m.missing as string[]) : [],
-        message: "上次构建结果",
-      };
-      resultSource.value = "persisted";
-    } catch {
-      /* 从未构建过 */
-    }
-  })();
+  buildError.value = "";
 }
 
 async function persistPrefs(): Promise<void> {
@@ -148,7 +161,7 @@ async function persistPrefs(): Promise<void> {
     mainScene: mainScene.value,
     title: title.value,
     debug: debug.value,
-    template: template.value,
+    templates: selectedTemplates.value,
     gzip: gzip.value,
   };
   try {
@@ -162,6 +175,7 @@ async function doBuild(): Promise<void> {
   const root = projectStore.currentPath;
   if (!root || !canBuild.value) return;
   building.value = true;
+  buildError.value = "";
   try {
     const res = await runBuild({
       root,
@@ -170,13 +184,16 @@ async function doBuild(): Promise<void> {
       mainScene: mainScene.value,
       title: title.value,
       debug: debug.value,
-      template: template.value,
+      templates: selectedTemplates.value,
       gzip: gzip.value,
     });
     result.value = res;
     resultSource.value = "fresh";
     await persistPrefs();
   } catch (e) {
+    buildError.value = String(e);
+    result.value = null;
+    resultSource.value = null;
     logStore.log("error", `构建失败: ${e}`, "build");
   } finally {
     building.value = false;
@@ -193,9 +210,11 @@ function previewInBrowser(): void {
   void previewBuildInBrowser(root, channel.value, result.value.main_scene_name);
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
-  void restoreState();
+  exportTemplates.value = await loadExportTemplates();
+  // 恢复配置放在模板列表就绪之后（模板 id 解析依赖列表）
+  await restoreState();
 });
 
 // 场景资产变化（导入/新建场景后打开面板）时补齐默认勾选
@@ -277,21 +296,30 @@ watch(projectScenes, (next, prev) => {
           <section class="bp-section">
             <h3 class="bp-section-title">渠道设置 · {{ currentChannel.label }}</h3>
             <template v-if="channel === 'web'">
-              <div class="bp-field">
-                <label>导出模板</label>
+              <div class="bp-field col">
+                <label>
+                  导出模板
+                  <span class="bp-label-hint">可多选，多文件与单页不能混选</span>
+                </label>
                 <div class="bp-tpl-list">
                   <label
-                    v-for="t in WEB_EXPORT_TEMPLATES"
+                    v-for="t in exportTemplates"
                     :key="t.id"
                     class="bp-tpl"
-                    :class="{ active: template === t.id }"
+                    :class="{ active: selectedTemplates.includes(t.id) }"
+                    :title="t.description"
                   >
-                    <input v-model="template" type="radio" :value="t.id" name="bp-tpl" />
+                    <input
+                      type="checkbox"
+                      :checked="selectedTemplates.includes(t.id)"
+                      @change="toggleTemplate(t.id, ($event.target as HTMLInputElement).checked)"
+                    />
                     <span class="bp-tpl-name">
-                      {{ t.name }}
-                      <span class="bp-channel-badge">{{ t.mode === "single" ? "单页" : "多文件" }}</span>
+                      {{ t.name }}<span v-if="t.user" class="bp-tpl-user" title="exe 旁 public 目录的自定义模板">自定义</span>
                     </span>
-                    <span class="bp-tpl-desc">{{ t.description }}</span>
+                    <span class="bp-mode" :class="t.mode">
+                      {{ t.mode === "single" ? "单页" : "多文件" }}
+                    </span>
                   </label>
                 </div>
               </div>
@@ -338,7 +366,11 @@ watch(projectScenes, (next, prev) => {
               <label>输出目录</label>
               <code class="bp-outdir" :title="outputDirPreview">{{ outputDirPreview }}</code>
             </div>
-            <div v-if="result" class="bp-result">
+            <div v-if="buildError" class="bp-result">
+              <div class="bp-result-line bp-error">构建失败</div>
+              <pre class="bp-err-detail">{{ buildError }}</pre>
+            </div>
+            <div v-else-if="result" class="bp-result">
               <div class="bp-result-line">
                 <span :class="resultSource === 'fresh' ? 'bp-ok' : 'bp-muted'">
                   {{ resultSource === "fresh" ? result.message : "上次构建结果" }}

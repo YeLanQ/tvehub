@@ -4,6 +4,7 @@ import { getProjectStore, type RecentProject } from "../stores/project";
 import {
   BUILTIN_PROJECT_TEMPLATES,
   createProjectCats,
+  loadProjectTemplates,
   type ProjectTemplate,
 } from "../lib/project-templates";
 import { fetchTemplateFiles } from "../lib/templates";
@@ -17,7 +18,7 @@ const emit = defineEmits<{
 
 const projectStore = getProjectStore();
 
-/** 工程模板（内置数据驱动） */
+/** 工程模板（内置编译期注册 + exe 旁自定义模板运行时合并） */
 const templates = ref<ProjectTemplate[]>(BUILTIN_PROJECT_TEMPLATES);
 
 /** 默认类别/模板取首个内置模板，不硬编码 id */
@@ -34,6 +35,15 @@ onMounted(async () => {
   // 默认项目位置：预先填充默认父目录（若已配置）
   const def = await loadDefaultProjectDir();
   if (def && !path.value) path.value = def;
+  // 合并 exe 旁 public/templates 的用户自定义模板（扫描失败保持内置列表）
+  const list = await loadProjectTemplates();
+  templates.value = list;
+  // 当前选中/类别失效（列表变化）时回退首个可用项
+  if (!list.some((t) => t.id === newTemplateId.value)) {
+    const cats = createProjectCats(list);
+    createCat.value = cats[0]?.id ?? "";
+    newTemplateId.value = list[0]?.id ?? "";
+  }
 });
 
 /** 模板类别列表（由模板动态推导） */

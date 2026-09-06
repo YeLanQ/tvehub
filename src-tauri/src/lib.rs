@@ -9,6 +9,7 @@ mod preview;
 mod project;
 mod scene;
 mod trash;
+mod user_templates;
 
 use project::{AssetEntry, MetaEntry, ProjectInfo};
 use trash::move_to_trash;
@@ -619,6 +620,8 @@ pub fn run() {
             preview::start_web_preview_server,
             preview::stop_web_preview,
             build::build_export,
+            user_templates::scan_user_templates,
+            user_templates::read_user_template_text,
             internal::read_internal_asset,
             internal::read_internal_binary,
             internal::scan_internal_assets,

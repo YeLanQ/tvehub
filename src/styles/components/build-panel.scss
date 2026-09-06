@@ -197,26 +197,36 @@
   text-overflow: ellipsis;
 }
 
-/* 导出模板选择列表 */
+/* 字段纵向布局（标签在上、内容在下，如导出模板/构建场景） */
+.bp-field.col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.bp-field.col > label {
+  width: auto;
+}
+
+/* 导出模板选择列表（行式：名称居左 / 形态徽标居右，选中行 accent 描边） */
 .bp-tpl-list {
-  flex: 1;
-  min-width: 0;
-  max-width: 380px;
-  max-height: 132px;
+  width: 100%;
+  max-height: 148px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .bp-tpl {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 9px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  font-family: inherit;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
   cursor: pointer;
 }
 .bp-tpl:hover {
@@ -225,26 +235,82 @@
 .bp-tpl.active {
   background: var(--bg-active);
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .bp-tpl input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
+  accent-color: var(--accent);
+  flex-shrink: 0;
 }
 
 .bp-tpl-name {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.bp-tpl-desc {
+.bp-label-hint {
+  font-weight: 400;
   font-size: 11px;
-  line-height: 1.5;
   color: var(--text-dim);
+}
+
+.bp-warn {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #d9a13b;
+}
+
+.bp-error {
+  color: #e07a7a;
+  font-weight: 600;
+}
+.bp-err-detail {
+  margin: 0;
+  font: 11px/1.6 Consolas, monospace;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.bp-tpl-user {
+  flex-shrink: 0;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+/* 产物形态徽标：多文件绿 / 单页蓝（右对齐） */
+.bp-mode {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.bp-mode.multi {
+  color: #58b380;
+  border-color: rgba(88, 179, 128, 0.55);
+  background: rgba(88, 179, 128, 0.12);
+}
+.bp-mode.single {
+  color: #5c9dd6;
+  border-color: rgba(92, 157, 214, 0.55);
+  background: rgba(92, 157, 214, 0.12);
 }
 
 /* 构建场景勾选列表 */

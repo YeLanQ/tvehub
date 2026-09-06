@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
@@ -28,7 +27,7 @@ use serde::Serialize;
 /// 当前支持的构建渠道（wechat 为 UI 占位，未实现）
 const SUPPORTED_CHANNELS: [&str; 1] = ["web"];
 
-/// 产物内单场景条目（pack-manifest 与前端结果展示共用）
+/// 产物内单场景条目（前端结果展示用）
 #[derive(Serialize, Clone)]
 pub struct PackedScene {
     /// 场景显示名（去扩展名的文件名，重名自动加序号；?scene= 参数用它）
@@ -39,7 +38,7 @@ pub struct PackedScene {
     pub file: String,
 }
 
-/// 构建结果（自描述；前端展示 + pack-manifest.json 落盘同源）
+/// 构建结果（自描述；前端结果展示用）
 #[derive(Serialize)]
 pub struct BuildResult {
     pub ok: bool,
@@ -73,9 +72,17 @@ fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
     name
 }
 
-/// 网页运行时代码文件（多文件/单页均按文件落盘，不进归档/内联数据）
+/// 网页运行时代码文件（多文件/单页均按文件落盘，不进归档/内联数据）；
+/// 入口页 index.html 与多模板附加页 index-<模板>.html 都算运行时代码
 fn is_runtime_code(rel: &str) -> bool {
-    rel == "index.html" || rel == "player.mjs" || rel.starts_with("libs/")
+    rel == "player.mjs"
+        || rel.starts_with("libs/")
+        || is_entry_page(rel)
+}
+
+/// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html
+fn is_entry_page(rel: &str) -> bool {
+    rel == "index.html" || (rel.starts_with("index-") && rel.ends_with(".html"))
 }
 
 /// 归档帧格式：u32 条数(LE) + 每条 [u32 pathLen][path][u32 dataLen][data]，整体 gzip
@@ -124,6 +131,31 @@ fn inline_data_script(
 /// 属 WebView 打包资源，编辑器离线可用）；场景与资产由 Rust 直读磁盘。
 #[tauri::command]
 pub async fn build_export(
+    root: String,
+    channel: String,
+    scenes: Vec<String>,
+    main_scene: String,
+    title: String,
+    debug: bool,
+    single_page: bool,
+    gzip: bool,
+    files: HashMap<String, String>,
+) -> Result<BuildResult, String> {
+    build_export_impl(
+        root,
+        channel,
+        scenes,
+        main_scene,
+        title,
+        debug,
+        single_page,
+        gzip,
+        files,
+    )
+}
+
+/// 构建导出实现（同步，便于单元测试直接驱动完整流程）
+fn build_export_impl(
     root: String,
     channel: String,
     scenes: Vec<String>,
@@ -241,19 +273,21 @@ pub async fn build_export(
 
     // 产物组装
     if single_page {
-        // 单页：数据内联 index.html（模板可用 {{BUILD_DATA}} 占位指定注入位置，
-        // 无占位符时回退注入 </body> 前；config 不落盘），运行时代码保留为文件
+        // 单页：数据内联全部入口页（index.html / index-<模板>.html；模板可用
+        // {{BUILD_DATA}} 占位指定注入位置，无占位符时回退注入 </body> 前；
+        // config 不落盘），运行时代码保留为文件
         let script = inline_data_script(cfg, &entries, gzip)?;
-        let html = files.remove("index.html").unwrap_or_default();
-        let injected = if html.contains("{{BUILD_DATA}}") {
-            html.replacen("{{BUILD_DATA}}", &script, 1)
-        } else if html.contains("</body>") {
-            html.replacen("</body>", &format!("{script}\n</body>"), 1)
-        } else {
-            format!("{html}\n{script}")
-        };
-        files.clear();
-        files.insert("index.html".to_string(), injected);
+        for (rel, html) in files.iter_mut() {
+            if is_entry_page(rel) {
+                *html = if html.contains("{{BUILD_DATA}}") {
+                    html.replacen("{{BUILD_DATA}}", &script, 1)
+                } else if html.contains("</body>") {
+                    html.replacen("</body>", &format!("{script}\n</body>"), 1)
+                } else {
+                    format!("{html}\n{script}")
+                };
+            }
+        }
     } else {
         files.insert(
             "config.json".to_string(),
@@ -270,32 +304,11 @@ pub async fn build_export(
     crate::preview::write_export_dir(&out, files, &binaries)
         .map_err(|e| format!("写入构建产物失败: {e}"))?;
 
-    // 自描述清单（面板重开时读回恢复上次结果）
     let assets_packed = if single_page || gzip {
         entries.len()
     } else {
         binaries.len() + packed.len()
     };
-    let built_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let manifest = serde_json::json!({
-        "channel": channel,
-        "project": root_path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-        "title": title,
-        "debug": debug,
-        "singlePage": single_page,
-        "gzip": gzip,
-        "built_at": built_at,
-        "main_scene": main_scene,
-        "main_scene_name": main_name,
-        "scenes": packed,
-        "assets_packed": assets_packed,
-        "missing": missing,
-    });
-    let _ = crate::preview::write_export_file(&out, "pack-manifest.json", manifest.to_string().as_bytes());
-
     let output_dir = out.display().to_string();
     let missing_n = missing.len();
     Ok(BuildResult {
@@ -319,7 +332,9 @@ pub async fn build_export(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_archive_bytes, is_runtime_code, scene_entry_name};
+    use super::{build_archive_bytes, build_export_impl, is_runtime_code, scene_entry_name};
+    use std::collections::HashMap;
+    use std::fs;
 
     #[test]
     fn scene_entry_name_dedups() {
@@ -343,10 +358,90 @@ mod tests {
     #[test]
     fn runtime_code_detection() {
         assert!(is_runtime_code("index.html"));
+        assert!(is_runtime_code("index-single.html"));
         assert!(is_runtime_code("player.mjs"));
         assert!(is_runtime_code("libs/three.module.min.js"));
         assert!(!is_runtime_code("assets/materials/Default.mat"));
         assert!(!is_runtime_code("scenes/Main.json"));
         assert!(!is_runtime_code("config.json"));
+        assert!(!is_runtime_code("index.json"));
+    }
+
+    /// 端到端：搭一个最小临时项目（场景 + 材质），跑单页/多文件 × gzip 全部形态，
+    /// 校验产物内容（单页入口页含内联数据、多文件 + gzip 写 assets.gzip）。
+    #[test]
+    fn build_export_end_to_end_all_modes() {
+        let base = std::env::temp_dir().join(format!("tve-build-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("proj");
+        fs::create_dir_all(root.join("assets/materials")).unwrap();
+        fs::create_dir_all(root.join("assets/models")).unwrap();
+        fs::write(
+            root.join("project.config.json"),
+            r#"{"designResolution":{"width":1280,"height":720},"scaleMode":"fixedauto"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("assets/materials/M.mat"),
+            r#"{"$type":"material","name":"M","materialType":"physical","map":"assets/textures/a.png"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("assets/textures")).unwrap();
+        fs::write(root.join("assets/textures/a.png"), [1u8, 2, 3, 4]).unwrap();
+        fs::write(
+            root.join("assets/Main.scene"),
+            r#"{"type":"scene","root":{"type":"node","childIds":[],"children":[{"type":"meshNode","source":"primitive","material":"assets/materials/M.mat"}]}}"#,
+        )
+        .unwrap();
+
+        let runtime_files = |entry: &str| {
+            HashMap::from([
+                ("index.html".to_string(), format!("<html><title>t</title><body>{entry}</body></html>")),
+                ("player.mjs".to_string(), "// player".to_string()),
+            ])
+        };
+        let scenes = vec!["assets/Main.scene".to_string()];
+
+        for &(single_page, gzip) in &[(false, false), (false, true), (true, false), (true, true)] {
+            let entry = if single_page { "{{BUILD_DATA}}" } else { "" };
+            let result = build_export_impl(
+                root.display().to_string(),
+                "web".into(),
+                scenes.clone(),
+                "assets/Main.scene".into(),
+                "T".into(),
+                false,
+                single_page,
+                gzip,
+                runtime_files(entry),
+            )
+            .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
+
+            let out = root.join("build/web");
+            assert!(out.join("player.mjs").is_file());
+            if single_page {
+                let html = fs::read_to_string(out.join("index.html")).unwrap();
+                assert!(html.contains("__TVE_BUILD_DATA"), "单页入口页应内联数据");
+                assert!(html.contains("scenes/Main.json"), "内联数据应包含场景条目");
+                assert!(!out.join("scenes").exists(), "单页模式不落盘场景文件");
+                assert!(!out.join("config.json").exists(), "单页模式不落盘 config.json");
+            } else {
+                assert!(out.join("config.json").is_file());
+                if gzip {
+                    let pak = fs::read(out.join("assets.gzip")).unwrap();
+                    assert_eq!(&pak[..2], &[0x1f, 0x8b]);
+                    assert!(!out.join("assets").exists(), "gzip 模式资产在归档中");
+                    assert!(!out.join("scenes").exists(), "gzip 模式场景在归档中");
+                } else {
+                    assert!(out.join("scenes/Main.json").is_file());
+                    assert!(out.join("assets/materials/M.mat").is_file());
+                }
+                let cfg: serde_json::Value =
+                    serde_json::from_str(&fs::read_to_string(out.join("config.json")).unwrap()).unwrap();
+                assert_eq!(cfg["scenes"][0]["file"], "scenes/Main.json");
+            }
+            assert!(result.ok);
+        }
+        let _ = fs::remove_dir_all(&base);
     }
 }

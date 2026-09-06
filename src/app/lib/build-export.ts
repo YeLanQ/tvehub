@@ -3,10 +3,7 @@
 
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { api, type BuildResult } from "../../lib/api";
-import {
-  WEB_EXPORT_TEMPLATES,
-  type BuiltinWebExportTemplateInfo,
-} from "../../generated/template-registry";
+import { WEB_EXPORT_TEMPLATES } from "../../generated/template-registry";
 import { logStore } from "../stores/log";
 import { saveCurrentSceneToMain } from "./save-scene";
 import { fetchWebPreviewRuntimeTexts, withHtmlTitle } from "./web-preview-runtime";
@@ -24,26 +21,70 @@ export const BUILD_CHANNELS: BuildChannel[] = [
   { id: "wechat", label: "微信小游戏", desc: "适配微信小游戏环境（即将支持）", supported: false },
 ];
 
-/** 默认导出模板 id（注册表首个；注册表为空时回退内置 multi 目录） */
-export function defaultExportTemplateId(): string {
-  return WEB_EXPORT_TEMPLATES[0]?.id ?? "web:multi";
+/** 导出模板（内置 + 用户自定义统一结构） */
+export interface ExportTemplateInfo {
+  /** 内置 "web:<dir>" / 用户自定义 "user:<dir>" */
+  id: string;
+  dir: string;
+  name: string;
+  description: string;
+  mode: "multi" | "single";
+  /** 是否为用户自定义模板（exe 旁 public 目录） */
+  user: boolean;
 }
 
-/** 解析导出模板（id 不存在/注册表变化时回退默认模板；无模板返回 null） */
+/** 内置导出模板（vite 插件编译期注册，模板文件随 exe 内嵌，打包后依然生效） */
+export const BUILTIN_EXPORT_TEMPLATES: ExportTemplateInfo[] = WEB_EXPORT_TEMPLATES.map((t) => ({
+  ...t,
+  id: `web:${t.dir}`,
+  user: false,
+}));
+
+/** 加载导出模板列表：内置 + exe 旁 public/exports/web 的用户自定义模板（同名目录内置优先） */
+export async function loadExportTemplates(): Promise<ExportTemplateInfo[]> {
+  const list = [...BUILTIN_EXPORT_TEMPLATES];
+  try {
+    const users = await api.scanUserTemplates("exports-web");
+    for (const u of users) {
+      if (list.some((t) => t.dir === u.dir)) continue;
+      list.push({
+        id: `user:${u.dir}`,
+        dir: u.dir,
+        name: u.name,
+        description: u.description,
+        mode: u.mode === "single" ? "single" : "multi",
+        user: true,
+      });
+    }
+  } catch (e) {
+    logStore.log("warn", `扫描自定义导出模板失败: ${e}`, "build");
+  }
+  return list;
+}
+
+/** 默认导出模板 id（内置列表首个；无内置模板时回退 web:multi） */
+export function defaultExportTemplateId(): string {
+  return BUILTIN_EXPORT_TEMPLATES[0]?.id ?? "web:multi";
+}
+
+/** 解析导出模板（id 不存在时回退默认模板；列表为空返回 null） */
 export function resolveExportTemplate(
   id: string | undefined,
-): BuiltinWebExportTemplateInfo | null {
+  templates: ExportTemplateInfo[] = BUILTIN_EXPORT_TEMPLATES,
+): ExportTemplateInfo | null {
   if (id) {
-    const hit = WEB_EXPORT_TEMPLATES.find((t) => t.id === id);
+    const hit = templates.find((t) => t.id === id);
     if (hit) return hit;
   }
-  return WEB_EXPORT_TEMPLATES[0] ?? null;
+  return templates[0] ?? null;
 }
 
-/** 拉取导出模板页面骨架（public/exports/web/<dir>/index.html，{{TITLE}} 由调用方替换） */
-export async function fetchExportTemplateHtml(id: string): Promise<string> {
-  const tpl = resolveExportTemplate(id);
-  if (!tpl) throw new Error("没有可用的导出模板（public/exports/web 下未扫描到模板）");
+/** 拉取导出模板页面骨架（{{TITLE}} 由调用方替换）：内置走内嵌静态资源，
+ *  用户自定义经 Rust 读 exe 旁 public 目录 */
+export async function fetchExportTemplateHtml(tpl: ExportTemplateInfo): Promise<string> {
+  if (tpl.user) {
+    return api.readUserTemplateText("exports-web", tpl.dir, "index.html");
+  }
   const res = await fetch(`/exports/web/${tpl.dir}/index.html`);
   if (!res.ok) throw new Error(`读取导出模板失败: ${tpl.dir} (HTTP ${res.status})`);
   return res.text();
@@ -69,8 +110,9 @@ export interface BuildPrefs {
   title: string;
   /** 调试模式：保留运行日志转发（web 渠道） */
   debug: boolean;
-  /** 导出模板 id（web 渠道；模板 mode 决定产物形态 multi/single） */
-  template: string;
+  /** 导出模板 id 列表（web 渠道；首个生成 index.html，其余生成 index-<模板>.html；
+   *  多文件与单页模板不能混选） */
+  templates: string[];
   /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
   gzip: boolean;
 }
@@ -90,7 +132,9 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
       mainScene: typeof cfg.mainScene === "string" ? cfg.mainScene : "",
       title: typeof cfg.title === "string" ? cfg.title : "",
       debug: cfg.debug !== false,
-      template: typeof cfg.template === "string" ? cfg.template : defaultExportTemplateId(),
+      templates: Array.isArray(cfg.templates)
+        ? cfg.templates.filter((s) => typeof s === "string")
+        : [defaultExportTemplateId()],
       gzip: cfg.gzip === true,
     };
   } catch {
@@ -107,7 +151,7 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     mainScene: prefs.mainScene,
     title: prefs.title,
     debug: prefs.debug,
-    template: prefs.template,
+    templates: prefs.templates,
     gzip: prefs.gzip,
   };
   await api.writeText(root, BUILD_CONFIG_REL, JSON.stringify(next, null, 2));
@@ -121,8 +165,8 @@ export async function runBuild(opts: {
   mainScene: string;
   title: string;
   debug: boolean;
-  /** 导出模板 id（模板 mode 决定产物形态 multi/single） */
-  template: string;
+  /** 导出模板 id 列表（首个生成 index.html，其余生成 index-<模板>.html） */
+  templates: string[];
   gzip: boolean;
 }): Promise<BuildResult> {
   // 产物内容与编辑器一致：构建前把当前编辑场景落盘（后端按磁盘内容读取）
@@ -133,10 +177,21 @@ export async function runBuild(opts: {
   }
 
   const runtime = await fetchWebPreviewRuntimeTexts();
-  // 页面骨架用所选导出模板（{{TITLE}} 换页面标题）；player/libs 代码仍取运行时
-  runtime["index.html"] = withHtmlTitle(await fetchExportTemplateHtml(opts.template), opts.title);
+  // 页面骨架用所选导出模板（{{TITLE}} 换页面标题）；player/libs 代码仍取运行时。
+  // 首个模板 → index.html，其余 → index-<模板目录>.html；形态必须一致（面板已守卫）
+  const templates = await loadExportTemplates();
+  const resolved = opts.templates
+    .map((id) => resolveExportTemplate(id, templates))
+    .filter((t): t is ExportTemplateInfo => t != null);
+  if (!resolved.length) throw new Error("没有可用的导出模板（public/exports/web 下未找到模板）");
+  if (resolved.some((t) => t.mode !== resolved[0].mode)) {
+    throw new Error("多文件与单页模板不能混选");
+  }
+  runtime["index.html"] = withHtmlTitle(await fetchExportTemplateHtml(resolved[0]), opts.title);
+  for (const t of resolved.slice(1)) {
+    runtime[`index-${t.dir}.html`] = withHtmlTitle(await fetchExportTemplateHtml(t), opts.title);
+  }
 
-  const tpl = resolveExportTemplate(opts.template);
   const result = await api.buildExport({
     root: opts.root,
     channel: opts.channel,
@@ -144,7 +199,7 @@ export async function runBuild(opts: {
     mainScene: opts.mainScene,
     title: opts.title,
     debug: opts.debug,
-    singlePage: tpl?.mode === "single",
+    singlePage: resolved[0].mode === "single",
     gzip: opts.gzip,
     files: runtime,
   });

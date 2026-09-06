@@ -95,7 +95,23 @@ export const api = {
     gzip: boolean;
     files: Record<string, string>;
   }) => invoke<BuildResult>("build_export", args),
+  /** 扫描 exe 旁 public 目录下的用户自定义模板
+   *  （kind: "templates"=项目模板 / "exports-web"=web 导出模板） */
+  scanUserTemplates: (kind: "templates" | "exports-web") =>
+    invoke<UserTemplateInfo[]>("scan_user_templates", { kind }),
+  /** 读取 exe 旁用户自定义模板的文本文件（如 index.html / 模板内项目文件） */
+  readUserTemplateText: (kind: "templates" | "exports-web", dir: string, rel: string) =>
+    invoke<string>("read_user_template_text", { kind, dir, rel }),
 };
+
+/** 用户自定义模板信息（exe 旁 public 目录扫描结果；与内置注册表字段对齐） */
+export interface UserTemplateInfo {
+  dir: string;
+  name: string;
+  description: string;
+  mode: string;
+  files: string[];
+}
 
 /** 构建导出结果（与 Rust build::BuildResult 对应） */
 export interface BuildResult {
