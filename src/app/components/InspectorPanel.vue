@@ -8,6 +8,7 @@ import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
+import { clampCameraParam, cameraParamDef, type CameraParamKey } from "../../framework/camera";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
@@ -298,23 +299,23 @@ function onLightUpdate(label: string, value: unknown): void {
   }, label);
 }
 
-function onCameraUpdate(label: string, value: unknown): void {
+function onCameraEdit(field: CameraParamKey, value: number): void {
   const n = node.value;
   if (!n || !(n instanceof CameraNode)) return;
+  const v = clampCameraParam(field, value);
   commit((target) => {
-    const camera = target as CameraNode;
-    switch (label) {
-      case "Set Fov":
-        camera.fov = value as number;
-        break;
-      case "Set Near":
-        camera.near = Math.max(0.01, value as number);
-        break;
-      case "Set Far":
-        camera.far = Math.max(1, value as number);
-        break;
-    }
-  }, label);
+    (target as CameraNode)[field] = v;
+  }, `Set ${cameraParamDef(field).label}`);
+}
+
+/** 切换相机类型（透视/正交）：视锥辅助线与预览渲染按新类型重建 */
+function onCameraChangeType(type: string): void {
+  const n = node.value;
+  if (!n || !(n instanceof CameraNode) || !type) return;
+  if (type !== "perspective" && type !== "orthographic") return;
+  commit((target) => {
+    (target as CameraNode).cameraType = type;
+  }, "Set Camera Type");
 }
 
 function onSkyboxUpdate(label: string, value: unknown): void {
@@ -435,7 +436,12 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof CameraNode" title="Camera" :open="true">
-        <CameraSection :node="node" :rev="revision" @update="onCameraUpdate" />
+        <CameraSection
+          :node="node"
+          :rev="revision"
+          @editParam="onCameraEdit"
+          @changeType="onCameraChangeType"
+        />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof SkyboxNode" title="Skybox" :open="true">

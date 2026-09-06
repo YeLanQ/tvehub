@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { CameraNode } from "../../../prototype/nodes/CameraNode";
 import type { Node } from "../../../prototype/Node";
+import { cameraTypeRegistry } from "../../../camera";
 import type { HelperContext, NodeHelper } from "./types";
 
 const FRUSTUM_COLOR = 0x55bbff;
@@ -8,12 +9,13 @@ const RAY_COLOR = 0xffcf5c;
 
 /**
  * 相机辅助线（视锥线框，参照 LQEN drawCameraHelper）：
- * - 近/远平面矩形由相机真实 fov / near / far 与取景宽高比推导（近小远大）；
+ * - 近/远平面矩形由相机类型工厂推导（cameraTypeRegistry → frustumHalfSize）：
+ *   透视按真实 fov/near/far 推导（近小远大），正交恒为 orthoSize（长方体）；
  *   取景宽高比 = 项目设计分辨率（designWidth/designHeight），未配置时回退视口宽高比，
  *   项目配置修改后宽高比变化 → 线框即时重建同步；
  * - 近矩形 + 远矩形 + 四角棱线 + 相机位置 → 远平面中心的“视向线段”；
  * - 全部在相机局部空间生成、随节点世界矩阵放置；
- * - 修改 Near / Far / Fov 或设计分辨率后立即重建线框（参数实时同步）。
+ * - 修改相机类型 / Near / Far / Fov / OrthoSize 或设计分辨率后立即重建线框（参数实时同步）。
  */
 export class CameraNodeHelper implements NodeHelper {
   readonly object: THREE.Group;
@@ -70,10 +72,19 @@ export class CameraNodeHelper implements NodeHelper {
       design && design.width > 0 && design.height > 0
         ? design.width / design.height
         : Math.max(0.01, ctx.getAspect());
-    const sig = `${cam.fov}|${cam.near}|${cam.far}|${aspect.toFixed(4)}`;
+    const sig = `${cam.cameraType}|${cam.fov}|${cam.orthoSize}|${cam.near}|${cam.far}|${aspect.toFixed(4)}`;
     if (sig !== this.signature) {
       this.signature = sig;
-      this.writeFrustum(cam.fov, cam.near, cam.far, aspect);
+      // 视锥尺寸由相机类型工厂推导：透视 fov 近小远大，正交 orthoSize 恒定
+      const def = cameraTypeRegistry.getOrDefault(cam.cameraType);
+      const near = Math.max(1e-4, cam.near);
+      const far = Math.max(near + 1e-4, cam.far);
+      this.writeFrustum(
+        def.frustumHalfSize(cam, near, aspect),
+        def.frustumHalfSize(cam, far, aspect),
+        near,
+        far,
+      );
     }
 
     // 局部线框 → 节点世界矩阵（含层级父级变换）
@@ -106,25 +117,21 @@ export class CameraNodeHelper implements NodeHelper {
     this.rayMat.dispose();
   }
 
-  /** 用真实 fov/near/far/aspect 生成：近矩形 + 远矩形 + 四角棱线 + 视向线段 */
-  private writeFrustum(fovDeg: number, near: number, far: number, aspect: number): void {
-    const n = Math.max(1e-4, near);
-    const f = Math.max(n + 1e-4, far);
-    const tanHalf = Math.tan((fovDeg * Math.PI) / 360);
-
-    const nH = 2 * tanHalf * n;
-    const nW = nH * aspect;
-    const fH = 2 * tanHalf * f;
-    const fW = fH * aspect;
-
-    const corners = (w: number, h: number, d: number): number[] => [
-      -w / 2, -h / 2, -d,
-      w / 2, -h / 2, -d,
-      w / 2, h / 2, -d,
-      -w / 2, h / 2, -d,
+  /** 用近/远平面半宽高生成：近矩形 + 远矩形 + 四角棱线 + 视向线段 */
+  private writeFrustum(
+    atNear: { halfW: number; halfH: number },
+    atFar: { halfW: number; halfH: number },
+    near: number,
+    far: number,
+  ): void {
+    const corners = (hw: number, hh: number, d: number): number[] => [
+      -hw, -hh, -d,
+      hw, -hh, -d,
+      hw, hh, -d,
+      -hw, hh, -d,
     ];
-    const n0 = corners(nW, nH, n);
-    const f0 = corners(fW, fH, f);
+    const n0 = corners(atNear.halfW, atNear.halfH, near);
+    const f0 = corners(atFar.halfW, atFar.halfH, far);
     const at = (arr: number[], i: number): number[] => arr.slice(i * 3, i * 3 + 3);
 
     // 12 条线段：近矩形 4 + 远矩形 4 + 四角棱线 4
@@ -151,7 +158,7 @@ export class CameraNodeHelper implements NodeHelper {
     this.frustumGeom.computeBoundingSphere();
 
     // 视向线段：相机位置(原点) → 远平面中心(0,0,-far)
-    const rayArr = new Float32Array([0, 0, 0, 0, 0, -f]);
+    const rayArr = new Float32Array([0, 0, 0, 0, 0, -far]);
     const rattr = this.rayGeom.getAttribute("position") as THREE.BufferAttribute;
     rattr.array = rayArr;
     rattr.needsUpdate = true;

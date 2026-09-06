@@ -64,10 +64,18 @@ export class EditorEngine {
 
   /**
    * 项目设计分辨率（取自 project.config.json 的 designResolution）。
-   * 相机辅助视锥线框的取景宽高比优先使用它；null = 未设置（回退视口宽高比）。
+   * 相机取景宽高比（视锥辅助线/正交预览）优先使用它；null = 未设置（回退视口宽高比）。
    * 应用层在项目打开/设置保存后写入，辅助线每帧读取即时同步。
    */
-  designResolution: { width: number; height: number } | null = null;
+  private designResolutionValue: { width: number; height: number } | null = null;
+  get designResolution(): { width: number; height: number } | null {
+    return this.designResolutionValue;
+  }
+  set designResolution(v: { width: number; height: number } | null) {
+    this.designResolutionValue = v;
+    // 取景宽高比变化 → 正交预览相机的左右范围立即重算（透视由渲染器 aspect 处理）
+    this.syncOrthoPreviewFrustum();
+  }
 
   selectedId: string | null = null;
   private selectedIds: string[] = [];
@@ -90,8 +98,12 @@ export class EditorEngine {
     }
   };
 
-  /** 场景真实渲染相机（预览用）：与编辑器自由轨道相机相互独立 */
+  /** 场景真实渲染相机（预览用，透视）：与编辑器自由轨道相机相互独立 */
   private readonly previewCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+  /** 场景真实渲染相机（预览用，正交）：按相机节点 orthoSize 取景（宽高比同视锥辅助线规则） */
+  private readonly previewOrthoCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 2000);
+  /** 当前预览正交取景半高（来自相机节点 orthoSize；视口/设计分辨率比例变化时重算范围） */
+  private previewOrthoSize = 5;
   /** 天空盒背景当前生效状态（签名 + 背景纹理）：变更/移除/销毁时据此释放 */
   private skyApplied: { sig: string; texture: THREE.Texture } | null = null;
   /** 已销毁标记：mount 期间被 dispose 后终止后续初始化；dispose 幂等 */
@@ -123,6 +135,8 @@ export class EditorEngine {
       },
     });
     this.renderer.registerCamera(this.previewCamera);
+    // 正交预览相机：视口宽高比变化时按半高重算左右/上下范围（而非写 aspect）
+    this.renderer.registerCamera(this.previewOrthoCamera, () => this.syncOrthoPreviewFrustum());
   }
 
   private initGizmo(): void {
@@ -637,15 +651,45 @@ export class EditorEngine {
     return cams.find((c) => !c.isEditorCamera) ?? cams[0];
   }
 
-  /** 把预览相机对齐到相机节点的世界变换与 FOV/裁剪参数 */
+  /** 相机节点对应的三维预览相机实例（按 cameraType 选择透视/正交） */
+  private previewCameraFor(node: CameraNode): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return node.cameraType === "orthographic" ? this.previewOrthoCamera : this.previewCamera;
+  }
+
+  /** 相机取景宽高比：优先项目设计分辨率，未配置回退视口宽高比（与视锥辅助线一致） */
+  private cameraViewAspect(): number {
+    const d = this.designResolution;
+    if (d && d.width > 0 && d.height > 0) return d.width / d.height;
+    return this.renderer.aspect;
+  }
+
+  /** 正交预览相机取景范围：半高 = orthoSize，半宽 = orthoSize × 取景宽高比 */
+  private syncOrthoPreviewFrustum(): void {
+    const cam = this.previewOrthoCamera;
+    const aspect = this.cameraViewAspect();
+    const halfH = Math.max(0.01, this.previewOrthoSize);
+    cam.left = -halfH * aspect;
+    cam.right = halfH * aspect;
+    cam.top = halfH;
+    cam.bottom = -halfH;
+    cam.updateProjectionMatrix();
+  }
+
+  /** 把预览相机对齐到相机节点的世界变换与取景参数（按类型应用 fov 或正交范围） */
   private syncPreviewCameraTo(node: CameraNode): void {
-    const cam = this.previewCamera;
-    cam.fov = node.fov;
-    // 模型层保证 near ≥ 0.01、far ≥ 1；真实透视相机还需要 far > near，这里兜底
+    const cam = this.previewCameraFor(node);
+    // 模型层保证 near ≥ 0.01、far ≥ 1；真实相机还需要 far > near，这里兜底
     const near = Math.max(0.01, node.near);
     const far = Math.max(node.far, near + 1e-4);
     cam.near = near;
     cam.far = far;
+    if (node.cameraType === "orthographic") {
+      this.previewOrthoSize = node.orthoSize;
+      this.syncOrthoPreviewFrustum();
+    } else {
+      (cam as THREE.PerspectiveCamera).fov = node.fov;
+      cam.updateProjectionMatrix();
+    }
     const obj = this.synchronizer.getObjectMap().get(node.id);
     if (obj) {
       obj.getWorldPosition(cam.position);
@@ -655,7 +699,6 @@ export class EditorEngine {
       const rot = degToRad(node.transform.rotation);
       cam.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, "XYZ"));
     }
-    cam.updateProjectionMatrix();
   }
 
   /**
@@ -686,7 +729,7 @@ export class EditorEngine {
     }
     this.overlayVisible = false;
     this.syncPreviewCameraTo(node);
-    this.renderer.setActiveCamera(this.previewCamera);
+    this.renderer.setActiveCamera(this.previewCameraFor(node));
     this.renderer.orbitControls.enabled = false;
     this.applyOverlayVisibility();
   }

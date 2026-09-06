@@ -21,7 +21,7 @@ defineProps<{ node: Node; rev?: number }>();
     </div>
     <div v-if="node instanceof CameraNode" class="comp-row">
       <span class="comp-label">Camera</span>
-      <span class="comp-type mono">Camera</span>
+      <span class="comp-type mono">{{ node.cameraType === "orthographic" ? "Ortho" : "Persp" }}</span>
     </div>
     <div v-if="node instanceof SkyboxNode" class="comp-row">
       <span class="comp-label">Skybox</span>

@@ -45,10 +45,12 @@ export class RendererManager {
   private resizeObs?: ResizeObserver;
   private renderCb?: () => void;
 
-  /** 所有需要随视口比例更新的相机（编辑器相机 + 预览相机等） */
-  private cameras = new Set<THREE.PerspectiveCamera>();
+  /** 所有需要随视口比例更新的相机（编辑器相机 + 预览相机等，透视/正交） */
+  private cameras = new Set<THREE.Camera>();
+  /** 相机宽高比更新钩子（正交相机按半高+宽高比重算左右/上下范围；缺省按透视 aspect 更新） */
+  private cameraAspectSyncs = new Map<THREE.Camera, (aspect: number) => void>();
   /** 当前渲染使用的相机（默认编辑器相机） */
-  private activeCamera: THREE.PerspectiveCamera | null = null;
+  private activeCamera: THREE.Camera | null = null;
 
   /** 容器期望尺寸（ResizeObserver 记录，渲染循环里再应用） */
   private targetW = 0;
@@ -146,22 +148,39 @@ export class RendererManager {
     }
   }
 
-  /** 注册需要跟随视口宽高比更新的相机 */
-  registerCamera(cam: THREE.PerspectiveCamera): void {
+  /**
+   * 注册需要跟随视口宽高比更新的相机。
+   * onAspect：自定义比例更新（正交相机重算取景范围用）；缺省按透视相机 aspect 更新。
+   */
+  registerCamera(cam: THREE.Camera, onAspect?: (aspect: number) => void): void {
     this.cameras.add(cam);
+    if (onAspect) this.cameraAspectSyncs.set(cam, onAspect);
     if (this.appliedW > 0 && this.appliedH > 0) {
-      cam.aspect = this.appliedW / this.appliedH;
-      cam.updateProjectionMatrix();
+      this.applyCameraAspect(cam, this.appliedW / this.appliedH);
     }
   }
 
-  /** 切换当前渲染相机（编辑器相机 与 预览相机 之间切换） */
-  setActiveCamera(cam: THREE.PerspectiveCamera): void {
+  /** 切换当前渲染相机（编辑器相机 与 预览相机（透视/正交）之间切换） */
+  setActiveCamera(cam: THREE.Camera): void {
     this.activeCamera = cam;
   }
 
-  getActiveCamera(): THREE.PerspectiveCamera | null {
+  getActiveCamera(): THREE.Camera | null {
     return this.activeCamera;
+  }
+
+  /** 按相机形态应用新宽高比：有钩子走钩子；透视相机写 aspect 后更新投影 */
+  private applyCameraAspect(cam: THREE.Camera, aspect: number): void {
+    const sync = this.cameraAspectSyncs.get(cam);
+    if (sync) {
+      sync(aspect);
+      return;
+    }
+    const persp = cam as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera === true) {
+      persp.aspect = aspect;
+      persp.updateProjectionMatrix();
+    }
   }
 
   /** ResizeObserver 回调：只记录目标尺寸，不在布局阶段触碰 WebGL 缓冲 */
@@ -179,10 +198,7 @@ export class RendererManager {
     if (!this.renderer || this.appliedW < 1 || this.appliedH < 1) return;
     this.renderer.setSize(this.appliedW, this.appliedH, false);
     const aspect = this.appliedW / this.appliedH;
-    this.cameras.forEach((c) => {
-      c.aspect = aspect;
-      c.updateProjectionMatrix();
-    });
+    this.cameras.forEach((c) => this.applyCameraAspect(c, aspect));
   };
 
   private loop = (): void => {
