@@ -117,6 +117,12 @@ export interface BuildPrefs {
   gzip: boolean;
   /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
   release: boolean;
+  /** CDN 模式：three.js 运行时不内嵌，从 Three CDN 地址在线加载 */
+  cdn: boolean;
+  /** gzip 资源地址（assets.gzip 归档远程基址；空 = 本地读取） */
+  gzipBase: string;
+  /** Three CDN 地址（three.js 远程基址，CDN 模式下生效；空 = 内嵌 three.js） */
+  cdnBase: string;
 }
 
 /** 项目根下的构建配置文件（与 project.config.json 同级同风格） */
@@ -139,6 +145,9 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
         : [defaultExportTemplateId()],
       gzip: cfg.gzip === true,
       release: cfg.release === true,
+      cdn: cfg.cdn === true,
+      gzipBase: typeof cfg.gzipBase === "string" ? cfg.gzipBase : "",
+      cdnBase: typeof cfg.cdnBase === "string" ? cfg.cdnBase : "",
     };
   } catch {
     return null;
@@ -157,6 +166,9 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     templates: prefs.templates,
     gzip: prefs.gzip,
     release: prefs.release,
+    cdn: prefs.cdn,
+    gzipBase: prefs.gzipBase,
+    cdnBase: prefs.cdnBase,
   };
   await api.writeText(root, BUILD_CONFIG_REL, JSON.stringify(next, null, 2));
 }
@@ -174,6 +186,12 @@ export async function runBuild(opts: {
   gzip: boolean;
   /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
   release: boolean;
+  /** CDN 模式：three.js 运行时不内嵌（从 Three CDN 地址在线加载） */
+  cdn: boolean;
+  /** gzip 资源地址（归档远程基址；空 = 本地 assets.gzip） */
+  gzipBase: string;
+  /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
+  cdnBase: string;
 }): Promise<BuildResult> {
   // 产物内容与编辑器一致：构建前把当前编辑场景落盘（后端按磁盘内容读取）
   try {
@@ -208,6 +226,9 @@ export async function runBuild(opts: {
     singlePage: resolved[0].mode === "single",
     gzip: opts.gzip,
     release: opts.release,
+    cdn: opts.cdn,
+    gzipBase: opts.gzipBase,
+    cdnBase: opts.cdnBase,
     files: runtime,
   });
   logStore.log("success", `构建完成: ${result.output_dir}`, "build");

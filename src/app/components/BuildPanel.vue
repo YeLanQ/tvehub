@@ -58,6 +58,12 @@ const exportTemplates = ref<ExportTemplateInfo[]>(BUILTIN_EXPORT_TEMPLATES);
 const gzip = ref(false);
 /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
 const release = ref(false);
+/** CDN 模式：three.js 运行时不内嵌，从 Three CDN 地址在线加载 */
+const cdn = ref(false);
+/** gzip 资源地址（assets.gzip 归档远程基址；空 = 本地读取） */
+const gzipBase = ref("");
+/** Three CDN 地址（three.js 远程基址，CDN 模式下生效；空 = 内嵌 three.js） */
+const cdnBase = ref("");
 
 // 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）
 watch(release, (v) => {
@@ -147,6 +153,9 @@ async function restoreState(): Promise<void> {
     }
     gzip.value = prefs.gzip;
     release.value = prefs.release;
+    cdn.value = prefs.cdn;
+    gzipBase.value = prefs.gzipBase;
+    cdnBase.value = prefs.cdnBase;
     // 兼容旧配置（两者曾可同时为 true）：发布模式优先
     if (release.value) debug.value = false;
   } else {
@@ -158,6 +167,9 @@ async function restoreState(): Promise<void> {
     selectedTemplates.value = [defaultExportTemplateId()];
     gzip.value = false;
     release.value = false;
+    cdn.value = false;
+    gzipBase.value = "";
+    cdnBase.value = "";
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -180,6 +192,9 @@ async function persistPrefs(): Promise<void> {
     templates: selectedTemplates.value,
     gzip: gzip.value,
     release: release.value,
+    cdn: cdn.value,
+    gzipBase: gzipBase.value,
+    cdnBase: cdnBase.value,
   };
   try {
     await saveBuildPrefs(projectStore.currentPath, prefs);
@@ -204,6 +219,9 @@ async function doBuild(): Promise<void> {
       templates: selectedTemplates.value,
       gzip: gzip.value,
       release: release.value,
+      cdn: cdn.value,
+      gzipBase: gzipBase.value,
+      cdnBase: cdnBase.value,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -410,6 +428,50 @@ watch(projectScenes, (next, prev) => {
                   </span>
                 </label>
               </div>
+              <div v-if="gzip && !singlePage" class="bp-field col">
+                <label for="bp-gzip-base">
+                  gzip 资源地址
+                  <span class="bp-label-hint">归档远程基址</span>
+                </label>
+                <input
+                  id="bp-gzip-base"
+                  v-model="gzipBase"
+                  placeholder="https://res.example.com/pkg"
+                  spellcheck="false"
+                />
+                <p class="bp-note">
+                  非空时运行时从 <code>&lt;地址&gt;/assets.gzip</code>
+                  拉取归档（产物内仍生成归档，供上传 CDN，需允许跨域）；<strong
+                    >留空则与当前一致，按本地路径读取</strong
+                  >。
+                </p>
+              </div>
+              <div class="bp-field">
+                <label for="bp-cdn">CDN 模式</label>
+                <label class="bp-check">
+                  <input id="bp-cdn" v-model="cdn" type="checkbox" />
+                  <span>不内嵌 three.js 运行时，改为从 Three CDN 地址在线加载</span>
+                </label>
+              </div>
+              <div v-if="cdn" class="bp-field col">
+                <label for="bp-cdn-base">
+                  Three CDN 地址
+                  <span class="bp-label-hint">three.js 远程基址</span>
+                </label>
+                <input
+                  id="bp-cdn-base"
+                  v-model="cdnBase"
+                  placeholder="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/"
+                  spellcheck="false"
+                />
+                <p class="bp-note">
+                  填写直接包含 three 构建文件的目录：官方 CDN 版本目录（如
+                  <code>https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/</code
+                  >，需与运行时同版本）或自建 CDN 上传产物 <code>libs/</code>
+                  内两个文件后的目录。非空时 three.js
+                  在线加载、不再内嵌（需允许跨域）；<strong>留空则仍内嵌 three.js</strong>。
+                </p>
+              </div>
               <div class="bp-field">
                 <label for="bp-title">页面标题</label>
                 <input id="bp-title" v-model="title" placeholder="项目名" />
@@ -455,7 +517,7 @@ watch(projectScenes, (next, prev) => {
               <div class="bp-result-line bp-muted">
                 {{ result.single_page ? "单页" : "多文件" }}{{ result.gzip ? " · gzip" : "" }}{{
                   result.release ? " · 发布" : ""
-                }}{{
+                }}{{ result.cdn ? " · CDN" : "" }}{{
                   result.bin_converted.length ? ` · 模型→bin ${result.bin_converted.length}` : ""
                 }}
                 · 场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景

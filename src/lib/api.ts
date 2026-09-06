@@ -95,6 +95,12 @@ export const api = {
     gzip: boolean;
     /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
     release: boolean;
+    /** CDN 模式：three.js 运行时不内嵌（从 Three CDN 地址在线加载） */
+    cdn: boolean;
+    /** gzip 资源地址（归档远程基址；空 = 本地 assets.gzip） */
+    gzipBase: string;
+    /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
+    cdnBase: string;
     files: Record<string, string>;
   }) => invoke<BuildResult>("build_export", args),
   /** 扫描 exe 旁 public 目录下的用户自定义模板
@@ -128,6 +134,8 @@ export interface BuildResult {
   single_page: boolean;
   gzip: boolean;
   release: boolean;
+  /** CDN 模式：three.js 不内嵌，从 Three CDN 地址在线加载 */
+  cdn: boolean;
   /** 发布模式转为 LQENBIN1 .bin 的模型（项目相对路径） */
   bin_converted: string[];
   assets_packed: number;

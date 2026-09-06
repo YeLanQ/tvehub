@@ -54,7 +54,13 @@ async function main() {
     installAssetShim(map);
   } else if (!inline) {
     try {
-      const r = await fetch("./assets.gzip");
+      // gzip 资源地址（config.gzipBase，与 Three CDN 模式无关）非空时归档从远端
+      // 拉取，产物内仍生成 assets.gzip 供上传；空 = 按本地相对路径读取。
+      // 地址已以 /assets.gzip 结尾时直接使用，避免重复拼接
+      const pakBase =
+        typeof cfg.gzipBase === "string" ? cfg.gzipBase.trim().replace(/\/+$/, "") : "";
+      const pakUrl = pakBase.endsWith("/assets.gzip") ? pakBase : pakBase + "/assets.gzip";
+      const r = await fetch(pakUrl || "./assets.gzip");
       if (r.ok) installAssetShim(parseArchive(await gunzip(new Uint8Array(await r.arrayBuffer()))));
     } catch {
       /* 无归档则按文件读取 */
