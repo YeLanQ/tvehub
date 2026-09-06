@@ -299,6 +299,18 @@ pub async fn build_export(
     )
 }
 
+/// 发布模式 JS 压缩：保守压缩（去注释 + 空白折叠，语义不变；见 js_minify 模块）
+fn minify_js_source(text: &str) -> String {
+    crate::js_minify::minify_js(text)
+}
+
+/// 需要压缩的运行时脚本（.js/.mjs；已压缩的 *.min.* 跳过，如 three 运行时）
+fn is_minifiable_script(rel: &str) -> bool {
+    is_runtime_code(rel)
+        && (rel.ends_with(".js") || rel.ends_with(".mjs"))
+        && !rel.contains(".min.")
+}
+
 /// 构建导出实现（同步，便于单元测试直接驱动完整流程）
 #[allow(clippy::too_many_arguments)]
 fn build_export_impl(
@@ -421,6 +433,15 @@ fn build_export_impl(
         // 多文件非 gzip：场景/材质/资产按相对路径落盘
         for (rel, text) in scene_texts {
             files.insert(rel, text);
+        }
+    }
+
+    // 发布模式：压缩运行时脚本（player / libs 模块 / 加载器；已压缩的 *.min.* 跳过）
+    if release {
+        for (rel, text) in files.iter_mut() {
+            if is_minifiable_script(rel) {
+                *text = minify_js_source(text);
+            }
         }
     }
 
@@ -648,7 +669,15 @@ mod tests {
                 release,
                 HashMap::from([
                     ("index.html".to_string(), "<html></html>".to_string()),
-                    ("player.mjs".to_string(), "// p".to_string()),
+                    ("player.mjs".to_string(), "// player entry\nimport { A } from \"./libs/helper.mjs\";\nconsole.log(A);\n".to_string()),
+                    (
+                        "libs/helper.mjs".to_string(),
+                        "// helper comment\nexport const A = 1;\n".to_string(),
+                    ),
+                    (
+                        "libs/three.module.min.js".to_string(),
+                        "/*already minified*/export const T = 1;".to_string(),
+                    ),
                 ]),
             )
             .unwrap()
@@ -677,6 +706,15 @@ mod tests {
         let fallback = fallback_uid("assets/textures/a.png");
         assert!(out.join(format!("assets/textures/{fallback}.png")).is_file(), "无 .meta 走路径哈希 uid");
         assert!(mat_text.contains(&fallback), "材质贴图引用重写为哈希 uid");
+
+        // 脚本压缩：player/libs 脚本去注释压缩；*.min.* 跳过
+        let player_min = fs::read_to_string(out.join("player.mjs")).unwrap();
+        assert!(!player_min.contains("//"), "player.mjs 注释已移除");
+        let helper_min = fs::read_to_string(out.join("libs/helper.mjs")).unwrap();
+        assert!(!helper_min.contains("// helper"), "libs 脚本注释已移除");
+        assert!(!helper_min.contains(" = 1;"), "libs 脚本空白已压缩");
+        let three_min = fs::read_to_string(out.join("libs/three.module.min.js")).unwrap();
+        assert!(three_min.contains("/*already minified*/"), "*.min.* 不重复压缩");
         let _ = fs::remove_dir_all(&base);
     }
 }

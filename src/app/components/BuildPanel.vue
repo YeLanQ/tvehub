@@ -365,7 +365,7 @@ watch(projectScenes, (next, prev) => {
                 <label for="bp-release">发布模式</label>
                 <label class="bp-check">
                   <input id="bp-release" v-model="release" type="checkbox" />
-                  <span>资源按 uuid 重命名并重写引用、压缩 JSON（与调试模式互斥）</span>
+                  <span>使用uuid，压缩 JSON 与脚本库（与调试模式互斥）</span>
                 </label>
               </div>
               <div class="bp-field">
