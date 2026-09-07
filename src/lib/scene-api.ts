@@ -51,6 +51,8 @@ export const sceneApi = {
     invoke<SceneLoadResult>("scene_load_doc", { doc, root, rel }),
   /** 保存场景（后端序列化 + 写盘 + 清脏标记） */
   save: () => invoke<void>("scene_save"),
+  /** 读取当前会话的完整场景文档（devtools/状态快照用） */
+  doc: () => invoke<unknown>("scene_doc"),
   /** 关闭会话（清空后端图与历史） */
   close: () => invoke<void>("scene_close"),
   /** 后端是否有未保存修改 */

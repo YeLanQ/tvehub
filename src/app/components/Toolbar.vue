@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
-import { runEditorCommand } from "../lib/editor-commands";
+import { dispatchCommand } from "../commands";
 import "../../styles/components/toolbar.scss";
 
 const store = getEditorStore();
@@ -70,7 +70,7 @@ function setViewMode(mode: ViewMode): void {
 
     <button
       :disabled="!state.canUndo"
-      @click="runEditorCommand('undo')"
+      @click="dispatchCommand('editor.undo')"
       title="撤销上一次场景修改"
     >
       撤销
@@ -79,11 +79,11 @@ function setViewMode(mode: ViewMode): void {
       class="primary save-btn"
       :class="{ dirty: editorDirty }"
       :title="editorDirty ? '保存当前场景（有未保存修改）' : '保存当前场景'"
-      @click="runEditorCommand('save')"
+      @click="dispatchCommand('editor.save')"
     >
       保存
       <span v-if="editorDirty" class="save-dirty-dot" aria-label="有未保存修改"></span>
     </button>
-    <button @click="runEditorCommand('close')" title="关闭项目返回首页">关闭</button>
+    <button @click="dispatchCommand('editor.close')" title="关闭项目返回首页">关闭</button>
   </div>
 </template>

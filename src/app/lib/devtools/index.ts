@@ -10,12 +10,12 @@
 // 双窗口注意：**只有编辑器窗口**（main）安装 devtools:cmd 监听器——事件会广播到
 // 所有窗口，首页窗口若也监听会导致同一命令被执行两次。首页只做启停与状态展示。
 
-import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logStore } from "../../stores/log";
 import { debugLog } from "../../../lib/debug-log";
+import { api } from "../../../lib/api";
 import { type DevToolsInfo, devtools, isToolAllowed, methodToolId, DEVTOOLS_DEFAULT_PORT } from "./state";
 import { handleMethod } from "./handlers";
 
@@ -47,10 +47,10 @@ function isEditorWindow(): boolean {
  *  编辑器窗口启用时挂命令监听器；首页启用仅启停服务器并通知编辑器补挂执行器。 */
 export async function startDevTools(): Promise<DevToolsInfo> {
   try {
-    const info = await invoke<DevToolsInfo>("devtools_start", {
+    const info = await api.devtoolsStart(
       // 未设置固定端口时用应用默认端口（与自动启动一致），被占用由用户改端口或清零回随机
-      port: devtools.port > 0 ? devtools.port : DEVTOOLS_DEFAULT_PORT,
-    });
+      devtools.port > 0 ? devtools.port : DEVTOOLS_DEFAULT_PORT,
+    );
     devtools.enabled = true;
     devtools.info = info;
     devtools.error = null;
@@ -73,7 +73,7 @@ export async function startDevTools(): Promise<DevToolsInfo> {
 /** 停止开发者服务控制服务器（释放端口；供首页开关与控制端 devtools.stop 调用） */
 export async function stopDevTools(): Promise<void> {
   try {
-    await invoke("devtools_stop");
+    await api.devtoolsStop();
   } catch (e: any) {
     debugLog("devtools", `停止失败: ${e}`);
   }
@@ -87,7 +87,7 @@ export async function stopDevTools(): Promise<void> {
 /** 查询当前是否启用（含连接信息）；页面启动时恢复开关状态 */
 export async function devtoolsStatus(): Promise<DevToolsInfo | null> {
   try {
-    return await invoke<DevToolsInfo | null>("devtools_status");
+    return await api.devtoolsStatus();
   } catch {
     return null;
   }
@@ -137,13 +137,9 @@ async function execute(cmd: CmdPayload): Promise<void> {
       throw new Error(`工具「${name}」未启用（可在首页 开发者服务 中开启）`);
     }
     const result = await handleMethod(cmd.method, cmd.params);
-    await invoke("devtools_reply", { token: cmd.replyToken, result, error: null });
+    await api.devtoolsReply(cmd.replyToken, result, null);
   } catch (err: any) {
-    await invoke("devtools_reply", {
-      token: cmd.replyToken,
-      result: null,
-      error: String(err?.message ?? err),
-    });
+    await api.devtoolsReply(cmd.replyToken, null, String(err?.message ?? err));
   }
 }
 
@@ -168,7 +164,7 @@ function startLogPush(): void {
 async function push(event: string, data: unknown): Promise<void> {
   if (!devtools.enabled) return;
   try {
-    await invoke("devtools_push", { event, data });
+    await api.devtoolsPush(event, data);
   } catch {
     /* ignore */
   }

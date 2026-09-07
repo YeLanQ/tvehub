@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { runEditorCommand, type EditorCommand } from "./app/lib/editor-commands";
+import { dispatchCommand } from "./app/commands";
+import { isEditingText } from "./app/commands/context";
 import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
 import WebPreviewPanel from "./app/components/WebPreviewPanel.vue";
@@ -72,19 +73,25 @@ const previewStyle = computed(() => {
 /** 订阅 Rust 原生菜单/快捷键事件（撤销/保存/关闭 → 前端执行） */
 let unlistenNative: UnlistenFn | null = null;
 
-/** 窗口级快捷键：Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
+/** 窗口级快捷键：F2 重命名选中节点 / Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
 function onWindowKeyDown(e: KeyboardEvent): void {
-  if (!e.ctrlKey || e.shiftKey || e.altKey) return;
   const key = e.key.toLowerCase();
+  // F2：重命名当前选中节点（弹统一输入框）。文本焦点下不拦截（保留输入/Monaco 等自身行为）
+  if (key === "f2" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && !isEditingText()) {
+    e.preventDefault();
+    void dispatchCommand("node.renameSelected");
+    return;
+  }
+  if (!e.ctrlKey || e.shiftKey || e.altKey) return;
   if (key === "z") {
     e.preventDefault();
-    void runEditorCommand("undo");
+    void dispatchCommand("editor.undo");
   } else if (key === "s") {
     e.preventDefault();
-    void runEditorCommand("save");
+    void dispatchCommand("editor.save");
   } else if (key === "w") {
     e.preventDefault();
-    void runEditorCommand("close");
+    void dispatchCommand("editor.close");
   }
 }
 
@@ -93,8 +100,10 @@ onMounted(async () => {
   // 原生菜单已移除：快捷键由本窗口 keydown 直接处理；保留菜单事件通道以兼容
   try {
     unlistenNative = await listen<string>("editor-command", (e) => {
-      const cmd = e.payload as EditorCommand;
-      if (cmd === "undo" || cmd === "save" || cmd === "close") runEditorCommand(cmd);
+      const cmd = e.payload;
+      if (cmd === "undo" || cmd === "save" || cmd === "close") {
+        void dispatchCommand(`editor.${cmd}`);
+      }
     });
   } catch {
     /* 浏览器开发环境没有原生菜单事件源，忽略 */

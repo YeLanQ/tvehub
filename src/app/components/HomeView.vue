@@ -6,12 +6,12 @@ import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import "../../styles/components/home-view.scss";
-import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
 import { isTauri } from "../../lib/tauri-env";
+import { api } from "../../lib/api";
 import { BUILTIN_PROJECT_TEMPLATES, type ProjectTemplate } from "../lib/project-templates";
 import { PREFS_CATS, THEME_COLOR_DEFS } from "../lib/home-helpers";
 import {
@@ -133,7 +133,7 @@ async function handoffToEditor(): Promise<void> {
       name: projectStore.projectName ?? "",
       rel: projectStore.sceneRel,
     });
-    await invoke("show_editor_window");
+    await api.showEditorWindow();
   } catch (e) {
     console.error("切换到编辑器窗口失败:", e);
     alert("切换到编辑器窗口失败：" + e);
@@ -163,7 +163,7 @@ async function handleProjectCreated(project: RecentProject) {
 async function removeProject(path: string) {
   // 最近记录现在由后端持久化：仅本地移除会在下次 refresh 时复活，需同步后端
   try {
-    await invoke("remove_recent_project", { path });
+    await api.removeRecentProject(path);
   } catch (e) {
     console.error("移除最近记录失败:", e);
   }
@@ -182,7 +182,7 @@ async function trashProject(path: string, name: string) {
   if (!ok) return;
   menuPath.value = null;
   try {
-    await invoke("trash_path", { path });
+    await api.trashPath(path);
   } catch (e) {
     console.error("移入回收站失败:", e);
     alert("移入回收站失败");
@@ -190,7 +190,7 @@ async function trashProject(path: string, name: string) {
   }
   // 移入回收站后同步清除后端最近记录（尽力而为；避免旧路径残留、系统回收站恢复后复活）
   try {
-    await invoke("remove_recent_project", { path });
+    await api.removeRecentProject(path);
   } catch (e) {
     console.error("清除最近记录失败:", e);
   }
@@ -203,7 +203,7 @@ async function renameProject(path: string, name: string) {
   if (!newName || newName.trim() === name) return;
   menuPath.value = null;
   try {
-    await invoke("rename_project", { path, newName: newName.trim() });
+    await api.renameProject(path, newName.trim());
     await projectStore.refreshRecent();
   } catch (e) {
     console.error("重命名失败:", e);

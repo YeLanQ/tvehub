@@ -16,6 +16,26 @@ export interface MetaEntry {
   sizeGrid: string | null;
 }
 
+/** 项目信息（open/create/rename/list 返回；scene_count 序列化为 sceneCount） */
+export interface RecentProject {
+  path: string;
+  name: string;
+  sceneCount: number;
+}
+
+/** 开发者服务连接信息（与 Rust devtools::DevToolsInfo 对应，字段保持 snake_case） */
+export interface DevToolsInfo {
+  port: number;
+  /** 展示用端点（tcp://…）；协议为换行分隔 JSON */
+  url: string;
+  /** MCP HTTP 端点（http://127.0.0.1:<port>/mcp，同一端口） */
+  mcp_url: string;
+  /** MCP stdio 桥程序路径（mcp.exe，与主程序同目录） */
+  stdio_command: string;
+  token: string;
+  protocol: string;
+}
+
 /** Tauri 资产命令封装 */
 export const api = {
   scanAssets: (root: string) => invoke<AssetEntry[]>("scan_assets", { root }),
@@ -110,6 +130,66 @@ export const api = {
   /** 读取 exe 旁用户自定义模板的文本文件（如 index.html / 模板内项目文件） */
   readUserTemplateText: (kind: "templates" | "exports-web", dir: string, rel: string) =>
     invoke<string>("read_user_template_text", { kind, dir, rel }),
+
+  // ---------------------------------------------------------------------------
+  // 窗口 / 项目生命周期与应用偏好（双窗口架构 + 最近项目）
+  // ---------------------------------------------------------------------------
+
+  /** 打开项目（后端登记最近项目并返回项目信息） */
+  openProject: (path: string) => invoke<RecentProject>("open_project", { path }),
+  /** 从内置模板创建项目（files：相对路径 → 内容；自动生成 .meta 并登记最近） */
+  createProject: (
+    parent: string,
+    name: string,
+    templateId: string,
+    files: Record<string, string>,
+  ) => invoke<RecentProject>("create_project", { parent, name, templateId, files }),
+  /** 列出最近项目（后端持久化；按规范化路径去重） */
+  listRecentProjects: () => invoke<RecentProject[]>("list_recent_projects"),
+  /** 移除最近项目记录（按规范化路径匹配） */
+  removeRecentProject: (path: string) => invoke<void>("remove_recent_project", { path }),
+  /** 重命名项目目录（最近记录跟随新路径），返回新项目信息 */
+  renameProject: (path: string, newName: string) =>
+    invoke<RecentProject>("rename_project", { path, newName }),
+  /** 把路径移入系统回收站（目录/文件均可） */
+  trashPath: (path: string) => invoke<void>("trash_path", { path }),
+  /** 选择项目文件夹对话框 */
+  pickProjectFolder: () => invoke<string | null>("pick_project_folder"),
+  /** 读取默认项目位置（新建项目默认父目录）；未设置返回 null */
+  getDefaultProjectDir: () => invoke<string | null>("get_default_project_dir"),
+  /** 设置默认项目位置（空值 = 清除） */
+  setDefaultProjectDir: (dir: string) => invoke<void>("set_default_project_dir", { dir }),
+  /** 显示编辑器窗口并聚焦（首页打开/新建项目成功后调用） */
+  showEditorWindow: () => invoke<void>("show_editor_window"),
+  /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
+  showHomeWindow: () => invoke<void>("show_home_window"),
+  /** 追加一行调试日志到应用配置目录 debug.log */
+  appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
+  /** 打开 WebView 开发者工具（发行构建会返回错误提示） */
+  openDevtools: () => invoke<void>("open_devtools"),
+  /** 应用相关目录路径（名称有序；前端展示 + opener 打开） */
+  devAppDirs: () => invoke<[string, string][]>("dev_app_dirs"),
+
+  // ---------------------------------------------------------------------------
+  // 开发者服务（控制服务器 + MCP）：启停 / 状态 / 命令回填 / 事件广播
+  // ---------------------------------------------------------------------------
+
+  /** 启动开发者服务控制服务器（幂等；port 为 0/未提供时随机端口） */
+  devtoolsStart: (port?: number) =>
+    invoke<DevToolsInfo>("devtools_start", { port: port || null }),
+  /** 停止开发者服务控制服务器 */
+  devtoolsStop: () => invoke<void>("devtools_stop"),
+  /** 当前是否已启用（含连接信息；未启用返回 null） */
+  devtoolsStatus: () => invoke<DevToolsInfo | null>("devtools_status"),
+  /** 前端执行器回填命令结果（按 replyToken 路由回对应客户端） */
+  devtoolsReply: (
+    token: string,
+    result: unknown,
+    error: string | null,
+  ) => invoke<void>("devtools_reply", { token, result, error }),
+  /** 前端推送事件（console / 日志 / 状态变化）广播给所有控制端 */
+  devtoolsPush: (event: string, data: unknown) =>
+    invoke<void>("devtools_push", { event, data }),
 };
 
 /** 用户自定义模板信息（exe 旁 public 目录扫描结果；与内置注册表字段对齐） */

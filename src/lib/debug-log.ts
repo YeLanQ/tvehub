@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { api } from "./api";
 
 /**
  * 调试日志：同时输出到浏览器控制台与磁盘（通过 Rust append_debug_log 命令）。
@@ -12,7 +12,7 @@ export function debugLog(tag: string, msg: string) {
     /* ignore */
   }
   try {
-    invoke("append_debug_log", { line }).catch(() => {});
+    api.appendDebugLog(line).catch(() => {});
   } catch {
     /* ignore */
   }

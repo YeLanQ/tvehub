@@ -1,15 +1,10 @@
 import { reactive } from "vue";
-import { invoke } from "@tauri-apps/api/core";
-import { api } from "../../lib/api";
+import { api, type RecentProject } from "../../lib/api";
 
 /** 项目默认主场景（打开项目时加载；之后可双击任意 .scene 资产切换） */
 export const DEFAULT_SCENE_REL = "assets/Main.scene";
 
-export interface RecentProject {
-  name: string;
-  path: string;
-  sceneCount: number;
-}
+export type { RecentProject };
 
 /** 编辑器渲染后端偏好（来自项目设置） */
 export type RendererBackend = "webgl" | "webgpu" | "auto";
@@ -282,7 +277,7 @@ export function getProjectStore(): ProjectStore {
     async refreshRecent() {
       state.loading = true;
       try {
-        const projects = await invoke<RecentProject[]>("list_recent_projects");
+        const projects = await api.listRecentProjects();
         state.recent = projects;
       } catch (e) {
         console.error("Failed to load recent projects:", e);
@@ -293,7 +288,7 @@ export function getProjectStore(): ProjectStore {
     async openProject(path) {
       state.loading = true;
       try {
-        const info = await invoke<RecentProject>("open_project", { path });
+        const info = await api.openProject(path);
         // asset:// 协议的项目根必须先于任何资产请求就位（模型/贴图直读依赖）
         await api.setCurrentProjectRoot(info.path);
         await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
@@ -314,12 +309,7 @@ export function getProjectStore(): ProjectStore {
     async createProject(parent, name, templateId, files) {
       state.loading = true;
       try {
-        const info = await invoke<RecentProject>("create_project", {
-          parent,
-          name,
-          templateId,
-          files,
-        });
+        const info = await api.createProject(parent, name, templateId, files);
         await api.setCurrentProjectRoot(info.path);
         await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
         await loadProjectRenderConfig(info.path);
@@ -338,7 +328,7 @@ export function getProjectStore(): ProjectStore {
     },
     async pickFolder() {
       try {
-        const path = await invoke<string | null>("pick_project_folder");
+        const path = await api.pickProjectFolder();
         return path;
       } catch (e) {
         console.error("Failed to pick folder:", e);

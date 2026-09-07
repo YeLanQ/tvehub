@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
 import type { Node } from "../../framework/prototype/Node";
-import type { GeometryKind, LightKind, SkyboxKind } from "../../framework/prototype/derived/Primitives";
 import { geometryRegistry } from "../../framework/mesh";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
 import {
@@ -20,6 +19,7 @@ import {
   menuSeparator,
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
+import { dispatchCommand } from "../commands";
 import { getScriptsStore } from "../stores/scripts";
 import "../../styles/components/hierarchy-panel.scss";
 
@@ -122,27 +122,30 @@ function onRowClick(id: string, ev: MouseEvent): void {
 }
 
 // ---------- 添加 / 删除 ----------
-function addNodeTo(parentId: string, type: string, name?: string): void {
-  const finalName = (name ?? "").trim() || type;
-  let node: Node;
+/** 把上下文菜单的节点类型串（mesh:box / light:point / script:rel …）映射为 node.add 参数 */
+function addNodeArgs(type: string, parentId: string, name?: string): Record<string, unknown> {
+  const args: Record<string, unknown> = { kind: "group", parentId };
   if (type.startsWith("mesh:")) {
-    node = engine.addMesh(type.slice(5) as GeometryKind, parentId);
+    args.kind = "mesh";
+    args.subtype = type.slice(5);
   } else if (type.startsWith("light:")) {
-    node = engine.addLight(type.slice(6) as LightKind, parentId);
+    args.kind = "light";
+    args.subtype = type.slice(6);
   } else if (type.startsWith("skybox:")) {
-    node = engine.addSkybox(type.slice(7) as SkyboxKind, parentId);
+    args.kind = "skybox";
+    args.subtype = type.slice(7);
   } else if (type === "camera") {
-    node = engine.addCamera(parentId);
+    args.kind = "camera";
   } else if (type.startsWith("script:")) {
-    // 脚本节点类型：按声明的 kind 创建基础节点并自动挂脚本组件
-    const rel = type.slice(7);
-    const nt = scriptsStore.scriptNodeTypes().find((s) => s.rel === rel);
-    node = engine.addScriptNode(rel, nt?.nodeType ?? { kind: "node" }, parentId);
-  } else {
-    node = engine.addEmptyGroup(parentId);
+    args.kind = "script";
+    args.subtype = type.slice(7);
   }
-  if (finalName !== type) engine.renameSelected(finalName);
-  engine.select(node.id);
+  if (name && name.trim()) args.name = name.trim();
+  return args;
+}
+
+function addNodeTo(parentId: string, type: string, name?: string): void {
+  void dispatchCommand("node.add", addNodeArgs(type, parentId, name));
 }
 
 function createAddItems(parentId: string): CtxMenuItem[] {
@@ -187,22 +190,7 @@ function createAddItems(parentId: string): CtxMenuItem[] {
 }
 
 function deleteNodes(targetIds: string[]): void {
-  const root = engine.graph.root;
-  let targets = targetIds.filter((id) => {
-    const n = engine.graph.get(id);
-    return !!n && n.id !== root?.id;
-  });
-  if (targets.length > 1) {
-    // 剔除互为子孙的冗余项，只保留顶层，避免父删后子再删的重复
-    targets = targets.filter(
-      (tid) => !targets.some((other) => other !== tid && engine.graph.isDescendant(other, tid)),
-    );
-  }
-  if (!targets.length) {
-    console.warn("根场景节点不可删除");
-    return;
-  }
-  engine.deleteNodes(targets);
+  void dispatchCommand("node.delete", { ids: targetIds });
 }
 
 function createItems(parentId: string): CtxMenuItem[] {
@@ -212,8 +200,8 @@ function createItems(parentId: string): CtxMenuItem[] {
   items.push({
     label: "重命名",
     onClick: () => {
-      const v = window.prompt("重命名节点", state.selectedId ? engine.graph.get(state.selectedId)?.name : "");
-      if (v && v.trim()) engine.renameSelected(v.trim());
+      // 弹统一输入框重命名选中节点（与 F2 快捷键同一条命令）
+      void dispatchCommand("node.renameSelected");
     },
   });
   const isRoot = engine.graph.root?.id === parentId;
@@ -365,8 +353,7 @@ function applyMove(ids: string[], targetId: string, mode: "before" | "after" | "
   const batch = ids.length > 1;
   const moves = moveMoves(ids, newParentId, batch ? -1 : newIndex);
   if (moves) {
-    engine.reparentNodes(moves);
-    engine.setSelection(ids);
+    void dispatchCommand("node.reparent", { moves, selectIds: ids });
   }
 }
 

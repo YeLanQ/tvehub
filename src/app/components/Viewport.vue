@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { disposeEditor, mountEditor, getEditorStore } from "../stores/editor";
+import { dispatchCommand } from "../commands";
 import "../../styles/components/viewport.scss";
 
 const host = ref<HTMLDivElement | null>(null);
@@ -33,10 +34,19 @@ function onDrop(e: DragEvent): void {
   e.preventDefault();
   try {
     const item = JSON.parse(data) as AssetItem;
-    if (item.kind === "mesh") engine.addMesh(item.id as never);
-    else if (item.kind === "light") engine.addLight(item.id as never);
-    else if (item.kind === "camera") engine.addCamera();
-    else engine.addEmptyGroup();
+    const args: Record<string, unknown> = {};
+    if (item.kind === "mesh") {
+      args.kind = "mesh";
+      args.subtype = item.id;
+    } else if (item.kind === "light") {
+      args.kind = "light";
+      args.subtype = item.id;
+    } else if (item.kind === "camera") {
+      args.kind = "camera";
+    } else {
+      args.kind = "group";
+    }
+    void dispatchCommand("node.add", args);
   } catch {
     // ignore invalid drop data
   }

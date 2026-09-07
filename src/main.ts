@@ -6,6 +6,7 @@ import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import App from "./App.vue";
 import "./styles/global.scss";
+import "./app/commands"; // 注册命令层（编辑器窗口命令入口）
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
 import { handleProjectOpenedFromHome } from "./app/stores/editor";

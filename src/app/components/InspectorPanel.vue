@@ -21,6 +21,7 @@ import type { JsonRecord, JsonValue } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
 import { isModelAssetRel } from "../../framework/mesh";
+import { dispatchCommand } from "../commands";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
@@ -126,7 +127,7 @@ function mutateNode(n: Node, mutate: (nn: Node) => void, label: string): void {
   const before = n.toJSON() as JsonRecord;
   mutate(n);
   const after = n.toJSON() as JsonRecord;
-  engine.patchNode(n.id, before, after, label);
+  void dispatchCommand("node.patch", { id: n.id, before, after, label });
 }
 
 function setTransformAxis(axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number): void {
@@ -140,11 +141,11 @@ function setTransformAxis(axis: "position" | "rotation" | "scale", part: "x" | "
     scale: { ...cur.scale },
   };
   next[axis][part] = value;
-  engine.setTransform(n.id, next);
+  void dispatchCommand("node.setTransform", { id: n.id, snapshot: next });
 }
 
 function onNodeRename(name: string): void {
-  engine.renameSelected(name);
+  void dispatchCommand("node.rename", { name });
 }
 
 function onNodeToggleActive(value: boolean): void {

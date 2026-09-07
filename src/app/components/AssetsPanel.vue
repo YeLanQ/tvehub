@@ -35,6 +35,7 @@ import { materialTypeRegistry } from "../../framework/material";
 import { isModelAssetRel } from "../../framework/mesh";
 import { getEditorStore } from "../stores/editor";
 import { getScriptsStore } from "../stores/scripts";
+import { dispatchCommand } from "../commands";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -280,8 +281,11 @@ function addModelToScene(item: ChildEntry): void {
     logStore.log("warn", "编辑器未就绪，无法添加模型");
     return;
   }
-  const node = store.engine.addModel(item.path);
-  logStore.log("success", `已添加模型节点 ${node.name}`, "engine");
+  void dispatchCommand("node.add", { kind: "model", path: item.path }).then((r) => {
+    if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
+      logStore.log("success", `已添加模型节点 ${(r.value as { name: string }).name}`, "engine");
+    }
+  });
 }
 
 function onItemContext(e: MouseEvent, item: ChildEntry) {
