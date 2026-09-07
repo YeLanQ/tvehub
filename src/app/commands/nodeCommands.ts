@@ -42,7 +42,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，script 可带 subtype 脚本 rel，model 需 path 资产路径）",
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/audio/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
   run: (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
@@ -80,6 +80,13 @@ registerCommand({
           parentId,
         );
         break;
+      case "audio":
+      case "audionode": {
+        // 可选 path：直接绑定音频资产（资产面板「添加到场景」）
+        const audioPath = args?.path !== undefined ? String(args.path) : "";
+        node = engine().addAudio(parentId, audioPath);
+        break;
+      }
       case "script":
       case "scriptnode": {
         const rel = subtype ?? args?.scriptRel;
@@ -96,7 +103,7 @@ registerCommand({
       }
       default:
         throw new Error(
-          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/script/model）`,
+          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/audio/script/model）`,
         );
     }
     // 显式命名：仅在提供了非空 name 时重命名（未提供保持引擎默认名，与历史 UI 一致）

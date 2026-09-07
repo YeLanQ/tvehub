@@ -40,6 +40,7 @@ import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { materialTypeRegistry } from "../../framework/material";
 import { isModelAssetRel } from "../../framework/mesh";
+import { isAudioAssetRel } from "../../framework/audio";
 import { getEditorStore } from "../stores/editor";
 import { getScriptsStore } from "../stores/scripts";
 import { dispatchCommand } from "../commands";
@@ -218,6 +219,11 @@ function onItemDblClick(item: ChildEntry) {
     addModelToScene(item);
     return;
   }
+  // 双击音频资产：作为音源节点加入当前场景（绑定该资产）
+  if (isAudioAssetRel(item.path)) {
+    addAudioToScene(item);
+    return;
+  }
   // 双击 .ts 脚本：切到脚本工作台打开编辑
   if (item.kind === "ts") {
     openScriptAsset(item);
@@ -244,6 +250,20 @@ function addModelToScene(item: ChildEntry): void {
   void dispatchCommand("node.add", { kind: "model", path: item.path }).then((r) => {
     if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
       logStore.log("success", `已添加模型节点 ${(r.value as { name: string }).name}`, "engine");
+    }
+  });
+}
+
+/** 把音频资产作为音源节点加入当前场景（audioNode 并绑定该资产） */
+function addAudioToScene(item: ChildEntry): void {
+  const store = getEditorStore();
+  if (!store.state.mounted) {
+    logStore.log("warn", "编辑器未就绪，无法添加音源");
+    return;
+  }
+  void dispatchCommand("node.add", { kind: "audio", path: item.path }).then((r) => {
+    if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
+      logStore.log("success", `已添加音源节点 ${(r.value as { name: string }).name}`, "engine");
     }
   });
 }
@@ -292,6 +312,7 @@ const menuApi: AssetMenuApi = {
     materialTypeRegistry.list().map((d) => ({ key: d.key, label: d.label })),
   onOpenDir: (dir) => navigate(dir),
   onAddModelToScene: (item) => addModelToScene(item),
+  onAddAudioToScene: (item) => addAudioToScene(item),
   onOpenScript: (item) => openScriptAsset(item),
   onCopyInternal: (item) => void copyInternalToProject(item),
   onCopy: (item) => void doCopy(item),

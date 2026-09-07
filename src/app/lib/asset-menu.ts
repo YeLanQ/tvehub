@@ -6,6 +6,7 @@
 import type { ChildEntry } from "./asset-browser";
 import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isModelAssetRel } from "../../framework/mesh";
+import { isAudioAssetRel } from "../../framework/audio";
 
 /** 材质类型注册表项（菜单「新建材质」子项需要 key + label） */
 export interface MenuMaterialType {
@@ -22,6 +23,7 @@ export interface AssetMenuApi {
   materialTypes: () => MenuMaterialType[];
   onOpenDir: (dir: string) => void;
   onAddModelToScene: (item: ChildEntry) => void;
+  onAddAudioToScene: (item: ChildEntry) => void;
   onOpenScript: (item: ChildEntry) => void;
   onCopyInternal: (item: ChildEntry) => void;
   onCopy: (item: ChildEntry) => void;
@@ -99,6 +101,10 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   // 模型资产：加入当前场景（source=model 网格节点）
   if (item.kind !== "dir" && isModelAssetRel(item.path)) {
     items.push({ label: "添加到场景", onClick: () => api.onAddModelToScene(item) });
+  }
+  // 音频资产：加入当前场景（audioNode 音源节点并绑定该资产）
+  if (item.kind !== "dir" && isAudioAssetRel(item.path)) {
+    items.push({ label: "添加到场景", onClick: () => api.onAddAudioToScene(item) });
   }
   // 脚本资产：打开脚本工作台编辑
   if (item.kind === "ts") {

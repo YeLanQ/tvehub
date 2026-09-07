@@ -7,8 +7,10 @@ export { DirectionalLightNode } from "../nodes/DirectionalLightNode";
 export { SpotLightNode } from "../nodes/SpotLightNode";
 export { CameraNode } from "../nodes/CameraNode";
 export { SkyboxNode, type SkyboxKind, type SkySunDisk, skyMaterialForKind } from "../nodes/SkyboxNode";
+export { AudioNode } from "../nodes/AudioNode";
 export type {
   MeshNodeInit,
   LightNodeInit,
   CameraNodeInit,
+  AudioNodeInit,
 } from "../nodes/index";

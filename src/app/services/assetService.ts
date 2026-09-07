@@ -75,13 +75,20 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   gltf: "assets/models",
   fbx: "assets/models",
   obj: "assets/models",
+  mp3: "assets/audio",
+  wav: "assets/audio",
+  ogg: "assets/audio",
+  m4a: "assets/audio",
+  aac: "assets/audio",
+  flac: "assets/audio",
   json: "assets",
 };
 
-/** 二进制资源（图片/模型等）走 base64；文本资源（材质/脚本等）走文本 */
+/** 二进制资源（图片/模型/音频等）走 base64；文本资源（材质/脚本等）走文本 */
 const BINARY_EXTS = new Set([
   "png", "jpg", "jpeg", "webp", "gif", "bmp",
   "glb", "gltf", "fbx", "obj", "bin",
+  "mp3", "wav", "ogg", "m4a", "aac", "flac",
 ]);
 
 export const assetService = {

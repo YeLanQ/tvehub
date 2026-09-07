@@ -3,4 +3,5 @@ export * from "./factory";
 export * from "./scene";
 export * from "./mesh";
 export * from "./animation";
+export * from "./audio";
 export * from "./engine";

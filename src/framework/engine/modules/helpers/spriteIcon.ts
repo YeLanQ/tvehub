@@ -6,6 +6,7 @@ import {
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
   LIGHT_SPOT_ICON_PATHS,
+  AUDIO_ICON_PATHS,
 } from "./icons";
 
 export type SpriteIconKind =
@@ -13,7 +14,8 @@ export type SpriteIconKind =
   | "light-point"
   | "light-directional"
   | "light-ambient"
-  | "light-spot";
+  | "light-spot"
+  | "audio";
 
 const TEXTURE_SIZE = 128;
 
@@ -33,6 +35,8 @@ function iconPaths(kind: SpriteIconKind): string[] {
       return LIGHT_AMBIENT_ICON_PATHS;
     case "light-spot":
       return LIGHT_SPOT_ICON_PATHS;
+    case "audio":
+      return AUDIO_ICON_PATHS;
   }
 }
 

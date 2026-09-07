@@ -12,6 +12,7 @@ import {
 } from "../scene/SceneClient";
 import type { Node } from "../prototype/Node";
 import {
+  AudioNode,
   CameraNode,
   LightNode,
   MeshNode,
@@ -39,6 +40,7 @@ import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
+import { AudioSystem, isAudioAssetRel } from "../audio";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -50,6 +52,8 @@ export interface EditorEvents extends Record<string, unknown> {
   "model:changed": { rel: string };
   /** 节点动画运行时变化（播放/暂停/图状态切换/参数写入） */
   "animation:changed": { nodeId: string };
+  /** 音源节点运行时变化（绑定/加载完成/播放控制/数据写入） */
+  "audio:changed": { nodeId: string };
 }
 
 export class EditorEngine {
@@ -67,6 +71,8 @@ export class EditorEngine {
   readonly models = new ModelManager();
   /** 动画系统（模型网格的剪辑播放/骨骼动画/动画图状态机；渲染循环推进） */
   readonly animation = new AnimationSystem();
+  /** 音频系统（音源节点的 2D/3D Web Audio 播放；渲染循环推进监听器与可见性） */
+  readonly audio = new AudioSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
   private clock = new THREE.Clock();
   /** 贴图 URL 解析器（相对路径 → asset:// 协议 URL；应用层注入） */
@@ -174,6 +180,7 @@ export class EditorEngine {
       instantiateModel: (rel) => this.models.instantiate(rel),
       modelReady: (rel) => this.models.has(rel),
       onModelInstance: (node, root) => this.bindNodeAnimation(node, root),
+      audioStateFor: (nodeId) => this.audio.stateFor(nodeId),
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
     this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
@@ -184,6 +191,11 @@ export class EditorEngine {
     });
     // 动画运行时变化（播放/图状态/参数）→ 广播给面板刷新
     this.animation.onChange((nodeId) => this.events.emit("animation:changed", { nodeId }));
+    // 音频运行时变化（绑定/加载/播放控制）→ 广播给面板与音源图标刷新
+    this.audio.onChange((nodeId) => {
+      this.refreshAudioNodeIcon(nodeId);
+      this.events.emit("audio:changed", { nodeId });
+    });
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -296,12 +308,17 @@ export class EditorEngine {
     this.renderer.setRenderCb(() => {
       // 动画推进（剪辑/骨骼/动画图状态机）与渲染同帧
       this.animation.update(this.clock.getDelta());
+      // 音频：监听器随活动渲染相机 + 可见性自动暂停（Web Audio 自走时钟）
+      const activeCam = this.renderer.getActiveCamera();
+      if (activeCam) this.audio.attachListener(activeCam);
+      this.audio.update();
       this.gizmo.updateSelectionBox();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
       // 正交预览的天空背景面跟随（渲染前更新 uniforms）
       this.updateOrthoSkyQuad();
     });
+    this.audio.ensureGestureResume();
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
     this.setupViewportClickHandler();
@@ -339,6 +356,7 @@ export class EditorEngine {
     this.helperSystem?.dispose();
     this.synchronizer?.dispose();
     this.animation?.dispose();
+    this.audio?.dispose();
     this.materials?.clear();
     this.models?.clear();
     this.removeViewportClickHandler();
@@ -362,6 +380,8 @@ export class EditorEngine {
     this.textureCache.clear();
     // 项目根变化后旧 URL 全部失效：天空贴图缓存一并清除（签名含版本号自动重载）
     this.texCubeCache.clear();
+    // 音频与贴图同一套 rel → URL 语义：解析器变化后旧缓冲失效并按新解析器重载
+    this.audio.setUrlResolver(fn);
     this.applySkyFromGraph();
   }
 
@@ -439,6 +459,26 @@ export class EditorEngine {
     this.select(node.id);
     // 预取触发 models.onChanged → refreshModelNodes 自动刷新（含广播）
     if (!this.models.has(rel)) void this.models.preload([rel]);
+    return node;
+  }
+
+  /**
+   * 添加音源节点（场景中的声音发射器：2D 全局 / 3D 位置音源）。
+   * source 传音频资产相对路径时直接绑定（非音频扩展名抛错）；
+   * autoplay 节点在音频解锁后自动起播。
+   */
+  addAudio(parentId?: string, source = ""): AudioNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createAudio({ parentId: parent?.id ?? null });
+    if (source) {
+      if (!isAudioAssetRel(source)) {
+        throw new Error(`非音频资产: ${source}（支持 mp3/wav/ogg/m4a/aac/flac）`);
+      }
+      node.audio.source = source;
+    }
+    applySpawnOffset(node);
+    this.graph.add(node);
+    this.select(node.id);
     return node;
   }
 
@@ -601,6 +641,12 @@ export class EditorEngine {
     this.events.emit("model:changed", { rel: rel ?? "" });
   }
 
+  /** 音源图标状态着色刷新（音频绑定/加载/失败状态变化后内部调用） */
+  private refreshAudioNodeIcon(nodeId: string): void {
+    const n = this.graph.get(nodeId);
+    if (n instanceof AudioNode) this.synchronizer.refreshAudioNodeIcon(n);
+  }
+
   private resolveParent(preferred?: string): Node | undefined {
     if (preferred) return this.graph.get(preferred);
     if (this.selectedId) {
@@ -675,6 +721,16 @@ export class EditorEngine {
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     // 节点子树移除 → 其动画绑定（mixer/骨骼辅助线）一并解除
     if (c.kind === "remove") this.animation.unbind(c.nodeId);
+    // 音源节点：入图/属性变更 → 按最新数据同步音源；移除 → 解绑销毁
+    if (c.kind === "remove") {
+      this.audio.unbind(c.nodeId);
+    } else {
+      const n = this.graph.get(c.nodeId);
+      if (n instanceof AudioNode && (c.kind === "add" || c.kind === "properties")) {
+        const obj = this.synchronizer.getObjectMap().get(n.id);
+        if (obj) this.audio.syncNode(n, obj);
+      }
+    }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -709,10 +765,18 @@ export class EditorEngine {
     // 场景整体重建：先解除全部动画绑定（mixer 指向旧实例），重建时经
     // onModelInstance 逐节点重新绑定
     this.animation.unbindAll();
+    // 音频绑定同样指向旧场景对象：整体重建后按新对象重绑
+    this.audio.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
     this.animation.setSelected(this.selectedId);
+    for (const node of this.graph.all()) {
+      if (node instanceof AudioNode) {
+        const obj = this.synchronizer.getObjectMap().get(node.id);
+        if (obj) this.audio.syncNode(node, obj);
+      }
+    }
     this.applySkyFromGraph();
   }
 
@@ -1117,6 +1181,9 @@ export class EditorEngine {
    */
   setRenderingActive(active: boolean): void {
     this.renderer.setPaused(!active);
+    // 后台渲染暂停（预览/脚本面板接管）时挂起编辑器音频上下文（进度保留），
+    // 避免与网页预览面板的音频叠加；恢复渲染时解除挂起并补起 autoplay
+    this.audio.setSuspended(!active);
   }
 
   private onSelectionChanged(): void {
@@ -1274,7 +1341,12 @@ export class EditorEngine {
   private applyOverlayVisibility(): void {
     const vis = this.overlayVisible;
     this.renderer.scene.traverse((o) => {
-      if (o.name === "__grid" || o.name === "__camBody" || o.name === "__camIcon") {
+      if (
+        o.name === "__grid" ||
+        o.name === "__camBody" ||
+        o.name === "__camIcon" ||
+        o.name === "__audioIcon"
+      ) {
         o.visible = vis;
         return;
       }

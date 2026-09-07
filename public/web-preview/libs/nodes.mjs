@@ -11,6 +11,7 @@ import { createMesh } from "./mesh.mjs";
  * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
  * - cameras：cameraNode 列表（{ json, obj }，供渲染相机取位姿/参数）；
  * - meshes：meshNode 列表（{ json, obj }，供贴图回填/动画绑定遍历）；
+ * - audios：audioNode 列表（{ json, obj }，供音频绑定遍历）；
  * - nodes：全部节点列表（{ json, obj }，供脚本宿主/tve SDK 寻址；
  *   节点对象打 userData.nodeId 标记，灯光实例等内部子对象不带标记）。
  * ctx = { materialParams, models }：.mat 参数表 + 模型实例化缓存。
@@ -18,6 +19,7 @@ import { createMesh } from "./mesh.mjs";
 export function buildSceneTree(rootJson, scene, ctx) {
   const cameras = [];
   const meshes = [];
+  const audios = [];
   const nodes = [];
 
   function buildOwn(type, json) {
@@ -66,6 +68,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
 
     if (type === "cameraNode") cameras.push({ json, obj });
     if (type === "meshNode") meshes.push({ json, obj });
+    if (type === "audioNode") audios.push({ json, obj });
     return obj;
   }
 
@@ -111,5 +114,5 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   buildNode(rootJson, null);
-  return { cameras, meshes, nodes };
+  return { cameras, meshes, audios, nodes };
 }

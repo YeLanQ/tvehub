@@ -33,7 +33,8 @@ export type EntityKind =
   | "directionalLightNode"
   | "ambientLightNode"
   | "spotLightNode"
-  | "skyboxNode";
+  | "skyboxNode"
+  | "audioNode";
 
 /** 节点类型 token 类的构造器形状（@property 的 type 选项可用） */
 export type NodeClass =
@@ -332,12 +333,27 @@ export interface AnimationApi {
   resume(entity: Entity): void;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 日志） */
+/** 音频运行期控制（按实体寻址；仅音源节点有效） */
+export interface AudioApi {
+  /** 播放（暂停态续播；停止/播完态从头播） */
+  play(entity: Entity): void;
+  /** 停止并回到起点 */
+  stop(entity: Entity): void;
+  /** 暂停（保留当前进度） */
+  pause(entity: Entity): void;
+  /** 从暂停处继续 */
+  resume(entity: Entity): void;
+  /** 运行时音量（0~1；不落盘） */
+  setVolume(entity: Entity, volume: number): void;
+}
+
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
   readonly scene: SceneApi;
   readonly animation: AnimationApi;
+  readonly audio: AudioApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */
   log(...args: unknown[]): void;
   warn(...args: unknown[]): void;

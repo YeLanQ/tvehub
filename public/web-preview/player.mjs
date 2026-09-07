@@ -17,6 +17,7 @@ import {
 import { loadMaterialParams } from "./libs/material.mjs";
 import { loadModels } from "./libs/model.mjs";
 import { createAnimations } from "./libs/animation.mjs";
+import { createAudios } from "./libs/audio.mjs";
 import { buildSceneTree } from "./libs/nodes.mjs";
 import { createScripts } from "./libs/scripts.mjs";
 import { applyMeshTextures } from "./libs/textures.mjs";
@@ -102,7 +103,7 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
+  const { cameras, meshes, audios, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
@@ -299,6 +300,10 @@ async function main() {
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
   const animations = createAnimations(meshes, models);
 
+  // 音频（音源节点 2D/3D 播放；监听器挂渲染相机随其位姿推进；
+  // autoplay 绑定在用户首次交互解锁 AudioContext 后自动起播）
+  const audiosApi = createAudios(audios, cam);
+
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
   let scripts = { update() {} };
   try {
@@ -306,6 +311,7 @@ async function main() {
       nodes,
       cfg,
       animations,
+      audios: audiosApi,
       canvas: renderer.domElement,
     });
   } catch (e) {
@@ -319,6 +325,7 @@ async function main() {
     const dt = clock.getDelta();
     scripts.update(dt);
     animations.update(dt);
+    audiosApi.update();
     applyClearFlags();
     renderer.render(scene, cam);
   }

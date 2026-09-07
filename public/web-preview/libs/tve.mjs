@@ -27,6 +27,7 @@ const R2D = 180 / Math.PI;
  * @property {THREE.Object3D|null} rootObj 场景根
  * @property {HTMLCanvasElement|null} canvas 预览画布（指针输入坐标基准）
  * @property {{play,stop,pause,resume}|null} animations 动画控制（按节点 id 寻址）
+ * @property {{play,stop,pause,resume,setVolume}|null} audios 音频控制（按节点 id 寻址）
  */
 
 /** @type {TveHost|null} */
@@ -346,6 +347,7 @@ const KIND_CLASSES = {
   meshNode: MeshNode,
   cameraNode: CameraNode,
   skyboxNode: SkyboxNode,
+  audioNode: Transform,
   lightNode: LightNode,
   pointLightNode: LightNode,
   directionalLightNode: LightNode,
@@ -484,6 +486,25 @@ const animationApi = {
   },
 };
 
+/** 音频控制（按实体寻址；仅音源节点有效，脚本经 engine.audio 调用） */
+const audioApi = {
+  play(entity) {
+    host?.audios?.play(entity?.id);
+  },
+  stop(entity) {
+    host?.audios?.stop(entity?.id);
+  },
+  pause(entity) {
+    host?.audios?.pause(entity?.id);
+  },
+  resume(entity) {
+    host?.audios?.resume(entity?.id);
+  },
+  setVolume(entity, volume) {
+    host?.audios?.setVolume(entity?.id, volume);
+  },
+};
+
 const sceneApi = {
   get root() {
     const rootObj = host && host.rootObj;
@@ -534,6 +555,7 @@ const engine = {
   input: inputApi,
   scene: sceneApi,
   animation: animationApi,
+  audio: audioApi,
   log(...args) {
     postLog("info", formatArgs(args));
     console.log(...args);

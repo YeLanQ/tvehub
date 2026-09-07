@@ -183,6 +183,15 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
                     if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
                         *val = serde_json::Value::String(new.clone());
                     }
+                } else if k == "audio" {
+                    // 音源节点：audio.source 为音频资产引用（其余播放参数不含路径）
+                    if let Some(src) = val.get_mut("source") {
+                        if src.is_string() {
+                            if let Some(new) = renames.get(src.as_str().unwrap_or("")) {
+                                *src = serde_json::Value::String(new.clone());
+                            }
+                        }
+                    }
                 } else {
                     rewrite_scene_refs(val, renames);
                 }

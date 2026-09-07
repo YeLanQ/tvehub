@@ -49,7 +49,7 @@ pub async fn set_current_project_root(
     Ok(())
 }
 
-/// 扩展名 → MIME（模型/贴图/文本；未知一律 octet-stream，three 加载器按内容解析）
+/// 扩展名 → MIME（模型/贴图/音频/文本；未知一律 octet-stream，three 加载器按内容解析）
 fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
         "png" => "image/png",
@@ -62,6 +62,12 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "gltf" => "model/gltf+json",
         "obj" | "txt" => "text/plain",
         "json" | "mat" | "texcube" => "application/json",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "flac" => "audio/flac",
         _ => "application/octet-stream",
     }
 }

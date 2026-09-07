@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
 import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import {
+  AudioNode,
   MeshNode,
   LightNode,
   PointLightNode,
@@ -33,6 +34,8 @@ export interface MaterialParamsLookup {
   modelReady?(rel: string): boolean;
   /** 模型实例挂载完成回调（引擎接 AnimationSystem 绑定动画） */
   onModelInstance?(node: MeshNode, modelRoot: THREE.Object3D): void;
+  /** 音源节点运行时状态查询（引擎注入 AudioSystem；音源图标状态着色用） */
+  audioStateFor?(nodeId: string): { ready: boolean; error: string | null } | null;
 }
 
 const defaultLookup: MaterialParamsLookup = {
@@ -45,6 +48,8 @@ const OUTLINE_CHILD_NAME = "__matOutline";
 const MODEL_CHILD_NAME = "__modelRoot";
 /** 模型加载中/失败的占位体子网格名 */
 const MODEL_PENDING_NAME = "__modelPending";
+/** 音源节点图标着色（就绪态；加载中黄/失败红/未绑定灰见 refreshAudio） */
+const AUDIO_ICON_COLOR = 0x7ed49a;
 
 /**
  * 拷贝几何并沿顶点外扩 offset（对象空间单位），用作轮廓体的独立几何，避免污染主网格几何。
@@ -243,6 +248,7 @@ export class SceneSynchronizer {
     if (node instanceof MeshNode) this.refreshMesh(node, obj as THREE.Mesh);
     else if (node instanceof LightNode) this.refreshLight(node, obj);
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
+    else if (node instanceof AudioNode) this.refreshAudio(node, obj);
     this.applyTransform(node);
   }
 
@@ -342,6 +348,13 @@ export class SceneSynchronizer {
     if (!obj) return;
     this.refreshMesh(mesh, obj as THREE.Mesh);
     this.applyTransform(mesh);
+  }
+
+  /** 音源节点图标刷新（音频绑定状态变化后由引擎调用；数据/变换不动） */
+  refreshAudioNodeIcon(node: AudioNode): void {
+    const obj = this.objectMap.get(node.id);
+    if (!obj) return;
+    this.refreshAudio(node, obj);
   }
 
   /**
@@ -482,6 +495,29 @@ export class SceneSynchronizer {
     (icon.material as THREE.SpriteMaterial).color.setHex(
       node.isEditorCamera ? 0x66aaff : 0x9ad7ff,
     );
+  }
+
+  /**
+   * 音源节点刷新：扬声器图标精灵表示声源位置（不渲染实体几何）。
+   * 图标名 __audioIcon（编辑器辅助物；真实音频对象由 AudioSystem 另行挂载）。
+   */
+  private refreshAudio(node: AudioNode, obj: THREE.Object3D): void {
+    let icon = obj.children.find((c) => c.name === "__audioIcon") as THREE.Sprite | null;
+    if (!icon) {
+      icon = createIconSprite("audio", AUDIO_ICON_COLOR, 1.0);
+      icon.name = "__audioIcon";
+      obj.add(icon);
+    }
+    // 绑定状态着色：就绪绿 / 加载中黄 / 失败红 / 未绑定灰
+    const state = this.lookup.audioStateFor?.(node.id) ?? null;
+    const color = !node.audio.source
+      ? 0x8a8f98
+      : state?.error
+        ? 0xe06c5a
+        : state?.ready
+          ? AUDIO_ICON_COLOR
+          : 0xd7b45a;
+    (icon.material as THREE.SpriteMaterial).color.setHex(color);
   }
 
   dispose(): void {

@@ -13,6 +13,7 @@ export {
   DirectionalLightNode,
   SpotLightNode,
   CameraNode,
+  AudioNode,
 } from "./derived/Primitives";
 export { PrototypeRegistry, createDefaultRegistry };
 export type { PrototypeCtor };
@@ -22,6 +23,7 @@ export type {
   MeshNodeInit,
   LightNodeInit,
   CameraNodeInit,
+  AudioNodeInit,
   LightKind,
 } from "./derived/Primitives";
 export type { TransformInit } from "./Transform";

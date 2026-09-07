@@ -9,6 +9,7 @@ import {
   MESH_ICON_PATHS,
   GROUP_ICON_PATHS,
   SKYBOX_ICON_PATHS,
+  AUDIO_ICON_PATHS,
   LIGHT_POINT_ICON_PATHS,
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
@@ -38,6 +39,7 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   ambientLightNode: { d: LIGHT_AMBIENT_ICON_PATHS, color: "#4dd0a1" },
   spotLightNode: { d: LIGHT_SPOT_ICON_PATHS, color: "#ff9f43" },
   skyboxNode: { d: SKYBOX_ICON_PATHS, color: "#8ecae6" },
+  audioNode: { d: AUDIO_ICON_PATHS, color: "#7ed49a" },
 };
 
 const FALLBACK_BADGE: Record<string, string> = {
@@ -50,6 +52,7 @@ const FALLBACK_BADGE: Record<string, string> = {
   spotLightNode: "S",
   cameraNode: "C",
   skyboxNode: "SK",
+  audioNode: "AU",
 };
 
 const search = ref("");
@@ -134,6 +137,8 @@ function addNodeArgs(type: string, parentId: string, name?: string): Record<stri
   } else if (type.startsWith("skybox:")) {
     args.kind = "skybox";
     args.subtype = type.slice(7);
+  } else if (type === "audio") {
+    args.kind = "audio";
   } else if (type === "camera") {
     args.kind = "camera";
   } else if (type.startsWith("script:")) {
@@ -174,6 +179,7 @@ function createAddItems(parentId: string): CtxMenuItem[] {
   items.push(menuSeparator());
   items.push({ label: "Camera", onClick: () => addNodeTo(parentId, "camera") });
   items.push({ label: "Group", onClick: () => addNodeTo(parentId, "group") });
+  items.push({ label: "Audio Source", onClick: () => addNodeTo(parentId, "audio") });
   items.push(menuSeparator());
   items.push({
     label: "天空盒",

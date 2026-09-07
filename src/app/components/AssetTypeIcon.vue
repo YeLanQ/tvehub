@@ -9,6 +9,7 @@ import {
   LIGHT_POINT_ICON_PATHS,
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
+  AUDIO_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 
 defineProps<{ kind: string }>();
@@ -67,6 +68,11 @@ defineProps<{ kind: string }>();
     <template v-else-if="kind === 'glb' || kind === 'gltf' || kind === 'fbx' || kind === 'obj'">
       <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
       <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+    </template>
+
+    <!-- 音频：扬声器 + 声波（mp3/wav/ogg/m4a/aac/flac） -->
+    <template v-else-if="kind === 'mp3' || kind === 'wav' || kind === 'ogg' || kind === 'm4a' || kind === 'aac' || kind === 'flac'">
+      <path v-for="d in AUDIO_ICON_PATHS" :key="d" :d="d" />
     </template>
 
     <!-- 着色器：尖括号代码 -->

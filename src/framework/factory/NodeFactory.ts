@@ -1,5 +1,6 @@
 import type { JsonRecord, Vec3 } from "../prototype/types";
 import {
+  AudioNode,
   CameraNode,
   LightNode,
   MeshNode,
@@ -18,7 +19,8 @@ export type EditorNodeType =
   | "meshNode"
   | "lightNode"
   | "cameraNode"
-  | "skyboxNode";
+  | "skyboxNode"
+  | "audioNode";
 
 export interface CreateOptions {
   parentId?: string | null;
@@ -112,6 +114,14 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建音源节点（音频资产引用与播放参数后续经检查器绑定） */
+  createAudio(opts: CreateOptions = {}): AudioNode {
+    const node = this.registry.create("audioNode") as AudioNode;
+    node.name = opts.name ?? "Audio Source";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   fromJSON(json: JsonRecord): Node {
     return this.registry.createFromJSON(json);
   }
@@ -125,13 +135,15 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
       ? CameraNode
       : K extends "skyboxNode"
         ? SkyboxNode
-        : Node;
+        : K extends "audioNode"
+          ? AudioNode
+          : Node;
 
 function defaultSkyboxName(kind: SkyboxKind): string {
   return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";
 }
 
-export type { MeshNode, LightNode, CameraNode, SkyboxNode };
+export type { MeshNode, LightNode, CameraNode, SkyboxNode, AudioNode };
 
 export function createNodeFactory(registry: PrototypeRegistry): NodeFactory {
   return new NodeFactory(registry);

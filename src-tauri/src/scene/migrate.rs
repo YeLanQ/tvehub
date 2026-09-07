@@ -432,6 +432,37 @@ pub fn collect_texcube_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集音源节点的音频资产引用（去重、按扩展名过滤）
+pub fn collect_audio_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_audio_rel(rel: &str) -> bool {
+        let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        matches!(ext.as_str(), "mp3" | "wav" | "ogg" | "m4a" | "aac" | "flac") && rel.contains('.')
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_audio_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            if o.get("type").and_then(Value::as_str) == Some("audioNode") {
+                if let Some(Value::String(rel)) = o.get("audio").and_then(|a| a.get("source")) {
+                    if is_audio_rel(rel) && !out.contains(rel) {
+                        out.push(rel.clone());
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_audio_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_audio_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {

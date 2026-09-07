@@ -37,6 +37,7 @@ import {
   type TexCubeFaceKey,
 } from "../../lib/texcube";
 import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat";
+import { isAudioAssetRel } from "../../../framework/audio";
 import type { MaterialParams } from "../../../framework/material";
 import MaterialParamsEditor from "./MaterialParamsEditor.vue";
 import AssetPreview3D from "./AssetPreview3D.vue";
@@ -393,6 +394,14 @@ function onImgLoad(e: Event): void {
         <label>尺寸</label>
         <span class="muted">{{ imgSize.w }} × {{ imgSize.h }}</span>
       </div>
+    </template>
+
+    <!-- 音频：原生播放器预览（mp3/wav/ogg/m4a/aac/flac） -->
+    <template v-if="isAudioAssetRel(rel)">
+      <div class="asset-audio-wrap">
+        <audio controls preload="metadata" :src="assetUrl(rel)" />
+      </div>
+      <div class="hint">音频资产：添加「Audio Source」音源节点后在此绑定播放；2D 全局 / 3D 位置衰减。</div>
     </template>
 
     <!-- hdr / TextureCube / 材质 / 模型：3D 预览 -->
@@ -815,5 +824,17 @@ function onImgLoad(e: Event): void {
   max-height: 220px;
   object-fit: contain;
   display: block;
+}
+.asset-audio-wrap {
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.asset-audio-wrap audio {
+  width: 100%;
+  height: 36px;
 }
 </style>

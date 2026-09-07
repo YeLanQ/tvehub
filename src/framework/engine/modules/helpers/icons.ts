@@ -72,6 +72,14 @@ export const SKYBOX_ICON_PATHS: string[] = [
   "M8 20.5h8",
 ];
 
+/** 音源节点：扬声器 + 声波（声音发射器语义） */
+export const AUDIO_ICON_PATHS: string[] = [
+  "M11 5L6.5 8.5H3.5a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h3L11 19V5z",
+  "M14.5 9.2a4 4 0 0 1 0 5.6",
+  "M17 6.8a7.3 7.3 0 0 1 0 10.4",
+  "M19.6 4.4a10.8 10.8 0 0 1 0 15.2",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

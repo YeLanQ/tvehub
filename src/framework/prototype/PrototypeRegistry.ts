@@ -1,5 +1,6 @@
 import {
   AmbientLightNode,
+  AudioNode,
   CameraNode,
   DirectionalLightNode,
   LightNode,
@@ -69,5 +70,6 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(LightNode.kType, () => new PointLightNode());
   registry.register(CameraNode.kType, () => new CameraNode());
   registry.register(SkyboxNode.kType, () => new SkyboxNode());
+  registry.register(AudioNode.kType, () => new AudioNode());
   return registry;
 }

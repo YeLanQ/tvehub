@@ -107,10 +107,11 @@ function callLifecycle(record, method, ...args) {
  * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
  * @param {object} opts.cfg 项目配置（entryScript = 入口脚本源路径）
  * @param {{play,stop,pause,resume}|null} opts.animations 动画控制（engine.animation 转发）
+ * @param {{play,stop,pause,resume,setVolume}|null} opts.audios 音频控制（engine.audio 转发）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, canvas }) {
   const noop = { update() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -118,6 +119,7 @@ export async function createScripts({ nodes, cfg, animations, canvas }) {
     rootObj: rootEntry ? rootEntry.obj : null,
     canvas: canvas ?? null,
     animations: animations ?? null,
+    audios: audios ?? null,
   });
 
   // 组件引用收集（注册表为文档序：先父后子）

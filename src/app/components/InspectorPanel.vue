@@ -5,7 +5,7 @@ import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
 import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
-import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../framework/camera";
@@ -32,6 +32,7 @@ import AnimationSection from "./inspector/AnimationSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
+import AudioSection from "./inspector/AudioSection.vue";
 import AssetInspector from "./inspector/AssetInspector.vue";
 import ComponentsSection from "./inspector/ComponentsSection.vue";
 import "../../styles/components/inspector-panel.scss";
@@ -371,6 +372,47 @@ async function onMaterialCopyToProject(): Promise<void> {
   void assetsStore.load(root);
 }
 
+// ---------------------------------------------------------------------------
+// 音频卡片（Audio）事件：节点数据提交（可撤销）；运行时控制由卡片直连引擎
+// ---------------------------------------------------------------------------
+
+function onAudioUpdate(label: string, value: unknown): void {
+  const n = node.value;
+  if (!n || !(n instanceof AudioNode)) return;
+  commit((m) => {
+    const audio = (m as AudioNode).audio;
+    switch (label) {
+      case "Set Audio Source":
+        audio.source = typeof value === "string" ? value : "";
+        break;
+      case "Set Audio Autoplay":
+        audio.autoplay = value === true;
+        break;
+      case "Set Audio Loop":
+        audio.loop = value === true;
+        break;
+      case "Set Audio Volume":
+        audio.volume = typeof value === "number" ? Math.max(0, Math.min(1, value)) : 1;
+        break;
+      case "Set Audio Speed":
+        audio.speed = typeof value === "number" ? Math.max(0.1, Math.min(4, value)) : 1;
+        break;
+      case "Set Audio Spatial":
+        audio.spatial = value === "3d" ? "3d" : "2d";
+        break;
+      case "Set Audio RefDistance":
+        audio.refDistance = typeof value === "number" ? Math.max(0.01, value) : 1;
+        break;
+      case "Set Audio MaxDistance":
+        audio.maxDistance = typeof value === "number" ? Math.max(0.01, value) : 30;
+        break;
+      case "Set Audio Rolloff":
+        audio.rolloff = typeof value === "number" ? Math.max(0, value) : 1;
+        break;
+    }
+  }, label);
+}
+
 function onLightUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof LightNode)) return;
@@ -626,6 +668,10 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
           @setMaterial="onSetSkyMaterial"
           @copyToProject="onSkyMaterialCopyToProject"
         />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof AudioNode" title="Audio" :open="true">
+        <AudioSection :node="node" :rev="revision" @update="onAudioUpdate" />
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">
