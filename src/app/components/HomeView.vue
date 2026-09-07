@@ -24,6 +24,7 @@ import {
   setToolEnabled,
   enabledMcpTools,
   sanitizeMcpName,
+  syncPermsFromBackend,
 } from "../lib/devtools/state";
 import {
   startDevTools,
@@ -89,6 +90,8 @@ onMounted(() => {
       .catch(() => (tauriVersion.value = ""));
     // 开发者服务·控制服务器：仅同步展示状态（命令监听器只在编辑器窗口安装）
     void syncDevToolsStatus();
+    // 工具权限：Rust 为权威存储，启动时同步一次（同时回写 localStorage 镜像）
+    void syncPermsFromBackend();
   }
 });
 

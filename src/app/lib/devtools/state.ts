@@ -6,6 +6,7 @@
 // （同源共享），保证勾选即时对执行端生效。
 
 import { reactive } from "vue";
+import { api } from "../../../lib/api";
 
 export interface DevToolsInfo {
   port: number;
@@ -202,12 +203,37 @@ export function setDevToolsPort(port: number): void {
   persistPort();
 }
 
-/** 设置某工具是否启用并持久化（写 localStorage，编辑器窗口执行端即时可见） */
-export function setToolEnabled(id: string, enabled: boolean): void {
+/** 设置某工具是否启用：先即时更新本地（reactive + localStorage），再持久化到 Rust 权威存储 */
+export async function setToolEnabled(id: string, enabled: boolean): Promise<void> {
   const t = devtools.tools.find((x) => x.id === id);
   if (t) {
     t.enabled = enabled;
     persistPerms();
+  }
+  try {
+    await api.devtoolsSetTool(id, enabled);
+  } catch (e) {
+    console.error("持久化工具权限到 Rust 失败:", e);
+  }
+}
+
+/** 从 Rust 权威存储同步工具权限（首页启动时调用；同时回写 localStorage 镜像供编辑器即时读取） */
+export async function syncPermsFromBackend(): Promise<void> {
+  try {
+    const list = await api.devtoolsTools();
+    const m: Record<string, boolean> = {};
+    for (const info of list) {
+      const t = devtools.tools.find((x) => x.id === info.id);
+      if (t) {
+        t.name = info.name;
+        t.group = info.group;
+        t.enabled = info.enabled;
+      }
+      m[info.id] = info.enabled;
+    }
+    persistPerms();
+  } catch {
+    // 无后端（浏览器直开/服务未启用）时保持本地默认
   }
 }
 

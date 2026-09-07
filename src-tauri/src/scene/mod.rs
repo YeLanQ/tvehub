@@ -465,6 +465,15 @@ pub async fn scene_dirty(state: tauri::State<'_, SceneSession>) -> Result<bool, 
     Ok(core.dirty)
 }
 
+/// 会话当前打开的项目根目录（devtools 纯后端查询扫描用；未打开返回 None）
+#[tauri::command]
+pub async fn scene_root_path(
+    state: tauri::State<'_, SceneSession>,
+) -> Result<Option<String>, String> {
+    let core = state.0.read().map_err(|e| e.to_string())?;
+    Ok(core.root_path.as_ref().map(|p| p.display().to_string()))
+}
+
 /// 当前场景文档（信封 + 图重建 root；调试/兜底用）
 #[tauri::command]
 pub async fn scene_doc(state: tauri::State<'_, SceneSession>) -> Result<Value, String> {

@@ -24,10 +24,29 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Tauri managed：当前开发者服务运行时（同一时刻至多一个）
-#[derive(Default)]
+/// Tauri managed：当前开发者服务运行时（同一时刻至多一个）+ 工具权限（Rust 权威存储）
 pub struct DevToolsState {
     inner: Mutex<Option<Arc<DevToolsRuntime>>>,
+    /// 工具 id -> 是否启用；None = 尚未从磁盘加载
+    perms: Mutex<Option<HashMap<String, bool>>>,
+}
+
+impl Default for DevToolsState {
+    fn default() -> Self {
+        DevToolsState {
+            inner: Mutex::new(None),
+            perms: Mutex::new(None),
+        }
+    }
+}
+
+/// 工具权限项（首页「工具权限」清单 / devtools_tools 返回值）
+#[derive(Serialize, Clone)]
+pub struct ToolPermInfo {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub enabled: bool,
 }
 
 /// 启动后返回给前端/用户的信息
@@ -74,6 +93,252 @@ impl DevToolsRuntime {
             protocol: "tcp-jsonlines + mcp-http".to_string(),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 工具权限：Rust 权威存储（app_config_dir/devtools_perms.json）。
+// 首页/编辑器窗口经 devtools_tools / devtools_set_tool 读写，Rust 直答与前端执行
+// 都按同一份权限门控（前端另有 localStorage 镜像，仅用于 UI 即时性）。
+// ---------------------------------------------------------------------------
+
+/// 工具目录（id, 显示名, 分组）；与前端 devtools/state.ts DEFAULT_TOOLS 保持同构。
+const TOOL_CATALOG: &[(&str, &str, &str)] = &[
+    ("editor", "编辑器状态", "编辑器"),
+    ("projectQuery", "查询项目", "编辑器"),
+    ("projectOpen", "打开/关闭项目", "编辑器"),
+    ("scene", "场景", "场景"),
+    ("node", "节点选中", "节点"),
+    ("nodeAdd", "添加节点", "节点"),
+    ("nodeDelete", "删除节点", "节点"),
+    ("nodeSet", "节点设置", "节点"),
+    ("state", "状态快照", "状态"),
+    ("previewOpen", "打开预览", "预览"),
+    ("previewClose", "关闭预览", "预览"),
+    ("previewStart", "启动预览", "预览"),
+    ("previewStop", "停止预览", "预览"),
+    ("screenScreenshot", "截图", "屏幕快照"),
+    ("assetList", "资源列表", "资源"),
+    ("assetCreate", "新建资源", "资源"),
+    ("assetDelete", "删除资源", "资源"),
+    ("assetRename", "重命名资源", "资源"),
+];
+
+/// method -> 工具 id（未列出的方法如 ping / health / mcp.listTools 不受权限控制）
+const METHOD_TO_TOOL: &[(&str, &str)] = &[
+    ("editor.state", "editor"),
+    ("project.list", "projectQuery"),
+    ("project.open", "projectOpen"),
+    ("project.close", "projectOpen"),
+    ("scene.list", "scene"),
+    ("scene.open", "scene"),
+    ("scene.save", "scene"),
+    ("scene.tree", "scene"),
+    ("node.select", "node"),
+    ("node.add", "nodeAdd"),
+    ("node.remove", "nodeDelete"),
+    ("node.rename", "nodeSet"),
+    ("node.set", "nodeSet"),
+    ("preview.start", "previewStart"),
+    ("preview.stop", "previewStop"),
+    ("preview.open", "previewOpen"),
+    ("preview.close", "previewClose"),
+    ("preview.screenshot", "screenScreenshot"),
+    ("state.snapshot", "state"),
+    ("state.restore", "state"),
+    ("asset.list", "assetList"),
+    ("asset.create", "assetCreate"),
+    ("asset.delete", "assetDelete"),
+    ("asset.rename", "assetRename"),
+];
+
+fn tool_name(id: &str) -> Option<String> {
+    TOOL_CATALOG
+        .iter()
+        .find(|(tid, _, _)| *tid == id)
+        .map(|(_, name, _)| name.to_string())
+}
+
+fn perms_file_path(app: &AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_config_dir()
+        .map(|d| d.join("devtools_perms.json"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("devtools_perms.json"))
+}
+
+/// 当前工具启用状态（默认全部启用；磁盘存档覆盖之）。缓存进 DevToolsState，首次读取时加载。
+fn ensure_perms_loaded(app: &AppHandle) -> HashMap<String, bool> {
+    let state = app.state::<DevToolsState>();
+    let mut guard = state.perms.lock().unwrap();
+    if guard.is_none() {
+        let mut map = HashMap::new();
+        if let Ok(text) = std::fs::read_to_string(perms_file_path(app)) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(obj) = v.as_object() {
+                    for (k, val) in obj {
+                        if let Some(b) = val.as_bool() {
+                            map.insert(k.clone(), b);
+                        }
+                    }
+                }
+            }
+        }
+        *guard = Some(map);
+    }
+    guard.clone().unwrap_or_default()
+}
+
+fn save_perms(app: &AppHandle, map: &HashMap<String, bool>) {
+    let path = perms_file_path(app);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&map) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// method 是否被工具权限允许（Rust 直答与转发统一门控）；未登记的方法放行
+fn require_tool(app: &AppHandle, method: &str) -> Result<(), String> {
+    let tool = METHOD_TO_TOOL
+        .iter()
+        .find(|(m, _)| *m == method)
+        .map(|(_, t)| *t);
+    let Some(tool) = tool else { return Ok(()) };
+    let map = ensure_perms_loaded(app);
+    let enabled = map.get(tool).copied().unwrap_or(true);
+    if enabled {
+        Ok(())
+    } else {
+        let name = tool_name(tool).unwrap_or_else(|| tool.to_string());
+        Err(format!("工具「{name}」未启用（可在首页 开发者服务 中开启）"))
+    }
+}
+
+fn current_tools(app: &AppHandle) -> Vec<ToolPermInfo> {
+    let map = ensure_perms_loaded(app);
+    TOOL_CATALOG
+        .iter()
+        .map(|(id, name, group)| ToolPermInfo {
+            id: (*id).to_string(),
+            name: (*name).to_string(),
+            group: (*group).to_string(),
+            enabled: map.get(*id).copied().unwrap_or(true),
+        })
+        .collect()
+}
+
+/// 查询工具权限清单（前端首页同步用）
+#[tauri::command]
+pub async fn devtools_tools(app: AppHandle) -> Result<Vec<ToolPermInfo>, String> {
+    Ok(current_tools(&app))
+}
+
+/// 设置某工具是否启用并持久化到 Rust（返回最新清单）
+#[tauri::command]
+pub async fn devtools_set_tool(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<ToolPermInfo>, String> {
+    if tool_name(&id).is_none() {
+        return Err(format!("未知工具 id: {id}"));
+    }
+    {
+        let state = app.state::<DevToolsState>();
+        let mut guard = state.perms.lock().unwrap();
+        let mut map = guard.take().unwrap_or_default();
+        map.insert(id.clone(), enabled);
+        save_perms(&app, &map);
+        *guard = Some(map);
+    }
+    Ok(current_tools(&app))
+}
+
+// ---------------------------------------------------------------------------
+// Rust 本地执行器：纯后端方法（查询/会话落盘）不经前端直接应答；其余仍转发前端。
+// ---------------------------------------------------------------------------
+
+/// 会话当前打开的项目根（未打开项目返回 None；供 scene.list / asset.list 扫描用）
+async fn scene_root_of(app: &AppHandle) -> Option<String> {
+    crate::scene::scene_root_path(app.state::<crate::scene::SceneSession>())
+        .await
+        .ok()
+        .flatten()
+}
+
+fn project_recent_list(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let mut recent = Vec::new();
+    for p in crate::store::list_recent_paths(app) {
+        if let Ok(info) = crate::project::project_info(&std::path::PathBuf::from(&p)) {
+            recent.push(serde_json::json!({
+                "path": info.path,
+                "name": info.name,
+                "sceneCount": info.scene_count,
+            }));
+        }
+    }
+    Ok(serde_json::json!({ "recent": recent }))
+}
+
+fn scene_list_of(root: &str) -> Result<serde_json::Value, String> {
+    let entries = crate::project::scan_tree(&std::path::PathBuf::from(root))?;
+    let scenes: Vec<serde_json::Value> = entries
+        .into_iter()
+        .filter(|a| a.kind == "scene" && !a.path.ends_with('/'))
+        .map(|a| serde_json::json!({ "name": a.name, "path": a.path }))
+        .collect();
+    Ok(serde_json::json!(scenes))
+}
+
+fn asset_list_of(root: &str) -> Result<serde_json::Value, String> {
+    let entries = crate::project::scan_tree(&std::path::PathBuf::from(root))?;
+    let list: Vec<serde_json::Value> = entries
+        .into_iter()
+        .map(|a| {
+            serde_json::json!({
+                "name": a.name,
+                "path": a.path,
+                "kind": a.kind,
+                "size": a.size,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!(list))
+}
+
+/// 尝试在 Rust 本地执行；返回 Ok(None) = 该方法需要前端，应照常转发。
+fn try_local(
+    app: &AppHandle,
+    method: &str,
+) -> Option<Result<serde_json::Value, String>> {
+    Some(match method {
+        "project.list" => project_recent_list(app),
+        "scene.list" => match scene_root_blocking(app) {
+            Some(root) => scene_list_of(&root),
+            None => Err("尚未打开项目".to_string()),
+        },
+        "asset.list" => match scene_root_blocking(app) {
+            Some(root) => asset_list_of(&root),
+            None => Err("尚未打开项目".to_string()),
+        },
+        "scene.tree" | "state.snapshot" => scene_doc_blocking(app),
+        "scene.save" => scene_save_blocking(app).map(|_| serde_json::json!({ "ok": true })),
+        _ => return None,
+    })
+}
+
+fn scene_root_blocking(app: &AppHandle) -> Option<String> {
+    tauri::async_runtime::block_on(scene_root_of(app))
+}
+
+fn scene_doc_blocking(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let state = app.state::<crate::scene::SceneSession>();
+    tauri::async_runtime::block_on(crate::scene::scene_doc(state))
+}
+
+fn scene_save_blocking(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<crate::scene::SceneSession>();
+    tauri::async_runtime::block_on(crate::scene::scene_save(state))
 }
 
 /// MCP stdio 桥程序路径：与主程序同目录的 mcp.exe（不存在时回退为裸文件名，供用户自行修正）。
@@ -132,6 +397,19 @@ fn dispatch_command(line: &str, rt: &DevToolsRuntime, app: &AppHandle, tx: &Sync
             return;
         }
         _ => {}
+    }
+
+    // 权限门控（Rust 权威存储）→ Rust 本地执行（纯后端方法）→ 其余转发前端执行器。
+    if let Err(msg) = require_tool(app, &method) {
+        send_reply(tx, id, serde_json::Value::Null, Some(msg));
+        return;
+    }
+    if let Some(res) = try_local(app, &method) {
+        match res {
+            Ok(v) => send_reply(tx, id, v, None),
+            Err(e) => send_reply(tx, id, serde_json::Value::Null, Some(e)),
+        }
+        return;
     }
 
     // 前端执行：登记待回复渠道，再发事件给前端执行器（编辑器窗口与首页窗口共用事件总线，
@@ -406,7 +684,18 @@ fn resolve_mcp(msg: serde_json::Value, rt: &DevToolsRuntime, app: &AppHandle) ->
                     });
                 }
             };
-            let result = mcp_frontend_call(rt, app, &method, args);
+            // 权限门控 → Rust 本地直答（纯后端方法）→ 其余经前端执行器
+            if let Err(msg) = require_tool(app, &method) {
+                return serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "content": [{ "type": "text", "text": msg }], "isError": true }
+                });
+            }
+            let result = match try_local(app, &method) {
+                Some(Ok(v)) => serde_json::json!({ "result": v }),
+                Some(Err(e)) => serde_json::json!({ "error": e }),
+                None => mcp_frontend_call(rt, app, &method, args),
+            };
             if let Some(err) = result.get("error").and_then(|e| e.as_str()) {
                 serde_json::json!({
                     "jsonrpc": "2.0", "id": id,

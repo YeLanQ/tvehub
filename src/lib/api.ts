@@ -36,6 +36,14 @@ export interface DevToolsInfo {
   protocol: string;
 }
 
+/** 工具权限项（与 Rust devtools::ToolPermInfo 对应；Rust 权威存储） */
+export interface DevToolPermInfo {
+  id: string;
+  name: string;
+  group: string;
+  enabled: boolean;
+}
+
 /** Tauri 资产命令封装 */
 export const api = {
   scanAssets: (root: string) => invoke<AssetEntry[]>("scan_assets", { root }),
@@ -181,6 +189,11 @@ export const api = {
   devtoolsStop: () => invoke<void>("devtools_stop"),
   /** 当前是否已启用（含连接信息；未启用返回 null） */
   devtoolsStatus: () => invoke<DevToolsInfo | null>("devtools_status"),
+  /** 工具权限清单（Rust 权威存储；首页启动时同步用） */
+  devtoolsTools: () => invoke<DevToolPermInfo[]>("devtools_tools"),
+  /** 设置某工具是否启用（持久化到 Rust；返回最新清单） */
+  devtoolsSetTool: (id: string, enabled: boolean) =>
+    invoke<DevToolPermInfo[]>("devtools_set_tool", { id, enabled }),
   /** 前端执行器回填命令结果（按 replyToken 路由回对应客户端） */
   devtoolsReply: (
     token: string,
