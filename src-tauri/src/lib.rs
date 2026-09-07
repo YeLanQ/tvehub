@@ -11,6 +11,7 @@ mod model_bin;
 mod preview;
 mod project;
 mod scene;
+mod store;
 mod trash;
 mod user_templates;
 
@@ -31,49 +32,10 @@ struct RecentProject {
     scene_count: usize,
 }
 
-
-fn recent_file_path(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .map(|d| d.join("recent_projects.json"))
-        .unwrap_or_else(|_| PathBuf::from("recent_projects.json"))
-}
-
-fn app_prefs_file_path(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .map(|d| d.join("prefs.json"))
-        .unwrap_or_else(|_| PathBuf::from("prefs.json"))
-}
-
-/// 读取应用级偏好文件（JSON 对象）；不存在/损坏返回空对象
-fn load_app_prefs(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
-    let f = app_prefs_file_path(app);
-    std::fs::read_to_string(&f)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .and_then(|v| match v {
-            serde_json::Value::Object(m) => Some(m),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-/// 写回应用级偏好文件
-fn save_app_prefs(app: &tauri::AppHandle, prefs: &serde_json::Map<String, serde_json::Value>) {
-    let f = app_prefs_file_path(app);
-    if let Some(dir) = f.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(prefs) {
-        let _ = std::fs::write(f, json);
-    }
-}
-
 /// 读取默认项目位置（新建项目默认父目录）；未设置返回 null
 #[tauri::command]
 async fn get_default_project_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let prefs = load_app_prefs(&app);
+    let prefs = store::load_app_prefs(&app);
     Ok(prefs
         .get("default_project_dir")
         .and_then(|v| v.as_str())
@@ -83,82 +45,22 @@ async fn get_default_project_dir(app: tauri::AppHandle) -> Result<Option<String>
 /// 设置默认项目位置（空值 = 清除）
 #[tauri::command]
 async fn set_default_project_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {
-    let mut prefs = load_app_prefs(&app);
+    let mut prefs = store::load_app_prefs(&app);
     let dir = dir.trim().to_string();
     if dir.is_empty() {
         prefs.remove("default_project_dir");
     } else {
         prefs.insert("default_project_dir".into(), dir.into());
     }
-    save_app_prefs(&app, &prefs);
+    store::save_app_prefs(&app, &prefs);
     Ok(())
-}
-
-fn load_recent(app: &tauri::AppHandle) -> Vec<String> {
-    let f = recent_file_path(app);
-    std::fs::read_to_string(f)
-        .ok()
-        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default()
-        // 展示/比较前规范化：统一分隔符并按规范化形式去重（同一路径多种写法只保留首条）
-        .into_iter()
-        .map(|p| normalize_recent_path(&p))
-        .fold(Vec::new(), |mut acc, p| {
-            if !acc.iter().any(|x| recent_path_key(x) == recent_path_key(&p)) {
-                acc.push(p);
-            }
-            acc
-        })
-}
-
-/// 规范化最近项目路径的写法：分隔符统一为反斜杠、去掉结尾分隔符
-/// （界面文件夹选择器给反斜杠，远程 devtools/手输可能给正斜杠，否则同一项目存两条）
-fn normalize_recent_path(path: &str) -> String {
-    let p = path.replace('/', "\\");
-    p.trim_end_matches('\\').to_string()
-}
-
-/// 最近项目路径的去重比较键（分隔符与大小写不敏感；Windows 路径不区分大小写）
-fn recent_path_key(path: &str) -> String {
-    normalize_recent_path(path).to_ascii_lowercase()
-}
-
-fn save_recent(app: &tauri::AppHandle, list: &[String]) {
-    let f = recent_file_path(app);
-    if let Some(dir) = f.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(list) {
-        let _ = std::fs::write(f, json);
-    }
-}
-
-/// 按规范化路径从最近列表移除（同一路径的多种写法一并移除）
-fn remove_recent_path(app: &tauri::AppHandle, path: &str) {
-    let key = recent_path_key(path);
-    let list: Vec<String> = load_recent(app)
-        .into_iter()
-        .filter(|p| recent_path_key(p) != key)
-        .collect();
-    save_recent(app, &list);
-}
-
-fn push_recent(app: &tauri::AppHandle, path: &str) {
-    let mut list = load_recent(app);
-    let norm = normalize_recent_path(path);
-    list.retain(|p| recent_path_key(p) != recent_path_key(&norm));
-    list.insert(0, norm);
-    if list.len() > 20 {
-        list.truncate(20);
-    }
-    save_recent(app, &list);
 }
 
 /// 打开项目
 #[tauri::command]
 async fn open_project(app: tauri::AppHandle, path: String) -> Result<ProjectInfo, String> {
     let info = project::project_info(&PathBuf::from(&path))?;
-    push_recent(&app, &info.path);
+    store::push_recent(&app, &info.path);
     Ok(info)
 }
 
@@ -177,7 +79,7 @@ async fn create_project(
     }
     let files = files.ok_or("模板缺少文件内容")?;
     let info = project::scaffold_from_files(&PathBuf::from(&parent), &name, &files)?;
-    push_recent(&app, &info.path);
+    store::push_recent(&app, &info.path);
     Ok(info)
 }
 
@@ -185,7 +87,7 @@ async fn create_project(
 #[tauri::command]
 async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject>, String> {
     let mut out = Vec::new();
-    for p in load_recent(&app) {
+    for p in store::list_recent_paths(&app) {
         if let Ok(info) = project::project_info(&PathBuf::from(&p)) {
             out.push(RecentProject {
                 path: info.path,
@@ -200,7 +102,7 @@ async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject
 /// 移除最近项目（按规范化路径匹配，同一路径的多种写法一并移除）
 #[tauri::command]
 async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    remove_recent_path(&app, &path);
+    store::remove_recent_path(&app, &path);
     Ok(())
 }
 
@@ -259,8 +161,8 @@ async fn rename_project(
     let project_path = PathBuf::from(&path);
     let info = project::rename_project_dir(&project_path, &new_name)?;
     // 最近项目记录跟随新目录名：旧路径已失效，若不更新下次列表会漏掉改名后的项目
-    remove_recent_path(&app, &path);
-    push_recent(&app, &info.path);
+    store::remove_recent_path(&app, &path);
+    store::push_recent(&app, &info.path);
     Ok(info)
 }
 
