@@ -22,6 +22,7 @@ import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
 import { isModelAssetRel } from "../../framework/mesh";
 import { dispatchCommand } from "../commands";
+import { assetService } from "../services/assetService";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
@@ -478,6 +479,38 @@ function onSetSkyMaterial(rel: string): void {
   }, "Set Sky Material");
 }
 
+/** 切换立方体天空盒的 TextureCube 资产引用（.texcube；类型不变） */
+function onSetSkyCubeMap(rel: string): void {
+  const n = node.value;
+  if (!n || !(n instanceof SkyboxNode) || !rel || rel === n.cubeMap) return;
+  commit((m) => {
+    (m as SkyboxNode).cubeMap = rel;
+  }, "Set Sky Cube Map");
+}
+
+/** 把当前天空 TextureCube（内置只读）复制为项目资产并绑定到本节点 */
+async function onSkyCubeMapCopyToProject(): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof SkyboxNode)) return;
+  const root = projectStore.currentPath;
+  if (!root || !n.cubeMap || !isInternalAsset(n.cubeMap)) return;
+  const name = n.cubeMap.split("/").pop() ?? "TextureCube.texcube";
+  const dup = await assetService.copyInternalToProject(root, name, n.cubeMap, assetsStore.assets);
+  if (!dup) {
+    logStore.log("error", "复制 TextureCube 资产失败", "engine");
+    return;
+  }
+  commit((m) => {
+    (m as SkyboxNode).cubeMap = dup;
+  }, "复制天空贴图到项目");
+  void assetsStore.load(root);
+}
+
+/** 项目 .texcube 就地编辑已写盘：通知引擎清除缓存并重载天空背景 */
+function onSkyTexCubeEdited(rel: string): void {
+  engine.invalidateTexCube(rel);
+}
+
 /** 把当前天空材质（内置只读）复制为项目资产并绑定到本节点 */
 async function onSkyMaterialCopyToProject(): Promise<void> {
   const n = node.value;
@@ -637,7 +670,10 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
           :node="node"
           :rev="revision"
           @setMaterial="onSetSkyMaterial"
+          @setCubeMap="onSetSkyCubeMap"
           @copyToProject="onSkyMaterialCopyToProject"
+          @copyCubeToProject="onSkyCubeMapCopyToProject"
+          @texCubeEdited="onSkyTexCubeEdited"
           @update="onSkyboxUpdate"
         />
       </ComponentCard>

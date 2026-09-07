@@ -172,6 +172,44 @@ pub(crate) fn collect_scene_assets(
         }
         binaries.insert(rel.clone(), bytes);
     }
+
+    // 天空盒 TextureCube 引用：.texcube 文本随导出（缺失跳过，player 回退色带天空），
+    // 其引用的全景图/六面贴图二进制一并随拷（缺失项跳过）
+    let mut texcube_refs = Vec::new();
+    crate::scene::migrate::collect_texcube_refs(&scene_json, &mut texcube_refs);
+    for rel in &texcube_refs {
+        let Ok(text) = crate::scene::texcube::read_texcube_text(root_path, rel) else {
+            missing.push(rel.clone());
+            continue;
+        };
+        files.insert(rel.clone(), text.clone());
+        // 解析失败视作无引用（player 读取该文件同样解析失败 → 回退色带天空）
+        let Some((_, _, map, faces)) = crate::scene::texcube::parse_texcube_doc(&text) else {
+            continue;
+        };
+        let mut tex_refs: Vec<String> = Vec::new();
+        if !map.is_empty() {
+            tex_refs.push(map);
+        }
+        if let Some(faces) = faces {
+            for f in [faces.px, faces.nx, faces.py, faces.ny, faces.pz, faces.nz] {
+                if !f.is_empty() {
+                    tex_refs.push(f);
+                }
+            }
+        }
+        for tex in tex_refs {
+            if binaries.contains_key(&tex) || files.contains_key(&tex) {
+                continue;
+            }
+            match read_asset_bytes(root_path, &tex) {
+                Ok(bytes) => {
+                    binaries.insert(tex, bytes);
+                }
+                Err(_) => missing.push(tex),
+            }
+        }
+    }
     missing
 }
 

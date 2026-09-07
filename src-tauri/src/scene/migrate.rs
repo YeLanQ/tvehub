@@ -363,6 +363,33 @@ pub fn collect_model_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集天空盒节点的 TextureCube（.texcube）资产引用（去重、忽略空）
+pub fn collect_texcube_refs(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_texcube_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            if o.get("type").and_then(Value::as_str) == Some("skyboxNode") {
+                if let Some(Value::String(rel)) = o.get("cubeMap") {
+                    if !rel.is_empty() && !out.contains(rel) {
+                        out.push(rel.clone());
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_texcube_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_texcube_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {

@@ -153,3 +153,59 @@ export function findSkyNode(json) {
   }
   return null;
 }
+
+/** fetch 相对路径 → ImageBitmap（失败返回 null；归档/磁盘资产统一走 fetch 拦截）。
+ * imageOrientation: "flipY" 必须显式指定——WebGL 对 ImageBitmap 上传忽略
+ * UNPACK_FLIP_Y_WEBGL，不预翻转会导致纹理（天空全景/六面）垂直颠倒。 */
+async function fetchImageBitmap(rel) {
+  try {
+    const r = await fetch(rel);
+    if (!r.ok) return null;
+    return await createImageBitmap(await r.blob(), { imageOrientation: "flipY" });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * TextureCube（.texcube）资产加载（与编辑器 loadTexCubeTexture 同规则）：
+ * - source=equirect：等距柱状全景图（png/jpg/webp/bmp）→ EquirectangularReflectionMapping，
+ *   透视背景与正交全屏天空面通用；
+ * - source=faces：六面贴图 → CubeTexture（透视背景直用，正交全屏面按光线方向采样）；
+ * - .hdr 网页运行时不解码（RGBE），返回 null 由调用方回退三段色带。
+ */
+export async function loadSkyTexCube(rel) {
+  try {
+    const r = await fetch(rel);
+    if (!r.ok) return null;
+    const doc = await r.json();
+    if (!doc || typeof doc !== "object" || doc.$type !== "texcube") return null;
+    if (doc.source === "faces") {
+      const keys = ["px", "nx", "py", "ny", "pz", "nz"];
+      const rels = keys.map((k) => doc.faces?.[k] ?? "");
+      if (rels.some((v) => !v)) return null;
+      const imgs = await Promise.all(rels.map(fetchImageBitmap));
+      if (imgs.some((i) => !i)) return null;
+      const cube = new THREE.CubeTexture(imgs);
+      cube.colorSpace = THREE.SRGBColorSpace;
+      cube.needsUpdate = true;
+      return cube;
+    }
+    const mapRel = doc.map ?? "";
+    if (!mapRel || /\.hdr$/i.test(mapRel)) return null;
+    const bmp = await fetchImageBitmap(mapRel);
+    if (!bmp) return null;
+    const tex = new THREE.Texture(bmp);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  } catch {
+    return null;
+  }
+}

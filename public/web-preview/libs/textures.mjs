@@ -11,13 +11,15 @@ const TEXTURE_CHANNELS = [
   ["emissiveMap", true],
 ];
 
-/** 加载相对路径贴图（同路径同色彩空间共享缓存；失败返回 null） */
+/** 加载相对路径贴图（同路径同色彩空间共享缓存；失败返回 null）。
+ * imageOrientation: "flipY" 必须显式指定——WebGL 对 ImageBitmap 上传忽略
+ * UNPACK_FLIP_Y_WEBGL，不预翻转贴图会上下颠倒（与编辑器 TextureLoader 不一致）。 */
 function loadImageTex(texCache, rel, srgb) {
   const key = `${srgb ? "c" : "n"}|${rel}`;
   if (texCache.has(key)) return texCache.get(key);
   const p = fetch(rel)
     .then((r) => (r.ok ? r.blob() : null))
-    .then((blob) => (blob ? createImageBitmap(blob) : null))
+    .then((blob) => (blob ? createImageBitmap(blob, { imageOrientation: "flipY" }) : null))
     .then((bmp) => {
       if (!bmp) return null;
       const tex = new THREE.Texture(bmp);

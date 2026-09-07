@@ -11,6 +11,8 @@ export type SkySunDisk = "high" | "simple" | "none";
 export const PROCEDURAL_SKY_MATERIAL_REL = "internal/materials/ProceduralSky.mat";
 /** 内置立方体天空盒材质（internal 只读，定义该类型天空的默认参数） */
 export const SKYBOX_MATERIAL_REL = "internal/materials/SkyBox.mat";
+/** 内置默认 TextureCube 资产（立方体天空盒默认贴图；等距柱状全景图） */
+export const DEFAULT_TEXCUBE_REL = "internal/skybox/DefaultSkybox.texcube";
 
 /** 每种天空盒类型固定的内置材质引用 */
 export function skyMaterialForKind(kind: SkyboxKind): string {
@@ -21,6 +23,8 @@ export interface SkyboxNodeInit extends NodeInit {
   skyKind?: SkyboxKind;
   /** 天空盒材质资产引用（内置 internal/…；创建时按类型固定，不可切换） */
   material?: string;
+  /** 立方体天空盒的 TextureCube 资产引用（.texcube；仅 skyKind=cube 生效） */
+  cubeMap?: string;
   /** 顶部颜色（程序化=天空顶部；立方体=顶面） */
   topColor?: number;
   /** 地平线颜色（程序化=地平线；立方体=四个侧面） */
@@ -72,6 +76,8 @@ export class SkyboxNode extends Node {
   skyKind: SkyboxKind = "procedural";
   /** 该天空盒使用的材质资产引用（按类型固定：程序化→ProceduralSky.mat；立方体→SkyBox.mat） */
   material: string = PROCEDURAL_SKY_MATERIAL_REL;
+  /** 立方体天空盒贴图（TextureCube 资产引用；仅 cube 生效，缺失/加载失败回退三段色带） */
+  cubeMap: string = DEFAULT_TEXCUBE_REL;
   topColor: number = DEFAULT_SKYBOX_COLORS.top;
   horizonColor: number = DEFAULT_SKYBOX_COLORS.horizon;
   groundColor: number = DEFAULT_SKYBOX_COLORS.ground;
@@ -87,6 +93,7 @@ export class SkyboxNode extends Node {
     super(init);
     this.skyKind = init.skyKind ?? this.skyKind;
     this.material = init.material ?? skyMaterialForKind(this.skyKind);
+    this.cubeMap = init.cubeMap ?? this.cubeMap;
     this.topColor = init.topColor ?? this.topColor;
     this.horizonColor = init.horizonColor ?? this.horizonColor;
     this.groundColor = init.groundColor ?? this.groundColor;
@@ -107,6 +114,7 @@ export class SkyboxNode extends Node {
       properties: cloneRecord(this.properties),
       skyKind: this.skyKind,
       material: this.material,
+      cubeMap: this.cubeMap,
       topColor: this.topColor,
       horizonColor: this.horizonColor,
       groundColor: this.groundColor,
@@ -122,6 +130,7 @@ export class SkyboxNode extends Node {
   protected override writeOwnData(target: Record<string, unknown>): void {
     target.skyKind = this.skyKind;
     target.material = this.material;
+    target.cubeMap = this.cubeMap;
     target.topColor = this.topColor;
     target.horizonColor = this.horizonColor;
     target.groundColor = this.groundColor;
@@ -139,6 +148,8 @@ export class SkyboxNode extends Node {
     // 兼容旧场景：缺 material 时按当前类型回退对应的内置天空盒材质
     this.material =
       (source.material as string) ?? skyMaterialForKind(this.skyKind);
+    // 兼容旧场景：缺 cubeMap 时回退内置默认 TextureCube（仅 cube 类型消费该字段）
+    this.cubeMap = (source.cubeMap as string) ?? DEFAULT_TEXCUBE_REL;
     this.topColor = (source.topColor as number) ?? this.topColor;
     this.horizonColor = (source.horizonColor as number) ?? this.horizonColor;
     this.groundColor = (source.groundColor as number) ?? this.groundColor;

@@ -20,7 +20,8 @@ export const ASSET_TYPE_FILTERS: { id: string; label: string; kinds?: string[] }
   { id: "material", label: "材质", kinds: ["mat", "mat2d"] },
   { id: "ts", label: "脚本", kinds: ["ts"] },
   { id: "json", label: "JSON", kinds: ["json"] },
-  { id: "tex", label: "纹理", kinds: ["png", "jpg", "jpeg", "webp", "bmp"] },
+  { id: "tex", label: "纹理", kinds: ["png", "jpg", "jpeg", "webp", "bmp", "hdr"] },
+  { id: "texcube", label: "TextureCube", kinds: ["texcube"] },
   { id: "model", label: "模型", kinds: ["glb", "gltf", "fbx", "obj"] },
 ];
 

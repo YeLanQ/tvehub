@@ -329,7 +329,7 @@ registerCommand({
   label: "新建资源",
   group: "资源",
   expose: true,
-  description: "新建资源文件或目录（type: scene/script/material/folder；dir 目标目录；name 名称）",
+  description: "新建资源文件或目录（type: scene/script/material/texcube/folder；dir 目标目录；name 名称）",
   run: async (_ctx, args: any) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();
@@ -366,6 +366,16 @@ registerCommand({
         if (!rel) throw new Error(`创建材质失败: ${dir || "项目根"}`);
         return { created: rel, type, materialType };
       }
+      case "texcube": {
+        const name = stem ?? "";
+        const rel = await store.createTextureCubeAsset(
+          root,
+          dir,
+          stripAssetExt(name, ".texcube") || null,
+        );
+        if (!rel) throw new Error(`创建 TextureCube 失败: ${dir || "项目根"}`);
+        return { created: rel, type };
+      }
       case "folder": {
         const base = dir ? `${dir}/` : "";
         const name = stem ?? "NewFolder";
@@ -374,7 +384,7 @@ registerCommand({
         return { created: rel, type };
       }
       default:
-        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/folder）`);
+        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/texcube/folder）`);
     }
   },
 });

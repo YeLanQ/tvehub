@@ -5,6 +5,7 @@
 import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
+import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
 import { sanitizeAssetStem } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
@@ -68,6 +69,8 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   jpeg: "assets/textures",
   webp: "assets/textures",
   bmp: "assets/textures",
+  hdr: "assets/textures",
+  texcube: "assets/textures",
   glb: "assets/models",
   gltf: "assets/models",
   fbx: "assets/models",
@@ -234,6 +237,33 @@ export const assetService = {
       return rel;
     } catch (e) {
       logStore.log("error", `新建材质失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
+   * 新建 TextureCube（.texcube）资产：默认等距柱状模式并引用内置默认全景图
+   * （创建即可用）；序列化/落盘由后端 texcube_write 完成（自动补 .meta）。
+   */
+  async createTextureCubeAsset(
+    root: string,
+    destDir: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建 TextureCube");
+      return null;
+    }
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "TextureCube";
+    const rel = uniqueRel(assets, destDir, baseName, ".texcube");
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - ".texcube".length);
+    try {
+      await api.texcubeWrite(root, rel, name, "equirect", DEFAULT_TEXCUBE_MAP, null);
+      logStore.log("success", `已新建 TextureCube: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建 TextureCube 失败: ${e}`);
       return null;
     }
   },

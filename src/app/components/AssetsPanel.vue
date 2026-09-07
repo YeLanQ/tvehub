@@ -301,6 +301,7 @@ const menuApi: AssetMenuApi = {
   onNewScript: (dir) => void doNewScript(dir),
   onNewFolder: (dir) => void doNewFolder(dir),
   onNewMaterial: (dir, key) => void doNewMaterial(dir, key),
+  onNewTextureCube: (dir) => void doNewTextureCube(dir),
   onImport: (dir) => void doImport(dir),
   onImportFolder: (dir) => void doImportFolder(dir),
   onCopyPath: (p) => void copyPath(p),
@@ -368,6 +369,19 @@ async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
     return;
   }
   await assetsStore.createMaterialAsset(root, dir, typeKey);
+}
+
+/** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；按名去重无需弹窗） */
+async function doNewTextureCube(dir: string): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir)
+      ? "src 目录不允许新建 TextureCube"
+      : "内置目录只读，不允许新建 TextureCube");
+    return;
+  }
+  await assetsStore.createTextureCubeAsset(root, dir);
 }
 
 async function doCopy(item: ChildEntry) {

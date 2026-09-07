@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
 
 /**
@@ -9,7 +10,11 @@ import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
  *   作为 EquirectangularReflectionMapping 的 scene.background，任意相机位置
  *   看到的都是平滑天空渐变；可绘制太阳盘（high=光晕+亮盘 / simple=纯盘 / none=无）；
  * - cube：等距柱状三段纯色带（|仰角|>45° 为顶/底色，之间为地平线色），透视视觉
- *   与传统“顶/四面/底”六面纯色立方体完全一致（立方体的面分界就是 ±45° 仰角）。
+ *   与传统“顶/四面/底”六面纯色立方体完全一致（立方体的面分界就是 ±45° 仰角）；
+ *   这是节点未绑定/未加载到 TextureCube 资产时的兜底表现。绑定 .texcube 后
+ *   （loadTexCubeTexture）消费真实贴图：等距柱状全景图继续走等距柱状映射
+ *   （透视背景与正交全屏面通用），六面模式生成 CubeTexture（正交全屏面按
+ *   光线方向 cube 采样）。
  *
  * 两种纹理统一用等距柱状表示的原因：three.js 会把纹理背景（含 CubeTexture）
  * 转成立方体贴图后经“贴在相机位置的 1×1×1 反转盒”绘制——透视相机在盒内所以
@@ -196,4 +201,80 @@ export function buildBandSkyTexture(sky: SkyColorSet): THREE.CanvasTexture {
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
   return tex;
+}
+
+// ---------------------------------------------------------------------------
+// TextureCube 资产（.texcube）加载：立方体天空盒的外部贴图。
+// 引用路径经调用方解析为 asset:// 协议 URL（项目资产/内置资源同一入口）。
+// ---------------------------------------------------------------------------
+
+/** .texcube 六面键 */
+export type TexCubeFaceKey = "px" | "nx" | "py" | "ny" | "pz" | "nz";
+
+/** .texcube 文档（JSON；$type === "texcube"，由 Rust 序列化落盘） */
+export interface TexCubeDoc {
+  /** "equirect"（等距柱状全景图）| "faces"（六面贴图）；未知值按 equirect 处理 */
+  source?: string;
+  /** source=equirect：全景图相对路径（png/jpg/webp/bmp/hdr…） */
+  map?: string;
+  /** source=faces：六面贴图相对路径（空串 = 该面未设置） */
+  faces?: Partial<Record<TexCubeFaceKey, string>>;
+}
+
+const TEXCUBE_FACE_KEYS: TexCubeFaceKey[] = ["px", "nx", "py", "ny", "pz", "nz"];
+
+/** 拉取并解析 .texcube 文档（网络失败/非 texcube 文档返回 null） */
+export async function fetchTexCubeDoc(url: string): Promise<TexCubeDoc | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const doc = (await res.json()) as (TexCubeDoc & { $type?: string }) | null;
+    if (!doc || typeof doc !== "object" || doc.$type !== "texcube") return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 按 .texcube 文档加载天空纹理：
+ * - equirect：等距柱状全景图（.hdr 经 RGBELoader 解码为线性数据纹理，其余走
+ *   图片解码）→ EquirectangularReflectionMapping，透视背景与正交全屏面同一直路；
+ * - faces：六面图 → CubeTexture（透视背景直用；正交全屏面按光线方向 cube 采样）。
+ * 引用缺失/加载失败返回 null（调用方回退三段色带兜底）。
+ */
+export async function loadTexCubeTexture(
+  doc: TexCubeDoc,
+  resolveUrl: (rel: string) => string | null,
+): Promise<{ texture: THREE.Texture; isCube: boolean } | null> {
+  if (doc.source === "faces") {
+    const urls = TEXCUBE_FACE_KEYS.map((k) => {
+      const rel = doc.faces?.[k] ?? "";
+      return rel ? resolveUrl(rel) : null;
+    });
+    if (urls.some((u) => !u)) return null;
+    const cube = await new THREE.CubeTextureLoader().loadAsync(urls as string[]);
+    cube.colorSpace = THREE.SRGBColorSpace;
+    return { texture: cube, isCube: true };
+  }
+  const rel = doc.map ?? "";
+  if (!rel) return null;
+  const url = resolveUrl(rel);
+  if (!url) return null;
+  if (/\.hdr$/i.test(rel)) {
+    // .hdr（RGBE）：线性高动态数据纹理，色彩空间保持线性交由渲染合成映射
+    const tex = await new RGBELoader().loadAsync(url);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    return { texture: tex, isCube: false };
+  }
+  const tex = await new THREE.TextureLoader().loadAsync(url);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  // 横向循环：等距贴图 0/1 列本是同一条经线，避免接缝；关闭 mipmap 减少闪烁
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  return { texture: tex, isCube: false };
 }

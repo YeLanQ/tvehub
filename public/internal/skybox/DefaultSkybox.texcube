@@ -1,0 +1,7 @@
+{
+  "$type": "texcube",
+  "$ver": 1,
+  "name": "DefaultSkybox",
+  "source": "equirect",
+  "map": "internal/skybox/default_skybox.png"
+}

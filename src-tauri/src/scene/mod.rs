@@ -11,6 +11,7 @@ pub mod history;
 pub mod material;
 pub mod migrate;
 pub mod model;
+pub mod texcube;
 
 use std::path::PathBuf;
 use std::sync::RwLock;

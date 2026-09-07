@@ -94,6 +94,15 @@ export const api = {
   /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */
   materialDuplicate: (root: string, srcRel: string, preferName: string) =>
     invoke<string>("material_duplicate", { root, srcRel, preferName }),
+  /** 序列化并写入 TextureCube 资产（后端持有 .texcube 格式；自动补 .meta） */
+  texcubeWrite: (
+    root: string,
+    rel: string,
+    name: string,
+    source: "equirect" | "faces",
+    map: string,
+    faces?: Record<string, string> | null,
+  ) => invoke<void>("texcube_write", { root, rel, name, source, map, faces: faces ?? null }),
   /** 从当前场景导出网页预览产物（scene.json/.mat/贴图由后端直接读盘写入；
    *  files 仅为 WebView 打包的网页运行时 + config.json 文本） */
   exportWebPreviewFromScene: (root: string, sceneRel: string, files: Record<string, string>) =>

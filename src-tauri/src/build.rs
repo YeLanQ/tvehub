@@ -169,7 +169,7 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// 递归重写 JSON 里 meshNode 的 material/model 资产引用
+/// 递归重写 JSON 里 meshNode 的 material/model 与 skyboxNode 的 cubeMap 资产引用
 fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
     match v {
         serde_json::Value::Array(items) => {
@@ -179,7 +179,7 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
         }
         serde_json::Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                if (k == "material" || k == "model") && val.is_string() {
+                if (k == "material" || k == "model" || k == "cubeMap") && val.is_string() {
                     if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
                         *val = serde_json::Value::String(new.clone());
                     }
@@ -190,6 +190,32 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
         }
         _ => {}
     }
+}
+
+/// 重写 .texcube JSON 里贴图引用（equirect 的 map / faces 各面）；parse 成功则同时紧凑化
+fn rewrite_texcube_text(text: &str, renames: &HashMap<String, String>) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return text.to_string();
+    };
+    let Some(obj) = v.as_object_mut() else {
+        return text.to_string();
+    };
+    let rewrite = |val: &mut serde_json::Value| {
+        if val.is_string() {
+            if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
+                *val = serde_json::Value::String(new.clone());
+            }
+        }
+    };
+    if let Some(map) = obj.get_mut("map") {
+        rewrite(map);
+    }
+    if let Some(faces) = obj.get_mut("faces").and_then(|f| f.as_object_mut()) {
+        for (_, val) in faces.iter_mut() {
+            rewrite(val);
+        }
+    }
+    v.to_string()
 }
 
 /// 重写 .mat JSON 里贴图字段引用；parse 成功则同时紧凑化（发布模式 JSON 压缩）
@@ -301,6 +327,8 @@ fn apply_release(
     for (rel, text) in files.iter_mut() {
         if rel.ends_with(".mat") {
             *text = rewrite_mat_text(text, &renames);
+        } else if rel.ends_with(".texcube") {
+            *text = rewrite_texcube_text(text, &renames);
         }
     }
 

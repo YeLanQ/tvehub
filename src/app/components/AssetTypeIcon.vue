@@ -50,10 +50,17 @@ defineProps<{ kind: string }>();
     </template>
 
     <!-- 纹理：图片（山 + 太阳） -->
-    <template v-else-if="kind === 'png' || kind === 'jpg' || kind === 'jpeg' || kind === 'webp' || kind === 'bmp'">
+    <template v-else-if="kind === 'png' || kind === 'jpg' || kind === 'jpeg' || kind === 'webp' || kind === 'bmp' || kind === 'hdr'">
       <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
       <circle cx="9" cy="9" r="1.7" />
       <path d="M4 17.5l4.2-4.2 3 3 3.2-3.2 5 4.6" />
+    </template>
+
+    <!-- TextureCube（.texcube）：立方体贴图（线框立方体 + 顶面取样点） -->
+    <template v-else-if="kind === 'texcube'">
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+      <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+      <circle cx="12" cy="7.4" r="1.3" />
     </template>
 
     <!-- 模型：线框立方体 -->

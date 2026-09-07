@@ -27,7 +27,12 @@ export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
 import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
-import { buildProceduralSkyTexture, buildBandSkyTexture } from "./modules/skyboxTextures";
+import {
+  buildProceduralSkyTexture,
+  buildBandSkyTexture,
+  fetchTexCubeDoc,
+  loadTexCubeTexture,
+} from "./modules/skyboxTextures";
 import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
@@ -67,6 +72,10 @@ export class EditorEngine {
   private textureCache = new Map<string, Promise<THREE.Texture | null>>();
   /** 贴图加载器（asset:// 协议 URL → Image 解码；colorSpace 按通道设置） */
   private textureLoader = new THREE.TextureLoader();
+  /** TextureCube（.texcube）加载缓存（key = "version|rel"；invalidateTexCube 换版本） */
+  private texCubeCache = new Map<string, Promise<THREE.Texture | null>>();
+  /** TextureCube 内容版本（外部改写 .texcube 后 bump，签名随之失效触发重载） */
+  private texCubeVersions = new Map<string, number>();
   gizmo!: GizmoController;
 
   /**
@@ -123,7 +132,8 @@ export class EditorEngine {
    * 正交预览的天空背景面：three.js 的纹理背景（立方体路径）只支持透视相机
    * （按贴在相机位置的 1×1×1 反转盒绘制，正交取景远大于盒子，只剩中间一小块）。
    * 正交预览（清除标志=skybox）时改由该全屏三角形渲染天空：逐像素由逆投影
-   * 求光线方向后按等距柱状坐标采样天空纹理，正交/透视光线方向都精确。
+   * 求光线方向后采样天空纹理——等距柱状纹理按 equirectUv 采样，TextureCube
+   * 六面纹理按光线方向 cube 采样（uIsCube 分支），正交/透视光线方向都精确。
    */
   private orthoSkyQuad: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
@@ -306,6 +316,7 @@ export class EditorEngine {
     }
     this.removeSkyEnvLight();
     this.textureCache.clear();
+    this.texCubeCache.clear();
     this.textureUrlResolver = null;
     this.renderer?.dispose();
     this.gizmo?.dispose();
@@ -333,6 +344,9 @@ export class EditorEngine {
   setTextureResolver(fn: ((rel: string) => string | null) | null): void {
     this.textureUrlResolver = fn;
     this.textureCache.clear();
+    // 项目根变化后旧 URL 全部失效：天空贴图缓存一并清除（签名含版本号自动重载）
+    this.texCubeCache.clear();
+    this.applySkyFromGraph();
   }
 
   // ===================== 模型加载（mesh 模块接入） =====================
@@ -689,8 +703,10 @@ export class EditorEngine {
   /**
    * 依据场景图应用/移除天空背景：
    * 场景中第一个 启用且可见 的天空盒节点决定 scene.background（程序化渐变 /
-   * 三段色带），节点增删、属性修改、启停切换都会触发重算；
+   * 三段色带 / TextureCube 贴图），节点增删、属性修改、启停切换都会触发重算；
    * 无天空盒时回退编辑器默认纯色背景。
+   * 立方体天空盒的 TextureCube（.texcube）为异步加载：先用三段色带兜底，
+   * 加载完成后热替换背景；引用缺失/加载失败保持色带（与旧版表现一致）。
    */
   private applySkyFromGraph(): void {
     const scene = this.renderer.scene;
@@ -709,9 +725,14 @@ export class EditorEngine {
       this.removeSkyEnvLight();
       return;
     }
+    // 签名含贴图引用与其内容版本：检查器改写 .texcube 后版本 bump 触发重载
+    const cubeVer =
+      sky.skyKind === "cube" ? (this.texCubeVersions.get(sky.cubeMap) ?? 0) : -1;
     const sig = [
       sky.id,
       sky.skyKind,
+      sky.cubeMap,
+      cubeVer,
       sky.topColor,
       sky.horizonColor,
       sky.groundColor,
@@ -725,18 +746,68 @@ export class EditorEngine {
     if (this.skyApplied?.sig === sig) return;
     release();
     try {
+      // 立方体：三段色带先兜底（未绑定/加载中/失败均保持可看）；贴图到位后热替换
       const tex =
         sky.skyKind === "procedural"
           ? buildProceduralSkyTexture(sky)
           : buildBandSkyTexture(sky);
       scene.background = tex;
       this.skyApplied = { sig, texture: tex };
+      if (sky.skyKind === "cube" && sky.cubeMap) {
+        const rel = sky.cubeMap;
+        void this.loadTexCubeTexture(rel).then((loaded) => {
+          // 异步返回时签名可能已变（节点切换/再次修改）：过期结果直接丢弃
+          const applied = this.skyApplied;
+          if (!applied || applied.sig !== sig || !loaded) return;
+          applied.texture.dispose();
+          applied.texture = loaded;
+          scene.background = loaded;
+        });
+      }
     } catch (e) {
       console.warn(`[sky] 天空盒背景生成失败: ${String(e)}`);
       scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
     }
     // 天空作为环境光照参与网格材质：半球光（天空色/地面色）随天空变化
     this.applySkyEnvLight(sky);
+  }
+
+  /**
+   * 加载 TextureCube（.texcube）资产为天空纹理（带缓存与内容版本；
+   * 解析/加载失败返回 null，调用方保持色带兜底）。
+   */
+  private loadTexCubeTexture(rel: string): Promise<THREE.Texture | null> {
+    const key = `${this.texCubeVersions.get(rel) ?? 0}|${rel}`;
+    const cached = this.texCubeCache.get(key);
+    if (cached) return cached;
+    const resolver = this.textureUrlResolver;
+    const task = (async (): Promise<THREE.Texture | null> => {
+      if (!resolver || !rel) return null;
+      const url = resolver(rel);
+      if (!url) return null;
+      const doc = await fetchTexCubeDoc(url);
+      if (!doc) return null;
+      const res = await loadTexCubeTexture(doc, resolver);
+      return res?.texture ?? null;
+    })().catch((e) => {
+      console.warn(`[sky] TextureCube 加载失败 '${rel}': ${String(e)}`);
+      return null;
+    });
+    this.texCubeCache.set(key, task);
+    return task;
+  }
+
+  /**
+   * 外部（检查器写盘等）通知某 .texcube 内容已更新：bump 版本使缓存与
+   * 天空签名失效并立即重算背景；贴图未变化时无副作用。
+   */
+  invalidateTexCube(rel: string): void {
+    if (!rel) return;
+    this.texCubeVersions.set(rel, (this.texCubeVersions.get(rel) ?? 0) + 1);
+    for (const key of [...this.texCubeCache.keys()]) {
+      if (key.endsWith(`|${rel}`)) this.texCubeCache.delete(key);
+    }
+    this.applySkyFromGraph();
   }
 
   /**
@@ -780,7 +851,13 @@ export class EditorEngine {
     }
     const quad = this.ensureOrthoSkyQuad();
     const u = quad.material.uniforms;
-    u.tSky.value = this.skyApplied.texture;
+    // 天空纹理两种形态：等距柱状 2D（按光线方向采样 equirectUv）与
+    // TextureCube 六面（CubeTexture，直接按光线方向 cube 采样）
+    const tex = this.skyApplied.texture;
+    const isCube = (tex as THREE.Texture & { isCubeTexture?: boolean }).isCubeTexture === true;
+    u.uIsCube.value = isCube ? 1 : 0;
+    u.tSky.value = isCube ? null : tex;
+    u.tSkyCube.value = isCube ? tex : null;
     // 相机不在场景图内（预览相机）或本帧渲染尚未推进 matrixWorld 时需手动刷新，
     // 否则采到上一帧的姿态（拖动/动画移动相机时天空滞后一帧）
     ocam.updateMatrixWorld();
@@ -800,6 +877,8 @@ export class EditorEngine {
       const material = new THREE.ShaderMaterial({
         uniforms: {
           tSky: { value: null },
+          tSkyCube: { value: null },
+          uIsCube: { value: 0 },
           projInverse: { value: new THREE.Matrix4() },
           camWorld: { value: new THREE.Matrix4() },
         },
@@ -812,6 +891,8 @@ export class EditorEngine {
         `,
         fragmentShader: /* glsl */ `
           uniform sampler2D tSky;
+          uniform samplerCube tSkyCube;
+          uniform float uIsCube;
           uniform mat4 projInverse;
           uniform mat4 camWorld;
           varying vec2 vNdc;
@@ -823,7 +904,10 @@ export class EditorEngine {
               ( camWorld * vec4( farP.xyz / farP.w, 1.0 ) ).xyz -
               ( camWorld * vec4( nearP.xyz / nearP.w, 1.0 ) ).xyz
             );
-            gl_FragColor = vec4( texture2D( tSky, equirectUv( dir ) ).rgb, 1.0 );
+            vec3 col = uIsCube > 0.5
+              ? textureCube( tSkyCube, dir ).rgb
+              : texture2D( tSky, equirectUv( dir ) ).rgb;
+            gl_FragColor = vec4( col, 1.0 );
             #include <colorspace_fragment>
           }
         `,

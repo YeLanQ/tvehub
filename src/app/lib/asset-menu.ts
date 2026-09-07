@@ -31,6 +31,7 @@ export interface AssetMenuApi {
   onNewScript: (dir: string) => void;
   onNewFolder: (dir: string) => void;
   onNewMaterial: (dir: string, typeKey: string) => void;
+  onNewTextureCube: (dir: string) => void;
   onImport: (dir: string) => void;
   onImportFolder: (dir: string) => void;
   onCopyPath: (path: string) => void;
@@ -58,6 +59,12 @@ function materialCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null 
       onClick: () => api.onNewMaterial(dir, def.key),
     })),
   };
+}
+
+/** 目录允许时的「新建 TextureCube」菜单项（立方体纹理资产；null 表示不提供） */
+function textureCubeCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
+  if (!api.importAllowed(dir)) return null;
+  return { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) };
 }
 
 /** 目录允许时的导入菜单项（dir 为导入目标目录；不允许 → 空数组） */
@@ -93,6 +100,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
       if (sc) items.push(sc);
       const mc = materialCreateItem(item.path, api);
       if (mc) items.push(mc);
+      const tc = textureCubeCreateItem(item.path, api);
+      if (tc) items.push(tc);
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path, api));
     } else if (!isInternal && item.kind === "dir" && item.path === "src") {
@@ -118,6 +127,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
         if (sc) items.push(sc);
         const mc = materialCreateItem(dir, api);
         if (mc) items.push(mc);
+        const tc = textureCubeCreateItem(dir, api);
+        if (tc) items.push(tc);
       }
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
       if (!api.isSrcDir(dir)) {
@@ -141,6 +152,8 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
       if (sc) items.push(sc);
       const mc = materialCreateItem(dir, api);
       if (mc) items.push(mc);
+      const tc = textureCubeCreateItem(dir, api);
+      if (tc) items.push(tc);
     }
     items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
     if (!api.isSrcDir(dir)) {

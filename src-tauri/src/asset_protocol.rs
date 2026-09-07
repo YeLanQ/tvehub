@@ -61,7 +61,7 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "glb" => "model/gltf-binary",
         "gltf" => "model/gltf+json",
         "obj" | "txt" => "text/plain",
-        "json" | "mat" => "application/json",
+        "json" | "mat" | "texcube" => "application/json",
         _ => "application/octet-stream",
     }
 }

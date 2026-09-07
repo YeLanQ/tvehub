@@ -32,10 +32,37 @@ export async function handleProjectOpenedFromHome(
   projectStore.applyOpenedProject(root, name, rel);
   const store = getEditorStore();
   if (store.state.mounted && !store.engine.isDisposed()) {
+    // 引擎先于项目挂载（编辑器窗口启动时无项目）：重注入资产访问器后再装载场景
+    applyProjectAccess(store.engine, root);
     await reloadEditorScene(root, rel);
   } else {
     pendingProject = { root, rel };
   }
+}
+
+/**
+ * 按当前项目根（重）注入资产访问器（材质/贴图/模型）。
+ * 编辑器窗口启动时可能尚无项目（引擎先于项目挂载，全部注入 null），项目经
+ * 首页交接打开后必须重注入，否则贴图/材质/模型读取静默失败（天空 TextureCube
+ * 停留在色带兜底、材质通道无贴图、模型不加载）。
+ */
+function applyProjectAccess(engine: EditorEngine, root: string | null): void {
+  // 材质资产来源：后端 material_read（internal/项目路由 + .mat 解析均在 Rust）
+  engine.materials.setFetcher(root ? (rel) => loadMaterialDoc(root, rel) : null);
+  // 项目切换后旧缓存不可跨项目复用（同 rel 指向不同文件）
+  engine.materials.clear();
+  // 贴图来源：asset:// 协议直读（internal/… 与项目资产统一走协议 URL；
+  // setTextureResolver 内部会清贴图/TextureCube 缓存并重算天空背景）
+  engine.setTextureResolver(root ? (rel) => (rel ? assetUrl(rel) : null) : null);
+  // 模型来源：与贴图同构（协议 URL + 按需流式外部资源；setModelAccess 内部清模型缓存）
+  engine.setModelAccess(
+    root
+      ? {
+          readBinary: (rel) => fetchAssetBinary(rel),
+          urlFor: (rel) => assetUrl(rel),
+        }
+      : null,
+  );
 }
 
 export function mountEditor(container: HTMLElement): Promise<void> {
@@ -51,19 +78,7 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
         height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
       };
-      // 材质资产来源：后端 material_read（internal/项目路由 + .mat 解析均在 Rust）
-      engine.materials.setFetcher(root ? (rel) => loadMaterialDoc(root, rel) : null);
-      // 贴图来源：asset:// 协议直读（internal/… 与项目资产统一走协议 URL）
-      engine.setTextureResolver(root ? (rel) => (rel ? assetUrl(rel) : null) : null);
-      // 模型来源：与贴图同构（协议 URL + 按需流式外部资源，无预读）
-      engine.setModelAccess(
-        root
-          ? {
-              readBinary: (rel) => fetchAssetBinary(rel),
-              urlFor: (rel) => assetUrl(rel),
-            }
-          : null,
-      );
+      applyProjectAccess(engine, root);
       // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
       engine.setSceneTransport(sceneApi.transport());
       await engine.bindSceneEvents(sceneApi.subscribe);
