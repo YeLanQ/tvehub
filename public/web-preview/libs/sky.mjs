@@ -1,5 +1,5 @@
-// 程序化天空盒：与编辑器 framework/engine/modules/skyboxTextures.ts 按同一算法复刻，
-// 保证网页预览与编辑器视口表现一致。
+// 程序化/三段式天空盒：与编辑器 framework/engine/modules/skyboxTextures.ts 按同
+// 一算法复刻，保证网页预览与编辑器视口表现一致。
 import * as THREE from "./three.module.min.js";
 import { num, matColor } from "./utils.mjs";
 
@@ -103,25 +103,41 @@ function drawSkySun(ctx, w, h, sun) {
   }
 }
 
-/** 默认立方体天空盒：六面纯色 CubeTexture（四面=地平线色，顶=天空色，底=地面色） */
-export function makeSkyCubeTexture(top, horizon, ground) {
-  const solid = (c) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 4;
-    canvas.height = 4;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = skyHex(c);
-      ctx.fillRect(0, 0, 4, 4);
-    }
-    return canvas;
-  };
-  const side = solid(horizon);
-  const up = solid(top);
-  const down = solid(ground);
-  const tex = new THREE.CubeTexture([side, side, up, down, side, side]);
+/**
+ * 默认三段式天空盒：等距柱状纯色带纹理（分界取仰角 ±45°，与六面纯色立方体
+ * 的透视视觉完全一致——立方体的面分界就是 ±45° 仰角）。
+ * 不用真正的 CubeTexture：three.js 把纹理背景（含 CubeTexture）统一转成立方体
+ * 贴图后经“贴在相机位置的 1×1×1 反转盒”绘制，透视相机在盒内所以满屏，正交
+ * 相机取景范围远大于盒子（天空盒只剩中间一小块）；正交时由 player.mjs 的
+ * 全屏天空背景面按光线方向采样渲染，需要 2D 等距柱状纹理。
+ */
+export function makeSkyBandTexture(top, horizon, ground) {
+  const w = 4;
+  const h = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    // 同一位置写两个 stop 形成硬分界（v: 0=天顶 → 0.25=仰角45° → 0.5=地平线）
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, skyHex(top));
+    g.addColorStop(0.25, skyHex(top));
+    g.addColorStop(0.25, skyHex(horizon));
+    g.addColorStop(0.75, skyHex(horizon));
+    g.addColorStop(0.75, skyHex(ground));
+    g.addColorStop(1, skyHex(ground));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   return tex;
 }
 

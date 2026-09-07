@@ -27,7 +27,7 @@ export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
 import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
-import { buildProceduralSkyTexture, buildCubeSkyTexture } from "./modules/skyboxTextures";
+import { buildProceduralSkyTexture, buildBandSkyTexture } from "./modules/skyboxTextures";
 import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
@@ -119,6 +119,13 @@ export class EditorEngine {
   private sceneUnlisten: (() => void) | null = null;
   /** 天空盒激活时注入的半球环境光（天空色照亮网格材质；无天空盒时移除） */
   private skyLight: THREE.HemisphereLight | null = null;
+  /**
+   * 正交预览的天空背景面：three.js 的纹理背景（立方体路径）只支持透视相机
+   * （按贴在相机位置的 1×1×1 反转盒绘制，正交取景远大于盒子，只剩中间一小块）。
+   * 正交预览（清除标志=skybox）时改由该全屏三角形渲染天空：逐像素由逆投影
+   * 求光线方向后按等距柱状坐标采样天空纹理，正交/透视光线方向都精确。
+   */
+  private orthoSkyQuad: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
   private previewMode = false;
   /** 预览渲染当前生效的相机节点（null = 无可用相机，按默认视角回退） */
@@ -164,7 +171,7 @@ export class EditorEngine {
     // 正交预览相机：视口宽高比变化时按半高重算左右/上下范围（而非写 aspect）
     this.renderer.registerCamera(this.previewOrthoCamera, () => this.syncOrthoPreviewFrustum());
     // 清除标志：渲染循环每帧按活动相机取清除状态（预览相机节点决定清屏方式）
-    this.renderer.setClearProvider(() => this.resolveClearState());
+    this.renderer.setClearProvider((cam) => this.resolveClearState(cam));
   }
 
   /** 历史状态视图（后端权威；UI 读取面与旧 CommandStack 同构） */
@@ -267,6 +274,8 @@ export class EditorEngine {
       this.gizmo.updateSelectionBox();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
+      // 正交预览的天空背景面跟随（渲染前更新 uniforms）
+      this.updateOrthoSkyQuad();
     });
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
@@ -288,6 +297,12 @@ export class EditorEngine {
     if (this.skyApplied) {
       this.skyApplied.texture.dispose();
       this.skyApplied = null;
+    }
+    if (this.orthoSkyQuad) {
+      this.orthoSkyQuad.geometry.dispose();
+      this.orthoSkyQuad.material.dispose();
+      this.orthoSkyQuad.parent?.remove(this.orthoSkyQuad);
+      this.orthoSkyQuad = null;
     }
     this.removeSkyEnvLight();
     this.textureCache.clear();
@@ -674,7 +689,7 @@ export class EditorEngine {
   /**
    * 依据场景图应用/移除天空背景：
    * 场景中第一个 启用且可见 的天空盒节点决定 scene.background（程序化渐变 /
-   * 默认立方体贴图），节点增删、属性修改、启停切换都会触发重算；
+   * 三段色带），节点增删、属性修改、启停切换都会触发重算；
    * 无天空盒时回退编辑器默认纯色背景。
    */
   private applySkyFromGraph(): void {
@@ -713,7 +728,7 @@ export class EditorEngine {
       const tex =
         sky.skyKind === "procedural"
           ? buildProceduralSkyTexture(sky)
-          : buildCubeSkyTexture(sky);
+          : buildBandSkyTexture(sky);
       scene.background = tex;
       this.skyApplied = { sig, texture: tex };
     } catch (e) {
@@ -744,6 +759,87 @@ export class EditorEngine {
       this.skyLight.parent?.remove(this.skyLight);
       this.skyLight = null;
     }
+  }
+
+  /**
+   * 正交预览的天空背景面（每帧调用）：仅 预览模式 + 正交活动相机 + 天空盒
+   * 清除标志 + 有天空 时启用；uniforms 随活动相机与全局天空纹理更新。
+   */
+  private updateOrthoSkyQuad(): void {
+    const ocam = this.renderer.getActiveCamera() as THREE.OrthographicCamera | null;
+    const node = this.previewMode ? this.previewNode : null;
+    if (
+      !ocam ||
+      ocam.isOrthographicCamera !== true ||
+      !node ||
+      node.clearFlags !== "skybox" ||
+      !this.skyApplied
+    ) {
+      if (this.orthoSkyQuad?.visible) this.orthoSkyQuad.visible = false;
+      return;
+    }
+    const quad = this.ensureOrthoSkyQuad();
+    const u = quad.material.uniforms;
+    u.tSky.value = this.skyApplied.texture;
+    // 相机不在场景图内（预览相机）或本帧渲染尚未推进 matrixWorld 时需手动刷新，
+    // 否则采到上一帧的姿态（拖动/动画移动相机时天空滞后一帧）
+    ocam.updateMatrixWorld();
+    (u.projInverse.value as THREE.Matrix4).copy(ocam.projectionMatrixInverse);
+    (u.camWorld.value as THREE.Matrix4).copy(ocam.matrixWorld);
+    quad.visible = true;
+  }
+
+  /** 惰性创建全屏天空背景面（三角形铺满 NDC；最先绘制、不读写深度） */
+  private ensureOrthoSkyQuad(): THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> {
+    if (!this.orthoSkyQuad) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3),
+      );
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          tSky: { value: null },
+          projInverse: { value: new THREE.Matrix4() },
+          camWorld: { value: new THREE.Matrix4() },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vNdc;
+          void main() {
+            vNdc = position.xy;
+            gl_Position = vec4( position.xy, 1.0, 1.0 );
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D tSky;
+          uniform mat4 projInverse;
+          uniform mat4 camWorld;
+          varying vec2 vNdc;
+          #include <common>
+          void main() {
+            vec4 nearP = projInverse * vec4( vNdc, -1.0, 1.0 );
+            vec4 farP = projInverse * vec4( vNdc, 1.0, 1.0 );
+            vec3 dir = normalize(
+              ( camWorld * vec4( farP.xyz / farP.w, 1.0 ) ).xyz -
+              ( camWorld * vec4( nearP.xyz / nearP.w, 1.0 ) ).xyz
+            );
+            gl_FragColor = vec4( texture2D( tSky, equirectUv( dir ) ).rgb, 1.0 );
+            #include <colorspace_fragment>
+          }
+        `,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      });
+      const quad = new THREE.Mesh(geometry, material);
+      quad.name = "__orthoSkyQuad";
+      quad.renderOrder = -1000000; // 最先绘制，被其后绘制的场景物体覆盖
+      quad.frustumCulled = false;
+      quad.visible = false;
+      this.renderer.scene.add(quad);
+      this.orthoSkyQuad = quad;
+    }
+    return this.orthoSkyQuad;
   }
 
   /** 深度优先查找第一个 启用且可见 的天空盒节点（场景树的文档序） */
@@ -884,7 +980,7 @@ export class EditorEngine {
    * 编辑器相机与"无相机节点回退"都保持既有行为（全局天空/底色背景）；
    * 有相机节点时按节点清除标志决定清屏方式与背景内容。
    */
-  private resolveClearState(): CameraClearState | null {
+  private resolveClearState(cam?: THREE.Camera): CameraClearState | null {
     const node = this.previewMode ? this.previewNode : null;
     if (!node) return null;
     switch (node.clearFlags) {
@@ -899,6 +995,12 @@ export class EditorEngine {
         return { background: null, clearColor: true, clearDepth: false };
       case "skybox":
       default:
+        // 正交相机：three.js 的纹理背景只支持透视相机（立方体路径按贴相机盒子
+        // 绘制，正交取景远大于盒子），天空改由全屏背景面渲染（updateOrthoSkyQuad），
+        // 这里只清屏、不绘制背景
+        if (this.skyApplied && (cam as THREE.OrthographicCamera).isOrthographicCamera === true) {
+          return { background: null, clearColor: true, clearDepth: true };
+        }
         // 天空盒：全局天空纹理；无天空盒节点回退编辑器底色（与场景背景规则一致）
         if (this.skyApplied) {
           return { background: this.skyApplied.texture, clearColor: true, clearDepth: true };

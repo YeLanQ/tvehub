@@ -4,12 +4,18 @@ import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
 /**
  * 天空盒背景纹理生成（编辑器视口用）。
  *
- * 程序化天空与默认立方体天空盒都由“节点上的参数”生成，无需外部贴图：
+ * 程序化天空与默认三段式天空盒都由“节点上的参数”生成，无需外部贴图：
  * - procedural：等距柱状垂直渐变纹理（画布顶部=天顶、中部=地平线、底部=下方），
  *   作为 EquirectangularReflectionMapping 的 scene.background，任意相机位置
  *   看到的都是平滑天空渐变；可绘制太阳盘（high=光晕+亮盘 / simple=纯盘 / none=无）；
- * - cube：六面纯色 CubeTexture（顶=top / 四面=horizon / 底=ground），
- *   作为 scene.background 的默认立方体贴图天空。
+ * - cube：等距柱状三段纯色带（|仰角|>45° 为顶/底色，之间为地平线色），透视视觉
+ *   与传统“顶/四面/底”六面纯色立方体完全一致（立方体的面分界就是 ±45° 仰角）。
+ *
+ * 两种纹理统一用等距柱状表示的原因：three.js 会把纹理背景（含 CubeTexture）
+ * 转成立方体贴图后经“贴在相机位置的 1×1×1 反转盒”绘制——透视相机在盒内所以
+ * 满屏，正交相机取景范围远大于盒子，天空盒只剩中间一小块。正交预览的天空改由
+ * 引擎的全屏天空背景面（EditorEngine.updateOrthoSkyQuad）承担，按光线方向采样
+ * 等距柱状纹理，故不再生成 CubeTexture。
  *
  * 网页预览运行时（public/web-preview/libs/sky.mjs）按同一算法复刻，保证表现一致。
  */
@@ -158,26 +164,36 @@ function drawProceduralSun(
   }
 }
 
-function solidCanvas(color: string, size = 4): HTMLCanvasElement {
+/**
+ * 默认三段式天空盒：等距柱状纯色带纹理。
+ * 分界取仰角 ±45°（v=0.25 / 0.75），与六面纯色立方体（顶=top / 四面=horizon /
+ * 底=ground）透视视觉完全一致；同一位置写两个 stop 形成硬分界。
+ */
+export function buildBandSkyTexture(sky: SkyColorSet): THREE.CanvasTexture {
+  const w = 4;
+  const h = 64;
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (ctx) {
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, size, size);
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, hex6(sky.topColor));
+    grad.addColorStop(0.25, hex6(sky.topColor));
+    grad.addColorStop(0.25, hex6(sky.horizonColor));
+    grad.addColorStop(0.75, hex6(sky.horizonColor));
+    grad.addColorStop(0.75, hex6(sky.groundColor));
+    grad.addColorStop(1, hex6(sky.groundColor));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
   }
-  return canvas;
-}
-
-/** 默认立方体天空盒：六面纯色 CubeTexture（px/nx/pz/nz=侧面色，py=顶，ny=底） */
-export function buildCubeSkyTexture(sky: SkyColorSet): THREE.CubeTexture {
-  const side = solidCanvas(hex6(sky.horizonColor));
-  const top = solidCanvas(hex6(sky.topColor));
-  const bottom = solidCanvas(hex6(sky.groundColor));
-  // CubeTexture 图片顺序：+x, -x, +y, -y, +z, -z
-  const tex = new THREE.CubeTexture([side, side, top, bottom, side, side]);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   return tex;
 }

@@ -8,7 +8,7 @@ import { matColor, mixHexColor } from "./libs/utils.mjs";
 import {
   SKY_DEFAULTS,
   findSkyNode,
-  makeSkyCubeTexture,
+  makeSkyBandTexture,
   makeSkyEquirectTexture,
 } from "./libs/sky.mjs";
 import { loadMaterialParams } from "./libs/material.mjs";
@@ -110,7 +110,7 @@ async function main() {
       const ground = matColor(sky.groundColor, SKY_DEFAULTS.ground);
       scene.background =
         sky.skyKind === "cube"
-          ? makeSkyCubeTexture(top, horizon, ground)
+          ? makeSkyBandTexture(top, horizon, ground)
           : makeSkyEquirectTexture(top, horizon, ground, {
               disk: sky.sunDisk,
               color: sky.sunColor,
@@ -132,6 +132,59 @@ async function main() {
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
   const { cam, applyProjection, clear } = createRenderCamera(cameras);
   const clearColor = new THREE.Color(clear.color);
+
+  // 正交相机的天空背景面：three.js 的纹理背景只支持透视相机（立方体路径按贴在
+  // 相机位置的 1×1×1 反转盒绘制，正交取景远大于盒子），正交 + 天空盒清除标志
+  // 时改由该全屏三角形渲染天空：逐像素由逆投影求光线方向后按等距柱状坐标采样
+  // 天空纹理（与编辑器 EditorEngine.updateOrthoSkyQuad 同一算法）
+  const skyTexture = scene.background?.isTexture === true ? scene.background : null;
+  let orthoSkyQuad = null;
+  if (cam.isOrthographicCamera === true && skyTexture) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3),
+    );
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        tSky: { value: null },
+        projInverse: { value: new THREE.Matrix4() },
+        camWorld: { value: new THREE.Matrix4() },
+      },
+      vertexShader: `
+        varying vec2 vNdc;
+        void main() {
+          vNdc = position.xy;
+          gl_Position = vec4( position.xy, 1.0, 1.0 );
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tSky;
+        uniform mat4 projInverse;
+        uniform mat4 camWorld;
+        varying vec2 vNdc;
+        #include <common>
+        void main() {
+          vec4 nearP = projInverse * vec4( vNdc, -1.0, 1.0 );
+          vec4 farP = projInverse * vec4( vNdc, 1.0, 1.0 );
+          vec3 dir = normalize(
+            ( camWorld * vec4( farP.xyz / farP.w, 1.0 ) ).xyz -
+            ( camWorld * vec4( nearP.xyz / nearP.w, 1.0 ) ).xyz
+          );
+          gl_FragColor = vec4( texture2D( tSky, equirectUv( dir ) ).rgb, 1.0 );
+          #include <colorspace_fragment>
+        }
+      `,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+    });
+    orthoSkyQuad = new THREE.Mesh(geometry, material);
+    orthoSkyQuad.renderOrder = -1000000; // 最先绘制，被其后绘制的场景物体覆盖
+    orthoSkyQuad.frustumCulled = false;
+    orthoSkyQuad.visible = false;
+    scene.add(orthoSkyQuad);
+  }
 
   // 渲染器 + 舞台缩放适配（按设计分辨率/缩放模式取景并适配 iframe）
   const renderer = createStage(app, cfg, applyProjection);
@@ -157,9 +210,19 @@ async function main() {
         renderer.autoClearDepth = false;
         break;
       default:
-        // skybox：保留全局天空/底色背景，确保颜色+深度全清
+        // skybox：透视保留全局天空/底色背景，确保颜色+深度全清；
+        // 正交由全屏天空背景面渲染（背景置空，避免失效的立方体背景绘制）
         renderer.autoClearColor = true;
         renderer.autoClearDepth = true;
+        if (orthoSkyQuad) {
+          scene.background = null;
+          const u = orthoSkyQuad.material.uniforms;
+          u.tSky.value = skyTexture;
+          cam.updateMatrixWorld(); // 渲染前 matrixWorld 尚未推进，需手动刷新
+          u.projInverse.value.copy(cam.projectionMatrixInverse);
+          u.camWorld.value.copy(cam.matrixWorld);
+          orthoSkyQuad.visible = true;
+        }
     }
   }
 
