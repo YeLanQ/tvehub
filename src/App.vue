@@ -21,7 +21,6 @@ import BuildPanel from "./app/components/BuildPanel.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
-import { getAssetsStore } from "./app/stores/assets";
 import {
   getActivePanel,
   getAssetSelection,
@@ -90,9 +89,9 @@ function onWindowKeyDown(e: KeyboardEvent): void {
   if (key === "f2" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && !isEditingText()) {
     e.preventDefault();
     if (getActivePanel() === "assets") {
-      // 面板主选中项（文件/目录均可），回退到 store 的资产选中
-      const selected = getAssetSelection() ?? getAssetsStore().selectedAsset;
-      if (selected) void dispatchCommand("asset.renameSelected");
+      // 资产面板主选中项（文件/目录均可）；显式作为 rel 传入，避免命令回退到旧选中
+      const selected = getAssetSelection();
+      if (selected) void dispatchCommand("asset.renameSelected", { rel: selected });
     } else {
       void dispatchCommand("node.renameSelected");
     }
