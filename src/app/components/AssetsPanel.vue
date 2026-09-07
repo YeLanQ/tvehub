@@ -26,8 +26,7 @@ import AssetTreeNode, {
   type AssetDragHandle,
   type AssetNode,
 } from "./AssetTreeNode.vue";
-import AssetTypeIcon from "./AssetTypeIcon.vue";
-import { fmtSize } from "../lib/format";
+import AssetEntryCell from "./AssetEntryCell.vue";
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
@@ -152,11 +151,6 @@ const selectedName = computed(() => {
 function parentOf(path: string): string | null {
   const i = path.lastIndexOf("/");
   return i > 0 ? path.slice(0, i) : i === 0 ? "" : null;
-}
-
-/** 目录是否可作为拖放目标（内置 internal 目录只读，不可作为落点） */
-function dropDirAttr(item: ChildEntry): string | undefined {
-  return item.kind === "dir" && !isInternalAsset(item.path) ? item.path : undefined;
 }
 
 /** 把内置资源（internal/…）复制到项目资产目录（业务与命名下沉 assetService） */
@@ -800,46 +794,19 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
         <div v-if="assetsStore.assets.length === 0" class="am-empty">未发现资产（项目需包含 assets/ 目录）</div>
         <div v-else-if="children.length === 0" class="am-empty">（空目录）</div>
 
-        <!-- 网格视图 -->
-        <template v-if="viewMode === 'grid'">
-          <div
-            v-for="item in children"
-            :key="item.path"
-            class="am-item grid"
-            :class="{ selected: selectedPaths.includes(item.path), 'drop-over': item.kind === 'dir' && item.path === hoverPath }"
-            :title="item.path"
-            :data-drop-dir="dropDirAttr(item)"
-            @click="onItemClickGuard($event, item)"
-            @dblclick="onItemDblClick(item)"
-            @contextmenu.prevent.stop="onItemContext($event, item)"
-            @mousedown="onItemMouseDown($event, item)"
-          >
-            <span class="am-icon"><AssetTypeIcon :kind="item.kind" /></span>
-            <span class="am-name">{{ item.name }}</span>
-          </div>
-        </template>
-
-        <!-- 列表视图 -->
-        <template v-else>
-          <div
-            v-for="item in children"
-            :key="item.path"
-            class="am-item list"
-            :class="{ selected: selectedPaths.includes(item.path), 'drop-over': item.kind === 'dir' && item.path === hoverPath }"
-            :title="item.path"
-            :data-drop-dir="dropDirAttr(item)"
-            @click="onItemClickGuard($event, item)"
-            @dblclick="onItemDblClick(item)"
-            @contextmenu.prevent.stop="onItemContext($event, item)"
-            @mousedown="onItemMouseDown($event, item)"
-          >
-            <span class="am-icon sm"><AssetTypeIcon :kind="item.kind" /></span>
-            <span class="am-name">{{ item.name }}</span>
-            <span v-if="item.relPath" class="am-rel">{{ item.relPath }}</span>
-            <span v-if="item.kind !== 'dir'" class="am-kind">{{ item.kind }}</span>
-            <span v-if="item.kind !== 'dir'" class="am-size">{{ fmtSize(item.size) }}</span>
-          </div>
-        </template>
+        <!-- 网格/列表条目：展示与事件透传在 AssetEntryCell，数据与交互回调留在面板 -->
+        <AssetEntryCell
+          v-for="item in children"
+          :key="item.path"
+          :item="item"
+          :view="viewMode"
+          :selected="selectedPaths.includes(item.path)"
+          :drop-over="item.kind === 'dir' && item.path === hoverPath"
+          @click="onItemClickGuard($event, item)"
+          @dblclick="onItemDblClick(item)"
+          @context="onItemContext($event, item)"
+          @mousedown="onItemMouseDown($event, item)"
+        />
       </div>
     </div>
 
