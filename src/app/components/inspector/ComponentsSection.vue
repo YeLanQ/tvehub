@@ -3,7 +3,11 @@
 // （随节点类型自动派生的只读展示）。脚本属性控件按脚本 static props 声明渲染
 // （scripts store 解析缓存，不执行用户代码）；组件的运行期实例化由播放器完成。
 import { computed, ref, watch } from "vue";
-import type { Node, NodeComponentRef } from "../../../framework/prototype/Node";
+import type { Node } from "../../../framework/prototype/Node";
+import {
+  isScriptComponent,
+  type ScriptComponentRef,
+} from "../../../framework/prototype/Node";
 import { MeshNode, LightNode, CameraNode, SkyboxNode } from "../../../framework/prototype/derived/Primitives";
 import { getEditorStore } from "../../stores/editor";
 import { getScriptsStore } from "../../stores/scripts";
@@ -25,10 +29,18 @@ const emit = defineEmits<{
 const scriptsStore = getScriptsStore();
 const projectStore = getProjectStore();
 
-/** 本节点组件列表（rev 为失效信号） */
-const components = computed<NodeComponentRef[]>(() => {
+/** 本节点脚本组件列表（物理组件在 Physics 卡片编辑；rev 为失效信号） */
+const components = computed<ScriptComponentRef[]>(() => {
   void props.rev;
-  return props.node.components;
+  return props.node.components.filter(isScriptComponent);
+});
+
+/** 物理组件概览（原生组件区只读展示） */
+const physicsCount = computed(() => {
+  void props.rev;
+  const rb = props.node.components.filter((c) => c.type === "rigidBody").length;
+  const col = props.node.components.filter((c) => c.type === "collider").length;
+  return { rb, col };
 });
 
 /** 项目脚本清单（缺失判定 + 添加菜单） */
@@ -77,7 +89,7 @@ function loadSchema(rel: string): void {
 }
 
 /** 为组件脚本补齐待加载的 schema 键，并触发未解析脚本的异步拉取 */
-function refreshSchemas(list: NodeComponentRef[]): void {
+function refreshSchemas(list: ScriptComponentRef[]): void {
   let changed = false;
   for (const c of list) {
     if (Object.prototype.hasOwnProperty.call(schemas.value, c.script)) continue;
@@ -113,13 +125,13 @@ function schemaOf(rel: string): ScriptPropDef[] | null {
 }
 
 /** 属性显示值：节点配置值优先，缺省取声明 default */
-function propValue(c: NodeComponentRef, key: string, def: ScriptPropDef): unknown {
+function propValue(c: ScriptComponentRef, key: string, def: ScriptPropDef): unknown {
   const stored = c.props[key];
   if (stored !== undefined) return stored;
   return def.default;
 }
 
-function onPropEdit(c: NodeComponentRef, def: ScriptPropDef, raw: unknown): void {
+function onPropEdit(c: ScriptComponentRef, def: ScriptPropDef, raw: unknown): void {
   let value: unknown = raw;
   if (def.type === "number") {
     const n = typeof raw === "number" ? raw : Number(raw);
@@ -136,7 +148,7 @@ function onPropEdit(c: NodeComponentRef, def: ScriptPropDef, raw: unknown): void
 }
 
 /** vec3 单轴提交：合并当前值改一轴 */
-function onVec3Axis(c: NodeComponentRef, def: ScriptPropDef, axis: "x" | "y" | "z", raw: number): void {
+function onVec3Axis(c: ScriptComponentRef, def: ScriptPropDef, axis: "x" | "y" | "z", raw: number): void {
   const cur = propValue(c, def.key, def) as { x: number; y: number; z: number };
   const next = {
     x: typeof cur?.x === "number" ? cur.x : 0,
@@ -338,6 +350,14 @@ const modelMeta = computed(() => {
     <div v-if="node instanceof SkyboxNode" class="comp-row">
       <span class="comp-label">Skybox</span>
       <span class="comp-type mono">Sky</span>
+    </div>
+    <div v-if="physicsCount.rb > 0" class="comp-row">
+      <span class="comp-label">Rigid Body</span>
+      <span class="comp-type mono">刚体</span>
+    </div>
+    <div v-if="physicsCount.col > 0" class="comp-row">
+      <span class="comp-label">Collider</span>
+      <span class="comp-type mono">× {{ physicsCount.col }}</span>
     </div>
   </div>
 </template>

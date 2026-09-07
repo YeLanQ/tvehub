@@ -108,10 +108,11 @@ function callLifecycle(record, method, ...args) {
  * @param {object} opts.cfg 项目配置（entryScript = 入口脚本源路径）
  * @param {{play,stop,pause,resume}|null} opts.animations 动画控制（engine.animation 转发）
  * @param {{play,stop,pause,resume,setVolume}|null} opts.audios 音频控制（engine.audio 转发）
+ * @param {object|null} opts.physics 物理控制（engine.physics 转发）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, physics, canvas }) {
   const noop = { update() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -120,6 +121,7 @@ export async function createScripts({ nodes, cfg, animations, audios, canvas }) 
     canvas: canvas ?? null,
     animations: animations ?? null,
     audios: audios ?? null,
+    physics: physics ?? null,
   });
 
   // 组件引用收集（注册表为文档序：先父后子）

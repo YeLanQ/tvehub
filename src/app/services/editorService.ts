@@ -79,6 +79,12 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
       };
       applyProjectAccess(engine, root);
+      // 物理配置（项目级：引擎/重力/启停）随项目装载生效
+      engine.physics.configure({
+        backend: projectStore.physicsBackend,
+        enabled: projectStore.physicsEnabled,
+        gravity: { ...projectStore.physicsGravity },
+      });
       // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
       engine.setSceneTransport(sceneApi.transport());
       await engine.bindSceneEvents(sceneApi.subscribe);
@@ -141,7 +147,7 @@ export function mountEditor(container: HTMLElement): Promise<void> {
  * 返回是否装载了有效根节点（false = 空场景，调用方回退初始场景）。
  */
 async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResult): Promise<boolean> {
-  const doc = result.doc as { root?: JsonRecord | null };
+  const doc = result.doc as { root?: JsonRecord | null; settings?: JsonRecord };
   const rootJson = doc.root ?? null;
   if (!rootJson || (rootJson as { type?: string }).type === "empty") return false;
   // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）

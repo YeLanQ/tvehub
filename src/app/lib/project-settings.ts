@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
 import { remapAssetPath } from "./asset-paths";
+import { DEFAULT_PHYSICS_BACKEND, isPhysicsBackendId, type PhysicsBackendId } from "../../framework/physics";
 
 /** 项目设置配置文件（相对项目根） */
 export const PROJECT_CONFIG_REL = "project.config.json";
@@ -32,6 +33,12 @@ export interface ProjectDraft {
   antiAliasing: number;
   /** 渲染后端（编辑器视口使用；webgpu 不可用时 three 会自动回退 WebGL2） */
   renderer: RendererBackend;
+  /** 物理引擎后端（项目级；ammo | jolt | rapier） */
+  physicsBackend: PhysicsBackendId;
+  /** 是否启用物理模拟（项目级；预览/发布产物据此自动模拟） */
+  physicsEnabled: boolean;
+  /** 重力向量（项目级） */
+  physicsGravity: { x: number; y: number; z: number };
 }
 
 /** 常用分辨率预设（label 即「宽 × 高」，竖屏/横屏分组） */
@@ -102,6 +109,9 @@ export function defaultDraft(): ProjectDraft {
     hdrMode: "ldr",
     antiAliasing: 2,
     renderer: "webgl",
+    physicsBackend: DEFAULT_PHYSICS_BACKEND,
+    physicsEnabled: false,
+    physicsGravity: { x: 0, y: -9.81, z: 0 },
   };
 }
 
@@ -128,6 +138,24 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
       ? clampInt(cfg.antiAliasing, 0, 8)
       : d.antiAliasing,
     renderer: cfg.renderer === "webgpu" || cfg.renderer === "auto" ? cfg.renderer : "webgl",
+    physicsBackend: (() => {
+      const pb = (cfg.physics ?? {}) as { backend?: unknown };
+      return isPhysicsBackendId(pb.backend) ? pb.backend : d.physicsBackend;
+    })(),
+    physicsEnabled: (() => {
+      const pb = (cfg.physics ?? {}) as { physicsEnabled?: unknown };
+      return pb.physicsEnabled === true;
+    })(),
+    physicsGravity: (() => {
+      const pb = (cfg.physics ?? {}) as { gravity?: Record<string, unknown> };
+      const g = (pb.gravity ?? {}) as { x?: unknown; y?: unknown; z?: unknown };
+      const n = (v: unknown, fb: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fb);
+      return {
+        x: n(g.x, d.physicsGravity.x),
+        y: n(g.y, d.physicsGravity.y),
+        z: n(g.z, d.physicsGravity.z),
+      };
+    })(),
   };
 }
 
@@ -162,9 +190,21 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
     hdrMode: draft.hdrMode,
     antiAliasing: clampInt(draft.antiAliasing, 0, 8),
     renderer: draft.renderer,
+    physics: {
+      backend: isPhysicsBackendId(draft.physicsBackend) ? draft.physicsBackend : DEFAULT_PHYSICS_BACKEND,
+      physicsEnabled: draft.physicsEnabled,
+      gravity: {
+        x: draft.physicsGravity.x,
+        y: draft.physicsGravity.y,
+        z: draft.physicsGravity.z,
+      },
+    },
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
   p.setRendererBackend(draft.renderer);
+  p.setPhysicsBackend(draft.physicsBackend);
+  p.setPhysicsEnabled(draft.physicsEnabled);
+  p.setPhysicsGravity(draft.physicsGravity);
   p.setAntiAliasing(clampInt(draft.antiAliasing, 0, 8));
   p.setHDRMode(draft.hdrMode);
   const w = clampInt(draft.designWidth, 1, 16384);

@@ -2,16 +2,22 @@ import { nextId } from "../../platform_abstraction/id";
 import { Prototype } from "./Prototype";
 import { Transform } from "./Transform";
 import { cloneRecord, type JsonRecord, type JsonValue } from "./types";
+import {
+  cloneColliderSettings,
+  cloneRigidBodySettings,
+  parseColliderSettings,
+  parseRigidBodySettings,
+} from "../physics/types";
 
 /**
  * 节点上的脚本组件引用（组件模式）。
  * 编辑器只持有数据（检查器增删改、随节点序列化）；实例化与生命周期由
  * 播放器脚本宿主（web-preview/libs/scripts.mjs）在预览/发布产物中执行。
  */
-export interface NodeComponentRef {
+export interface ScriptComponentRef {
   /** 组件实例 id（同节点内唯一） */
   id: string;
-  /** 组件类型（当前仅脚本组件） */
+  /** 组件类型 */
   type: "script";
   /** 脚本源路径（项目内相对路径，如 "src/spin.ts"） */
   script: string;
@@ -21,28 +27,85 @@ export interface NodeComponentRef {
   props: JsonRecord;
 }
 
-/** 组件引用 JSON 收敛（非法项剔除；props 缺省空表） */
+/**
+ * 刚体组件引用：声明节点的运动学形态（static/kinematic/dynamic）。
+ * 数据随节点序列化；模拟由物理系统在预览/播放时驱动（编辑态只同步数据）。
+ */
+export interface RigidBodyComponentRef {
+  id: string;
+  type: "rigidBody";
+  enabled: boolean;
+  rigidBody: import("../physics/types").RigidBodySettings;
+}
+
+/**
+ * 碰撞体组件引用：声明节点的碰撞形状与表面材质。
+ * 同节点可挂多个碰撞体（复合形状）；无刚体只有碰撞体 = 隐式静态碰撞体。
+ */
+export interface ColliderComponentRef {
+  id: string;
+  type: "collider";
+  enabled: boolean;
+  collider: import("../physics/types").ColliderSettings;
+}
+
+/** 节点组件引用（可辨识联合，按 type 收敛） */
+export type NodeComponentRef = ScriptComponentRef | RigidBodyComponentRef | ColliderComponentRef;
+
+export function isScriptComponent(c: NodeComponentRef): c is ScriptComponentRef {
+  return c.type === "script";
+}
+export function isRigidBodyComponent(c: NodeComponentRef): c is RigidBodyComponentRef {
+  return c.type === "rigidBody";
+}
+export function isColliderComponent(c: NodeComponentRef): c is ColliderComponentRef {
+  return c.type === "collider";
+}
+
+/** 组件引用 JSON 收敛（非法项剔除；各类型字段缺失回退默认） */
 export function parseNodeComponents(value: unknown): NodeComponentRef[] {
   if (!Array.isArray(value)) return [];
   const out: NodeComponentRef[] = [];
   for (const c of value) {
     if (!c || typeof c !== "object") continue;
     const rec = c as JsonRecord;
-    if (typeof rec.script !== "string" || !rec.script) continue;
-    out.push({
-      id: typeof rec.id === "string" && rec.id ? rec.id : nextId("comp"),
-      type: "script",
-      script: rec.script,
-      enabled: rec.enabled !== false,
-      props: rec.props && typeof rec.props === "object" ? cloneRecord(rec.props as JsonRecord) : {},
-    });
+    const id = typeof rec.id === "string" && rec.id ? rec.id : nextId("comp");
+    const enabled = rec.enabled !== false;
+    // 未知 type（旧数据只有 script 无 type 字段）按 script 收敛
+    const type = typeof rec.type === "string" ? rec.type : "script";
+    if (type === "rigidBody") {
+      out.push({ id, type: "rigidBody", enabled, rigidBody: parseRigidBodySettings(rec.rigidBody) });
+    } else if (type === "collider") {
+      out.push({ id, type: "collider", enabled, collider: parseColliderSettings(rec.collider) });
+    } else {
+      if (typeof rec.script !== "string" || !rec.script) continue;
+      out.push({
+        id,
+        type: "script",
+        script: rec.script,
+        enabled,
+        props: rec.props && typeof rec.props === "object" ? cloneRecord(rec.props as JsonRecord) : {},
+      });
+    }
   }
   return out;
 }
 
 /** 组件引用深拷贝（id 重新生成，避免克隆节点后实例 id 重复） */
 function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
-  return list.map((c) => ({ ...c, id: nextId("comp"), props: cloneRecord(c.props) }));
+  return list.map((c) => {
+    const id = nextId("comp");
+    if (c.type === "rigidBody") return { ...c, id, rigidBody: cloneRigidBodySettings(c.rigidBody) };
+    if (c.type === "collider") return { ...c, id, collider: cloneColliderSettings(c.collider) };
+    return { ...c, id, props: cloneRecord(c.props) };
+  });
+}
+
+/** 组件引用深拷贝（保留 id；序列化用） */
+function cloneComponentForWrite(c: NodeComponentRef): NodeComponentRef {
+  if (c.type === "rigidBody") return { ...c, rigidBody: cloneRigidBodySettings(c.rigidBody) };
+  if (c.type === "collider") return { ...c, collider: cloneColliderSettings(c.collider) };
+  return { ...c, props: cloneRecord(c.props) };
 }
 
 export interface NodeInit {
@@ -147,10 +210,9 @@ export class Node extends Prototype {
     };
     // 组件列表非空才写入（旧场景文件保持字节兼容）
     if (this.components.length) {
-      record.components = this.components.map((c) => ({
-        ...c,
-        props: cloneRecord(c.props),
-      }));
+      record.components = this.components.map(
+        (c) => cloneComponentForWrite(c) as unknown as JsonRecord,
+      );
     }
     this.writeOwnData(record);
     return record;

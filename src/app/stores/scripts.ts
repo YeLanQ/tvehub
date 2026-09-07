@@ -266,10 +266,10 @@ export function getScriptsStore(): ScriptsStore {
 function rewriteScriptRefs(fromRel: string, toRel: string): void {
   const engine = getEditorStore().engine;
   for (const node of engine.graph.all()) {
-    if (!node.components.some((c) => c.script === fromRel)) continue;
+    if (!node.components.some((c) => c.type === "script" && c.script === fromRel)) continue;
     const before = node.toJSON() as JsonRecord;
     node.components = node.components.map((c) =>
-      c.script === fromRel ? { ...c, script: toRel } : c,
+      c.type === "script" && c.script === fromRel ? { ...c, script: toRel } : c,
     );
     const after = node.toJSON() as JsonRecord;
     engine.patchNode(node.id, before, after, "重命名脚本引用");
@@ -280,9 +280,9 @@ function rewriteScriptRefs(fromRel: string, toRel: string): void {
 function removeScriptComponents(rel: string): void {
   const engine = getEditorStore().engine;
   for (const node of engine.graph.all()) {
-    if (!node.components.some((c) => c.script === rel)) continue;
+    if (!node.components.some((c) => c.type === "script" && c.script === rel)) continue;
     const before = node.toJSON() as JsonRecord;
-    node.components = node.components.filter((c) => c.script !== rel);
+    node.components = node.components.filter((c) => !(c.type === "script" && c.script === rel));
     const after = node.toJSON() as JsonRecord;
     engine.patchNode(node.id, before, after, "移除已删除脚本的组件");
   }

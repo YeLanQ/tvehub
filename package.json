@@ -9,15 +9,18 @@
     "build": "vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js"
+    "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
+    "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "jolt-physics": "^1.1.0",
     "monaco-editor": "0.52.2",
     "three": "^0.185.1",
-    "vue": "^3.5.13",
-    "typescript": "~5.6.2"
+    "typescript": "~5.6.2",
+    "vue": "^3.5.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

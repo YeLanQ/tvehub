@@ -14,7 +14,6 @@ export { ScenePrototype, createDefaultMetadata, createDefaultSettings } from "./
 export type {
   SceneMetadata,
   SceneRenderingSettings,
-  ScenePhysicsSettings,
   SceneSettings,
   SceneVersion,
 } from "./ScenePrototype";

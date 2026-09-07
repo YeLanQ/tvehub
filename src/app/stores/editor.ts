@@ -84,6 +84,7 @@ export function getEditorStore(): EditorStore {
   engine.events.on("model:changed", bump);
   engine.events.on("animation:changed", bump);
   engine.events.on("audio:changed", bump);
+  engine.events.on("physics:changed", bump);
   engine.history.events.on("changed", bump);
 
   // 脏标记：编辑器有改动（场景图/材质/撤销重做）→ 保存按钮标记 + 关闭提醒

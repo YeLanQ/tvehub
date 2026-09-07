@@ -18,16 +18,19 @@ import {
   PROJECT_CONFIG_REL,
   type ProjectDraft,
 } from "../lib/project-settings";
+import { physicsBackendRegistry, type PhysicsBackendId } from "../../framework/physics";
 import "../../styles/components/project-settings.scss";
 
 const projectStore = getProjectStore();
 const assetsStore = getAssetsStore();
+const editorStore = getEditorStore();
 
-type SettingsCat = "basic" | "display";
+type SettingsCat = "basic" | "display" | "physics";
 const cat = ref<SettingsCat>("basic");
 const CATS: { id: SettingsCat; label: string }[] = [
   { id: "basic", label: "基础信息" },
   { id: "display", label: "显示与运行" },
+  { id: "physics", label: "物理" },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -59,6 +62,8 @@ function close(): void {
   draft.value = null;
 }
 
+const backendOptions = physicsBackendRegistry.list();
+
 async function save(): Promise<void> {
   if (!draft.value) return;
   saving.value = true;
@@ -70,6 +75,12 @@ async function save(): Promise<void> {
       width: projectStore.designWidth,
       height: projectStore.designHeight,
     };
+    // 物理配置（项目级）即时生效：引擎按最新后端/重力/开关运行
+    editorStore.engine.physics.configure({
+      backend: projectStore.physicsBackend as PhysicsBackendId,
+      enabled: projectStore.physicsEnabled,
+      gravity: { ...projectStore.physicsGravity },
+    });
     close();
   } catch (e) {
     logStore.log("error", `项目设置保存失败: ${e}`, "toolbar");
@@ -215,6 +226,61 @@ onMounted(async () => {
                 渲染后端在编辑器启动/重载视口时生效；WebGPU 与 WebGL 的后端在运行时不可切换，
                 修改后请重新打开编辑器查看效果。设计分辨率修改会即时同步到相机辅助视锥线框。
               </p>
+            </section>
+
+            <!-- 物理 -->
+            <section v-else-if="cat === 'physics'" class="ps-section">
+              <h3 class="ps-section-title">物理</h3>
+              <label class="ps-field ps-physics-toggle">
+                <input
+                  id="ps-physics-enabled"
+                  v-model="draft.physicsEnabled"
+                  type="checkbox"
+                />
+                <span>启用物理模拟</span>
+              </label>
+              <p class="ps-note">
+                启用后，预览/发布产物对挂了「刚体」组件的节点自动开始模拟；
+                编辑器视口的模拟经检查器 Physics 卡片的 ▶/⏹ 控制。
+              </p>
+              <div class="ps-field">
+                <label for="ps-physics-backend">物理引擎</label>
+                <select
+                  id="ps-physics-backend"
+                  v-model="draft.physicsBackend"
+                >
+                  <option v-for="b in backendOptions" :key="b.key" :value="b.key">
+                    {{ b.label }}
+                  </option>
+                </select>
+                <p class="ps-note">
+                  预览/发布产物按所选引擎按需加载（未启用物理的产物不打包引擎）。
+                </p>
+              </div>
+              <div class="ps-field">
+                <label>重力</label>
+                <div class="ps-res">
+                  <input
+                    v-model.number="draft.physicsGravity.x"
+                    type="number"
+                    step="0.1"
+                    title="重力 X"
+                  />
+                  <input
+                    v-model.number="draft.physicsGravity.y"
+                    type="number"
+                    step="0.1"
+                    title="重力 Y"
+                  />
+                  <input
+                    v-model.number="draft.physicsGravity.z"
+                    type="number"
+                    step="0.1"
+                    title="重力 Z"
+                  />
+                </div>
+                <p class="ps-note">世界加速度（米/秒²；地球重力约为 -9.81 沿 -Y），影响全部动力学体。</p>
+              </div>
             </section>
           </template>
           <div v-else class="ps-loading muted mono">加载中…</div>

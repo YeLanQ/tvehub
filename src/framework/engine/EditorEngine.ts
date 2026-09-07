@@ -41,6 +41,7 @@ import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
+import { PhysicsSystem } from "../physics";
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -54,6 +55,8 @@ export interface EditorEvents extends Record<string, unknown> {
   "animation:changed": { nodeId: string };
   /** 音源节点运行时变化（绑定/加载完成/播放控制/数据写入） */
   "audio:changed": { nodeId: string };
+  /** 物理运行时变化（绑定/世界就绪/模拟启停/数据写入） */
+  "physics:changed": { nodeId: string };
 }
 
 export class EditorEngine {
@@ -73,6 +76,8 @@ export class EditorEngine {
   readonly animation = new AnimationSystem();
   /** 音频系统（音源节点的 2D/3D Web Audio 播放；渲染循环推进监听器与可见性） */
   readonly audio = new AudioSystem();
+  /** 物理系统（刚体/碰撞体节点模拟；固定步长推进，动力学体回写渲染变换） */
+  readonly physics = new PhysicsSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
   private clock = new THREE.Clock();
   /** 贴图 URL 解析器（相对路径 → asset:// 协议 URL；应用层注入） */
@@ -196,6 +201,8 @@ export class EditorEngine {
       this.refreshAudioNodeIcon(nodeId);
       this.events.emit("audio:changed", { nodeId });
     });
+    // 物理运行时变化（绑定/世界就绪/模拟启停）→ 广播给面板与工具栏刷新
+    this.physics.onChange((nodeId) => this.events.emit("physics:changed", { nodeId }));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -306,8 +313,12 @@ export class EditorEngine {
     if (this.disposed) return;
     this.initGizmo();
     this.renderer.setRenderCb(() => {
-      // 动画推进（剪辑/骨骼/动画图状态机）与渲染同帧
-      this.animation.update(this.clock.getDelta());
+      // 帧间隔（动画推进与物理步进共用一次取值）
+      const dt = this.clock.getDelta();
+      // 动画推进（剪辑/骨骼/动画图状态机）与渲染同帧；
+      // 物理紧随其后：运动学体跟随动画后的位姿推开动力学体
+      this.animation.update(dt);
+      this.physics.update(dt);
       // 音频：监听器随活动渲染相机 + 可见性自动暂停（Web Audio 自走时钟）
       const activeCam = this.renderer.getActiveCamera();
       if (activeCam) this.audio.attachListener(activeCam);
@@ -357,6 +368,7 @@ export class EditorEngine {
     this.synchronizer?.dispose();
     this.animation?.dispose();
     this.audio?.dispose();
+    this.physics?.dispose();
     this.materials?.clear();
     this.models?.clear();
     this.removeViewportClickHandler();
@@ -731,6 +743,13 @@ export class EditorEngine {
         if (obj) this.audio.syncNode(n, obj);
       }
     }
+    // 物理组件：入图/属性变更 → 差异同步刚体/碰撞体；移除 → 解绑
+    if (c.kind === "remove") {
+      this.physics.unbind(c.nodeId);
+    } else if (c.kind === "add" || c.kind === "properties") {
+      const n = this.graph.get(c.nodeId);
+      if (n) this.syncPhysicsNode(n);
+    }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -767,6 +786,8 @@ export class EditorEngine {
     this.animation.unbindAll();
     // 音频绑定同样指向旧场景对象：整体重建后按新对象重绑
     this.audio.unbindAll();
+    // 物理绑定指向旧场景对象：模拟中一并停止（世界里的体按旧位姿建出）
+    this.physics.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
@@ -776,8 +797,20 @@ export class EditorEngine {
         const obj = this.synchronizer.getObjectMap().get(node.id);
         if (obj) this.audio.syncNode(node, obj);
       }
+      this.syncPhysicsNode(node);
     }
     this.applySkyFromGraph();
+  }
+
+  /** 节点物理组件同步（有刚体/碰撞体组件 → 绑定；无 → 解绑） */
+  private syncPhysicsNode(node: Node): void {
+    const hasPhysics = node.components.some(
+      (c) => c.type === "rigidBody" || c.type === "collider",
+    );
+    const obj = this.synchronizer.getObjectMap().get(node.id);
+    if (!obj) return;
+    if (hasPhysics) this.physics.syncNode(node, obj);
+    else this.physics.unbind(node.id);
   }
 
   /**

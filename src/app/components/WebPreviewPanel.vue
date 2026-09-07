@@ -14,7 +14,7 @@ import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
-import { fetchWebPreviewRuntimeTexts } from "../lib/web-preview-runtime";
+import { fetchWebPreviewRuntimeTexts, configUsesPhysics } from "../lib/web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
@@ -37,14 +37,18 @@ const previewUrl = computed(() =>
  *  scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制由 Rust 直接从磁盘
  *  读取写入导出目录（export_web_preview_from_scene），不再以 base64 过 IPC。 */
 async function buildExportFiles(): Promise<Record<string, string>> {
-  const files = await fetchWebPreviewRuntimeTexts();
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
+  // 项目配置：物理启用状态（磁盘上的 config）决定引擎运行时是否随导出（按需打包）
+  let configText = "{}";
   try {
-    files["config.json"] = await api.readText(root, "project.config.json");
+    configText = await api.readText(root, "project.config.json");
   } catch {
-    files["config.json"] = "{}";
+    /* 无配置按未启用处理 */
   }
+  const includePhysics = configUsesPhysics(configText);
+  const files = await fetchWebPreviewRuntimeTexts({ includePhysics });
+  files["config.json"] = configText;
   // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
   try {
     const scripts = await loadProjectScripts(root);

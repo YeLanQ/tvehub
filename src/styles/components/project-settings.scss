@@ -233,3 +233,16 @@
 .ps-hint code {
   color: var(--text);
 }
+
+/* 物理分类：启用开关（复选框 + 文字同行） */
+.ps-physics-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+
+  > span {
+    font-size: 12px;
+    color: var(--text);
+  }
+}

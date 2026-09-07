@@ -1,6 +1,6 @@
 import { Node } from "../prototype/Node";
 
-import { cloneRecord, type JsonRecord, type JsonValue, type Vec3 } from "../prototype/types";
+import { cloneRecord, type JsonRecord, type JsonValue } from "../prototype/types";
 
 /**
  * 场景版本信息
@@ -52,21 +52,10 @@ export interface SceneRenderingSettings {
 }
 
 /**
- * 场景物理设置
- */
-export interface ScenePhysicsSettings {
-  /** 重力向量 */
-  gravity: Vec3;
-  /** 是否启用物理模拟 */
-  physicsEnabled: boolean;
-}
-
-/**
  * 场景完整设置
  */
 export interface SceneSettings {
   rendering: SceneRenderingSettings;
-  physics: ScenePhysicsSettings;
 }
 
 /**
@@ -97,10 +86,6 @@ export function createDefaultSettings(): SceneSettings {
       ambientIntensity: 0.3,
       ambientColor: 0xffffff,
     },
-    physics: {
-      gravity: { x: 0, y: -9.81, z: 0 },
-      physicsEnabled: false,
-    },
   };
 }
 
@@ -110,7 +95,7 @@ export function createDefaultSettings(): SceneSettings {
  * 定义场景文件的完整数据结构，用于序列化/反序列化场景。
  * 类似 Unity `.unity` 场景文件，包含：
  * - 场景元数据（名称、版本、创建时间等）
- * - 场景设置（渲染、物理等）
+ * - 场景设置（渲染；物理配置在项目设置中）
  * - 节点树（层级结构）
  * 
  * 编辑器通过此结构体：
@@ -170,10 +155,7 @@ export class ScenePrototype {
         const r = settings.rendering as JsonRecord;
         scene.settings.rendering = { ...scene.settings.rendering, ...r };
       }
-      if (settings.physics) {
-        const p = settings.physics as JsonRecord;
-        scene.settings.physics = { ...scene.settings.physics, ...p };
-      }
+
     }
     
     // 解析节点树
@@ -210,7 +192,6 @@ export class ScenePrototype {
       metadata: { ...this.metadata } as unknown as JsonRecord,
       settings: {
         rendering: { ...this.settings.rendering } as unknown as JsonRecord,
-        physics: { ...this.settings.physics } as unknown as JsonRecord,
       },
     };
     

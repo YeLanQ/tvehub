@@ -57,7 +57,7 @@ export interface ScenePrototypeDoc {
   /**
    * 场景设置
    * 
-   * 包含渲染、物理等全局设置
+   * 包含渲染等全局设置（物理配置在项目设置中）
    */
   settings: {
     /** 渲染设置 */
@@ -76,13 +76,6 @@ export interface ScenePrototypeDoc {
       ambientIntensity: number;
       /** 环境光颜色 */
       ambientColor: number;
-    };
-    /** 物理设置 */
-    physics: {
-      /** 重力向量 */
-      gravity: { x: number; y: number; z: number };
-      /** 是否启用物理模拟 */
-      physicsEnabled: boolean;
     };
   };
 

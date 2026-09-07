@@ -505,6 +505,34 @@ const audioApi = {
   },
 };
 
+/** 物理控制（按实体寻址；仅挂刚体组件的节点有效，脚本经 engine.physics 调用） */
+const physicsApi = {
+  applyImpulse(entity, x, y, z) {
+    host?.physics?.applyImpulse(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
+  },
+  applyForce(entity, x, y, z) {
+    host?.physics?.applyForce(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
+  },
+  setLinearVelocity(entity, x, y, z) {
+    host?.physics?.setLinearVelocity(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
+  },
+  setAngularVelocity(entity, x, y, z) {
+    host?.physics?.setAngularVelocity(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
+  },
+  getLinearVelocity(entity) {
+    return host?.physics?.getLinearVelocity(entity?.id) ?? null;
+  },
+  setGravityScale(entity, scale) {
+    host?.physics?.setGravityScale(entity?.id, numOr(scale, 1));
+  },
+  wakeUp(entity) {
+    host?.physics?.wakeUp(entity?.id);
+  },
+  setGravity(x, y, z) {
+    host?.physics?.setGravity(numOr(x, 0), numOr(y, -9.81), numOr(z, 0));
+  },
+};
+
 const sceneApi = {
   get root() {
     const rootObj = host && host.rootObj;
@@ -556,6 +584,7 @@ const engine = {
   scene: sceneApi,
   animation: animationApi,
   audio: audioApi,
+  physics: physicsApi,
   log(...args) {
     postLog("info", formatArgs(args));
     console.log(...args);

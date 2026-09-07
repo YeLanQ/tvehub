@@ -30,7 +30,7 @@ function setViewMode(mode: ViewMode): void {
 
 <template>
   <div class="toolbar-groups">
-    <!-- 项目信息：点击打开/关闭项目设置面板 -->
+    <!-- 项目信息：点击打开/关闭项目设置面板（物理引擎/重力/启停在其中的「物理」分类） -->
     <div
       class="project-info"
       :class="{ open: projectStore.settingsOpen }"

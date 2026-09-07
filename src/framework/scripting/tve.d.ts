@@ -347,13 +347,34 @@ export interface AudioApi {
   setVolume(entity: Entity, volume: number): void;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 日志） */
+/** 物理运行期控制（按实体寻址；仅挂了刚体组件的节点有效） */
+export interface PhysicsApi {
+  /** 施加冲量（世界空间，N·s；动力学体） */
+  applyImpulse(entity: Entity, x: number, y: number, z: number): void;
+  /** 施加持续力（世界空间，N；动力学体，每帧调用生效） */
+  applyForce(entity: Entity, x: number, y: number, z: number): void;
+  /** 直接设置线速度（m/s） */
+  setLinearVelocity(entity: Entity, x: number, y: number, z: number): void;
+  /** 直接设置角速度（rad/s） */
+  setAngularVelocity(entity: Entity, x: number, y: number, z: number): void;
+  /** 读取线速度（未绑定/世界未就绪返回 null） */
+  getLinearVelocity(entity: Entity): Vec3 | null;
+  /** 重力缩放（0 = 不受重力） */
+  setGravityScale(entity: Entity, scale: number): void;
+  /** 唤醒（修改参数后让睡眠中的体立即响应） */
+  wakeUp(entity: Entity): void;
+  /** 世界重力（影响全部动力学体） */
+  setGravity(x: number, y: number, z: number): void;
+}
+
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 物理 / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
   readonly scene: SceneApi;
   readonly animation: AnimationApi;
   readonly audio: AudioApi;
+  readonly physics: PhysicsApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */
   log(...args: unknown[]): void;
   warn(...args: unknown[]): void;

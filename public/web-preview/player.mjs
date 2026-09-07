@@ -18,6 +18,7 @@ import { loadMaterialParams } from "./libs/material.mjs";
 import { loadModels } from "./libs/model.mjs";
 import { createAnimations } from "./libs/animation.mjs";
 import { createAudios } from "./libs/audio.mjs";
+import { createPhysics } from "./libs/physics.mjs";
 import { buildSceneTree } from "./libs/nodes.mjs";
 import { createScripts } from "./libs/scripts.mjs";
 import { applyMeshTextures } from "./libs/textures.mjs";
@@ -304,6 +305,17 @@ async function main() {
   // autoplay 绑定在用户首次交互解锁 AudioContext 后自动起播）
   const audiosApi = createAudios(audios, cam);
 
+  // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
+  // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。
+  // physicsEnabled 为 true 时自动开始模拟，后端 rapier|jolt|ammo 惰性加载。
+  const physicsApi = await createPhysics({
+    nodes,
+    settings: (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics),
+  }).catch((e) => {
+    postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);
+    return null;
+  });
+
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
   let scripts = { update() {} };
   try {
@@ -312,6 +324,7 @@ async function main() {
       cfg,
       animations,
       audios: audiosApi,
+      physics: physicsApi,
       canvas: renderer.domElement,
     });
   } catch (e) {
@@ -325,6 +338,7 @@ async function main() {
     const dt = clock.getDelta();
     scripts.update(dt);
     animations.update(dt);
+    physicsApi?.update(dt);
     audiosApi.update();
     applyClearFlags();
     renderer.render(scene, cam);

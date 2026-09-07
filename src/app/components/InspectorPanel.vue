@@ -10,7 +10,19 @@ import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../framework/camera";
 import { nextId } from "../../platform_abstraction/id";
-import type { NodeComponentRef } from "../../framework/prototype/Node";
+import {
+  isColliderComponent,
+  isRigidBodyComponent,
+  isScriptComponent,
+  type ColliderComponentRef,
+  type NodeComponentRef,
+} from "../../framework/prototype/Node";
+import {
+  DEFAULT_COLLIDER_SETTINGS,
+  DEFAULT_RIGID_BODY_SETTINGS,
+  type ColliderSettings,
+  type RigidBodySettings,
+} from "../../framework/physics";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
@@ -35,6 +47,7 @@ import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
 import AssetInspector from "./inspector/AssetInspector.vue";
 import ComponentsSection from "./inspector/ComponentsSection.vue";
+import PhysicsSection from "./inspector/PhysicsSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
 const store = getEditorStore();
@@ -559,13 +572,143 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
   if (!n) return;
   commit((target) => {
     target.components = target.components.map((c) => {
-      if (c.id !== compId) return c;
+      if (c.id !== compId || !isScriptComponent(c)) return c;
       const props = { ...c.props };
       // 属性值由检查器按脚本声明类型收敛（number/string/boolean/color/vec3）
       props[key] = value as JsonValue;
       return { ...c, props };
     });
   }, "设置组件属性");
+}
+
+// ---------------------------------------------------------------------------
+// 物理组件（Physics 卡片）：刚体/碰撞体增删改走 commit → patchNode（可撤销）
+// ---------------------------------------------------------------------------
+
+function onAddRigidBodyComponent(): void {
+  const n = node.value;
+  if (!n || n.components.some(isRigidBodyComponent)) return;
+  commit((target) => {
+    const comp: NodeComponentRef = {
+      id: nextId("comp"),
+      type: "rigidBody",
+      enabled: true,
+      rigidBody: { ...DEFAULT_RIGID_BODY_SETTINGS },
+    };
+    target.components = [...target.components, comp];
+  }, "添加刚体组件");
+}
+
+function onAddColliderComponent(): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    const comp: NodeComponentRef = {
+      id: nextId("comp"),
+      type: "collider",
+      enabled: true,
+      collider: {
+        ...DEFAULT_COLLIDER_SETTINGS,
+        size: { ...DEFAULT_COLLIDER_SETTINGS.size },
+        offset: { ...DEFAULT_COLLIDER_SETTINGS.offset },
+      },
+    };
+    target.components = [...target.components, comp];
+  }, "添加碰撞体组件");
+}
+
+function onRemovePhysicsComponent(compId: string): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    target.components = target.components.filter((c) => c.id !== compId);
+  }, "移除物理组件");
+}
+
+function onTogglePhysicsComponent(compId: string, enabled: boolean): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    target.components = target.components.map((c) =>
+      c.id === compId ? { ...c, enabled } : c,
+    );
+  }, enabled ? "启用物理组件" : "停用物理组件");
+}
+
+function onRigidBodyUpdate(label: string, value: unknown): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    const comp = target.components.find(isRigidBodyComponent);
+    if (!comp) return;
+    const rb: RigidBodySettings = comp.rigidBody;
+    switch (label) {
+      case "Set RigidBody Mode":
+        if (value === "static" || value === "kinematic" || value === "dynamic") rb.mode = value;
+        break;
+      case "Set RigidBody Mass":
+        rb.mass = Math.max(0.001, typeof value === "number" ? value : 1);
+        break;
+      case "Set RigidBody LinearDamping":
+        rb.linearDamping = Math.max(0, typeof value === "number" ? value : 0);
+        break;
+      case "Set RigidBody AngularDamping":
+        rb.angularDamping = Math.max(0, typeof value === "number" ? value : 0);
+        break;
+      case "Set RigidBody GravityScale":
+        rb.gravityScale = Math.max(0, typeof value === "number" ? value : 1);
+        break;
+      case "Set RigidBody CCD":
+        rb.ccd = value === true;
+        break;
+    }
+  }, label);
+}
+
+function onColliderUpdate(compId: string, label: string, value: unknown): void {
+  const n = node.value;
+  if (!n) return;
+  commit((target) => {
+    const comp = target.components.find(
+      (c): c is ColliderComponentRef => c.id === compId && isColliderComponent(c),
+    );
+    if (!comp) return;
+    const col: ColliderSettings = comp.collider;
+    const axis = (a: "x" | "y" | "z"): void => {
+      col.size[a] = Math.max(0.1, typeof value === "number" ? value : 1);
+    };
+    const offsetAxis = (a: "x" | "y" | "z"): void => {
+      col.offset[a] = typeof value === "number" ? value : 0;
+    };
+    switch (label) {
+      case "Set Collider Shape":
+        if (
+          value === "box" || value === "sphere" || value === "capsule" ||
+          value === "cylinder" || value === "convex"
+        ) {
+          col.shape = value;
+        }
+        break;
+      case "Set Collider AutoSize":
+        col.autoSize = value === true;
+        break;
+      case "Set Collider Size X": axis("x"); break;
+      case "Set Collider Size Y": axis("y"); break;
+      case "Set Collider Size Z": axis("z"); break;
+      case "Set Collider Offset X": offsetAxis("x"); break;
+      case "Set Collider Offset Y": offsetAxis("y"); break;
+      case "Set Collider Offset Z": offsetAxis("z"); break;
+      case "Set Collider Friction":
+        col.friction = Math.max(0, Math.min(4, typeof value === "number" ? value : 0.6));
+        break;
+      case "Set Collider Restitution":
+        col.restitution = Math.max(0, Math.min(1, typeof value === "number" ? value : 0.1));
+        break;
+      case "Set Collider Sensor":
+        col.isSensor = value === true;
+        break;
+    }
+  }, label);
 }
 </script>
 
@@ -672,6 +815,20 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
 
       <ComponentCard v-if="node instanceof AudioNode" title="Audio" :open="true">
         <AudioSection :node="node" :rev="revision" @update="onAudioUpdate" />
+      </ComponentCard>
+
+      <!-- 物理卡片：任意节点可挂刚体/碰撞体组件（增删改可撤销） -->
+      <ComponentCard title="Physics" :open="true">
+        <PhysicsSection
+          :node="node"
+          :rev="revision"
+          @addRigidBody="onAddRigidBodyComponent"
+          @addCollider="onAddColliderComponent"
+          @removeComponent="onRemovePhysicsComponent"
+          @toggleComponent="onTogglePhysicsComponent"
+          @updateRigidBody="onRigidBodyUpdate"
+          @updateCollider="onColliderUpdate"
+        />
       </ComponentCard>
 
       <ComponentCard title="Components" :open="true">

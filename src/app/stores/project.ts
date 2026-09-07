@@ -1,5 +1,10 @@
 import { reactive } from "vue";
 import { api, type RecentProject } from "../../lib/api";
+import {
+  DEFAULT_PHYSICS_BACKEND,
+  isPhysicsBackendId,
+  type PhysicsBackendId,
+} from "../../framework/physics";
 
 /** 项目默认主场景（打开项目时加载；之后可双击任意 .scene 资产切换） */
 export const DEFAULT_SCENE_REL = "assets/Main.scene";
@@ -29,10 +34,19 @@ export interface ProjectStore {
   antiAliasing: number;
   /** 渲染合成：hdr = HDR（ACES 色调映射）/ ldr = LDR（常规输出） */
   hdrMode: "hdr" | "ldr";
+  /** 物理引擎后端（项目级；ammo | jolt | rapier） */
+  physicsBackend: PhysicsBackendId;
+  /** 是否启用物理模拟（项目级；预览/发布产物据此自动模拟） */
+  physicsEnabled: boolean;
+  /** 重力向量（项目级） */
+  physicsGravity: { x: number; y: number; z: number };
   /** 项目设计分辨率（project.config.json designResolution；相机辅助视锥取景用） */
   designWidth: number;
   designHeight: number;
   setRendererBackend: (v: RendererBackend) => void;
+  setPhysicsBackend: (v: PhysicsBackendId) => void;
+  setPhysicsEnabled: (v: boolean) => void;
+  setPhysicsGravity: (v: { x: number; y: number; z: number }) => void;
   setAntiAliasing: (v: number) => void;
   setHDRMode: (v: "hdr" | "ldr") => void;
   setDesignSize: (width: number, height: number) => void;
@@ -89,6 +103,9 @@ export function getProjectStore(): ProjectStore {
     rendererBackend: "webgl" as RendererBackend,
     antiAliasing: 2,
     hdrMode: "ldr" as "hdr" | "ldr",
+    physicsBackend: DEFAULT_PHYSICS_BACKEND as PhysicsBackendId,
+    physicsEnabled: false,
+    physicsGravity: { x: 0, y: -9.81, z: 0 },
     designWidth: 1280,
     designHeight: 720,
   });
@@ -104,6 +121,16 @@ export function getProjectStore(): ProjectStore {
       state.antiAliasing =
         typeof aa === "number" ? Math.max(0, Math.min(8, Math.round(aa))) : 2;
       state.hdrMode = cfg.hdrMode === "hdr" ? "hdr" : "ldr";
+      const pb = (cfg.physics ?? {}) as { backend?: unknown; physicsEnabled?: unknown; gravity?: Record<string, unknown> };
+      state.physicsBackend = isPhysicsBackendId(pb.backend) ? pb.backend : DEFAULT_PHYSICS_BACKEND;
+      state.physicsEnabled = pb.physicsEnabled === true;
+      const pg = (pb.gravity ?? {}) as { x?: unknown; y?: unknown; z?: unknown };
+      const pn = (v: unknown, fb: number) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
+      state.physicsGravity = {
+        x: pn(pg.x, 0),
+        y: pn(pg.y, -9.81),
+        z: pn(pg.z, 0),
+      };
       const dr = (cfg.designResolution ?? {}) as { width?: unknown; height?: unknown };
       const dw = typeof dr.width === "number" ? Math.round(dr.width) : 0;
       const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
@@ -113,6 +140,9 @@ export function getProjectStore(): ProjectStore {
       state.rendererBackend = "webgl";
       state.antiAliasing = 2;
       state.hdrMode = "ldr";
+      state.physicsBackend = DEFAULT_PHYSICS_BACKEND;
+      state.physicsEnabled = false;
+      state.physicsGravity = { x: 0, y: -9.81, z: 0 };
       state.designWidth = 1280;
       state.designHeight = 720;
     }
@@ -210,6 +240,15 @@ export function getProjectStore(): ProjectStore {
     get hdrMode() {
       return state.hdrMode;
     },
+    get physicsBackend() {
+      return state.physicsBackend;
+    },
+    get physicsEnabled() {
+      return state.physicsEnabled;
+    },
+    get physicsGravity() {
+      return state.physicsGravity;
+    },
     get designWidth() {
       return state.designWidth;
     },
@@ -224,6 +263,15 @@ export function getProjectStore(): ProjectStore {
     },
     setHDRMode(v) {
       state.hdrMode = v;
+    },
+    setPhysicsBackend(v) {
+      state.physicsBackend = v;
+    },
+    setPhysicsEnabled(v) {
+      state.physicsEnabled = v;
+    },
+    setPhysicsGravity(v) {
+      state.physicsGravity = { ...v };
     },
     setDesignSize(width, height) {
       state.designWidth = Math.max(1, Math.min(16384, Math.round(width)));
