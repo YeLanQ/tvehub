@@ -3,6 +3,7 @@ import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
 import { loadAssetTemplate } from "../lib/asset-templates";
+import { sanitizeAssetStem } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { remapAssetPath } from "../lib/asset-paths";
 import { syncMainSceneAfterMove } from "../lib/project-settings";
@@ -24,7 +25,13 @@ export interface AssetsStore {
   moveTo: (root: string, rel: string, destDir: string) => Promise<string | null>;
   importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
   createSceneAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
-  createMaterialAsset: (root: string, destDir: string, typeKey: string) => Promise<string | null>;
+  createMaterialAsset: (
+    root: string,
+    destDir: string,
+    typeKey: string,
+    /** 显式指定材质名（devtools/外部调用按名创建）；缺省用类型显示名（资产面板「新建材质」） */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
   createScriptAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
@@ -215,8 +222,10 @@ export function getAssetsStore(): AssetsStore {
         logStore.log("warn", "内置目录与 src 目录不允许新建场景");
         return null;
       }
+      // 基名（调用方可能已带 .scene，避免 .scene.scene）
+      const base = clean.toLowerCase().endsWith(".scene") ? clean.slice(0, -".scene".length) : clean;
       const ext = ".scene";
-      let name = clean;
+      let name = base;
       let n = 2;
       const prefix = destDir ? `${destDir}/` : "";
       while (
@@ -224,7 +233,7 @@ export function getAssetsStore(): AssetsStore {
           (a) => a.path.toLowerCase() === `${prefix}${name}${ext}`.toLowerCase(),
         )
       ) {
-        name = `${clean} ${n++}`;
+        name = `${base} ${n++}`;
       }
       const rel = `${prefix}${name}${ext}`;
       try {
@@ -246,22 +255,24 @@ export function getAssetsStore(): AssetsStore {
         return null;
       }
     },
-    async createMaterialAsset(root, destDir, typeKey) {
+    async createMaterialAsset(root, destDir, typeKey, preferStem = null) {
       const def = materialTypeRegistry.getOrDefault(typeKey);
       if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
         logStore.log("warn", "内置目录与 src 目录不允许新建材质");
         return null;
       }
-      // 显示名 = 类型名（"PBR"…），目录内去重
+      // 显示名 = 显式名或类型名（"PBR"…），目录内去重
       const prefix = destDir ? `${destDir}/` : "";
-      let name = def.label;
+      const baseName =
+        preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : def.label;
+      let name = baseName;
       let n = 2;
       while (
         state.assets.some(
           (a) => a.path.toLowerCase() === `${prefix}${name}${MATERIAL_EXT}`.toLowerCase(),
         )
       ) {
-        name = `${def.label} ${n++}`;
+        name = `${baseName} ${n++}`;
       }
       const rel = `${prefix}${name}${MATERIAL_EXT}`;
       try {
@@ -286,15 +297,17 @@ export function getAssetsStore(): AssetsStore {
         logStore.log("warn", "脚本只能创建在 src 目录内");
         return null;
       }
+      // 基名（调用方可能已带 .ts，避免 .ts.ts）
+      const base = clean.toLowerCase().endsWith(".ts") ? clean.slice(0, -".ts".length) : clean;
       const ext = ".ts";
-      let name = clean;
+      let name = base;
       let n = 2;
       while (
         state.assets.some(
           (a) => a.path.toLowerCase() === `${destDir}/${name}${ext}`.toLowerCase(),
         )
       ) {
-        name = `${clean} ${n++}`;
+        name = `${base} ${n++}`;
       }
       const rel = `${destDir}/${name}${ext}`;
       try {

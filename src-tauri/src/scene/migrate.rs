@@ -20,7 +20,7 @@ const LEGACY_KEYS: [&str; 5] = ["color", "metalness", "roughness", "emissive", "
 /// 材质参数（PBR 超集；缺失字段回退默认——与 DEFAULT_MATERIAL_PARAMS 一致）。
 /// serde 为前端 IPC 形态（camelCase、颜色为数字、贴图为字符串）。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct MaterialParams {
     pub color: i64,
     pub metalness: f64,
@@ -46,6 +46,9 @@ pub struct MaterialParams {
     pub anisotropy: f64,
     pub anisotropy_rotation: f64,
     pub iridescence: f64,
+    /// three.js 属性名即资产/IPC 键：serde 的 camelCase 会把 ior 规整成 Ior，
+    /// 这里显式钉住前端与 .mat 文件的写法（iridescenceIOR），否则 material_write 参数缺失。
+    #[serde(rename = "iridescenceIOR")]
     pub iridescence_ior: f64,
     pub opacity: f64,
     pub alpha_clip_threshold: f64,
@@ -479,6 +482,22 @@ mod tests {
         assert_eq!(p.metalness, 1.0);
         assert_eq!(p.roughness, 0.0);
         assert_eq!(p.ior, 1.5); // 缺失回退默认
+    }
+
+    /// IPC（material_write 参数）与 .mat 文件共用 three.js 键 iridescenceIOR；
+    /// serde camelCase 默认会把 ior 规整成 Ior，须由字段级 rename 钉住。
+    #[test]
+    fn ipc_roundtrip_keeps_iridescence_ior_key() {
+        let v = serde_json::to_value(MaterialParams::default()).unwrap();
+        assert!(
+            v.get("iridescenceIOR").is_some(),
+            "IPC 材质参数必须带 three.js 键 iridescenceIOR（实际: {v}）"
+        );
+        assert!(v.get("iridescenceIor").is_none());
+        let back: MaterialParams =
+            serde_json::from_value(serde_json::json!({ "iridescenceIOR": 1.3 })).unwrap();
+        assert_eq!(back.iridescence_ior, 1.3);
+        assert_eq!(back.color, MaterialParams::default().color); // 其余字段走 default
     }
 
     #[test]

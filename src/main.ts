@@ -35,6 +35,11 @@ if (!isTauri()) {
       void handleProjectOpenedFromHome(e.payload.root, e.payload.name, e.payload.rel);
     },
   );
+  // 首页「启用服务」在首页窗口启停服务器；本窗口（main）是唯一命令执行端，
+  // 收到 devtools:enabled 后（重新）确认命令监听器就绪（幂等），首页本身不挂监听器。
+  void listen("devtools:enabled", () => {
+    void restoreDevToolsStatus();
+  });
   // 开发者服务：控制服务器若已启用（首页开启），恢复命令监听与日志推送。
   // 仅编辑器窗口安装监听器（事件广播到所有窗口，首页监听会重复执行命令）。
   void restoreDevToolsStatus();

@@ -11,8 +11,9 @@
 // 所有窗口，首页窗口若也监听会导致同一命令被执行两次。首页只做启停与状态展示。
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { watch } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logStore } from "../../stores/log";
 import { debugLog } from "../../../lib/debug-log";
 import { type DevToolsInfo, devtools, isToolAllowed, methodToolId, DEVTOOLS_DEFAULT_PORT } from "./state";
@@ -31,7 +32,19 @@ export {
 let unlistenCmd: UnlistenFn | null = null;
 let logWatchStarted = false;
 
-/** 启动开发者服务控制服务器（幂等；已运行则复用连接信息） */
+/** 命令执行器只允许挂在编辑器窗口（main）：事件广播到所有窗口，若首页也监听，
+ *  同一命令会在两个窗口各执行一次（首页还缺场景/引擎状态）。首页只启停/展示。 */
+function isEditorWindow(): boolean {
+  try {
+    return getCurrentWindow().label === "main";
+  } catch {
+    // 浏览器/单窗口兜底：视为编辑器执行端
+    return true;
+  }
+}
+
+/** 启动开发者服务控制服务器（幂等；已运行则复用连接信息）。
+ *  编辑器窗口启用时挂命令监听器；首页启用仅启停服务器并通知编辑器补挂执行器。 */
 export async function startDevTools(): Promise<DevToolsInfo> {
   try {
     const info = await invoke<DevToolsInfo>("devtools_start", {
@@ -41,9 +54,14 @@ export async function startDevTools(): Promise<DevToolsInfo> {
     devtools.enabled = true;
     devtools.info = info;
     devtools.error = null;
-    await installCmdListener();
-    startLogPush();
-    debugLog("devtools", `开发者服务已启用：${info.url}（协议 ${info.protocol}）`);
+    if (isEditorWindow()) {
+      await installCmdListener();
+      startLogPush();
+      debugLog("devtools", `开发者服务已启用：${info.url}（协议 ${info.protocol}）`);
+    } else {
+      // 编辑器窗口是常驻执行端：通知它（重新）确认监听器就绪（幂等）
+      void emit("devtools:enabled", { port: info.port });
+    }
     return info;
   } catch (e: any) {
     devtools.error = String(e?.message ?? e);

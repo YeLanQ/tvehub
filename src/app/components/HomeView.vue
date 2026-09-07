@@ -4,6 +4,7 @@ import { version as vueVersion } from "vue";
 import { REVISION as threeRevision } from "three";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import "../../styles/components/home-view.scss";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
@@ -160,7 +161,14 @@ async function handleProjectCreated(project: RecentProject) {
 }
 
 async function removeProject(path: string) {
+  // 最近记录现在由后端持久化：仅本地移除会在下次 refresh 时复活，需同步后端
+  try {
+    await invoke("remove_recent_project", { path });
+  } catch (e) {
+    console.error("移除最近记录失败:", e);
+  }
   await projectStore.removeRecent(path);
+  await projectStore.refreshRecent();
   menuPath.value = null;
 }
 
@@ -175,12 +183,19 @@ async function trashProject(path: string, name: string) {
   menuPath.value = null;
   try {
     await invoke("trash_path", { path });
-    await projectStore.removeRecent(path);
-    await projectStore.refreshRecent();
   } catch (e) {
     console.error("移入回收站失败:", e);
     alert("移入回收站失败");
+    return;
   }
+  // 移入回收站后同步清除后端最近记录（尽力而为；避免旧路径残留、系统回收站恢复后复活）
+  try {
+    await invoke("remove_recent_project", { path });
+  } catch (e) {
+    console.error("清除最近记录失败:", e);
+  }
+  await projectStore.removeRecent(path);
+  await projectStore.refreshRecent();
 }
 
 async function renameProject(path: string, name: string) {
@@ -682,6 +697,9 @@ watch(showNewProject, (val) => {
     <Transition name="fade">
       <div v-if="showCopyToast" class="copy-toast">已复制到剪贴板</div>
     </Transition>
+
+    <!-- 全局确认弹窗（首页窗口独立挂载：垃圾篓/移除等 confirm 依赖它） -->
+    <ConfirmDialog />
 
     <NewProjectDialog
       v-if="showNewProject"

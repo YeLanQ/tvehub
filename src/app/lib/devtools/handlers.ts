@@ -280,6 +280,11 @@ function uniqueName(taken: Set<string>, dir: string, stem: string, ext: string):
   return `${name}${ext}`;
 }
 
+/** 去尾部扩展名（scene/script 等创建走 store，store 会补后缀；调用方带后缀会导致双后缀） */
+function stripAssetExt(name: string, ext: string): string {
+  return name.toLowerCase().endsWith(ext) ? name.slice(0, -ext.length) : name;
+}
+
 /** asset.create：scene/script/material/folder（与资产面板同一条创建链路，自动补 .meta） */
 async function createAsset(params: any): Promise<unknown> {
   const root = requireRoot();
@@ -292,23 +297,30 @@ async function createAsset(params: any): Promise<unknown> {
   switch (type) {
     case "scene": {
       const name = uniqueName(taken, dir, stem ?? "NewScene", ".scene");
-      const rel = await store.createSceneAsset(root, dir, name);
+      // store.createSceneAsset 只接收基名（内部再补 .scene/去重）
+      const rel = await store.createSceneAsset(root, dir, stripAssetExt(name, ".scene"));
       if (!rel) throw new Error(`创建场景失败: ${dir}/${name}`);
       return { created: rel, type };
     }
     case "script": {
       const dest = dir && (dir === "src" || dir.startsWith("src/")) ? dir : "src";
       const name = uniqueName(taken, dest, stem ?? "MyScript", ".ts");
-      const rel = await store.createScriptAsset(root, dest, name);
+      const rel = await store.createScriptAsset(root, dest, stripAssetExt(name, ".ts"));
       if (!rel) throw new Error(`创建脚本失败: ${dest}/${name}`);
       return { created: rel, type };
     }
     case "material": {
-      const name = uniqueName(taken, dir, stem ?? "Material", ".mat");
-      const rel = await store.createMaterialAsset(root, dir, String(params?.materialType ?? ""));
-      if (!rel) throw new Error(`创建材质失败: ${dir}/${name}`);
-      void name;
-      return { created: rel, type };
+      const materialType = String(params?.materialType ?? "");
+      // 基名由调用方 name 指定；缺省用类型显示名（store 内部处理）
+      const name = stem ?? "";
+      const rel = await store.createMaterialAsset(
+        root,
+        dir,
+        materialType,
+        stripAssetExt(name, ".mat") || null,
+      );
+      if (!rel) throw new Error(`创建材质失败: ${dir || "项目根"}`);
+      return { created: rel, type, materialType };
     }
     case "folder": {
       const base = dir ? `${dir}/` : "";
@@ -322,26 +334,42 @@ async function createAsset(params: any): Promise<unknown> {
   }
 }
 
-/** 删除资源（文件/目录，移入回收站由后端 delete_asset 决定） */
+/** 删除资源（文件/目录，移入回收站由后端 delete_asset 决定）。
+ *  脚本与资产面板一致走 scripts store：同步移除场景内组件引用与编辑器标签页。 */
 async function removeAsset(params: any): Promise<unknown> {
   const root = requireRoot();
-  const rel = params?.path;
+  const rel = String(params?.path ?? "");
   if (!rel) throw new Error("缺少 path（项目相对路径）");
-  const ok = await getAssetsStore().remove(root, String(rel));
+  const isScript = (rel === "src" || rel.startsWith("src/")) && rel.endsWith(".ts");
+  const ok = isScript
+    ? await getScriptsStore().deleteScript(rel)
+    : await getAssetsStore().remove(root, rel);
   if (!ok) throw new Error(`删除失败: ${rel}`);
   return { deleted: rel };
 }
 
-/** 重命名资源（文件/目录；场景引用随动） */
+/** 重命名资源（文件/目录；场景引用随动）。
+ *  与资产面板一致：文件新名未带后缀时自动补原扩展名（目录/隐藏文件不补）；
+ *  脚本走 scripts store 同步改写场景内组件引用。 */
 async function renameAssetEntry(params: any): Promise<unknown> {
   const root = requireRoot();
   const rel = params?.path;
   const newName = params?.newName;
   if (!rel) throw new Error("缺少 path（项目相对路径）");
   if (!newName) throw new Error("缺少 newName（新名称）");
-  const renamed = await getAssetsStore().rename(root, String(rel), String(newName));
-  if (!renamed) throw new Error(`重命名失败: ${rel}`);
-  return { renamed: rel, newName: renamed };
+  let finalName = String(newName).trim();
+  const slash = String(rel).lastIndexOf("/");
+  const dot = String(rel).lastIndexOf(".");
+  if (dot > slash && dot > 0 && !finalName.includes(".")) {
+    finalName = finalName + String(rel).slice(dot);
+  }
+  const relStr = String(rel);
+  const isScript = (relStr === "src" || relStr.startsWith("src/")) && relStr.endsWith(".ts");
+  const renamed = isScript
+    ? await getScriptsStore().renameScript(relStr, finalName)
+    : await getAssetsStore().rename(root, relStr, finalName);
+  if (!renamed) throw new Error(`重命名失败: ${relStr}`);
+  return { renamed: relStr, newName: renamed };
 }
 
 // ===================== 方法分派 =====================

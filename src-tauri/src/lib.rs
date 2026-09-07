@@ -133,6 +133,16 @@ fn save_recent(app: &tauri::AppHandle, list: &[String]) {
     }
 }
 
+/// 按规范化路径从最近列表移除（同一路径的多种写法一并移除）
+fn remove_recent_path(app: &tauri::AppHandle, path: &str) {
+    let key = recent_path_key(path);
+    let list: Vec<String> = load_recent(app)
+        .into_iter()
+        .filter(|p| recent_path_key(p) != key)
+        .collect();
+    save_recent(app, &list);
+}
+
 fn push_recent(app: &tauri::AppHandle, path: &str) {
     let mut list = load_recent(app);
     let norm = normalize_recent_path(path);
@@ -190,12 +200,7 @@ async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject
 /// 移除最近项目（按规范化路径匹配，同一路径的多种写法一并移除）
 #[tauri::command]
 async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let key = recent_path_key(&path);
-    let list: Vec<String> = load_recent(&app)
-        .into_iter()
-        .filter(|p| recent_path_key(p) != key)
-        .collect();
-    save_recent(&app, &list);
+    remove_recent_path(&app, &path);
     Ok(())
 }
 
@@ -246,9 +251,17 @@ async fn pick_import_folders(title: Option<String>) -> Result<Vec<String>, Strin
 
 /// 重命名项目
 #[tauri::command]
-async fn rename_project(path: String, new_name: String) -> Result<ProjectInfo, String> {
+async fn rename_project(
+    app: tauri::AppHandle,
+    path: String,
+    new_name: String,
+) -> Result<ProjectInfo, String> {
     let project_path = PathBuf::from(&path);
-    project::rename_project_dir(&project_path, &new_name)
+    let info = project::rename_project_dir(&project_path, &new_name)?;
+    // 最近项目记录跟随新目录名：旧路径已失效，若不更新下次列表会漏掉改名后的项目
+    remove_recent_path(&app, &path);
+    push_recent(&app, &info.path);
+    Ok(info)
 }
 
 /// 把路径移入回收站
