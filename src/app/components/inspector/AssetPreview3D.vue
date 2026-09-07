@@ -13,12 +13,12 @@ import * as THREE from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { materialTypeRegistry, type MaterialParams } from "../../../framework/material";
 import {
-  buildBandSkyTexture,
   fetchTexCubeDoc,
   loadTexCubeTexture,
-  type SkyColorSet,
 } from "../../../framework/engine/modules/skyboxTextures";
+import { buildNishitaSkyEquirect, type NishitaSkyParams } from "../../../framework/engine/modules/nishitaSky";
 import { getEditorStore } from "../../stores/editor";
+import { getProjectStore } from "../../stores/project";
 import { assetUrl } from "../../../lib/asset-url";
 
 const props = defineProps<{
@@ -27,8 +27,8 @@ const props = defineProps<{
   /** material：实时参数（编辑时随 reactive 更新） */
   params?: MaterialParams | null;
   matType?: string;
-  /** sky：三段色带颜色 */
-  skyColors?: SkyColorSet | null;
+  /** sky：Nishita 大气散射参数（程序化材质） */
+  nishita?: NishitaSkyParams | null;
   /** 天空背景属性（旋转/强度/模糊；随 sky 材质编辑实时应用） */
   bgRotation?: number;
   bgIntensity?: number;
@@ -61,6 +61,11 @@ function ensureRenderer(): void {
   camera = new THREE.PerspectiveCamera(38, 1, 0.05, 100);
   camera.position.set(0, 0, 3);
   camera.lookAt(0, 0, 0);
+  // 与编辑器视口同一色调映射规则（随项目 HDR 模式），保证线性 HDR 天空呈现一致
+  renderer.toneMapping =
+    getProjectStore().hdrMode === "hdr"
+      ? THREE.ACESFilmicToneMapping
+      : THREE.NoToneMapping;
   // 简单布光：半球环境 + 主平行光，材质球/模型有基础立体感
   const hemi = new THREE.HemisphereLight(0xffffff, 0x606068, 1.1);
   const key = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -160,12 +165,23 @@ async function buildModelPreview(): Promise<void> {
   startSpin();
 }
 
-// —— sky：三段色带背景 ——
+// —— sky：程序化背景（Nishita 大气散射） ——
 function buildSkyPreview(): void {
   if (props.kind !== "sky" || !scene) return;
   clearScene();
-  if (props.skyColors) scene.background = buildBandSkyTexture(props.skyColors);
+  if (props.nishita && renderer) {
+    // 预览自身的渲染器：RT 纹理必须生成本上下文内才能显示
+    scene.background = buildNishitaSkyEquirect(renderer, props.nishita);
+  }
   applyBgProps();
+  // 地平线取景（微仰视）：同框呈现 天顶蓝/地平线辉光/地平线下暗部，
+  // 与编辑器视口看到的天空构图一致
+  if (camera) {
+    camera.fov = 55;
+    camera.updateProjectionMatrix();
+    camera.position.set(0, 0, 3);
+    camera.lookAt(0, 0.28, 0);
+  }
   render();
 }
 
@@ -204,6 +220,11 @@ async function buildPanoramaPreview(): Promise<void> {
 function rebuild(): void {
   stopSpin();
   ensureRenderer();
+  // sky 模式会改 FOV（55 地平线取景）：重建时先复位，避免残留到其他模式
+  if (camera) {
+    camera.fov = 38;
+    camera.updateProjectionMatrix();
+  }
   if (props.kind === "material") buildMaterialPreview();
   else if (props.kind === "model") void buildModelPreview();
   else if (props.kind === "sky") buildSkyPreview();
@@ -234,9 +255,9 @@ onBeforeUnmount(() => {
 });
 
 watch(() => [props.kind, props.rel], () => rebuild());
-// 材质参数/天空颜色实时更新（reactive 镜像被就地修改，深监听捕获）
+// 材质参数/天空参数实时更新（reactive 镜像被就地修改，深监听捕获）
 watch(
-  () => [props.params, props.skyColors],
+  () => [props.params, props.nishita],
   () => {
     if (props.kind === "material") buildMaterialPreview();
     else if (props.kind === "sky") buildSkyPreview();

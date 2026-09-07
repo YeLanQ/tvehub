@@ -257,6 +257,13 @@ export class RendererManager {
     return this.renderer.domElement;
   }
 
+  /** 原始 WebGL 渲染器（仅 webgl 后端；离屏渲染等特殊用途；其他后端返回 null） */
+  get glRenderer(): THREE.WebGLRenderer | null {
+    return this.activeBackend === "webgl"
+      ? (this.renderer as unknown as THREE.WebGLRenderer)
+      : null;
+  }
+
   get orbitControls(): OrbitControls {
     return this.orbit;
   }

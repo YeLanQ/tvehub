@@ -14,10 +14,6 @@ export type SkyMatKind = "cube" | "procedural";
 
 export interface SkyMatDoc {
   kind: SkyMatKind;
-  // —— procedural：三段配色 ——
-  topColor: number;
-  horizonColor: number;
-  groundColor: number;
   // —— cube：TextureCube + 渲染参数 ——
   /** TextureCube（.texcube）资产引用 */
   cubeMap: string;
@@ -29,26 +25,31 @@ export interface SkyMatDoc {
   worldOpacity: number;
   /** 模糊（0~1） */
   blur: number;
+  // —— procedural：Blender 天空纹理风格参数 ——
+  sunDisc: boolean;
+  sunSize: number;
+  sunStrength: number;
+  sunElevation: number;
+  sunRotation: number;
+  altitude: number;
+  air: number;
+  dust: number;
+  ozone: number;
+  ms: boolean;
   /** 完整原始 JSON（写回时以它为底，保留未知字段） */
   raw: Record<string, unknown>;
 }
 
-function hex6(c: number): string {
-  return "#" + (c & 0xffffff).toString(16).padStart(6, "0");
-}
-
-function parseHex(v: unknown, fallback: number): number {
-  if (typeof v !== "string") return fallback;
-  const n = parseInt(v.replace("#", ""), 16);
-  return Number.isNaN(n) ? fallback : n & 0xffffff;
+function parseStr(v: unknown, fallback: string): string {
+  return typeof v === "string" ? v : fallback;
 }
 
 function parseNum(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
-function parseStr(v: unknown, fallback: string): string {
-  return typeof v === "string" ? v : fallback;
+function parseBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
 }
 
 /** 解析天空材质文本；非天空材质（普通 material/非 JSON）返回 null */
@@ -65,14 +66,21 @@ export function parseSkyMatDoc(text: string): SkyMatDoc | null {
       kind === "procedural" || shader === "SkyProcedural" ? "procedural" : "cube";
     return {
       kind: docKind,
-      topColor: parseHex(obj.topColor, 0x2f6fbb),
-      horizonColor: parseHex(obj.horizonColor, 0xcfe4f7),
-      groundColor: parseHex(obj.groundColor, 0x8fa2b5),
       cubeMap: parseStr(obj.cubeMap, "internal/skybox/DefaultSkybox.texcube"),
       rotation: parseNum(obj.rotation, 0),
       strength: parseNum(obj.strength, 1),
       worldOpacity: parseNum(obj.worldOpacity, 0),
       blur: parseNum(obj.blur, 0),
+      sunDisc: parseBool(obj.sunDisc, true),
+      sunSize: parseNum(obj.sunSize, 1),
+      sunStrength: parseNum(obj.sunStrength, 1),
+      sunElevation: parseNum(obj.sunElevation, 25),
+      sunRotation: parseNum(obj.sunRotation, 0),
+      altitude: parseNum(obj.altitude, 0),
+      air: parseNum(obj.air, 1),
+      dust: parseNum(obj.dust, 1),
+      ozone: parseNum(obj.ozone, 1),
+      ms: parseBool(obj.ms, true),
       raw: obj,
     };
   } catch {
@@ -98,13 +106,20 @@ export async function loadSkyMatDoc(root: string | null, rel: string): Promise<S
 export async function saveSkyMatDoc(root: string, rel: string, doc: SkyMatDoc): Promise<void> {
   doc.raw.kind = doc.kind;
   doc.raw.shader = doc.kind === "procedural" ? "SkyProcedural" : "SkyBox";
-  doc.raw.topColor = hex6(doc.topColor);
-  doc.raw.horizonColor = hex6(doc.horizonColor);
-  doc.raw.groundColor = hex6(doc.groundColor);
   doc.raw.cubeMap = doc.cubeMap;
   doc.raw.rotation = doc.rotation;
   doc.raw.strength = doc.strength;
   doc.raw.worldOpacity = doc.worldOpacity;
   doc.raw.blur = doc.blur;
+  doc.raw.sunDisc = doc.sunDisc;
+  doc.raw.sunSize = doc.sunSize;
+  doc.raw.sunStrength = doc.sunStrength;
+  doc.raw.sunElevation = doc.sunElevation;
+  doc.raw.sunRotation = doc.sunRotation;
+  doc.raw.altitude = doc.altitude;
+  doc.raw.air = doc.air;
+  doc.raw.dust = doc.dust;
+  doc.raw.ozone = doc.ozone;
+  doc.raw.ms = doc.ms;
   await api.writeText(root, rel, JSON.stringify(doc.raw, null, 2) + "\n");
 }

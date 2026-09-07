@@ -449,47 +449,6 @@ function onCameraClearColor(color: number): void {
   }, "Set Clear Color");
 }
 
-function onSkyboxUpdate(label: string, value: unknown): void {
-  const n = node.value;
-  if (!n || !(n instanceof SkyboxNode)) return;
-  commit((target) => {
-    const sky = target as SkyboxNode;
-    switch (label) {
-      case "Set Top Color":
-        sky.topColor = (value as number) & 0xffffff;
-        break;
-      case "Set Horizon Color":
-        sky.horizonColor = (value as number) & 0xffffff;
-        break;
-      case "Set Ground Color":
-        sky.groundColor = (value as number) & 0xffffff;
-        break;
-      case "Set Sun Disk": {
-        const d = value as string;
-        if (d === "high" || d === "simple" || d === "none") sky.sunDisk = d;
-        break;
-      }
-      case "Set Sun Color":
-        sky.sunColor = (value as number) & 0xffffff;
-        break;
-      case "Set Sun Size":
-        sky.sunSize = Math.max(0.2, Math.min(30, value as number));
-        break;
-      case "Set Sun Glow":
-        sky.sunGlow = Math.max(0, Math.min(1, value as number));
-        break;
-      case "Set Sun Azimuth": {
-        const az = (value as number) % 360;
-        sky.sunAzimuth = az < 0 ? az + 360 : az;
-        break;
-      }
-      case "Set Sun Elevation":
-        sky.sunElevation = Math.max(0, Math.min(360, value as number));
-        break;
-    }
-  }, label);
-}
-
 /** 切换天空盒材质引用（内置或项目资产；类型不变，仅切换引用的 .mat） */
 function onSetSkyMaterial(rel: string): void {
   const n = node.value;
@@ -666,7 +625,6 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
           :rev="revision"
           @setMaterial="onSetSkyMaterial"
           @copyToProject="onSkyMaterialCopyToProject"
-          @update="onSkyboxUpdate"
         />
       </ComponentCard>
 

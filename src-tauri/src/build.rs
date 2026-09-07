@@ -218,14 +218,17 @@ fn rewrite_texcube_text(text: &str, renames: &HashMap<String, String>) -> String
     v.to_string()
 }
 
-/// 重写 .mat JSON 里贴图字段引用；parse 成功则同时紧凑化（发布模式 JSON 压缩）
+/// 重写 .mat JSON 里贴图字段引用；parse 成功则同时紧凑化（发布模式 JSON 压缩）。
+/// cubeMap 为天空盒材质的 TextureCube 引用，一并重写。
 fn rewrite_mat_text(text: &str, renames: &HashMap<String, String>) -> String {
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
         return text.to_string();
     };
     if let serde_json::Value::Object(map) = &mut v {
         for (k, val) in map.iter_mut() {
-            if crate::preview::TEXTURE_FIELDS.contains(&k.as_str()) && val.is_string() {
+            if (crate::preview::TEXTURE_FIELDS.contains(&k.as_str()) || k == "cubeMap")
+                && val.is_string()
+            {
                 if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
                     *val = serde_json::Value::String(new.clone());
                 }

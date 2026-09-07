@@ -8,7 +8,9 @@ import { matColor, mixHexColor } from "./libs/utils.mjs";
 import {
   SKY_DEFAULTS,
   findSkyNode,
+  loadSkyMatParams,
   loadSkyTexCube,
+  makeNishitaSkyEquirect,
   makeSkyBandTexture,
   makeSkyEquirectTexture,
 } from "./libs/sky.mjs";
@@ -103,18 +105,29 @@ async function main() {
   const { cameras, meshes, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
-  // 立方体天空盒优先消费 TextureCube（.texcube）贴图，未绑定/加载失败（含 .hdr）
-  // 回退三段色带，与编辑器兜底表现一致
+  // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
+  // 节点 cubeMap 兜底），未绑定/加载失败（含 .hdr）回退三段色带
+  let activeSkyKind = null;
+  let skyMatParams = null;
   {
     const sky = findSkyNode(rootJson);
     if (sky) {
+      activeSkyKind = sky.skyKind;
+      if (sky.material) {
+        try {
+          skyMatParams = await loadSkyMatParams(sky.material);
+        } catch {
+          skyMatParams = null;
+        }
+      }
       const top = matColor(sky.topColor, SKY_DEFAULTS.top);
       const horizon = matColor(sky.horizonColor, SKY_DEFAULTS.horizon);
       const ground = matColor(sky.groundColor, SKY_DEFAULTS.ground);
       scene.background =
         sky.skyKind === "cube"
-          ? ((sky.cubeMap ? await loadSkyTexCube(sky.cubeMap) : null) ??
-            makeSkyBandTexture(top, horizon, ground))
+          ? ((skyMatParams?.cubeMap || sky.cubeMap
+              ? await loadSkyTexCube(skyMatParams?.cubeMap || sky.cubeMap)
+              : null) ?? makeSkyBandTexture(top, horizon, ground))
           : makeSkyEquirectTexture(top, horizon, ground, {
               disk: sky.sunDisk,
               color: sky.sunColor,
@@ -142,7 +155,7 @@ async function main() {
   // 时改由该全屏三角形渲染天空：逐像素由逆投影求光线方向后采样天空纹理
   // （等距柱状按 equirectUv、TextureCube 按光线方向 cube 采样，
   // 与编辑器 EditorEngine.updateOrthoSkyQuad 同一算法）
-  const skyTexture = scene.background?.isTexture === true ? scene.background : null;
+  let skyTexture = scene.background?.isTexture === true ? scene.background : null;
   let orthoSkyQuad = null;
   if (cam.isOrthographicCamera === true && skyTexture) {
     const isCube = skyTexture.isCubeTexture === true;
@@ -156,6 +169,10 @@ async function main() {
         tSky: { value: null },
         tSkyCube: { value: null },
         uIsCube: { value: isCube ? 1 : 0 },
+        uSkyRotation: {
+          value: ((skyMatParams?.rotation ?? 0) * Math.PI) / 180,
+        },
+        uSkyIntensity: { value: skyMatParams?.strength ?? 1 },
         projInverse: { value: new THREE.Matrix4() },
         camWorld: { value: new THREE.Matrix4() },
       },
@@ -170,6 +187,8 @@ async function main() {
         uniform sampler2D tSky;
         uniform samplerCube tSkyCube;
         uniform float uIsCube;
+        uniform float uSkyRotation;
+        uniform float uSkyIntensity;
         uniform mat4 projInverse;
         uniform mat4 camWorld;
         varying vec2 vNdc;
@@ -181,16 +200,23 @@ async function main() {
             ( camWorld * vec4( farP.xyz / farP.w, 1.0 ) ).xyz -
             ( camWorld * vec4( nearP.xyz / nearP.w, 1.0 ) ).xyz
           );
+          float cr = cos( uSkyRotation );
+          float sr = sin( uSkyRotation );
+          vec3 sdir = normalize( vec3( cr * dir.x - sr * dir.z, dir.y, sr * dir.x + cr * dir.z ) );
           vec3 col = uIsCube > 0.5
-            ? textureCube( tSkyCube, dir ).rgb
-            : texture2D( tSky, equirectUv( dir ) ).rgb;
-          gl_FragColor = vec4( col, 1.0 );
+            ? textureCube( tSkyCube, sdir ).rgb
+            : texture2D( tSky, equirectUv( sdir ) ).rgb;
+          gl_FragColor = vec4( col * uSkyIntensity, 1.0 );
+          #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }
       `,
       depthTest: false,
       depthWrite: false,
       fog: false,
+      // 与透视背景同一色调映射规则：线性 HDR（等距柱状程序化天空）随渲染器
+      // toneMapping；sRGB 显示域内容（TextureCube）不再映射（同 WebGLBackground）
+      toneMapped: !isCube,
     });
     orthoSkyQuad = new THREE.Mesh(geometry, material);
     orthoSkyQuad.renderOrder = -1000000; // 最先绘制，被其后绘制的场景物体覆盖
@@ -204,6 +230,27 @@ async function main() {
 
   // 渲染器 + 舞台缩放适配（按设计分辨率/缩放模式取景并适配 iframe）
   const renderer = createStage(app, cfg, applyProjection);
+
+  // 程序化天空材质：Nishita 大气散射（Blender 天空纹理风格）。需要渲染上下文，
+  // 渲染器就绪后生成并覆盖渐变兜底；强度经背景属性与正交面 uniform 同步生效
+  if (activeSkyKind === "procedural" && skyMatParams) {
+    try {
+      const nishita = makeNishitaSkyEquirect(renderer, skyMatParams);
+      scene.background = nishita;
+      scene.backgroundIntensity = skyMatParams.strength ?? 1;
+      skyTexture = scene.background;
+      if (orthoSkyQuad) {
+        const u = orthoSkyQuad.material.uniforms;
+        u.tSky.value = null;
+        u.tSkyCube.value = null;
+        u.uIsCube.value = 0;
+        u.tSky.value = skyTexture;
+        u.uSkyIntensity.value = skyMatParams.strength ?? 1;
+      }
+    } catch (e) {
+      postLog("error", `程序化天空生成失败: ${e?.message ?? e}`);
+    }
+  }
 
   // 相机清除标志：每帧渲染前应用（与编辑器预览渲染规则一致）
   function applyClearFlags() {

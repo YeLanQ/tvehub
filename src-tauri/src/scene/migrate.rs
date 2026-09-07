@@ -251,13 +251,7 @@ pub fn serialize_material_file(name: &str, material_type: &str, p: &MaterialPara
 /// - cube：持有 TextureCube 引用（cubeMap）+ 旋转/强度/世界不透明度/模糊；
 /// - procedural：三段配色；
 /// 与内置 internal/materials/SkyBox.mat 同构；kind 未知值归一为 cube。
-pub fn serialize_sky_material_file(
-    name: &str,
-    kind: &str,
-    top: &str,
-    horizon: &str,
-    ground: &str,
-) -> String {
+pub fn serialize_sky_material_file(name: &str, kind: &str) -> String {
     let procedural = kind.trim() == "procedural";
     let v = json!({
         "$type": "material",
@@ -265,15 +259,23 @@ pub fn serialize_sky_material_file(
         "name": sanitize_asset_stem(name),
         "shader": if procedural { "SkyProcedural" } else { "SkyBox" },
         "kind": if procedural { "procedural" } else { "cube" },
-        "topColor": top,
-        "horizonColor": horizon,
-        "groundColor": ground,
         // cube 专属：TextureCube 引用 + 渲染参数（默认与引擎兜底一致）
         "cubeMap": "internal/skybox/DefaultSkybox.texcube",
         "rotation": 0,
         "strength": 1,
         "worldOpacity": 0,
         "blur": 0,
+        // procedural 专属：Blender 天空纹理风格参数
+        "sunDisc": true,
+        "sunSize": 1.0,
+        "sunStrength": 1.0,
+        "sunElevation": 25.0,
+        "sunRotation": 0.0,
+        "altitude": 0,
+        "air": 1.0,
+        "dust": 1.0,
+        "ozone": 1.0,
+        "ms": true,
         "color": "#9aa4b2",
         "metalness": 0,
         "roughness": 1,
@@ -341,7 +343,8 @@ pub(crate) fn suggest_material_rel(taken: &[String], stem: &str) -> String {
     format!("assets/materials/{name}{MATERIAL_EXT}")
 }
 
-/// 遍历场景 JSON 收集 meshNode 的材质资产引用（去重、忽略空）
+/// 遍历场景 JSON 收集 meshNode/skyboxNode 的材质资产引用（去重、忽略空）。
+/// skyboxNode 的 .mat（天空材质）随导出：player 据此渲染天空贴图/参数。
 pub fn collect_material_refs(v: &Value, out: &mut Vec<String>) {
     match v {
         Value::Array(items) => {
@@ -350,7 +353,8 @@ pub fn collect_material_refs(v: &Value, out: &mut Vec<String>) {
             }
         }
         Value::Object(o) => {
-            if o.get("type").and_then(Value::as_str) == Some("meshNode") {
+            let ty = o.get("type").and_then(Value::as_str);
+            if ty == Some("meshNode") || ty == Some("skyboxNode") {
                 if let Some(Value::String(rel)) = o.get("material") {
                     if !rel.is_empty() && !out.contains(rel) {
                         out.push(rel.clone());

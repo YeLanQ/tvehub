@@ -35,6 +35,7 @@ import {
   loadTexCubeTexture,
   type SkyMatParams,
 } from "./modules/skyboxTextures";
+import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
@@ -803,6 +804,37 @@ export class EditorEngine {
           scene.background = loaded;
         });
       }
+      if (sky.skyKind === "procedural" && sky.material) {
+        // 程序化材质链路：Nishita 大气散射（Blender 天空纹理风格），
+        // 参数来自绑定 .mat（日轮/太阳/海拔/空气/气溶胶/臭氧/多重散射）
+        void (async (): Promise<THREE.Texture | null> => {
+          const mat = await this.loadSkyMatParams(sky.material);
+          if (this.skyApplied?.sig !== sig || !mat) return null;
+          const gl = this.renderer.glRenderer;
+          if (!gl) return null; // WebGPU 后端：保留色带兜底
+          const nishita = buildNishitaSkyEquirect(gl, {
+            sunDisc: mat.sunDisc,
+            sunSize: mat.sunSize,
+            sunStrength: mat.sunStrength,
+            sunElevation: mat.sunElevation,
+            sunRotation: mat.sunRotation,
+            altitude: mat.altitude,
+            air: mat.air,
+            dust: mat.dust,
+            ozone: mat.ozone,
+            ms: mat.ms,
+          });
+          if (this.skyApplied?.sig !== sig) return null;
+          this.setSkyBgProps({ rotation: 0, intensity: mat.strength, blurriness: 0 });
+          return nishita;
+        })().then((loaded) => {
+          const applied = this.skyApplied;
+          if (!applied || applied.sig !== sig || !loaded) return;
+          applied.texture.dispose();
+          applied.texture = loaded;
+          scene.background = loaded;
+        });
+      }
     } catch (e) {
       console.warn(`[sky] 天空盒背景生成失败: ${String(e)}`);
       scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
@@ -933,6 +965,13 @@ export class EditorEngine {
     u.uIsCube.value = isCube ? 1 : 0;
     u.tSky.value = isCube ? null : tex;
     u.tSkyCube.value = isCube ? tex : null;
+    // 色调映射与透视背景一致：线性 HDR（等距柱状程序化）随渲染器 toneMapping，
+    // sRGB 显示域内容（TextureCube）不再映射（同 WebGLBackground 按 colorSpace 判定）
+    if (quad.userData.toneMappedForCube !== isCube) {
+      quad.userData.toneMappedForCube = isCube;
+      quad.material.toneMapped = !isCube;
+      quad.material.needsUpdate = true;
+    }
     // 天空材质参数：旋转（绕世界 Y）与强度
     u.uSkyRotation.value = THREE.MathUtils.degToRad(this.skyBgProps.rotation);
     u.uSkyIntensity.value = this.skyBgProps.intensity;
@@ -994,6 +1033,7 @@ export class EditorEngine {
               ? textureCube( tSkyCube, sdir ).rgb
               : texture2D( tSky, equirectUv( sdir ) ).rgb;
             gl_FragColor = vec4( col * uSkyIntensity, 1.0 );
+            #include <tonemapping_fragment>
             #include <colorspace_fragment>
           }
         `,

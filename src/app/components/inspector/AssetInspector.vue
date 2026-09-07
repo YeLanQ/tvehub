@@ -295,24 +295,6 @@ function updateSky(mutate: (doc: SkyMatDoc) => void): void {
   }, 300);
 }
 
-function hexToNum(hex: string): number {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return Number.isNaN(n) ? 0xffffff : n & 0xffffff;
-}
-
-function numToHex(v: number): string {
-  return "#" + (v & 0xffffff).toString(16).padStart(6, "0");
-}
-
-type SkyColorKey = "topColor" | "horizonColor" | "groundColor";
-
-function onSkyColor(key: SkyColorKey, e: Event): void {
-  const v = (e.target as HTMLInputElement).value;
-  updateSky((d) => {
-    d[key] = hexToNum(v);
-  });
-}
-
 function onSkyCubeMapChange(e: Event): void {
   const v = (e.target as HTMLSelectElement).value;
   updateSky((d) => {
@@ -320,9 +302,28 @@ function onSkyCubeMapChange(e: Event): void {
   });
 }
 
-type SkyParamKey = "rotation" | "strength" | "worldOpacity" | "blur";
+type SkyParamKey =
+  | "rotation"
+  | "strength"
+  | "worldOpacity"
+  | "blur"
+  | "sunSize"
+  | "sunStrength"
+  | "sunElevation"
+  | "sunRotation"
+  | "altitude"
+  | "air"
+  | "dust"
+  | "ozone";
 
 function onSkyParam(key: SkyParamKey, v: number): void {
+  updateSky((d) => {
+    d[key] = v;
+  });
+}
+
+function onSkyCheckbox(key: "sunDisc" | "ms", e: Event): void {
+  const v = (e.target as HTMLInputElement).checked;
   updateSky((d) => {
     d[key] = v;
   });
@@ -402,9 +403,9 @@ function onImgLoad(e: Event): void {
       :rel="previewRel"
       :params="previewKind === 'material' && matReady ? matParams : null"
       :mat-type="previewKind === 'material' ? matType : undefined"
-      :sky-colors="previewKind === 'sky' && skyDoc ? skyDoc : null"
+      :nishita="previewKind === 'sky' && skyDoc ? skyDoc : null"
       :bg-rotation="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.rotation : undefined"
-      :bg-intensity="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.strength : undefined"
+      :bg-intensity="(previewKind === 'texcube' || previewKind === 'sky') && isSkyMat && skyDoc ? skyDoc.strength : undefined"
       :bg-blurriness="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.blur : undefined"
     />
 
@@ -572,40 +573,124 @@ function onImgLoad(e: Event): void {
           </div>
         </template>
 
-        <!-- 程序化：三段配色 -->
+        <!-- 程序化：Blender 天空纹理参数（Nishita 大气散射） -->
         <template v-else>
-          <div class="field">
-            <label>顶部颜色</label>
+          <label class="sky-checkbox">
             <input
-              type="color"
-              :value="numToHex(skyDoc.topColor)"
+              type="checkbox"
+              :checked="skyDoc.ms"
               :disabled="isInternal"
-              @input="onSkyColor('topColor', $event)"
-              @change="onSkyColor('topColor', $event)"
+              @change="onSkyCheckbox('ms', $event)"
+            />
+            <span>多重散射</span>
+          </label>
+          <label class="sky-checkbox">
+            <input
+              type="checkbox"
+              :checked="skyDoc.sunDisc"
+              :disabled="isInternal"
+              @change="onSkyCheckbox('sunDisc', $event)"
+            />
+            <span>日轮</span>
+          </label>
+          <div class="field">
+            <label>太阳尺寸</label>
+            <NumberField
+              :model-value="skyDoc.sunSize"
+              :step="0.1"
+              :min="0.1"
+              :max="30"
+              :disabled="isInternal"
+              title="太阳圆盘全角尺寸（度）"
+              @commit="(v) => onSkyParam('sunSize', v)"
             />
           </div>
           <div class="field">
-            <label>地平线颜色</label>
-            <input
-              type="color"
-              :value="numToHex(skyDoc.horizonColor)"
+            <label>太阳强度</label>
+            <NumberField
+              :model-value="skyDoc.sunStrength"
+              :step="0.1"
+              :min="0"
+              :max="20"
               :disabled="isInternal"
-              @input="onSkyColor('horizonColor', $event)"
-              @change="onSkyColor('horizonColor', $event)"
+              title="太阳圆盘亮度倍率"
+              @commit="(v) => onSkyParam('sunStrength', v)"
             />
           </div>
           <div class="field">
-            <label>下方地面色</label>
-            <input
-              type="color"
-              :value="numToHex(skyDoc.groundColor)"
+            <label>太阳高度</label>
+            <NumberField
+              :model-value="skyDoc.sunElevation"
+              :step="0.5"
+              :min="-90"
+              :max="90"
               :disabled="isInternal"
-              @input="onSkyColor('groundColor', $event)"
-              @change="onSkyColor('groundColor', $event)"
+              title="太阳高度角（度，0=地平线）"
+              @commit="(v) => onSkyParam('sunElevation', v)"
+            />
+          </div>
+          <div class="field">
+            <label>太阳旋转</label>
+            <NumberField
+              :model-value="skyDoc.sunRotation"
+              :step="1"
+              :min="0"
+              :max="360"
+              :disabled="isInternal"
+              title="太阳方位角（度）"
+              @commit="(v) => onSkyParam('sunRotation', v)"
+            />
+          </div>
+          <div class="field">
+            <label>海拔</label>
+            <NumberField
+              :model-value="skyDoc.altitude"
+              :step="10"
+              :min="0"
+              :max="20000"
+              :disabled="isInternal"
+              title="观察点海拔（米）"
+              @commit="(v) => onSkyParam('altitude', v)"
+            />
+          </div>
+          <div class="field">
+            <label>空气</label>
+            <NumberField
+              :model-value="skyDoc.air"
+              :step="0.01"
+              :min="0"
+              :max="10"
+              :disabled="isInternal"
+              title="空气密度（瑞利散射倍率）"
+              @commit="(v) => onSkyParam('air', v)"
+            />
+          </div>
+          <div class="field">
+            <label>气溶胶</label>
+            <NumberField
+              :model-value="skyDoc.dust"
+              :step="0.01"
+              :min="0"
+              :max="10"
+              :disabled="isInternal"
+              title="气溶胶密度（米氏散射倍率）"
+              @commit="(v) => onSkyParam('dust', v)"
+            />
+          </div>
+          <div class="field">
+            <label>臭氧</label>
+            <NumberField
+              :model-value="skyDoc.ozone"
+              :step="0.01"
+              :min="0"
+              :max="10"
+              :disabled="isInternal"
+              title="臭氧密度（吸收倍率）"
+              @commit="(v) => onSkyParam('ozone', v)"
             />
           </div>
           <div class="hint">
-            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "写入 .mat 资产；已放置的天空盒节点配色为节点自身参数，不受此文件影响。" }}
+            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "Nishita 大气散射（Blender 天空纹理风格）；写入 .mat 资产，被天空盒节点绑定时背景即时刷新。" }}
           </div>
         </template>
       </template>
@@ -663,6 +748,21 @@ function onImgLoad(e: Event): void {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.sky-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text, #ddd);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.sky-checkbox input {
+  margin: 0;
+}
+.sky-checkbox input:disabled + span {
+  color: var(--text-dim, #999);
 }
 .asset-rel {
   overflow: hidden;

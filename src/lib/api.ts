@@ -103,25 +103,9 @@ export const api = {
     map: string,
     faces?: Record<string, string> | null,
   ) => invoke<void>("texcube_write", { root, rel, name, source, map, faces: faces ?? null }),
-  /** 序列化并写入天空盒材质（.mat；shader/kind + 三段配色；后端持有格式，自动补 .meta） */
-  skymatWrite: (
-    root: string,
-    rel: string,
-    name: string,
-    kind: "procedural" | "cube",
-    topColor?: string,
-    horizonColor?: string,
-    groundColor?: string,
-  ) =>
-    invoke<void>("skymat_write", {
-      root,
-      rel,
-      name,
-      kind,
-      topColor: topColor ?? null,
-      horizonColor: horizonColor ?? null,
-      groundColor: groundColor ?? null,
-    }),
+  /** 序列化并写入天空盒材质（.mat；shader/kind + 天空参数；后端持有格式，自动补 .meta） */
+  skymatWrite: (root: string, rel: string, name: string, kind: "procedural" | "cube") =>
+    invoke<void>("skymat_write", { root, rel, name, kind }),
   /** 从当前场景导出网页预览产物（scene.json/.mat/贴图由后端直接读盘写入；
    *  files 仅为 WebView 打包的网页运行时 + config.json 文本） */
   exportWebPreviewFromScene: (root: string, sceneRel: string, files: Record<string, string>) =>

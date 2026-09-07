@@ -223,8 +223,10 @@ export interface TexCubeDoc {
 
 const TEXCUBE_FACE_KEYS: TexCubeFaceKey[] = ["px", "nx", "py", "ny", "pz", "nz"];
 
-/** 天空盒材质（.mat cube 分支）中引擎消费的字段 */
+/** 天空盒材质（.mat）中引擎消费的字段（cube 与 procedural 分支） */
 export interface SkyMatParams {
+  kind: "cube" | "procedural";
+  // —— cube ——
   /** TextureCube（.texcube）资产引用 */
   cubeMap: string;
   /** 天空旋转（度，绕世界 Y 轴） */
@@ -235,9 +237,20 @@ export interface SkyMatParams {
   worldOpacity: number;
   /** 模糊（0~1） */
   blur: number;
+  // —— procedural（Blender 天空纹理风格）——
+  sunDisc: boolean;
+  sunSize: number;
+  sunStrength: number;
+  sunElevation: number;
+  sunRotation: number;
+  altitude: number;
+  air: number;
+  dust: number;
+  ozone: number;
+  ms: boolean;
 }
 
-/** 拉取并解析天空盒材质参数（仅 cube 分支；procedural 由节点参数驱动返回 null） */
+/** 拉取并解析天空盒材质参数（cube/procedural 均解析；非天空材质返回 null） */
 export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | null> {
   try {
     const res = await fetch(url);
@@ -246,16 +259,32 @@ export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | nul
     if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
     const kind = typeof doc.kind === "string" ? doc.kind : "";
     const shader = typeof doc.shader === "string" ? doc.shader : "";
-    if (kind === "procedural" || shader === "SkyProcedural") return null;
-    if (kind !== "cube" && shader !== "SkyBox") return null;
+    if (kind !== "cube" && kind !== "procedural" && shader !== "SkyBox" && shader !== "SkyProcedural") {
+      return null;
+    }
     const num = (v: unknown, fallback: number): number =>
       typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    const bool = (v: unknown, fallback: boolean): boolean =>
+      typeof v === "boolean" ? v : fallback;
+    const str = (v: unknown, fallback: string): string =>
+      typeof v === "string" ? v : fallback;
     return {
-      cubeMap: typeof doc.cubeMap === "string" ? doc.cubeMap : "",
+      kind: kind === "procedural" || shader === "SkyProcedural" ? "procedural" : "cube",
+      cubeMap: str(doc.cubeMap, ""),
       rotation: num(doc.rotation, 0),
       strength: num(doc.strength, 1),
       worldOpacity: num(doc.worldOpacity, 0),
       blur: num(doc.blur, 0),
+      sunDisc: bool(doc.sunDisc, true),
+      sunSize: num(doc.sunSize, 1),
+      sunStrength: num(doc.sunStrength, 1),
+      sunElevation: num(doc.sunElevation, 25),
+      sunRotation: num(doc.sunRotation, 0),
+      altitude: num(doc.altitude, 0),
+      air: num(doc.air, 1),
+      dust: num(doc.dust, 1),
+      ozone: num(doc.ozone, 1),
+      ms: bool(doc.ms, true),
     };
   } catch {
     return null;
