@@ -1,14 +1,14 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
-import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
-import { loadAssetTemplate } from "../lib/asset-templates";
-import { sanitizeAssetStem } from "../lib/materials";
-import { isProtectedAsset } from "../lib/asset-guards";
-import { remapAssetPath } from "../lib/asset-paths";
-import { syncMainSceneAfterMove } from "../lib/project-settings";
-import { getProjectStore } from "./project";
+import { assetService } from "../services/assetService";
 import { logStore } from "./log";
+
+/**
+ * 资产状态层：持有资产列表/meta/选中项，并把写操作委托给 assetService。
+ * 业务规则（命名去重/只读保护/场景引用跟随/模板注入）在 services/assetService.ts，
+ * 本 store 只负责成功后的状态刷新（重扫列表/清选中）。
+ */
 
 export interface AssetsStore {
   assets: AssetEntry[];
@@ -36,40 +36,7 @@ export interface AssetsStore {
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
-/** 资产名规范化（弹窗预填/校验用） */
-export function validateAssetName(name: string): string | null {
-  const clean = name.trim();
-  if (!clean) return null;
-  if (clean.includes("/") || clean.includes("\\") || clean.includes(":") || clean.includes("..")) {
-    return null;
-  }
-  return clean;
-}
-
-/** 为指定目录建议一个不冲突的默认资产名 */
-export function suggestAssetName(assets: AssetEntry[], base: string, stem: string, ext: string): string {
-  const used = new Set(assets.map((a) => a.path.toLowerCase()));
-  let name = stem;
-  let n = 2;
-  while (used.has(`${base}/${name}${ext}`.toLowerCase())) {
-    name = `${stem} ${n++}`;
-  }
-  return `${name}${ext}`;
-}
-
 let singleton: AssetsStore | null = null;
-
-/**
- * 移动/重命名资产后跟随改写场景引用：
- * 当前打开场景（sceneRel）就是被移动文件或位于被移动目录内时指向新路径，
- * 让后续保存写入新位置而不是在旧路径重建文件；mainScene 配置同理同步。
- */
-async function followSceneMove(root: string, fromRel: string, toRel: string): Promise<void> {
-  const projectStore = getProjectStore();
-  const next = remapAssetPath(projectStore.sceneRel, fromRel, toRel);
-  if (next) projectStore.setSceneRel(next);
-  await syncMainSceneAfterMove(root, fromRel, toRel);
-}
 
 export function getAssetsStore(): AssetsStore {
   if (singleton) return singleton;
@@ -80,6 +47,9 @@ export function getAssetsStore(): AssetsStore {
     selectedAsset: null as string | null,
     loadedPath: null as string | null,
   });
+
+  /** 写操作成功后重扫列表（业务逻辑不接触状态，由本层统一刷新） */
+  const reload = (root: string) => store.load(root);
 
   const store: AssetsStore = {
     get assets() {
@@ -106,7 +76,6 @@ export function getAssetsStore(): AssetsStore {
         state.assets = [...projectAssets, ...internalAssets];
         state.metaMap = map;
         state.loadedPath = root;
-        // logStore.log("success", `资产扫描完成: ${state.assets.length} 项`);
       } catch (e) {
         logStore.log("error", `资产扫描失败: ${e}`);
       }
@@ -119,222 +88,61 @@ export function getAssetsStore(): AssetsStore {
       state.selectedAsset = rel;
     },
     async createFolder(root, rel) {
-      if (isInternalAsset(rel)) {
-        logStore.log("warn", "内置目录只读，不能在其中新建");
-        return null;
-      }
-      try {
-        const r = await api.createFolder(root, rel);
-        await store.load(root);
-        return r;
-      } catch (e) {
-        logStore.log("error", `新建目录失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.createFolder(root, rel);
+      if (r) await reload(root);
+      return r;
     },
     async rename(root, rel, newName) {
-      if (isProtectedAsset(rel)) {
-        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许重命名");
-        return null;
-      }
-      try {
-        const r = await api.renameAsset(root, rel, newName);
-        await followSceneMove(root, rel, r);
-        await store.load(root);
-        return r;
-      } catch (e) {
-        logStore.log("error", `重命名失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.rename(root, rel, newName);
+      if (r) await reload(root);
+      return r;
     },
     async duplicate(root, rel) {
-      if (isProtectedAsset(rel)) {
-        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许复制，请使用「复制到项目」");
-        return null;
-      }
-      try {
-        const r = await api.copyAsset(root, rel);
-        await store.load(root);
-        return r;
-      } catch (e) {
-        logStore.log("error", `复制失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.duplicate(root, rel);
+      if (r) await reload(root);
+      return r;
     },
     async remove(root, rel) {
-      if (isProtectedAsset(rel)) {
-        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许删除");
-        return false;
-      }
-      try {
-        await api.deleteAsset(root, rel);
+      const ok = await assetService.remove(root, rel);
+      if (ok) {
         if (state.selectedAsset === rel) state.selectedAsset = null;
-        await store.load(root);
-        return true;
-      } catch (e) {
-        logStore.log("error", `删除失败: ${e}`);
-        return false;
+        await reload(root);
       }
+      return ok;
     },
     async moveTo(root, rel, destDir) {
-      if (isProtectedAsset(rel) || isInternalAsset(destDir)) {
-        logStore.log("warn", "内置资源与项目固定目录（assets/src）不允许移动");
-        return null;
-      }
-      try {
-        const r = await api.moveAsset(root, rel, destDir);
-        await followSceneMove(root, rel, r);
-        await store.load(root);
-        return r;
-      } catch (e) {
-        logStore.log("error", `移动失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.moveTo(root, rel, destDir);
+      if (r) await reload(root);
+      return r;
     },
     async importPaths(root, destDir, sourcePaths) {
-      if (!sourcePaths.length) return false;
-      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
-        logStore.log("warn", "内置目录与 src 目录不允许导入资产（脚本用「新建脚本」创建）");
-        return false;
-      }
-      try {
-        const imported = await api.importAssets(root, destDir, sourcePaths);
-        await store.load(root);
-        logStore.log(
-          "success",
-          imported.length > 1
-            ? `已导入 ${imported.length} 个资产到 ${destDir || "项目根"}`
-            : `已导入资产: ${imported[0] ?? ""}`,
-        );
-        return true;
-      } catch (e) {
-        logStore.log("error", `导入失败: ${e}`);
-        return false;
-      }
+      const ok = await assetService.importPaths(root, destDir, sourcePaths);
+      if (ok) await reload(root);
+      return ok;
     },
     async createSceneAsset(root, destDir, stem) {
-      const clean = validateAssetName(stem);
-      if (!clean) {
-        logStore.log("warn", "无效的场景名（不能含 / \\ : ..）");
-        return null;
-      }
-      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
-        logStore.log("warn", "内置目录与 src 目录不允许新建场景");
-        return null;
-      }
-      // 基名（调用方可能已带 .scene，避免 .scene.scene）
-      const base = clean.toLowerCase().endsWith(".scene") ? clean.slice(0, -".scene".length) : clean;
-      const ext = ".scene";
-      let name = base;
-      let n = 2;
-      const prefix = destDir ? `${destDir}/` : "";
-      while (
-        state.assets.some(
-          (a) => a.path.toLowerCase() === `${prefix}${name}${ext}`.toLowerCase(),
-        )
-      ) {
-        name = `${base} ${n++}`;
-      }
-      const rel = `${prefix}${name}${ext}`;
-      try {
-        // 场景原型不内嵌代码：读 internal/templates 模板 + 数据注入
-        const now = new Date().toISOString();
-        const rootId = `node_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
-        const content = await loadAssetTemplate("scene", {
-          SCENE_NAME: name,
-          NOW: now,
-          ROOT_ID: rootId,
-        });
-        if (content == null) throw new Error("场景模板读取失败");
-        await api.writeText(root, rel, content);
-        await store.load(root);
-        logStore.log("success", `已新建场景: ${rel}`);
-        return rel;
-      } catch (e) {
-        logStore.log("error", `新建场景失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.createSceneAsset(root, destDir, stem, state.assets);
+      if (r) await reload(root);
+      return r;
     },
     async createMaterialAsset(root, destDir, typeKey, preferStem = null) {
-      const def = materialTypeRegistry.getOrDefault(typeKey);
-      if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
-        logStore.log("warn", "内置目录与 src 目录不允许新建材质");
-        return null;
-      }
-      // 显示名 = 显式名或类型名（"PBR"…），目录内去重
-      const prefix = destDir ? `${destDir}/` : "";
-      const baseName =
-        preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : def.label;
-      let name = baseName;
-      let n = 2;
-      while (
-        state.assets.some(
-          (a) => a.path.toLowerCase() === `${prefix}${name}${MATERIAL_EXT}`.toLowerCase(),
-        )
-      ) {
-        name = `${baseName} ${n++}`;
-      }
-      const rel = `${prefix}${name}${MATERIAL_EXT}`;
-      try {
-        // 材质默认参数以工厂注册表为单一来源；.mat 序列化/落盘由后端完成
-        await api.materialWrite(root, rel, name, def.key, def.defaultParams() as unknown as Record<string, unknown>);
-        await store.load(root);
-        logStore.log("success", `已新建材质: ${rel}`);
-        return rel;
-      } catch (e) {
-        logStore.log("error", `新建材质失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.createMaterialAsset(
+        root,
+        destDir,
+        typeKey,
+        state.assets,
+        preferStem,
+      );
+      if (r) await reload(root);
+      return r;
     },
     async createScriptAsset(root, destDir, stem) {
-      const clean = validateAssetName(stem);
-      if (!clean) {
-        logStore.log("warn", "无效的脚本名（不能含 / \\ : ..）");
-        return null;
-      }
-      // 脚本固定存放 src/（项目固定脚本目录）；destDir 仅接受 src 子目录
-      if (destDir !== "src" && !destDir.startsWith("src/")) {
-        logStore.log("warn", "脚本只能创建在 src 目录内");
-        return null;
-      }
-      // 基名（调用方可能已带 .ts，避免 .ts.ts）
-      const base = clean.toLowerCase().endsWith(".ts") ? clean.slice(0, -".ts".length) : clean;
-      const ext = ".ts";
-      let name = base;
-      let n = 2;
-      while (
-        state.assets.some(
-          (a) => a.path.toLowerCase() === `${destDir}/${name}${ext}`.toLowerCase(),
-        )
-      ) {
-        name = `${base} ${n++}`;
-      }
-      const rel = `${destDir}/${name}${ext}`;
-      try {
-        // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入）
-        const className = clean
-          .split(/[^A-Za-z0-9]+/)
-          .filter(Boolean)
-          .map((s) => s[0].toUpperCase() + s.slice(1))
-          .join("") || "MyScript";
-        const content = await loadAssetTemplate("script", { CLASS_NAME: className });
-        if (content == null) throw new Error("脚本模板读取失败");
-        await api.writeText(root, rel, content);
-        await store.load(root);
-        logStore.log("success", `已新建脚本: ${rel}`);
-        return rel;
-      } catch (e) {
-        logStore.log("error", `新建脚本失败: ${e}`);
-        return null;
-      }
+      const r = await assetService.createScriptAsset(root, destDir, stem, state.assets);
+      if (r) await reload(root);
+      return r;
     },
     async readText(root, rel) {
-      try {
-        return await api.readText(root, rel);
-      } catch (e) {
-        logStore.log("error", `读取资产失败: ${e}`);
-        return null;
-      }
+      return assetService.readText(root, rel);
     },
   };
 

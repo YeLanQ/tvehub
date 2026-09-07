@@ -11,6 +11,7 @@ import { computed, provide, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
+import { assetService } from "../services/assetService";
 import { logStore } from "../stores/log";
 import { openContextMenu, menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
@@ -30,7 +31,6 @@ import { fmtSize } from "../lib/format";
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
-import { sanitizeAssetStem } from "../lib/materials";
 import { materialTypeRegistry } from "../../framework/material";
 import { isModelAssetRel } from "../../framework/mesh";
 import { getEditorStore } from "../stores/editor";
@@ -154,67 +154,22 @@ function parentOf(path: string): string | null {
   return i > 0 ? path.slice(0, i) : i === 0 ? "" : null;
 }
 
-/** 内置资源按类型复制到项目的默认目录 */
-const INTERNAL_COPY_DIRS: Record<string, string> = {
-  mat: "assets/materials",
-  ts: "src",
-  png: "assets/textures",
-  jpg: "assets/textures",
-  jpeg: "assets/textures",
-  webp: "assets/textures",
-  bmp: "assets/textures",
-  glb: "assets/models",
-  gltf: "assets/models",
-  fbx: "assets/models",
-  obj: "assets/models",
-  json: "assets",
-};
-
 /** 目录是否可作为拖放目标（内置 internal 目录只读，不可作为落点） */
 function dropDirAttr(item: ChildEntry): string | undefined {
   return item.kind === "dir" && !isInternalAsset(item.path) ? item.path : undefined;
 }
 
-/** 把内置资源（internal/…）复制到项目资产目录（只读源 → 项目内可编辑副本） */
+/** 把内置资源（internal/…）复制到项目资产目录（业务与命名下沉 assetService） */
 async function copyInternalToProject(item: ChildEntry): Promise<void> {
   const root = projectStore.currentPath;
   if (!root || item.kind === "dir") return;
-  const dot = item.name.lastIndexOf(".");
-  const ext = dot >= 0 ? item.name.slice(dot + 1).toLowerCase() : "";
-  const stem = sanitizeAssetStem(dot >= 0 ? item.name.slice(0, dot) : item.name);
-  const dir = INTERNAL_COPY_DIRS[ext] ?? "assets";
-  const used = new Set(
-    assetsStore.assets.filter((a) => a.kind !== "dir").map((a) => a.path.toLowerCase()),
+  const rel = await assetService.copyInternalToProject(
+    root,
+    item.name,
+    item.path,
+    assetsStore.assets,
   );
-  let name = stem;
-  let n = 2;
-  const candidate = (base: string) => (ext ? `${base}.${ext}` : base);
-  let fname = candidate(name);
-  while (used.has(`${dir}/${fname}`.toLowerCase())) {
-    name = `${stem} ${n++}`;
-    fname = candidate(name);
-  }
-  const rel = `${dir}/${fname}`;
-  // 二进制资源（图片/模型等）走 base64；文本资源（材质/脚本等）走文本
-  const BINARY_EXTS = new Set([
-    "png", "jpg", "jpeg", "webp", "gif", "bmp",
-    "glb", "gltf", "fbx", "obj", "bin",
-  ]);
-  try {
-    if (BINARY_EXTS.has(ext)) {
-      const b64 = await api.readInternalBinary(item.path);
-      if (b64 == null) throw new Error("读取内置资源失败");
-      await api.writeAssetBinary(root, rel, b64);
-    } else {
-      const content = await api.readInternalAsset(item.path);
-      if (content == null) throw new Error("读取内置资源失败");
-      await api.writeText(root, rel, content);
-    }
-    await assetsStore.load(root);
-    logStore.log("success", `已复制到项目: ${rel}`);
-  } catch (e) {
-    logStore.log("error", `复制内置资源到项目失败: ${e}`);
-  }
+  if (rel) await assetsStore.load(root);
 }
 
 function onItemClick(e: MouseEvent, item: ChildEntry) {
