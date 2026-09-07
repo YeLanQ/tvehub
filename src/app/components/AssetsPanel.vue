@@ -372,30 +372,8 @@ async function doCopy(item: ChildEntry) {
 }
 
 async function doRename(item: ChildEntry) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  const newName = await prompt({
-    title: "重命名",
-    label: item.name,
-    initial: item.name,
-    confirmText: "重命名",
-  });
-  if (!newName || newName === item.name) return;
-  // 文件重命名：新名未带后缀时自动补原扩展名（目录不补；隐藏文件 .env 等也不补）
-  let finalName = newName;
-  if (item.kind !== "dir") {
-    const slash = item.path.lastIndexOf("/");
-    const dot = item.path.lastIndexOf(".");
-    if (dot > slash && dot > 0 && !finalName.includes(".")) {
-      finalName = finalName + item.path.slice(dot);
-    }
-  }
-  // 脚本重命名走 scripts store：同步换标签页缓存并改写场景内组件引用
-  if (item.kind === "ts") {
-    await getScriptsStore().renameScript(item.path, finalName);
-    return;
-  }
-  await assetsStore.rename(root, item.path, finalName);
+  // 重命名语义（补扩展名/脚本引用随动）统一在 asset.renameSelected 命令（资产面板右键 / F2 共用）
+  await dispatchCommand("asset.renameSelected", { rel: item.path });
 }
 
 async function doDelete(item: ChildEntry) {

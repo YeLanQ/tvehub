@@ -21,12 +21,17 @@ import BuildPanel from "./app/components/BuildPanel.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
+import { getAssetsStore } from "./app/stores/assets";
+import { getActivePanel, installActivePanelTracker } from "./app/lib/active-panel";
 import { mountEditor } from "./app/services/editorService";
 import "./styles/global.scss";
 import "./styles/components/app.scss";
 
 const projectStore = getProjectStore();
 const editorStore = getEditorStore();
+
+// 记录最近交互面板（assets / scene），F2 重命名按上下文分派
+installActivePanelTracker();
 
 /** 退出预览（网页预览面板）返回场景编辑 */
 function goScene() {
@@ -76,10 +81,16 @@ let unlistenNative: UnlistenFn | null = null;
 /** 窗口级快捷键：F2 重命名选中节点 / Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
 function onWindowKeyDown(e: KeyboardEvent): void {
   const key = e.key.toLowerCase();
-  // F2：重命名当前选中节点（弹统一输入框）。文本焦点下不拦截（保留输入/Monaco 等自身行为）
+  // F2：按最近交互的面板上下文重命名——资产面板内重命名选中资产；
+  // 层级/视口/检查器等场景区重命名选中节点。文本焦点下不拦截（保留输入/Monaco 行为）
   if (key === "f2" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && !isEditingText()) {
     e.preventDefault();
-    void dispatchCommand("node.renameSelected");
+    if (getActivePanel() === "assets") {
+      const selected = getAssetsStore().selectedAsset;
+      if (selected) void dispatchCommand("asset.renameSelected");
+    } else {
+      void dispatchCommand("node.renameSelected");
+    }
     return;
   }
   if (!e.ctrlKey || e.shiftKey || e.altKey) return;

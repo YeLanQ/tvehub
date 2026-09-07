@@ -8,6 +8,7 @@
 
 import "./editorCommands";
 import "./nodeCommands";
+import "./assetCommands";
 import "./remoteCommands";
 
 export {
