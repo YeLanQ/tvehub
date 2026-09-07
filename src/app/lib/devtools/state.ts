@@ -109,6 +109,38 @@ const METHOD_TOOL: Record<string, string> = {
   "asset.rename": "assetRename",
 };
 
+/**
+ * 远程方法 -> 命令 id（devtools 适配层据此走统一命令执行器）。
+ * 与 MCP_TOOLS/METHOD_TOOL 同为本文件的远程契约（方法名/工具 id/命令路由单源）；
+ * 执行主体始终是 src/app/commands 命令注册表，注册表缺命令时 handleMethod 报错提示。
+ */
+export const METHOD_TO_COMMAND: Record<string, string> = {
+  "editor.state": "editor.state",
+  "project.list": "project.recentList",
+  "project.open": "project.open",
+  "project.close": "project.close",
+  "scene.list": "scene.list",
+  "scene.open": "scene.open",
+  "scene.save": "scene.save",
+  "scene.tree": "scene.doc",
+  "node.select": "node.select",
+  "node.add": "node.add",
+  "node.remove": "node.delete",
+  "node.rename": "node.rename",
+  "node.set": "node.set",
+  "preview.open": "preview.open",
+  "preview.close": "preview.close",
+  "preview.start": "preview.start",
+  "preview.stop": "preview.stop",
+  "preview.screenshot": "preview.screenshot",
+  "state.snapshot": "scene.doc",
+  "state.restore": "state.restore",
+  "asset.list": "asset.list",
+  "asset.create": "asset.create",
+  "asset.delete": "asset.delete",
+  "asset.rename": "asset.rename",
+};
+
 /** 控制服务器默认端口（应用启动自动绑定；与 Rust devtools::DEFAULT_PORT 对应） */
 export const DEVTOOLS_DEFAULT_PORT = 39100;
 

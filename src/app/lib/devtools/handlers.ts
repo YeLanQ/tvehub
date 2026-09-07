@@ -2,36 +2,8 @@
 // 等与编辑器 UI 共用同一命令执行路径）。命令实现见 src/app/commands/。
 // mcp.listTools（协议自省）保留本地处理；参数/返回值形状与历史 devtools API 保持兼容。
 
-import { runCommand } from "../../commands";
-import { enabledMcpTools } from "./state";
-
-/** 远程 method -> 命令 id（无匹配的方法将返回「未知方法」错误） */
-const METHOD_TO_COMMAND: Record<string, string> = {
-  "editor.state": "editor.state",
-  "project.list": "project.recentList",
-  "project.open": "project.open",
-  "project.close": "project.close",
-  "scene.list": "scene.list",
-  "scene.open": "scene.open",
-  "scene.save": "scene.save",
-  "scene.tree": "scene.doc",
-  "node.select": "node.select",
-  "node.add": "node.add",
-  "node.remove": "node.delete",
-  "node.rename": "node.rename",
-  "node.set": "node.set",
-  "preview.open": "preview.open",
-  "preview.close": "preview.close",
-  "preview.start": "preview.start",
-  "preview.stop": "preview.stop",
-  "preview.screenshot": "preview.screenshot",
-  "state.snapshot": "scene.doc",
-  "state.restore": "state.restore",
-  "asset.list": "asset.list",
-  "asset.create": "asset.create",
-  "asset.delete": "asset.delete",
-  "asset.rename": "asset.rename",
-};
+import { runCommand, hasCommand } from "../../commands";
+import { enabledMcpTools, METHOD_TO_COMMAND } from "./state";
 
 /** 远程参数 → 命令参数规整（字段名差异集中在节点删除/命名） */
 function normalizeParams(method: string, params: any): any {
@@ -81,7 +53,10 @@ export async function handleMethod(method: string, params: any): Promise<unknown
     }));
   }
   const cmdId = METHOD_TO_COMMAND[method];
-  if (!cmdId) throw new Error(`未知方法: ${method}`);
+  if (!cmdId || !hasCommand(cmdId)) {
+    // 契约表集中 devtools/state.ts：方法未登记或对应命令未注册（入口漏 import commands）均视为未知
+    throw new Error(`未知方法: ${method}`);
+  }
   const value = await runCommand(cmdId, normalizeParams(method, params), { logError: false });
   return decorate(method, value);
 }
