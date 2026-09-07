@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { disposeEditor, mountEditor, getEditorStore } from "../stores/editor";
+import { getEditorStore } from "../stores/editor";
+import { disposeEditor, mountEditor } from "../services/editorService";
 import { dispatchCommand } from "../commands";
 import "../../styles/components/viewport.scss";
 

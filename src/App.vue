@@ -21,7 +21,7 @@ import BuildPanel from "./app/components/BuildPanel.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
-import { mountEditor } from "./app/stores/editor";
+import { mountEditor } from "./app/services/editorService";
 import "./styles/global.scss";
 import "./styles/components/app.scss";
 

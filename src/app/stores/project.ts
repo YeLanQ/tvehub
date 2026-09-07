@@ -349,7 +349,7 @@ export function getProjectStore(): ProjectStore {
       state.currentSceneRel = rel;
       // 编辑器已挂载：后端重装会话 + 镜像重建（层级/视口切换），无需重进编辑器
       if (state.view === "editor") {
-        const { reloadEditorScene } = await import("../stores/editor");
+        const { reloadEditorScene } = await import("../services/editorService");
         await reloadEditorScene(root, rel);
       }
       return true;
