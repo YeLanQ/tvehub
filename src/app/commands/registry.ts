@@ -47,7 +47,17 @@ export async function dispatchCommand(
   const cmd = commandMap.get(id);
   if (!cmd) return { ok: false, error: `未知命令: ${id}` };
   const ctx = createContext();
-  if (cmd.canRun && !cmd.canRun(ctx)) return { ok: false, skipped: true };
+  // 可用性判定抛错时按“不可用”处理（避免整条 dispatch 静默 reject）
+  if (cmd.canRun) {
+    let allowed: boolean;
+    try {
+      allowed = cmd.canRun(ctx);
+    } catch (e) {
+      console.error(`[commands] ${id} canRun 异常:`, e);
+      allowed = false;
+    }
+    if (!allowed) return { ok: false, skipped: true };
+  }
   try {
     const value = await cmd.run(ctx, args);
     return value === undefined ? { ok: true } : { ok: true, value };

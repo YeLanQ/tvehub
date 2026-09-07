@@ -251,19 +251,24 @@ registerCommand({
   id: "node.renameSelected",
   label: "重命名选中节点",
   group: "节点",
-  description: "弹出统一输入框重命名当前选中节点（层级右键/F2 共用；根节点与文本编辑焦点时不触发）",
+  description: "弹出统一输入框重命名当前选中节点（层级右键/F2 共用；根节点不可重命名）",
   canRun: (ctx) => {
     if (ctx.view !== "editor") return false;
-    if (isEditingText()) return false;
     const s = getEditorStore();
-    return s.state.mounted && s.state.viewMode === "scene";
+    if (!s.state.mounted) return false;
+    if (!s.state.selectedId) return false;
+    // 脚本工作台：正在文本编辑（Monaco 等）时不劫持 F2（保留编辑器自身重命名等行为）
+    if (s.state.viewMode === "script" && isEditingText()) return false;
+    return true;
   },
   run: async () => {
-    const id = getEditorStore().state.selectedId;
+    const store = getEditorStore();
+    if (!store.state.mounted) return { renamed: false };
+    const id = store.state.selectedId;
     if (!id) return { renamed: false };
     const node = graph().get(id);
-    if (node?.isRoot) return { renamed: false };
-    const current = node?.name ?? "";
+    if (!node || node.isRoot) return { renamed: false };
+    const current = node.name;
     const name = await prompt({
       title: "重命名节点",
       label: current,

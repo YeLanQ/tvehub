@@ -108,7 +108,9 @@ onMounted(async () => {
   } catch {
     /* 浏览器开发环境没有原生菜单事件源，忽略 */
   }
-  window.addEventListener("keydown", onWindowKeyDown);
+  // 捕获阶段监听：避免子元素（Monaco 等）提前 stopPropagation 吞掉窗口级快捷键；
+  // 文本焦点守卫在回调内自行放行，不影响输入框自身行为
+  window.addEventListener("keydown", onWindowKeyDown, true);
   const container = document.querySelector<HTMLElement>(".center");
   if (container && !editorStore.state.mounted) {
     mountEditor(container);
@@ -118,7 +120,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlistenNative?.();
   unlistenNative = null;
-  window.removeEventListener("keydown", onWindowKeyDown);
+  window.removeEventListener("keydown", onWindowKeyDown, true);
 });
 </script>
 
