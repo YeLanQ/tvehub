@@ -4,6 +4,7 @@
 
 mod asset_protocol;
 mod build;
+mod devtools;
 mod internal;
 mod js_minify;
 mod model_bin;
@@ -595,6 +596,13 @@ pub fn run() {
         .manage(preview::PreviewServerState::default())
         .manage(asset_protocol::AssetProtocolState::default())
         .manage(scene::SceneSession::default())
+        .manage(devtools::DevToolsState::default())
+        // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
+        // 首页「开发者服务」页签可停用/改端口。
+        .setup(|app| {
+            devtools::autostart(app.handle());
+            Ok(())
+        })
         // asset:// 协议：模型/贴图等二进制资产由 WebView 直读 Rust（替代 base64 过 IPC）
         .register_uri_scheme_protocol("asset", |ctx, request| {
             use tauri::Manager;
@@ -676,6 +684,11 @@ pub fn run() {
             scene::material::material_read,
             scene::material::material_write,
             scene::material::material_duplicate,
+            devtools::devtools_start,
+            devtools::devtools_stop,
+            devtools::devtools_status,
+            devtools::devtools_reply,
+            devtools::devtools_push,
             preview::export_web_preview_from_scene,
             preview::start_web_preview_server,
             preview::stop_web_preview,

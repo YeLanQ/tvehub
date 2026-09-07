@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+# 新增 mcp 独立二进制后需显式指定默认运行目标（tauri dev/build 用）
+default-run = "three-visual-editor"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

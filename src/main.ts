@@ -9,6 +9,7 @@ import "./styles/global.scss";
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
 import { handleProjectOpenedFromHome } from "./app/stores/editor";
+import { restoreDevToolsStatus } from "./app/lib/devtools";
 
 debugLog("boot", "app script started");
 
@@ -34,6 +35,9 @@ if (!isTauri()) {
       void handleProjectOpenedFromHome(e.payload.root, e.payload.name, e.payload.rel);
     },
   );
+  // 开发者服务：控制服务器若已启用（首页开启），恢复命令监听与日志推送。
+  // 仅编辑器窗口安装监听器（事件广播到所有窗口，首页监听会重复执行命令）。
+  void restoreDevToolsStatus();
 }
 
 createApp(App).mount("#app");
