@@ -208,22 +208,13 @@ async fn scan_asset_db(root: String) -> Result<Vec<MetaEntry>, String> {
 /// 读取项目内文本文件
 #[tauri::command]
 async fn read_text(root: String, rel: String) -> Result<String, String> {
-    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
-    std::fs::read_to_string(&p).map_err(|e| format!("读取失败 '{}': {}", rel, e))
+    store::read_text(&PathBuf::from(&root), &rel)
 }
 
 /// 写入项目内文本文件（自动补 .meta）
 #[tauri::command]
 async fn write_text(root: String, rel: String, content: String) -> Result<(), String> {
-    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&p, content).map_err(|e| format!("写入失败 '{}': {}", rel, e))?;
-    if project::is_meta_candidate(&PathBuf::from(&root), &rel) {
-        let _ = project::ensure_meta(&p);
-    }
-    Ok(())
+    store::write_text(&PathBuf::from(&root), &rel, &content)
 }
 
 /// 读取资产 .meta（JSON）；无则 null
@@ -298,13 +289,9 @@ async fn create_folder(root: String, rel: String) -> Result<String, String> {
 /// 写入项目内二进制文件（base64 内容；internal 复制等场景用）
 #[tauri::command]
 async fn write_asset_binary(root: String, rel: String, content_b64: String) -> Result<(), String> {
-    let p = project::resolve_in_root(&PathBuf::from(&root), &rel)?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let bytes = crate::base64_decode(&content_b64)
         .map_err(|e| format!("解码二进制失败 '{}': {}", rel, e))?;
-    std::fs::write(&p, bytes).map_err(|e| format!("写入二进制失败 '{}': {}", rel, e))
+    store::write_binary(&PathBuf::from(&root), &rel, &bytes)
 }
 
 /// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）

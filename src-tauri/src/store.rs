@@ -111,3 +111,36 @@ pub fn push_recent(app: &AppHandle, path: &str) {
 pub fn list_recent_paths(app: &AppHandle) -> Vec<String> {
     load_recent(app)
 }
+
+// ---------------------------------------------------------------------------
+// 项目资产文件 IO（read_text / write_text / 二进制写盘 收口于此）
+// ---------------------------------------------------------------------------
+
+/// 读取项目内文本文件（先经沙箱 resolve_in_root 校验路径，防越界）
+pub fn read_text(root: &std::path::Path, rel: &str) -> Result<String, String> {
+    let p = crate::project::resolve_in_root(root, rel)?;
+    std::fs::read_to_string(&p).map_err(|e| format!("读取失败 '{rel}': {e}"))
+}
+
+/// 写入项目内文件（自动创建父目录）；ensure_meta 命中 .meta 候选时补 .meta
+fn write_to(root: &std::path::Path, rel: &str, bytes: &[u8], ensure_meta: bool) -> Result<(), String> {
+    let p = crate::project::resolve_in_root(root, rel)?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, bytes).map_err(|e| format!("写入失败 '{rel}': {e}"))?;
+    if ensure_meta && crate::project::is_meta_candidate(root, rel) {
+        let _ = crate::project::ensure_meta(&p);
+    }
+    Ok(())
+}
+
+/// 写入项目内文本文件（自动补 .meta；材质/脚本/场景等资产用）
+pub fn write_text(root: &std::path::Path, rel: &str, content: &str) -> Result<(), String> {
+    write_to(root, rel, content.as_bytes(), true)
+}
+
+/// 写入项目内二进制文件（internal 复制、截屏留档等；不补 .meta）
+pub fn write_binary(root: &std::path::Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+    write_to(root, rel, bytes, false)
+}
