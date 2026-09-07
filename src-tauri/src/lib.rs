@@ -98,8 +98,29 @@ fn load_recent(app: &tauri::AppHandle) -> Vec<String> {
     let f = recent_file_path(app);
     std::fs::read_to_string(f)
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
+        // 展示/比较前规范化：统一分隔符并按规范化形式去重（同一路径多种写法只保留首条）
+        .into_iter()
+        .map(|p| normalize_recent_path(&p))
+        .fold(Vec::new(), |mut acc, p| {
+            if !acc.iter().any(|x| recent_path_key(x) == recent_path_key(&p)) {
+                acc.push(p);
+            }
+            acc
+        })
+}
+
+/// 规范化最近项目路径的写法：分隔符统一为反斜杠、去掉结尾分隔符
+/// （界面文件夹选择器给反斜杠，远程 devtools/手输可能给正斜杠，否则同一项目存两条）
+fn normalize_recent_path(path: &str) -> String {
+    let p = path.replace('/', "\\");
+    p.trim_end_matches('\\').to_string()
+}
+
+/// 最近项目路径的去重比较键（分隔符与大小写不敏感；Windows 路径不区分大小写）
+fn recent_path_key(path: &str) -> String {
+    normalize_recent_path(path).to_ascii_lowercase()
 }
 
 fn save_recent(app: &tauri::AppHandle, list: &[String]) {
@@ -114,8 +135,9 @@ fn save_recent(app: &tauri::AppHandle, list: &[String]) {
 
 fn push_recent(app: &tauri::AppHandle, path: &str) {
     let mut list = load_recent(app);
-    list.retain(|p| p != path);
-    list.insert(0, path.to_string());
+    let norm = normalize_recent_path(path);
+    list.retain(|p| recent_path_key(p) != recent_path_key(&norm));
+    list.insert(0, norm);
     if list.len() > 20 {
         list.truncate(20);
     }
@@ -165,11 +187,14 @@ async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject
     Ok(out)
 }
 
-/// 移除最近项目
+/// 移除最近项目（按规范化路径匹配，同一路径的多种写法一并移除）
 #[tauri::command]
 async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let mut list = load_recent(&app);
-    list.retain(|p| p != &path);
+    let key = recent_path_key(&path);
+    let list: Vec<String> = load_recent(&app)
+        .into_iter()
+        .filter(|p| recent_path_key(p) != key)
+        .collect();
     save_recent(&app, &list);
     Ok(())
 }

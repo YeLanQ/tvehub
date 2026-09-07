@@ -73,6 +73,11 @@ export interface ProjectStore {
 
 let singleton: ProjectStore | null = null;
 
+/** 最近项目路径的比较键（分隔符/结尾分隔符/大小写不敏感；与后端 normalize 规则对应） */
+function recentPathKey(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
 export function getProjectStore(): ProjectStore {
   if (singleton) return singleton;
 
@@ -261,13 +266,15 @@ export function getProjectStore(): ProjectStore {
       state.buildOpen = false;
     },
     addRecent(project) {
+      const key = recentPathKey(project.path);
       state.recent = [
         project,
-        ...state.recent.filter((p) => p.path !== project.path),
+        ...state.recent.filter((p) => recentPathKey(p.path) !== key),
       ].slice(0, 20);
     },
     removeRecent(path) {
-      state.recent = state.recent.filter((p) => p.path !== path);
+      const key = recentPathKey(path);
+      state.recent = state.recent.filter((p) => recentPathKey(p.path) !== key);
     },
     clearRecent() {
       state.recent = [];

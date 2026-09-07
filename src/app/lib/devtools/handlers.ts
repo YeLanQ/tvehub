@@ -353,7 +353,8 @@ export async function handleMethod(method: string, params: any): Promise<unknown
     case "editor.state":
       return editorState();
     case "project.list":
-      return { recent: getProjectStore().recent };
+      // 直接查后端最近项目列表（编辑器窗口内存里的 recent 未经首页刷新，常为空）
+      return { recent: await invoke<unknown[]>("list_recent_projects") };
     case "project.open":
       return projectOpen(String(params?.path ?? ""));
     case "project.close":
