@@ -260,18 +260,21 @@ onMounted(async () => {
               <div class="ps-field">
                 <label>重力</label>
                 <div class="ps-res">
+                  <span class="ps-axis">X</span>
                   <input
                     v-model.number="draft.physicsGravity.x"
                     type="number"
                     step="0.1"
                     title="重力 X"
                   />
+                  <span class="ps-axis">Y</span>
                   <input
                     v-model.number="draft.physicsGravity.y"
                     type="number"
                     step="0.1"
                     title="重力 Y"
                   />
+                  <span class="ps-axis">Z</span>
                   <input
                     v-model.number="draft.physicsGravity.z"
                     type="number"
