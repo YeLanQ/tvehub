@@ -15,6 +15,7 @@ import { logStore } from "../stores/log";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
 import { confirm } from "../lib/confirm";
+import { setAssetSelection } from "../lib/active-panel";
 import {
   listDirectoryChildren,
   type ChildEntry,
@@ -90,6 +91,7 @@ function navigate(dir: string) {
   currentDir.value = dir;
   selectedPaths.value = [];
   lastAnchor = null;
+  setAssetSelection(null);
 }
 function goBack() {
   const p = backStack.value.pop();
@@ -189,6 +191,8 @@ function onItemClick(e: MouseEvent, item: ChildEntry) {
     lastAnchor = item.path;
   }
   if (item.kind !== "dir") assetsStore.select(item.path);
+  // 主选中项（文件或目录）供 F2 上下文重命名；多选时无单一主项
+  setAssetSelection(selectedPaths.value.length === 1 ? selectedPaths.value[0] : null);
 }
 
 function onItemDblClick(item: ChildEntry) {
@@ -255,6 +259,7 @@ function onContentClick(e: MouseEvent) {
   if (t?.closest(".am-item, input, select, button")) return;
   selectedPaths.value = [];
   lastAnchor = null;
+  setAssetSelection(null);
 }
 
 /** 右栏空白区右键：在当前目录新建目录 + 刷新（内置 internal 目录只读，无新建） */

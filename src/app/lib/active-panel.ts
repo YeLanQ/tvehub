@@ -7,9 +7,20 @@ export type ActivePanel = "assets" | "scene";
 
 let active: ActivePanel = "scene";
 let installed = false;
+/** 资产面板当前“主选中项”（文件或目录均可；单选时记录，多选/空白清空） */
+let assetSelection: string | null = null;
 
 export function getActivePanel(): ActivePanel {
   return active;
+}
+
+export function getAssetSelection(): string | null {
+  return assetSelection;
+}
+
+/** 资产面板记录其单选主选中项（供 F2 上下文重命名） */
+export function setAssetSelection(path: string | null): void {
+  assetSelection = path;
 }
 
 /** 安装一次全局指针监听：落在 .asset-manager（AssetsPanel）内记为 assets，其余归 scene */

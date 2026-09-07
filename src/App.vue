@@ -22,7 +22,11 @@ import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, ty
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
 import { getAssetsStore } from "./app/stores/assets";
-import { getActivePanel, installActivePanelTracker } from "./app/lib/active-panel";
+import {
+  getActivePanel,
+  getAssetSelection,
+  installActivePanelTracker,
+} from "./app/lib/active-panel";
 import { mountEditor } from "./app/services/editorService";
 import "./styles/global.scss";
 import "./styles/components/app.scss";
@@ -86,7 +90,8 @@ function onWindowKeyDown(e: KeyboardEvent): void {
   if (key === "f2" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && !isEditingText()) {
     e.preventDefault();
     if (getActivePanel() === "assets") {
-      const selected = getAssetsStore().selectedAsset;
+      // 面板主选中项（文件/目录均可），回退到 store 的资产选中
+      const selected = getAssetSelection() ?? getAssetsStore().selectedAsset;
       if (selected) void dispatchCommand("asset.renameSelected");
     } else {
       void dispatchCommand("node.renameSelected");

@@ -5,6 +5,7 @@
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
 import { getScriptsStore } from "../stores/scripts";
+import { isProtectedAsset } from "../lib/asset-guards";
 import { prompt } from "../lib/prompt";
 import { registerCommand } from "./registry";
 
@@ -19,6 +20,9 @@ registerCommand({
     const root = project.currentPath;
     const rel = args?.rel ? String(args.rel) : getAssetsStore().selectedAsset;
     if (!root || !rel) return { renamed: false };
+    // 只读/固定根目录与已不存在的条目不重命名（与资产面板右键菜单的可用性一致）
+    if (isProtectedAsset(rel)) return { renamed: false };
+    if (!getAssetsStore().assets.some((a) => a.path === rel)) return { renamed: false };
     const slash = rel.lastIndexOf("/");
     const name = rel.slice(slash + 1);
     const newName = await prompt({
