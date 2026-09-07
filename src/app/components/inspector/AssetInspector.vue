@@ -40,6 +40,7 @@ import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat"
 import type { MaterialParams } from "../../../framework/material";
 import MaterialParamsEditor from "./MaterialParamsEditor.vue";
 import AssetPreview3D from "./AssetPreview3D.vue";
+import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ rel: string }>();
 
@@ -61,9 +62,32 @@ const previewKind = computed<
 >(() => {
   if (kind.value === "hdr") return "hdr";
   if (kind.value === "texcube") return "texcube";
-  if (kind.value === "mat") return isSkyMat.value ? "sky" : "material";
+  if (kind.value === "mat") {
+    if (!isSkyMat.value) return "material";
+    // 立方体天空材质预览其绑定的 TextureCube；程序化预览三段色带
+    return skyDoc.value?.kind === "cube" ? "texcube" : "sky";
+  }
   if (MODEL_KINDS.has(kind.value)) return "model";
   return null;
+});
+
+/** 预览用的资产 rel：立方体天空材质预览其绑定的 TextureCube */
+const previewRel = computed(() =>
+  kind.value === "mat" && isSkyMat.value && skyDoc.value
+    ? skyDoc.value.cubeMap
+    : props.rel,
+);
+
+/** TextureCube 资产选项（内置 internal/… + 项目 assets/… 的全部 .texcube） */
+const cubeOptions = computed(() => {
+  const internal: { rel: string; name: string }[] = [];
+  const project: { rel: string; name: string }[] = [];
+  for (const a of assetsStore.assets) {
+    if (a.kind !== "texcube") continue;
+    if (isInternalAsset(a.path)) internal.push({ rel: a.path, name: a.name });
+    else project.push({ rel: a.path, name: a.name });
+  }
+  return { internal, project };
 });
 
 // ---------------------------------------------------------------------------
@@ -251,7 +275,7 @@ function persistMaterial(): void {
   }, 300);
 }
 
-// —— 天空材质编辑：整卡 JSON 写回（防抖）——
+// —— 天空材质编辑：整卡 JSON 写回（防抖）；写盘后通知引擎重载天空 ——
 function updateSky(mutate: (doc: SkyMatDoc) => void): void {
   const doc = skyDoc.value;
   const rootPath = root.value;
@@ -259,9 +283,9 @@ function updateSky(mutate: (doc: SkyMatDoc) => void): void {
   mutate(doc);
   if (skySaveTimer) clearTimeout(skySaveTimer);
   pendingSkySave = (): void => {
-    void saveSkyMatDoc(rootPath, props.rel, doc).catch((e) =>
-      logStore.log("error", `保存天空材质 ${props.rel} 失败: ${e}`),
-    );
+    void saveSkyMatDoc(rootPath, props.rel, doc)
+      .then(() => editorStore.engine.invalidateSkyMaterial(props.rel))
+      .catch((e) => logStore.log("error", `保存天空材质 ${props.rel} 失败: ${e}`));
   };
   skySaveTimer = setTimeout(() => {
     skySaveTimer = null;
@@ -282,17 +306,25 @@ function numToHex(v: number): string {
 
 type SkyColorKey = "topColor" | "horizonColor" | "groundColor";
 
-function onSkyKind(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  updateSky((d) => {
-    d.kind = v === "procedural" ? "procedural" : "cube";
-  });
-}
-
 function onSkyColor(key: SkyColorKey, e: Event): void {
   const v = (e.target as HTMLInputElement).value;
   updateSky((d) => {
     d[key] = hexToNum(v);
+  });
+}
+
+function onSkyCubeMapChange(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value;
+  updateSky((d) => {
+    d.cubeMap = v;
+  });
+}
+
+type SkyParamKey = "rotation" | "strength" | "worldOpacity" | "blur";
+
+function onSkyParam(key: SkyParamKey, v: number): void {
+  updateSky((d) => {
+    d[key] = v;
   });
 }
 
@@ -365,12 +397,15 @@ function onImgLoad(e: Event): void {
     <!-- hdr / TextureCube / 材质 / 模型：3D 预览 -->
     <AssetPreview3D
       v-if="previewKind"
-      :key="rel + ':' + previewKind + ':' + texcubeRev"
+      :key="previewRel + ':' + previewKind + ':' + texcubeRev"
       :kind="previewKind"
-      :rel="rel"
+      :rel="previewRel"
       :params="previewKind === 'material' && matReady ? matParams : null"
       :mat-type="previewKind === 'material' ? matType : undefined"
       :sky-colors="previewKind === 'sky' && skyDoc ? skyDoc : null"
+      :bg-rotation="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.rotation : undefined"
+      :bg-intensity="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.strength : undefined"
+      :bg-blurriness="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.blur : undefined"
     />
 
     <!-- hdr 信息 -->
@@ -449,49 +484,130 @@ function onImgLoad(e: Event): void {
       </div>
     </template>
 
-    <!-- 材质：类型 + 全部参数（天空材质暴露类型与三色） -->
+    <!-- 材质：类型 + 全部参数（天空类型创建时固定，不可切换） -->
     <template v-if="kind === 'mat'">
       <template v-if="isSkyMat && skyDoc">
         <div class="field">
           <label>天空类型</label>
-          <select :value="skyDoc.kind" :disabled="isInternal" title="立方体=三段纯色带；程序化=渐变+太阳" @change="onSkyKind">
-            <option value="cube">立方体天空盒</option>
-            <option value="procedural">程序化天空</option>
-          </select>
+          <span class="type-tag">
+            {{ skyDoc.kind === "cube" ? "立方体天空盒（创建时固定）" : "程序化天空（创建时固定）" }}
+          </span>
         </div>
-        <div class="field">
-          <label>顶部颜色</label>
-          <input
-            type="color"
-            :value="numToHex(skyDoc.topColor)"
-            :disabled="isInternal"
-            @input="onSkyColor('topColor', $event)"
-            @change="onSkyColor('topColor', $event)"
-          />
-        </div>
-        <div class="field">
-          <label>地平线颜色</label>
-          <input
-            type="color"
-            :value="numToHex(skyDoc.horizonColor)"
-            :disabled="isInternal"
-            @input="onSkyColor('horizonColor', $event)"
-            @change="onSkyColor('horizonColor', $event)"
-          />
-        </div>
-        <div class="field">
-          <label>下方地面色</label>
-          <input
-            type="color"
-            :value="numToHex(skyDoc.groundColor)"
-            :disabled="isInternal"
-            @input="onSkyColor('groundColor', $event)"
-            @change="onSkyColor('groundColor', $event)"
-          />
-        </div>
-        <div class="hint">
-          {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "写入 .mat 资产；已放置的天空盒节点配色为节点自身参数，不受此文件影响。" }}
-        </div>
+
+        <!-- 立方体：TextureCube 纹理 + 旋转/强度/世界不透明度/模糊 -->
+        <template v-if="skyDoc.kind === 'cube'">
+          <div class="field">
+            <label>TextureCube</label>
+            <select
+              :value="skyDoc.cubeMap"
+              :disabled="isInternal"
+              title="立方体天空的贴图来源（.texcube 资产）"
+              @change="onSkyCubeMapChange"
+            >
+              <optgroup label="内置 TextureCube">
+                <option v-for="o in cubeOptions.internal" :key="o.rel" :value="o.rel">
+                  {{ o.name }}
+                </option>
+              </optgroup>
+              <optgroup label="项目 TextureCube">
+                <option v-if="cubeOptions.project.length === 0" value="" disabled>
+                  （项目内暂无 .texcube，可在资产面板「新建 TextureCube」）
+                </option>
+                <option v-for="o in cubeOptions.project" :key="o.rel" :value="o.rel">
+                  {{ o.name }}
+                </option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="field">
+            <label>旋转</label>
+            <NumberField
+              :model-value="skyDoc.rotation"
+              :step="1"
+              :min="0"
+              :max="360"
+              :disabled="isInternal"
+              title="绕世界 Y 轴旋转（度）"
+              @commit="(v) => onSkyParam('rotation', v)"
+            />
+          </div>
+          <div class="field">
+            <label>强度</label>
+            <NumberField
+              :model-value="skyDoc.strength"
+              :step="0.01"
+              :min="0"
+              :max="16"
+              :disabled="isInternal"
+              title="背景亮度倍率"
+              @commit="(v) => onSkyParam('strength', v)"
+            />
+          </div>
+          <div class="field">
+            <label>世界不透明度</label>
+            <NumberField
+              :model-value="skyDoc.worldOpacity"
+              :step="0.01"
+              :min="0"
+              :max="1"
+              :disabled="isInternal"
+              title="世界不透明度（保留参数）"
+              @commit="(v) => onSkyParam('worldOpacity', v)"
+            />
+          </div>
+          <div class="field">
+            <label>模糊</label>
+            <NumberField
+              :model-value="skyDoc.blur"
+              :step="0.01"
+              :min="0"
+              :max="1"
+              :disabled="isInternal"
+              title="背景模糊（0~1）"
+              @commit="(v) => onSkyParam('blur', v)"
+            />
+          </div>
+          <div class="hint">
+            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "写入 .mat 资产；被天空盒节点绑定时背景与参数即时生效。" }}
+          </div>
+        </template>
+
+        <!-- 程序化：三段配色 -->
+        <template v-else>
+          <div class="field">
+            <label>顶部颜色</label>
+            <input
+              type="color"
+              :value="numToHex(skyDoc.topColor)"
+              :disabled="isInternal"
+              @input="onSkyColor('topColor', $event)"
+              @change="onSkyColor('topColor', $event)"
+            />
+          </div>
+          <div class="field">
+            <label>地平线颜色</label>
+            <input
+              type="color"
+              :value="numToHex(skyDoc.horizonColor)"
+              :disabled="isInternal"
+              @input="onSkyColor('horizonColor', $event)"
+              @change="onSkyColor('horizonColor', $event)"
+            />
+          </div>
+          <div class="field">
+            <label>下方地面色</label>
+            <input
+              type="color"
+              :value="numToHex(skyDoc.groundColor)"
+              :disabled="isInternal"
+              @input="onSkyColor('groundColor', $event)"
+              @change="onSkyColor('groundColor', $event)"
+            />
+          </div>
+          <div class="hint">
+            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "写入 .mat 资产；已放置的天空盒节点配色为节点自身参数，不受此文件影响。" }}
+          </div>
+        </template>
       </template>
       <template v-else-if="matReady">
         <div class="field">

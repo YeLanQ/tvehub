@@ -223,6 +223,45 @@ export interface TexCubeDoc {
 
 const TEXCUBE_FACE_KEYS: TexCubeFaceKey[] = ["px", "nx", "py", "ny", "pz", "nz"];
 
+/** 天空盒材质（.mat cube 分支）中引擎消费的字段 */
+export interface SkyMatParams {
+  /** TextureCube（.texcube）资产引用 */
+  cubeMap: string;
+  /** 天空旋转（度，绕世界 Y 轴） */
+  rotation: number;
+  /** 强度（背景亮度倍率） */
+  strength: number;
+  /** 世界不透明度（保留字段） */
+  worldOpacity: number;
+  /** 模糊（0~1） */
+  blur: number;
+}
+
+/** 拉取并解析天空盒材质参数（仅 cube 分支；procedural 由节点参数驱动返回 null） */
+export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const doc = (await res.json()) as Record<string, unknown> | null;
+    if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
+    const kind = typeof doc.kind === "string" ? doc.kind : "";
+    const shader = typeof doc.shader === "string" ? doc.shader : "";
+    if (kind === "procedural" || shader === "SkyProcedural") return null;
+    if (kind !== "cube" && shader !== "SkyBox") return null;
+    const num = (v: unknown, fallback: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    return {
+      cubeMap: typeof doc.cubeMap === "string" ? doc.cubeMap : "",
+      rotation: num(doc.rotation, 0),
+      strength: num(doc.strength, 1),
+      worldOpacity: num(doc.worldOpacity, 0),
+      blur: num(doc.blur, 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 拉取并解析 .texcube 文档（网络失败/非 texcube 文档返回 null） */
 export async function fetchTexCubeDoc(url: string): Promise<TexCubeDoc | null> {
   try {

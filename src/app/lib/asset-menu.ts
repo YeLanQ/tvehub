@@ -31,6 +31,7 @@ export interface AssetMenuApi {
   onNewScript: (dir: string) => void;
   onNewFolder: (dir: string) => void;
   onNewMaterial: (dir: string, typeKey: string) => void;
+  onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTextureCube: (dir: string) => void;
   onImport: (dir: string) => void;
   onImportFolder: (dir: string) => void;
@@ -58,6 +59,18 @@ function materialCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null 
       label: def.label,
       onClick: () => api.onNewMaterial(dir, def.key),
     })),
+  };
+}
+
+/** 目录允许时的「新建天空盒」子菜单（程序化/立方体两种天空材质；null 表示不提供） */
+function skyboxCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
+  if (!api.importAllowed(dir)) return null;
+  return {
+    label: "新建天空盒",
+    children: [
+      { label: "程序化天空", onClick: () => api.onNewSkybox(dir, "procedural") },
+      { label: "立方体天空盒", onClick: () => api.onNewSkybox(dir, "cube") },
+    ],
   };
 }
 
@@ -100,6 +113,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
       if (sc) items.push(sc);
       const mc = materialCreateItem(item.path, api);
       if (mc) items.push(mc);
+      const sc2 = skyboxCreateItem(item.path, api);
+      if (sc2) items.push(sc2);
       const tc = textureCubeCreateItem(item.path, api);
       if (tc) items.push(tc);
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
@@ -127,6 +142,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
         if (sc) items.push(sc);
         const mc = materialCreateItem(dir, api);
         if (mc) items.push(mc);
+        const sc2 = skyboxCreateItem(dir, api);
+        if (sc2) items.push(sc2);
         const tc = textureCubeCreateItem(dir, api);
         if (tc) items.push(tc);
       }
@@ -152,6 +169,8 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
       if (sc) items.push(sc);
       const mc = materialCreateItem(dir, api);
       if (mc) items.push(mc);
+      const sc2 = skyboxCreateItem(dir, api);
+      if (sc2) items.push(sc2);
       const tc = textureCubeCreateItem(dir, api);
       if (tc) items.push(tc);
     }

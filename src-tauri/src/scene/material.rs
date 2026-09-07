@@ -98,6 +98,28 @@ pub async fn material_write(
     write_material_asset(&std::path::PathBuf::from(&root), &rel, &content)
 }
 
+/// 序列化并写入天空盒材质（.mat；shader/kind + 三段配色，配色缺省用内置默认）。
+/// 与 material_write 同套路：序列化在 Rust（.mat 格式所有权），自动补 .meta。
+#[tauri::command]
+pub async fn skymat_write(
+    root: String,
+    rel: String,
+    name: String,
+    kind: String,
+    top_color: Option<String>,
+    horizon_color: Option<String>,
+    ground_color: Option<String>,
+) -> Result<(), String> {
+    let content = crate::scene::migrate::serialize_sky_material_file(
+        &name,
+        &kind,
+        top_color.as_deref().unwrap_or("#2f6fbb"),
+        horizon_color.as_deref().unwrap_or("#cfe4f7"),
+        ground_color.as_deref().unwrap_or("#8fa2b5"),
+    );
+    write_material_asset(&std::path::PathBuf::from(&root), &rel, &content)
+}
+
 /// 把引用路径的材质复制为项目材质资产（internal → assets/materials），
 /// 目标名去重由后端扫盘保证；返回新相对路径。源缺失时按默认参数生成。
 #[tauri::command]
@@ -163,5 +185,29 @@ mod tests {
     fn parse_rejects_non_material() {
         assert!(parse_material_doc("{}").is_none());
         assert!(parse_material_doc("not json").is_none());
+    }
+
+    #[test]
+    fn serialize_sky_material_matches_internal_shape() {
+        let text = crate::scene::migrate::serialize_sky_material_file(
+            "MySky", "procedural", "#2f6fbb", "#cfe4f7", "#8fa2b5",
+        );
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["shader"], "SkyProcedural");
+        assert_eq!(v["kind"], "procedural");
+        assert_eq!(v["topColor"], "#2f6fbb");
+        // cube：持有 TextureCube 引用与渲染参数
+        let text2 = crate::scene::migrate::serialize_sky_material_file("X", "cube", "#111111", "#222222", "#333333");
+        let v2: Value = serde_json::from_str(&text2).unwrap();
+        assert_eq!(v2["shader"], "SkyBox");
+        assert_eq!(v2["kind"], "cube");
+        assert_eq!(v2["cubeMap"], "internal/skybox/DefaultSkybox.texcube");
+        assert_eq!(v2["strength"], 1);
+        assert_eq!(v2["blur"], 0);
+        // 未知 kind 归一为 cube
+        let text3 = crate::scene::migrate::serialize_sky_material_file("Y", "whatever", "#111111", "#222222", "#333333");
+        let v3: Value = serde_json::from_str(&text3).unwrap();
+        assert_eq!(v3["shader"], "SkyBox");
+        assert_eq!(v3["kind"], "cube");
     }
 }

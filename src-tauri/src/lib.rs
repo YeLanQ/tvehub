@@ -611,6 +611,7 @@ pub fn run() {
             scene::material::material_read,
             scene::material::material_write,
             scene::material::material_duplicate,
+            scene::material::skymat_write,
             scene::texcube::texcube_write,
             devtools::devtools_start,
             devtools::devtools_stop,

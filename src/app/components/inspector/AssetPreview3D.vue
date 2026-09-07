@@ -29,6 +29,10 @@ const props = defineProps<{
   matType?: string;
   /** sky：三段色带颜色 */
   skyColors?: SkyColorSet | null;
+  /** 天空背景属性（旋转/强度/模糊；随 sky 材质编辑实时应用） */
+  bgRotation?: number;
+  bgIntensity?: number;
+  bgBlurriness?: number;
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
@@ -77,6 +81,14 @@ function syncAspect(): void {
 
 function render(): void {
   if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+/** 应用天空背景属性（旋转/强度/模糊；three 的 scene 背景属性） */
+function applyBgProps(): void {
+  if (!scene) return;
+  scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(props.bgRotation ?? 0), 0);
+  scene.backgroundIntensity = props.bgIntensity ?? 1;
+  scene.backgroundBlurriness = Math.max(0, Math.min(1, props.bgBlurriness ?? 0));
 }
 
 function startSpin(): void {
@@ -153,6 +165,7 @@ function buildSkyPreview(): void {
   if (props.kind !== "sky" || !scene) return;
   clearScene();
   if (props.skyColors) scene.background = buildBandSkyTexture(props.skyColors);
+  applyBgProps();
   render();
 }
 
@@ -183,6 +196,7 @@ async function buildPanoramaPreview(): Promise<void> {
       // 预览画布旋转：等距柱状取正视方向，六面 CubeTexture 直接作背景
       scene.background = res.texture;
     }
+    applyBgProps();
     render();
   }
 }
@@ -232,6 +246,14 @@ watch(
 watch(() => props.matType, () => {
   if (props.kind === "material") buildMaterialPreview();
 });
+// 天空背景属性（旋转/强度/模糊）：无需重建，应用后重渲染即可
+watch(
+  () => [props.bgRotation, props.bgIntensity, props.bgBlurriness],
+  () => {
+    applyBgProps();
+    render();
+  },
+);
 </script>
 
 <template>

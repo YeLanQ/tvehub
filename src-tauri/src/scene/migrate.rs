@@ -247,6 +247,44 @@ pub fn serialize_material_file(name: &str, material_type: &str, p: &MaterialPara
     serde_json::to_string_pretty(&v).unwrap_or_default()
 }
 
+/// 天空盒材质序列化（.mat 中 shader=SkyBox/SkyProcedural 的特殊材质）：
+/// - cube：持有 TextureCube 引用（cubeMap）+ 旋转/强度/世界不透明度/模糊；
+/// - procedural：三段配色；
+/// 与内置 internal/materials/SkyBox.mat 同构；kind 未知值归一为 cube。
+pub fn serialize_sky_material_file(
+    name: &str,
+    kind: &str,
+    top: &str,
+    horizon: &str,
+    ground: &str,
+) -> String {
+    let procedural = kind.trim() == "procedural";
+    let v = json!({
+        "$type": "material",
+        "$ver": 1,
+        "name": sanitize_asset_stem(name),
+        "shader": if procedural { "SkyProcedural" } else { "SkyBox" },
+        "kind": if procedural { "procedural" } else { "cube" },
+        "topColor": top,
+        "horizonColor": horizon,
+        "groundColor": ground,
+        // cube 专属：TextureCube 引用 + 渲染参数（默认与引擎兜底一致）
+        "cubeMap": "internal/skybox/DefaultSkybox.texcube",
+        "rotation": 0,
+        "strength": 1,
+        "worldOpacity": 0,
+        "blur": 0,
+        "color": "#9aa4b2",
+        "metalness": 0,
+        "roughness": 1,
+        "emissive": "#000000",
+        "wireframe": false,
+    });
+    let mut text = serde_json::to_string_pretty(&v).unwrap_or_default();
+    text.push('\n');
+    text
+}
+
 /// 资产名规范化（去扩展名/非法字符；空值回退 "Material"）
 pub(crate) fn sanitize_asset_stem(raw: &str) -> String {
     let trimmed = raw.trim();

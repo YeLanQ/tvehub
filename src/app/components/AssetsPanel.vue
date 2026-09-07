@@ -301,6 +301,7 @@ const menuApi: AssetMenuApi = {
   onNewScript: (dir) => void doNewScript(dir),
   onNewFolder: (dir) => void doNewFolder(dir),
   onNewMaterial: (dir, key) => void doNewMaterial(dir, key),
+  onNewSkybox: (dir, kind) => void doNewSkybox(dir, kind),
   onNewTextureCube: (dir) => void doNewTextureCube(dir),
   onImport: (dir) => void doImport(dir),
   onImportFolder: (dir) => void doImportFolder(dir),
@@ -369,6 +370,19 @@ async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
     return;
   }
   await assetsStore.createMaterialAsset(root, dir, typeKey);
+}
+
+/** 新建天空盒材质资产（.mat；程序化/立方体两种；按类型基名去重，无需弹窗） */
+async function doNewSkybox(dir: string, kind: "procedural" | "cube"): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir)
+      ? "src 目录不允许新建天空盒"
+      : "内置目录只读，不允许新建天空盒");
+    return;
+  }
+  await assetsStore.createSkyboxAsset(root, dir, kind);
 }
 
 /** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；按名去重无需弹窗） */

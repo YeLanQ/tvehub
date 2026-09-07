@@ -30,8 +30,10 @@ import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/
 import {
   buildProceduralSkyTexture,
   buildBandSkyTexture,
+  fetchSkyMatParams,
   fetchTexCubeDoc,
   loadTexCubeTexture,
+  type SkyMatParams,
 } from "./modules/skyboxTextures";
 import { MaterialManager } from "../material/MaterialManager";
 import { ModelManager, type ModelFileAccess } from "../mesh";
@@ -76,6 +78,18 @@ export class EditorEngine {
   private texCubeCache = new Map<string, Promise<THREE.Texture | null>>();
   /** TextureCube 内容版本（外部改写 .texcube 后 bump，签名随之失效触发重载） */
   private texCubeVersions = new Map<string, number>();
+  /** 天空盒材质参数缓存（key = "version|rel"；invalidateSkyMaterial 换版本） */
+  private skyMatCache = new Map<string, Promise<SkyMatParams | null>>();
+  /** 天空盒材质内容版本（检查器改写 .mat 后 bump） */
+  private skyMatVersions = new Map<string, number>();
+  /** 当前生效的天空背景属性（旋转/强度/模糊；procedural/兜底时为中性值） */
+  private skyBgProps: { rotation: number; intensity: number; blurriness: number } = {
+    rotation: 0,
+    intensity: 1,
+    blurriness: 0,
+  };
+  /** 天空重算纪元：任何贴图/材质失效时 bump，使天空签名失效 */
+  private skyEpoch = 0;
   gizmo!: GizmoController;
 
   /**
@@ -317,6 +331,7 @@ export class EditorEngine {
     this.removeSkyEnvLight();
     this.textureCache.clear();
     this.texCubeCache.clear();
+    this.skyMatCache.clear();
     this.textureUrlResolver = null;
     this.renderer?.dispose();
     this.gizmo?.dispose();
@@ -725,14 +740,19 @@ export class EditorEngine {
       this.removeSkyEnvLight();
       return;
     }
-    // 签名含贴图引用与其内容版本：检查器改写 .texcube 后版本 bump 触发重载
+    // 签名含贴图引用与其内容版本：检查器改写 .texcube/.mat 后版本 bump 触发重载
     const cubeVer =
       sky.skyKind === "cube" ? (this.texCubeVersions.get(sky.cubeMap) ?? 0) : -1;
+    const matVer =
+      sky.skyKind === "cube" ? (this.skyMatVersions.get(sky.material) ?? 0) : -1;
     const sig = [
       sky.id,
       sky.skyKind,
       sky.cubeMap,
       cubeVer,
+      sky.material,
+      matVer,
+      this.skyEpoch,
       sky.topColor,
       sky.horizonColor,
       sky.groundColor,
@@ -745,6 +765,8 @@ export class EditorEngine {
     ].join("|");
     if (this.skyApplied?.sig === sig) return;
     release();
+    // 兜底（三段色带/程序化）期间背景属性回中性；cube 贴图加载完成后应用材质参数
+    this.setSkyBgProps({ rotation: 0, intensity: 1, blurriness: 0 });
     try {
       // 立方体：三段色带先兜底（未绑定/加载中/失败均保持可看）；贴图到位后热替换
       const tex =
@@ -753,9 +775,26 @@ export class EditorEngine {
           : buildBandSkyTexture(sky);
       scene.background = tex;
       this.skyApplied = { sig, texture: tex };
-      if (sky.skyKind === "cube" && sky.cubeMap) {
-        const rel = sky.cubeMap;
-        void this.loadTexCubeTexture(rel).then((loaded) => {
+      if (sky.skyKind === "cube") {
+        // 材质链路：绑定 .mat 的 cubeMap 优先，节点 cubeMap 兜底；
+        // 材质的旋转/强度/模糊经 scene 背景属性生效
+        void (async (): Promise<THREE.Texture | null> => {
+          let mat: SkyMatParams | null = null;
+          if (sky.material) {
+            mat = await this.loadSkyMatParams(sky.material);
+            if (this.skyApplied?.sig !== sig) return null;
+          }
+          const texRel = mat?.cubeMap || sky.cubeMap || "";
+          if (!texRel) return null;
+          const loaded = await this.loadTexCubeTexture(texRel);
+          if (this.skyApplied?.sig !== sig) return null;
+          this.setSkyBgProps({
+            rotation: mat?.rotation ?? 0,
+            intensity: mat?.strength ?? 1,
+            blurriness: mat?.blur ?? 0,
+          });
+          return loaded;
+        })().then((loaded) => {
           // 异步返回时签名可能已变（节点切换/再次修改）：过期结果直接丢弃
           const applied = this.skyApplied;
           if (!applied || applied.sig !== sig || !loaded) return;
@@ -807,7 +846,43 @@ export class EditorEngine {
     for (const key of [...this.texCubeCache.keys()]) {
       if (key.endsWith(`|${rel}`)) this.texCubeCache.delete(key);
     }
+    this.skyEpoch++;
     this.applySkyFromGraph();
+  }
+
+  /** 加载天空盒材质参数（.mat cube 分支；带缓存与内容版本，失败返回 null） */
+  private loadSkyMatParams(rel: string): Promise<SkyMatParams | null> {
+    const key = `${this.skyMatVersions.get(rel) ?? 0}|${rel}`;
+    const cached = this.skyMatCache.get(key);
+    if (cached) return cached;
+    const resolver = this.textureUrlResolver;
+    const task = (async (): Promise<SkyMatParams | null> => {
+      if (!resolver || !rel) return null;
+      const url = resolver(rel);
+      if (!url) return null;
+      return await fetchSkyMatParams(url);
+    })().catch(() => null);
+    this.skyMatCache.set(key, task);
+    return task;
+  }
+
+  /** 外部（检查器写盘）通知某天空盒材质已更新：失效缓存并重算天空背景 */
+  invalidateSkyMaterial(rel: string): void {
+    if (!rel) return;
+    this.skyMatVersions.set(rel, (this.skyMatVersions.get(rel) ?? 0) + 1);
+    for (const key of [...this.skyMatCache.keys()]) {
+      if (key.endsWith(`|${rel}`)) this.skyMatCache.delete(key);
+    }
+    this.skyEpoch++;
+    this.applySkyFromGraph();
+  }
+
+  /** 应用天空背景属性（旋转/强度/模糊；three 的 scene 背景属性） */
+  private setSkyBgProps(props: { rotation: number; intensity: number; blurriness: number }): void {
+    this.skyBgProps = props;
+    this.renderer.scene.backgroundRotation.set(0, THREE.MathUtils.degToRad(props.rotation), 0);
+    this.renderer.scene.backgroundIntensity = props.intensity;
+    this.renderer.scene.backgroundBlurriness = Math.max(0, Math.min(1, props.blurriness));
   }
 
   /**
@@ -858,6 +933,9 @@ export class EditorEngine {
     u.uIsCube.value = isCube ? 1 : 0;
     u.tSky.value = isCube ? null : tex;
     u.tSkyCube.value = isCube ? tex : null;
+    // 天空材质参数：旋转（绕世界 Y）与强度
+    u.uSkyRotation.value = THREE.MathUtils.degToRad(this.skyBgProps.rotation);
+    u.uSkyIntensity.value = this.skyBgProps.intensity;
     // 相机不在场景图内（预览相机）或本帧渲染尚未推进 matrixWorld 时需手动刷新，
     // 否则采到上一帧的姿态（拖动/动画移动相机时天空滞后一帧）
     ocam.updateMatrixWorld();
@@ -879,6 +957,8 @@ export class EditorEngine {
           tSky: { value: null },
           tSkyCube: { value: null },
           uIsCube: { value: 0 },
+          uSkyRotation: { value: 0 },
+          uSkyIntensity: { value: 1 },
           projInverse: { value: new THREE.Matrix4() },
           camWorld: { value: new THREE.Matrix4() },
         },
@@ -893,6 +973,8 @@ export class EditorEngine {
           uniform sampler2D tSky;
           uniform samplerCube tSkyCube;
           uniform float uIsCube;
+          uniform float uSkyRotation;
+          uniform float uSkyIntensity;
           uniform mat4 projInverse;
           uniform mat4 camWorld;
           varying vec2 vNdc;
@@ -904,10 +986,14 @@ export class EditorEngine {
               ( camWorld * vec4( farP.xyz / farP.w, 1.0 ) ).xyz -
               ( camWorld * vec4( nearP.xyz / nearP.w, 1.0 ) ).xyz
             );
+            // 天空旋转：采样方向绕世界 Y 轴反向旋转（与 scene.backgroundRotation 一致）
+            float cr = cos( uSkyRotation );
+            float sr = sin( uSkyRotation );
+            vec3 sdir = normalize( vec3( cr * dir.x - sr * dir.z, dir.y, sr * dir.x + cr * dir.z ) );
             vec3 col = uIsCube > 0.5
-              ? textureCube( tSkyCube, dir ).rgb
-              : texture2D( tSky, equirectUv( dir ) ).rgb;
-            gl_FragColor = vec4( col, 1.0 );
+              ? textureCube( tSkyCube, sdir ).rgb
+              : texture2D( tSky, equirectUv( sdir ) ).rgb;
+            gl_FragColor = vec4( col * uSkyIntensity, 1.0 );
             #include <colorspace_fragment>
           }
         `,

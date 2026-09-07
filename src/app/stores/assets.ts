@@ -41,6 +41,13 @@ export interface AssetsStore {
     /** 显式指定名称（devtools/外部调用按名创建）；缺省用 "TextureCube"（资产面板「新建」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
+  createSkyboxAsset: (
+    root: string,
+    destDir: string,
+    kind: "procedural" | "cube",
+    /** 显式指定名称；缺省按类型用 "ProceduralSky"/"SkyBox" */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -193,6 +200,11 @@ export function getAssetsStore(): AssetsStore {
     },
     async createTextureCubeAsset(root, destDir, preferStem = null) {
       const r = await assetService.createTextureCubeAsset(root, destDir, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createSkyboxAsset(root, destDir, kind, preferStem = null) {
+      const r = await assetService.createSkyboxAsset(root, destDir, kind, state.assets, preferStem);
       if (r) await reload(root);
       return r;
     },

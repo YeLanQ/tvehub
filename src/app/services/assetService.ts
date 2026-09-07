@@ -268,6 +268,40 @@ export const assetService = {
     }
   },
 
+  /**
+   * 新建天空盒材质资产（.mat；shader/kind + 三段配色）：procedural →
+   * "ProceduralSky"、cube → "SkyBox" 基名去重；序列化/落盘由后端 skymat_write
+   * 完成（自动补 .meta）。创建即可被资产检查器预览与编辑。
+   */
+  async createSkyboxAsset(
+    root: string,
+    destDir: string,
+    kind: "procedural" | "cube",
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建天空盒");
+      return null;
+    }
+    const baseName =
+      preferStem && preferStem.trim()
+        ? sanitizeAssetStem(preferStem)
+        : kind === "procedural"
+          ? "ProceduralSky"
+          : "SkyBox";
+    const rel = uniqueRel(assets, destDir, baseName, MATERIAL_EXT);
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - MATERIAL_EXT.length);
+    try {
+      await api.skymatWrite(root, rel, name, kind);
+      logStore.log("success", `已新建天空盒: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建天空盒失败: ${e}`);
+      return null;
+    }
+  },
+
   async createScriptAsset(
     root: string,
     destDir: string,
