@@ -11,10 +11,24 @@ interface RendererHandle {
   domElement: HTMLCanvasElement;
   shadowMap: { enabled: boolean; type: number };
   toneMapping: number;
+  /** 每帧是否清颜色/深度缓冲（两种后端语义一致；清除标志按帧改写） */
+  autoClearColor: boolean;
+  autoClearDepth: boolean;
   setPixelRatio(value?: number): void;
   setSize(width: number, height: number, updateStyle?: boolean): void;
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   dispose(): void;
+}
+
+/**
+ * 相机清除状态（渲染每帧开始时如何清屏；由引擎按活动相机节点的清除标志给出）：
+ * - background：本帧 scene.background（null = 不绘制背景，配合不清颜色保留上一帧画面）；
+ * - clearColor / clearDepth：是否清空颜色/深度缓冲。
+ */
+export interface CameraClearState {
+  background: THREE.Texture | THREE.Color | null;
+  clearColor: boolean;
+  clearDepth: boolean;
 }
 
 /**
@@ -44,6 +58,8 @@ export class RendererManager {
   private raf = 0;
   private resizeObs?: ResizeObserver;
   private renderCb?: () => void;
+  /** 清除状态提供方（引擎按活动相机节点的清除标志给出；缺省全清 + 全局背景） */
+  private clearProvider: ((cam: THREE.Camera) => CameraClearState | null) | null = null;
 
   /** 所有需要随视口比例更新的相机（编辑器相机 + 预览相机等，透视/正交） */
   private cameras = new Set<THREE.Camera>();
@@ -137,6 +153,30 @@ export class RendererManager {
     this.renderCb = cb;
   }
 
+  /** 注入清除状态提供方（每帧渲染前按活动相机调用；null 配置 = 保持默认全清与全局背景） */
+  setClearProvider(provider: ((cam: THREE.Camera) => CameraClearState | null) | null): void {
+    this.clearProvider = provider;
+  }
+
+  /**
+   * 渲染前按活动相机应用清除标志：改写 scene.background 与 autoClear 标志。
+   * background 由 provider 每帧给定（纯色/天空/无背景），与引擎的全局天空
+   * 维护（applySkyFromGraph）不冲突：每帧重写，引擎侧仍是纹理的属主。
+   */
+  private applyClearState(cam: THREE.Camera): void {
+    const r = this.renderer;
+    if (!r) return;
+    const state = this.clearProvider ? this.clearProvider(cam) : null;
+    if (!state) {
+      r.autoClearColor = true;
+      r.autoClearDepth = true;
+      return;
+    }
+    this.scene.background = state.background;
+    r.autoClearColor = state.clearColor;
+    r.autoClearDepth = state.clearDepth;
+  }
+
   /** 暂停/恢复渲染循环（中央区域被 iframe/面板接管时暂停，避免后台空转） */
   setPaused(paused: boolean): void {
     if (this.paused === paused) return;
@@ -207,7 +247,10 @@ export class RendererManager {
     this.applySizeIfNeeded();
     this.orbit?.update();
     this.renderCb?.();
-    if (this.renderer) this.renderer.render(this.scene, this.activeCamera ?? this.camera);
+    if (this.renderer) {
+      this.applyClearState(this.activeCamera ?? this.camera);
+      this.renderer.render(this.scene, this.activeCamera ?? this.camera);
+    }
   };
 
   get domElement(): HTMLElement {
@@ -240,7 +283,12 @@ async function createRendererHandle(
   const fallback = (why?: string): RendererHandle => {
     if (why) console.warn(`[renderer] 使用 WebGLRenderer: ${why}`);
     onCreated("webgl");
-    return new THREE.WebGLRenderer({ antialias: aa }) as unknown as RendererHandle;
+    // preserveDrawingBuffer：仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲
+    // （WebGL 默认呈现后缓冲失效，不清颜色会退化成黑屏/花屏）
+    return new THREE.WebGLRenderer({
+      antialias: aa,
+      preserveDrawingBuffer: true,
+    }) as unknown as RendererHandle;
   };
 
   if (backend === "webgl") return fallback();

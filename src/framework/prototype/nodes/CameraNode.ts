@@ -1,6 +1,13 @@
 import { Node, type NodeInit } from "../Node";
 import { cloneRecord } from "../types";
-import { clampCameraParam, parseCameraKind, type CameraKind } from "../../camera";
+import {
+  clampCameraParam,
+  parseCameraKind,
+  parseCameraClearFlags,
+  DEFAULT_CAMERA_CLEAR_FLAGS,
+  type CameraClearFlags,
+  type CameraKind,
+} from "../../camera";
 
 export interface CameraNodeInit extends NodeInit {
   cameraType?: CameraKind;
@@ -9,6 +16,10 @@ export interface CameraNodeInit extends NodeInit {
   far?: number;
   /** 正交半高（取景高度的一半，世界单位；仅 cameraType=orthographic 生效） */
   orthoSize?: number;
+  /** 清除标志（渲染每帧开始时如何清屏；缺省天空盒） */
+  clearFlags?: CameraClearFlags;
+  /** 纯色清屏色（clearFlags=solidColor 生效；0xRRGGBB） */
+  clearColor?: number;
   isEditorCamera?: boolean;
 }
 
@@ -24,6 +35,10 @@ export class CameraNode extends Node {
   far = 20;
   /** 正交半高（取景高度的一半，世界单位；最小值 0.01；仅正交相机生效） */
   orthoSize = 5;
+  /** 清除标志：skybox（默认）/ solidColor / depthOnly / colorOnly */
+  clearFlags: CameraClearFlags = DEFAULT_CAMERA_CLEAR_FLAGS;
+  /** 纯色清屏色（clearFlags=solidColor 时的背景；0xRRGGBB） */
+  clearColor = 0x000000;
   isEditorCamera = false;
 
   constructor(init: CameraNodeInit = {}) {
@@ -33,6 +48,8 @@ export class CameraNode extends Node {
     this.near = Math.max(0.01, init.near ?? this.near);
     this.far = Math.max(1, init.far ?? this.far);
     this.orthoSize = clampCameraParam("orthoSize", init.orthoSize ?? this.orthoSize);
+    this.clearFlags = parseCameraClearFlags(init.clearFlags ?? this.clearFlags);
+    this.clearColor = (init.clearColor ?? this.clearColor) & 0xffffff;
     this.isEditorCamera = init.isEditorCamera ?? this.isEditorCamera;
   }
 
@@ -46,6 +63,8 @@ export class CameraNode extends Node {
       near: this.near,
       far: this.far,
       orthoSize: this.orthoSize,
+      clearFlags: this.clearFlags,
+      clearColor: this.clearColor,
       isEditorCamera: this.isEditorCamera,
     });
   }
@@ -56,6 +75,8 @@ export class CameraNode extends Node {
     target.near = this.near;
     target.far = this.far;
     target.orthoSize = this.orthoSize;
+    target.clearFlags = this.clearFlags;
+    target.clearColor = this.clearColor;
     target.isEditorCamera = this.isEditorCamera;
   }
 
@@ -68,6 +89,8 @@ export class CameraNode extends Node {
       "orthoSize",
       (source.orthoSize as number) ?? this.orthoSize,
     );
+    this.clearFlags = parseCameraClearFlags(source.clearFlags);
+    this.clearColor = ((source.clearColor as number) ?? this.clearColor) & 0xffffff;
     this.isEditorCamera = (source.isEditorCamera as boolean) ?? this.isEditorCamera;
   }
 

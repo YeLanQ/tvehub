@@ -1,11 +1,19 @@
 // 渲染相机：从场景相机节点（或缺省位姿）构建，并按取景宽高比自适应投影。
 // 相机类型：正交（orthoSize 半高取景，无近大远小）/ 透视（fov 取景，缺省）。
+// 清除标志：skybox（缺省，全局天空/底色）/ solidColor（纯色 clearColor）/
+// depthOnly（只清深度，保留上一帧颜色）/ colorOnly（只清颜色，保留上一帧深度）。
 import * as THREE from "./three.module.min.js";
 import { num } from "./utils.mjs";
 
+/** 任意来源 → 清除标志（未知值回退 skybox，与编辑器框架规则一致） */
+function parseClearFlags(v) {
+  return v === "solidColor" || v === "depthOnly" || v === "colorOnly" ? v : "skybox";
+}
+
 /**
  * 构建渲染相机（优先取场景第一个非编辑器相机节点，无相机节点用缺省位姿）。
- * 返回 { cam, applyProjection(aspect) }：透视写 aspect；正交重算左右/上下范围。
+ * 返回 { cam, applyProjection(aspect), clear }：透视写 aspect；正交重算左右/上下范围；
+ * clear = { flags, color } 供渲染循环每帧应用清除标志。
  */
 export function createRenderCamera(canvasCameras) {
   const cams = canvasCameras.filter((c) => c.json.isEditorCamera !== true);
@@ -41,5 +49,9 @@ export function createRenderCamera(canvasCameras) {
     cam.position.set(7, 5, 8);
     cam.lookAt(0, 0.6, 0);
   }
-  return { cam, applyProjection };
+  const clear = {
+    flags: parseClearFlags(pick?.json?.clearFlags),
+    color: num(pick?.json?.clearColor, 0) & 0xffffff,
+  };
+  return { cam, applyProjection, clear };
 }

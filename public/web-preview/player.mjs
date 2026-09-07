@@ -129,11 +129,39 @@ async function main() {
   // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）
   await applyMeshTextures(meshes, materialParams);
 
-  // 渲染相机
-  const { cam, applyProjection } = createRenderCamera(cameras);
+  // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
+  const { cam, applyProjection, clear } = createRenderCamera(cameras);
+  const clearColor = new THREE.Color(clear.color);
 
   // 渲染器 + 舞台缩放适配（按设计分辨率/缩放模式取景并适配 iframe）
   const renderer = createStage(app, cfg, applyProjection);
+
+  // 相机清除标志：每帧渲染前应用（与编辑器预览渲染规则一致）
+  function applyClearFlags() {
+    switch (clear.flags) {
+      case "solidColor":
+        scene.background = clearColor;
+        renderer.autoClearColor = true;
+        renderer.autoClearDepth = true;
+        break;
+      case "depthOnly":
+        // 只清深度：不清颜色、不绘制背景，保留上一帧画面
+        scene.background = null;
+        renderer.autoClearColor = false;
+        renderer.autoClearDepth = true;
+        break;
+      case "colorOnly":
+        // 只清颜色：不清深度，保留上一帧深度
+        scene.background = null;
+        renderer.autoClearColor = true;
+        renderer.autoClearDepth = false;
+        break;
+      default:
+        // skybox：保留全局天空/底色背景，确保颜色+深度全清
+        renderer.autoClearColor = true;
+        renderer.autoClearDepth = true;
+    }
+  }
 
   // 平行光/聚光阴影范围兜底（相机朝 -Z 时 target 世界矩阵由场景更新）
   scene.traverse((o) => {
@@ -166,6 +194,7 @@ async function main() {
     const dt = clock.getDelta();
     scripts.update(dt);
     animations.update(dt);
+    applyClearFlags();
     renderer.render(scene, cam);
   }
   frame();

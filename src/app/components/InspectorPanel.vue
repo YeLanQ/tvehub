@@ -8,7 +8,7 @@ import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, SkyboxNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
 import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
-import { clampCameraParam, cameraParamDef, type CameraParamKey } from "../../framework/camera";
+import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../framework/camera";
 import { nextId } from "../../platform_abstraction/id";
 import type { NodeComponentRef } from "../../framework/prototype/Node";
 import { isInternalAsset } from "../../lib/internal-assets";
@@ -405,6 +405,28 @@ function onCameraChangeType(type: string): void {
   }, "Set Camera Type");
 }
 
+/** 切换清除标志（天空盒/纯色/仅深度/仅颜色）：预览渲染的清屏方式随之变化 */
+function onCameraClearFlags(flags: string): void {
+  const n = node.value;
+  if (!n || !(n instanceof CameraNode)) return;
+  const v = parseCameraClearFlags(flags);
+  if (v === n.clearFlags) return;
+  commit((target) => {
+    (target as CameraNode).clearFlags = v;
+  }, "Set Clear Flags");
+}
+
+/** 修改纯色清屏色（清除标志=纯色时的背景色） */
+function onCameraClearColor(color: number): void {
+  const n = node.value;
+  if (!n || !(n instanceof CameraNode)) return;
+  const v = color & 0xffffff;
+  if (v === n.clearColor) return;
+  commit((target) => {
+    (target as CameraNode).clearColor = v;
+  }, "Set Clear Color");
+}
+
 function onSkyboxUpdate(label: string, value: unknown): void {
   const n = node.value;
   if (!n || !(n instanceof SkyboxNode)) return;
@@ -604,6 +626,8 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
           :rev="revision"
           @editParam="onCameraEdit"
           @changeType="onCameraChangeType"
+          @editClearFlags="onCameraClearFlags"
+          @editClearColor="onCameraClearColor"
         />
       </ComponentCard>
 

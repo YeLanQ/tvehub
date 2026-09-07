@@ -21,7 +21,7 @@ import {
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { nextId } from "../../platform_abstraction/id";
-import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR } from "./modules/RendererManager";
+import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
@@ -121,6 +121,10 @@ export class EditorEngine {
   private skyLight: THREE.HemisphereLight | null = null;
   /** 是否处于预览渲染（用场景中的 CameraNode 渲染） */
   private previewMode = false;
+  /** 预览渲染当前生效的相机节点（null = 无可用相机，按默认视角回退） */
+  private previewNode: CameraNode | null = null;
+  /** 清除状态共享色（纯色/底色背景复用同一实例，避免每帧新建对象） */
+  private clearScratchColor = new THREE.Color();
   /** 编辑器辅助物（网格/相机盒体/灯球/gizmo/选择框）是否显示 */
   private overlayVisible = true;
   /** 无场景相机时的回退提示是否已输出过（避免每次图事件刷屏） */
@@ -159,6 +163,8 @@ export class EditorEngine {
     this.renderer.registerCamera(this.previewCamera);
     // 正交预览相机：视口宽高比变化时按半高重算左右/上下范围（而非写 aspect）
     this.renderer.registerCamera(this.previewOrthoCamera, () => this.syncOrthoPreviewFrustum());
+    // 清除标志：渲染循环每帧按活动相机取清除状态（预览相机节点决定清屏方式）
+    this.renderer.setClearProvider(() => this.resolveClearState());
   }
 
   /** 历史状态视图（后端权威；UI 读取面与旧 CommandStack 同构） */
@@ -874,12 +880,42 @@ export class EditorEngine {
   }
 
   /**
+   * 预览相机的清除状态（每帧渲染前调用；返回 null = 默认全清 + 全局背景）。
+   * 编辑器相机与"无相机节点回退"都保持既有行为（全局天空/底色背景）；
+   * 有相机节点时按节点清除标志决定清屏方式与背景内容。
+   */
+  private resolveClearState(): CameraClearState | null {
+    const node = this.previewMode ? this.previewNode : null;
+    if (!node) return null;
+    switch (node.clearFlags) {
+      case "solidColor":
+        this.clearScratchColor.setHex(node.clearColor & 0xffffff);
+        return { background: this.clearScratchColor, clearColor: true, clearDepth: true };
+      case "depthOnly":
+        // 不清颜色：保留上一帧画面（背景不绘制，颜色缓冲原样保留）
+        return { background: null, clearColor: false, clearDepth: true };
+      case "colorOnly":
+        // 不清深度：保留上一帧深度（背景照常清除重画）
+        return { background: null, clearColor: true, clearDepth: false };
+      case "skybox":
+      default:
+        // 天空盒：全局天空纹理；无天空盒节点回退编辑器底色（与场景背景规则一致）
+        if (this.skyApplied) {
+          return { background: this.skyApplied.texture, clearColor: true, clearDepth: true };
+        }
+        this.clearScratchColor.setHex(EDITOR_BACKGROUND_COLOR);
+        return { background: this.clearScratchColor, clearColor: true, clearDepth: true };
+    }
+  }
+
+  /**
    * 依据当前 previewMode 应用一致的状态：
    * 有可用相机节点 → 用该节点渲染预览；
    * 无相机节点 → 用默认取景视角渲染（隐藏编辑器辅助物、禁用轨道）。
    */
   private syncPreviewView(): void {
     if (!this.previewMode) {
+      this.previewNode = null;
       this.overlayVisible = true;
       this.renderer.setActiveCamera(this.renderer.camera);
       this.renderer.orbitControls.enabled = true;
@@ -892,6 +928,7 @@ export class EditorEngine {
         logger.info("场景中没有 CameraNode，预览使用默认相机视角");
         this.previewFallbackLogged = true;
       }
+      this.previewNode = null;
       this.applyDefaultPreviewPose();
       this.overlayVisible = false;
       this.renderer.setActiveCamera(this.previewCamera);
@@ -899,6 +936,7 @@ export class EditorEngine {
       this.applyOverlayVisibility();
       return;
     }
+    this.previewNode = node;
     this.overlayVisible = false;
     this.syncPreviewCameraTo(node);
     this.renderer.setActiveCamera(this.previewCameraFor(node));

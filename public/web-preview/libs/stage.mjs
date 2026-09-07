@@ -24,6 +24,8 @@ export function createStage(app, cfg, applyProjection) {
   const scaleMode = typeof cfg.scaleMode === "string" && cfg.scaleMode ? cfg.scaleMode : "full";
   const renderer = new THREE.WebGLRenderer({
     antialias: cfg.antiAliasing !== 0,
+    // 仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲（默认呈现后缓冲失效）
+    preserveDrawingBuffer: true,
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.toneMapping =

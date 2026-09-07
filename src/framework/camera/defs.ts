@@ -1,7 +1,7 @@
 // 相机参数面板定义（风格对齐 material/defs.ts，命名参照 Blender 相机属性）：
 // 供 CameraSection 数据驱动渲染；公共分组（near/far）任何类型都显示，
 // 类型特有分组（透视 fov / 正交 orthoSize）由工厂类型定义各自给出。
-import type { CameraParamKey } from "./types";
+import type { CameraParamKey, CameraClearFlags } from "./types";
 
 export interface CameraParamDef {
   key: CameraParamKey;
@@ -16,6 +16,45 @@ export interface CameraParamDef {
   /** 允许的最大值（缺省不限） */
   max?: number;
 }
+
+/** 清除标志选项定义（相机属性面板下拉；渲染（Rendering）分组用） */
+export interface CameraClearFlagDef {
+  key: CameraClearFlags;
+  /** 中文显示名 */
+  label: string;
+  /** 引擎英文属性名（提示） */
+  en: string;
+  /** 行为说明（下拉 title 提示） */
+  desc: string;
+}
+
+/** 清除标志选项（顺序 = 下拉展示顺序） */
+export const CAMERA_CLEAR_FLAG_DEFS: CameraClearFlagDef[] = [
+  {
+    key: "skybox",
+    label: "天空盒",
+    en: "Skybox",
+    desc: "清空颜色+深度缓冲并绘制天空盒（无天空盒节点时回退编辑器底色）",
+  },
+  {
+    key: "solidColor",
+    label: "纯色",
+    en: "Solid Color",
+    desc: "清空颜色+深度缓冲并以纯色填充背景",
+  },
+  {
+    key: "depthOnly",
+    label: "仅深度",
+    en: "Depth Only",
+    desc: "只清空深度缓冲、保留上一帧颜色（不清颜色，画面逐帧叠加）",
+  },
+  {
+    key: "colorOnly",
+    label: "仅颜色",
+    en: "Color Only",
+    desc: "只清空颜色缓冲、保留上一帧深度（不清深度）",
+  },
+];
 
 export interface CameraParamGroup {
   /** 分组标题 */
