@@ -58,9 +58,10 @@ export class HelperSystem {
       this.removeEntry(c.nodeId);
       return;
     }
-    // transform / properties / reparent → 同步形状与贴合世界变换
+    // transform / properties / reparent → 需要时补建（如节点首次挂上碰撞体组件）
     const node = graph.get(c.nodeId);
     if (!node) return;
+    if (!this.entries.has(node.id)) this.ensureEntry(node, objectMap);
     const entry = this.entries.get(node.id);
     if (entry) this.syncEntry(entry, objectMap.get(node.id));
   }

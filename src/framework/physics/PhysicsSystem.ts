@@ -28,8 +28,8 @@ import {
   type RigidBodySettings,
 } from "./types";
 import { physicsBackendRegistry } from "./backend/factory";
+import { computeColliderShapeDesc } from "./colliderShape";
 import type {
-  ColliderShapeDesc,
   IPhysicsBody,
   IPhysicsWorld,
   PhysicsQuat,
@@ -109,8 +109,6 @@ export class PhysicsSystem {
   private tmpPos = new THREE.Vector3();
   private tmpQuat = new THREE.Quaternion();
   private tmpMat = new THREE.Matrix4();
-  private tmpBox = new THREE.Box3();
-  private tmpScale = new THREE.Vector3();
 
   onChange(l: PhysicsChangeListener): () => void {
     this.listeners.add(l);
@@ -343,136 +341,6 @@ export class PhysicsSystem {
     this.worldError = null;
   }
 
-  /** 由刚体设置 + 对象包围盒生成碰撞形状描述（世界单位） */
-  private colliderDescFor(entry: ColliderEntry, obj: THREE.Object3D): ColliderShapeDesc {
-    const s = entry.settings;
-    let half = { x: 0.5, y: 0.5, z: 0.5 };
-    let center = { x: 0, y: 0, z: 0 };
-    let points: number[] = [];
-    if (s.autoSize) {
-      const bounds = this.computeLocalBounds(obj);
-      if (bounds) {
-        half = bounds.half;
-        center = bounds.center;
-        points = bounds.points;
-      }
-    } else {
-      // 显式尺寸（全尺寸 → 半尺寸；sphere 直径取 x；capsule/cylinder 直径取 x、柱高取 y）
-      half = {
-        x: Math.max(0.05, s.size.x / 2),
-        y: Math.max(0.05, s.size.y / 2),
-        z: Math.max(0.05, s.size.z / 2),
-      };
-    }
-    // 对象世界缩放烘进形状（物理体不支持缩放变换）
-    obj.getWorldScale(this.tmpScale);
-    const sx = Math.abs(this.tmpScale.x) || 1;
-    const sy = Math.abs(this.tmpScale.y) || 1;
-    const sz = Math.abs(this.tmpScale.z) || 1;
-    const uniform = (sx + sy + sz) / 3;
-    const desc: ColliderShapeDesc = {
-      shape: s.shape,
-      halfExtents: { x: Math.max(0.001, half.x * sx), y: Math.max(0.001, half.y * sy), z: Math.max(0.001, half.z * sz) },
-      radius: Math.max(0.001, Math.max(half.x * sx, half.z * sz, s.shape === "sphere" ? half.y * sy : 0.001)),
-      halfHeight: 0.5,
-      points: [],
-      offset: {
-        x: s.offset.x + (s.autoSize ? center.x : 0),
-        y: s.offset.y + (s.autoSize ? center.y : 0),
-        z: s.offset.z + (s.autoSize ? center.z : 0),
-      },
-      friction: s.friction,
-      restitution: s.restitution,
-      isSensor: s.isSensor,
-    };
-    switch (s.shape) {
-      case "sphere":
-        desc.radius = Math.max(0.001, uniform * Math.max(half.x, half.y, half.z));
-        break;
-      case "capsule": {
-        desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-        desc.halfHeight = Math.max(0.001, half.y - desc.radius);
-        break;
-      }
-      case "cylinder": {
-        desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-        desc.halfHeight = Math.max(0.001, half.y);
-        break;
-      }
-      case "convex": {
-        // 顶点采样已按对象局部空间收集：乘世界缩放后传入
-        if (points.length) {
-          const scaled: number[] = new Array(points.length);
-          for (let i = 0; i + 2 < points.length; i += 3) {
-            scaled[i] = points[i] * sx;
-            scaled[i + 1] = points[i + 1] * sy;
-            scaled[i + 2] = points[i + 2] * sz;
-          }
-          desc.points = scaled;
-        }
-        break;
-      }
-      case "box":
-      default:
-        break;
-    }
-    return desc;
-  }
-
-  /** 对象局部空间包围盒 + convex 顶点采样（遍历子网格；含子变换、不含对象自身缩放） */
-  private computeLocalBounds(obj: THREE.Object3D): { center: Vec3; half: Vec3; points: number[] } | null {
-    obj.updateWorldMatrix(true, true);
-    this.tmpBox.makeEmpty();
-    const objInv = new THREE.Matrix4().copy(obj.matrixWorld).invert();
-    const childMat = new THREE.Matrix4();
-    const meshPoints: (THREE.BufferAttribute | THREE.InterleavedBufferAttribute)[] = [];
-    let firstMesh: THREE.Mesh | null = null;
-    obj.traverse((child) => {
-      const mesh = child as THREE.Mesh;
-      if (!(mesh as THREE.Mesh).isMesh || !mesh.geometry) return;
-      childMat.copy(mesh.matrixWorld).premultiply(objInv);
-      const geo = mesh.geometry;
-      geo.computeBoundingBox();
-      if (geo.boundingBox) {
-        const b = geo.boundingBox.clone().applyMatrix4(childMat);
-        this.tmpBox.union(b);
-      }
-      if (!firstMesh) {
-        firstMesh = mesh;
-        const pos = geo.getAttribute("position");
-        if (pos) meshPoints.push(pos);
-      }
-    });
-    if (this.tmpBox.isEmpty()) return null;
-    const min = this.tmpBox.min;
-    const max = this.tmpBox.max;
-    const center = { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
-    const half = {
-      x: Math.max(0.05, (max.x - min.x) / 2),
-      y: Math.max(0.05, (max.y - min.y) / 2),
-      z: Math.max(0.05, (max.z - min.z) / 2),
-    };
-    // convex 顶点：首个网格的顶点属性均匀采样（≤64 点），经子变换到对象局部空间
-    const points: number[] = [];
-    const pos = meshPoints[0];
-    if (firstMesh && pos) {
-      const count = pos.count;
-      const step = Math.max(1, Math.floor(count / 64));
-      const v = new THREE.Vector3();
-      for (let i = 0; i < count && points.length < 64 * 3; i += step) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(this.childMatFor(firstMesh, objInv));
-        points.push(v.x, v.y, v.z);
-      }
-    }
-    return { center, half, points };
-  }
-
-  /** 采样顶点用的子变换（computeLocalBounds 内的 childMat 复用不便，这里按需重算） */
-  private childMatCache = new THREE.Matrix4();
-  private childMatFor(mesh: THREE.Mesh, objInv: THREE.Matrix4): THREE.Matrix4 {
-    return this.childMatCache.copy(mesh.matrixWorld).premultiply(objInv);
-  }
-
   /** 世界就绪后为绑定建体（以当前世界位姿为初值） */
   private createBindingBody(binding: Binding): void {
     const world = this.world;
@@ -496,7 +364,7 @@ export class PhysicsSystem {
       mode: rb.mode,
       position: { x: this.tmpPos.x, y: this.tmpPos.y, z: this.tmpPos.z },
       quaternion: { x: this.tmpQuat.x, y: this.tmpQuat.y, z: this.tmpQuat.z, w: this.tmpQuat.w },
-      colliders: binding.colliders.map((c) => this.colliderDescFor(c, obj)),
+      colliders: binding.colliders.map((c) => computeColliderShapeDesc(c.settings, obj)),
       mass: rb.mass,
       linearDamping: rb.linearDamping,
       angularDamping: rb.angularDamping,

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
-    "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js"
+    "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js",
+    "smoke:collider": "vite build --ssr scripts/smoke-collider-helper.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-collider-helper.js"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",
