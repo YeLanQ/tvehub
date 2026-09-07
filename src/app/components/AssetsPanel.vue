@@ -7,26 +7,33 @@
  * - 底部状态栏：选中项 + 总数量
  * 右键菜单（新建目录/复制/重命名/删除/复制路径/刷新）。资产操作统一走 assets store。
  */
-import { computed, provide, onMounted, onUnmounted, ref, watch } from "vue";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { computed, provide, onMounted, ref, watch } from "vue";
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
 import { assetService } from "../services/assetService";
 import { logStore } from "../stores/log";
-import { openContextMenu, menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
+import { openContextMenu } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
 import { confirm } from "../lib/confirm";
 import {
   listDirectoryChildren,
-  ASSET_TYPE_FILTERS as TYPE_FILTERS,
   type ChildEntry,
 } from "../lib/asset-browser";
+import {
+  buildEntryMenu,
+  buildContentMenu,
+  buildBlankMenu,
+  buildRefreshOnlyMenu,
+  type AssetMenuApi,
+} from "../lib/asset-menu";
 import AssetTreeNode, {
   ASSET_DRAG_KEY,
   type AssetDragHandle,
   type AssetNode,
 } from "./AssetTreeNode.vue";
 import AssetEntryCell from "./AssetEntryCell.vue";
+import AssetToolbar from "./AssetToolbar.vue";
+import { useAssetTransfer } from "./useAssetTransfer";
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
@@ -148,11 +155,6 @@ const selectedName = computed(() => {
 // ---------------------------------------------------------------------------
 // 资产操作（右键菜单）
 // ---------------------------------------------------------------------------
-function parentOf(path: string): string | null {
-  const i = path.lastIndexOf("/");
-  return i > 0 ? path.slice(0, i) : i === 0 ? "" : null;
-}
-
 /** 把内置资源（internal/…）复制到项目资产目录（业务与命名下沉 assetService） */
 async function copyInternalToProject(item: ChildEntry): Promise<void> {
   const root = projectStore.currentPath;
@@ -214,13 +216,18 @@ function onItemDblClick(item: ChildEntry) {
   }
   // 双击 .ts 脚本：切到脚本工作台打开编辑
   if (item.kind === "ts") {
-    getEditorStore().setViewMode("script");
-    void getScriptsStore().openScript(item.path);
+    openScriptAsset(item);
     return;
   }
   // 其余资产：双击仅选中并记录日志
   assetsStore.select(item.path);
   logStore.log("info", `${item.name} (${item.kind})`);
+}
+
+/** 打开脚本到脚本工作台（双击 / 右键菜单共用） */
+function openScriptAsset(item: ChildEntry): void {
+  getEditorStore().setViewMode("script");
+  void getScriptsStore().openScript(item.path);
 }
 
 /** 把模型资产作为网格节点加入当前场景（source=model；动画自动绑定） */
@@ -240,72 +247,9 @@ function addModelToScene(item: ChildEntry): void {
 function onItemContext(e: MouseEvent, item: ChildEntry) {
   e.preventDefault();
   e.stopPropagation();
-  const items: CtxMenuItem[] = [];
-  const isProtected = isProtectedAsset(item.path);
-  const isInternal = isInternalAsset(item.path);
-
-  if (item.kind === "dir") items.push({ label: "打开", onClick: () => navigate(item.path) });
-  // 模型资产：加入当前场景（source=model 网格节点）
-  if (item.kind !== "dir" && isModelAssetRel(item.path)) {
-    items.push({ label: "添加到场景", onClick: () => addModelToScene(item) });
-  }
-  // 脚本资产：打开脚本工作台编辑
-  if (item.kind === "ts") {
-    items.push({
-      label: "打开脚本",
-      onClick: () => {
-        getEditorStore().setViewMode("script");
-        void getScriptsStore().openScript(item.path);
-      },
-    });
-  }
-
-  if (isProtected) {
-    // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
-    if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建场景/材质/子目录（assets/materials 等）
-      const sc = sceneCreateItem(item.path);
-      if (sc) items.push(sc);
-      const mc = materialCreateItem(item.path);
-      if (mc) items.push(mc);
-      items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
-      items.push(menuSeparator(), ...importMenuItems(item.path));
-    } else if (!isInternal && item.kind === "dir" && item.path === "src") {
-      // src 固定脚本目录：新建脚本/子目录（脚本经「新建脚本」模板创建）
-      items.push({ label: "新建脚本", onClick: () => void doNewScript(item.path) });
-      items.push({ label: "新建目录", onClick: () => void doNewFolder(item.path) });
-    } else if (isInternal && item.kind !== "dir") {
-      // 内置文件可「复制到项目」生成项目内可编辑副本
-      items.push({ label: "复制到项目", onClick: () => void copyInternalToProject(item) });
-    }
-  } else {
-    items.push(
-      { label: "复制", onClick: () => void doCopy(item) },
-      { label: "重命名", onClick: () => void doRename(item) },
-      { label: "删除", danger: true, onClick: () => void doDelete(item) },
-    );
-    const targetDir = item.kind === "dir" ? item.path : parentOf(item.path);
-    if (targetDir != null) {
-      if (isSrcDir(targetDir)) {
-        items.push({ label: "新建脚本", onClick: () => void doNewScript(targetDir as string) });
-      } else {
-        const sc = sceneCreateItem(targetDir);
-        if (sc) items.push(sc);
-        const mc = materialCreateItem(targetDir);
-        if (mc) items.push(mc);
-      }
-      items.push({ label: "新建目录", onClick: () => void doNewFolder(targetDir) });
-      if (!isSrcDir(targetDir)) {
-        items.push(menuSeparator(), ...importMenuItems(targetDir));
-      }
-    }
-  }
-  items.push(menuSeparator());
-  items.push({ label: "复制路径", onClick: () => void copyPath(item.path) });
-  openContextMenu(e, items);
+  openContextMenu(e, buildEntryMenu(item, menuApi));
 }
 
-/** 右栏空白区点击：清空选中 */
 function onContentClick(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (t?.closest(".am-item, input, select, button")) return;
@@ -319,43 +263,44 @@ function onContentContext(e: MouseEvent) {
   if (t?.closest(".am-item, input, select, button")) return;
   e.preventDefault();
   e.stopPropagation();
-  const items: CtxMenuItem[] = [];
-  if (!isInternalAsset(currentDir.value)) {
-    if (isSrcDir(currentDir.value)) {
-      items.push({ label: "新建脚本", onClick: () => void doNewScript(currentDir.value) });
-    } else {
-      const sc = sceneCreateItem(currentDir.value);
-      if (sc) items.push(sc);
-      const mc = materialCreateItem(currentDir.value);
-      if (mc) items.push(mc);
-    }
-    items.push({ label: "新建目录", onClick: () => void doNewFolder(currentDir.value) });
-    if (!isSrcDir(currentDir.value)) {
-      items.push(menuSeparator(), ...importMenuItems(currentDir.value));
-    }
-  }
-  items.push(menuSeparator(), { label: "刷新资产", onClick: () => void assetsStore.refresh() });
-  openContextMenu(e, items);
+  openContextMenu(e, buildContentMenu(currentDir.value, menuApi));
 }
 
-/** 左栏（树）空白区右键：默认位置新建场景/目录 + 导入 + 刷新 */
 function onBlankContext(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (t?.closest(".asset-row, input, select, button, textarea")) return;
   e.preventDefault();
   e.stopPropagation();
-  const items: CtxMenuItem[] = [];
-  if (!isInternalAsset(currentDir.value)) {
-    const sc = sceneCreateItem("assets");
-    if (sc) items.push(sc);
-    const mc = materialCreateItem("assets");
-    if (mc) items.push(mc);
-    items.push({ label: "新建目录", onClick: () => void doNewFolder("assets") });
-    items.push(menuSeparator(), ...importMenuItems("assets"));
-  }
-  items.push(menuSeparator(), { label: "刷新资产", onClick: () => void assetsStore.refresh() });
+  const items = isInternalAsset(currentDir.value)
+    ? buildRefreshOnlyMenu(menuApi)
+    : buildBlankMenu(menuApi);
   openContextMenu(e, items);
 }
+
+/** 面板 → asset-menu 的动作回调集合（结构/守卫在 asset-menu，动作在此闭包执行） */
+const menuApi: AssetMenuApi = {
+  isInternal: (p) => isInternalAsset(p),
+  isProtected: (p) => isProtectedAsset(p),
+  isSrcDir,
+  importAllowed: importAllowedDir,
+  materialTypes: () =>
+    materialTypeRegistry.list().map((d) => ({ key: d.key, label: d.label })),
+  onOpenDir: (dir) => navigate(dir),
+  onAddModelToScene: (item) => addModelToScene(item),
+  onOpenScript: (item) => openScriptAsset(item),
+  onCopyInternal: (item) => void copyInternalToProject(item),
+  onCopy: (item) => void doCopy(item),
+  onRename: (item) => void doRename(item),
+  onDelete: (item) => void doDelete(item),
+  onNewScene: (dir) => void doNewScene(dir),
+  onNewScript: (dir) => void doNewScript(dir),
+  onNewFolder: (dir) => void doNewFolder(dir),
+  onNewMaterial: (dir, key) => void doNewMaterial(dir, key),
+  onImport: (dir) => void doImport(dir),
+  onImportFolder: (dir) => void doImportFolder(dir),
+  onCopyPath: (p) => void copyPath(p),
+  onRefresh: () => void assetsStore.refresh(),
+};
 
 async function doNewFolder(dir: string) {
   const root = projectStore.currentPath;
@@ -391,12 +336,6 @@ async function doNewScene(dir: string) {
   await assetsStore.createSceneAsset(root, dir, name);
 }
 
-/** 目录允许时的“新建场景”菜单项（null 表示不提供） */
-function sceneCreateItem(dir: string): CtxMenuItem | null {
-  if (!importAllowedDir(dir)) return null;
-  return { label: "新建场景", onClick: () => void doNewScene(dir) };
-}
-
 /** 新建 TS 脚本（src/ 目录专用；模板创建后切到脚本工作台打开） */
 async function doNewScript(dir: string) {
   if (!isSrcDir(dir)) {
@@ -424,18 +363,6 @@ async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
     return;
   }
   await assetsStore.createMaterialAsset(root, dir, typeKey);
-}
-
-/** 目录允许时的“新建材质”子菜单（二级列出已注册材质类型；null 表示不提供） */
-function materialCreateItem(dir: string): CtxMenuItem | null {
-  if (!importAllowedDir(dir)) return null;
-  return {
-    label: "新建材质",
-    children: materialTypeRegistry.list().map((def) => ({
-      label: def.label,
-      onClick: () => void doNewMaterial(dir, def.key),
-    })),
-  };
 }
 
 async function doCopy(item: ChildEntry) {
@@ -519,115 +446,12 @@ async function copyPath(path: string) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 资产面板内部拖拽（把文件/文件夹拖到另一个目录移动）
-// 注意：Tauri 2 dragDropEnabled 默认拦截 WebView 内的 HTML5 draggable 拖放事件，
-// 因此这里改用鼠标事件（mousedown/mousemove/mouseup）自建内部拖拽。
-// ---------------------------------------------------------------------------
-const dragPaths = ref<string[] | null>(null);
-interface DragStart {
-  x: number;
-  y: number;
-  paths: string[];
-}
-let dragStart: DragStart | null = null;
-let dragActive = false;
-let suppressClickUntil = 0;
-
-const hoverPath = ref<string | null>(null);
-const dragGhost = ref<{ x: number; y: number; label: string } | null>(null);
-
-function onItemMouseDown(e: MouseEvent, item: ChildEntry) {
-  if (e.button !== 0) return;
-  if (isProtectedAsset(item.path)) return; // 内置资源与项目固定目录（assets/src）只读，不能拖拽移动
-  const draggingAll = selectedPaths.value.includes(item.path);
-  dragStart = {
-    x: e.clientX,
-    y: e.clientY,
-    paths: draggingAll && selectedPaths.value.length > 0 ? [...selectedPaths.value] : [item.path],
-  };
-  dragActive = false;
-  window.addEventListener("mousemove", onWindowMouseMove);
-  window.addEventListener("mouseup", onWindowMouseUp);
-}
-
-function findDropTarget(x: number, y: number, paths: string[] | null): string | null {
-  const el = document.elementFromPoint(x, y) as HTMLElement | null;
-  if (!el || el.classList.contains("asset-drag-ghost")) return null;
-  const dirEl = el.closest<HTMLElement>("[data-drop-dir]");
-  if (dirEl) {
-    const p = dirEl.getAttribute("data-drop-dir");
-    if (p) {
-      if (paths && paths.includes(p)) return null;
-      return p;
-    }
-  }
-  if (el.closest(".am-content")) return currentDir.value;
-  return null;
-}
-
-function onWindowMouseMove(e: MouseEvent) {
-  if (!dragStart) return;
-  if (!dragActive) {
-    if (Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < 4) return;
-    dragActive = true;
-    dragPaths.value = dragStart.paths;
-  }
-  dragGhost.value = { x: e.clientX, y: e.clientY, label: dragStart.paths[0] };
-  hoverPath.value = findDropTarget(e.clientX, e.clientY, dragStart.paths);
-}
-
-function onWindowMouseUp(e: MouseEvent) {
-  window.removeEventListener("mousemove", onWindowMouseMove);
-  window.removeEventListener("mouseup", onWindowMouseUp);
-  const s = dragStart;
-  dragStart = null;
-  const wasActive = dragActive;
-  dragActive = false;
-  if (!wasActive) return;
-  suppressClickUntil = Date.now() + 150;
-  dragPaths.value = null;
-  dragGhost.value = null;
-  hoverPath.value = null;
-  if (s) {
-    const target = findDropTarget(e.clientX, e.clientY, s.paths);
-    if (target && !s.paths.includes(target)) void moveAssetsToDir(s.paths, target);
-  }
-}
-
-function onItemClickGuard(e: MouseEvent, item: ChildEntry) {
-  if (Date.now() < suppressClickUntil) return;
-  onItemClick(e, item);
-}
-
-async function moveAssetsToDir(paths: string[], destDir: string) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  dragPaths.value = null;
-  for (const p of paths) await assetsStore.moveTo(root, p, destDir);
-}
-
-// ---------------------------------------------------------------------------
-// 资产导入：按钮（文件/目录多选）+ 窗口级拖放导入
-// ---------------------------------------------------------------------------
-const panelEl = ref<HTMLElement | null>(null);
-const dragOver = ref(false);
-
 /** 是否允许把外部资产导入到该目录（src=脚本目录、internal=内置只读 不允许） */
 function isSrcDir(dir: string): boolean {
   return dir === "src" || dir.startsWith("src/");
 }
 function importAllowedDir(dir: string): boolean {
   return !isSrcDir(dir) && !isInternalAsset(dir);
-}
-
-/** 导入菜单项（空白区/目录右键；dir 为导入目标目录） */
-function importMenuItems(dir: string): CtxMenuItem[] {
-  if (!importAllowedDir(dir)) return [];
-  return [
-    { label: "导入资产…", onClick: () => void doImport(dir) },
-    { label: "导入目录…", onClick: () => void doImportFolder(dir) },
-  ];
 }
 
 /** 导入按钮：打开多文件选择对话框，导入到目标目录 */
@@ -660,52 +484,27 @@ async function doImportFolder(dir: string = currentDir.value): Promise<void> {
   await assetsStore.importPaths(root, dir, picked);
 }
 
-/** 外部文件拖放导入：Tauri 窗口级 onDragDropEvent（拖入系统文件到面板内） */
-let unlistenDrop: (() => void) | null = null;
-
-async function setupExternalDrop(): Promise<void> {
-  try {
-    const win = getCurrentWindow();
-    unlistenDrop = await win.onDragDropEvent((event) => {
-      const p = event.payload;
-      if (p.type === "enter" || p.type === "over") {
-        if (panelEl.value) {
-          const r = panelEl.value.getBoundingClientRect();
-          const sf = window.devicePixelRatio || 1;
-          const x = p.position.x / sf;
-          const y = p.position.y / sf;
-          dragOver.value = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-        }
-      } else if (p.type === "drop") {
-        const inside = dragOver.value;
-        dragOver.value = false;
-        if (!inside || !p.paths || p.paths.length === 0) return;
-        const root = projectStore.currentPath;
-        const dir = currentDir.value;
-        if (!root) return;
-        if (!importAllowedDir(dir)) {
-          logStore.log("warn", "该目录不允许拖放导入（src/内置只读）");
-          return;
-        }
-        void assetsStore.importPaths(root, dir, p.paths);
-      } else {
-        // leave / cancel
-        dragOver.value = false;
-      }
-    });
-  } catch (e) {
-    logStore.log("warn", `外部拖放监听不可用: ${e}`);
-  }
-}
-
-onMounted(() => {
-  void setupExternalDrop();
-  if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
+const {
+  panelEl,
+  dragOver,
+  hoverPath,
+  dragGhost,
+  dragPaths,
+  onItemMouseDown,
+  onItemClickGuard,
+  moveAssetsToDir,
+} = useAssetTransfer({
+  currentDir,
+  selectedPaths,
+  importAllowedDir,
+  getProjectPath: () => projectStore.currentPath,
+  moveTo: (root, rel, destDir) => assetsStore.moveTo(root, rel, destDir),
+  importPaths: (root, destDir, paths) => assetsStore.importPaths(root, destDir, paths),
+  onClickItem: (e, item) => onItemClick(e, item),
 });
 
-onUnmounted(() => {
-  unlistenDrop?.();
-  unlistenDrop = null;
+onMounted(() => {
+  if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
 });
 
 provide<AssetDragHandle>(ASSET_DRAG_KEY, {
@@ -725,52 +524,29 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
     @dragover.prevent
     @drop.prevent
   >
-    <!-- 顶部工具栏：导航 + 面包屑 + 搜索 + 筛选 + 排序 + 视图 + 刷新 -->
-    <div class="am-toolbar">
-      <button class="am-btn" :disabled="backStack.length === 0" title="后退" @click="goBack">◀</button>
-      <button class="am-btn" :disabled="fwdStack.length === 0" title="前进" @click="goForward">▶</button>
-      <button class="am-btn" :disabled="currentDir === ''" title="上级目录" @click="goUp">▲</button>
-      <div class="am-crumbs" title="当前目录">
-        <button v-if="crumbs.length === 0" class="crumb" @click="navigate('')">根</button>
-        <template v-for="(c, i) in crumbs" :key="c.path">
-          <span v-if="i > 0" class="crumb-sep">▸</span>
-          <button class="crumb" :class="{ cur: i === crumbs.length - 1 }" @click="navigate(c.path)">
-            {{ c.name }}
-          </button>
-        </template>
-      </div>
-      <span class="spacer"></span>
-      <input v-model="query" class="am-search" type="text" placeholder="搜索资产…" title="按名称搜索（递归当前目录）" />
-      <select v-model="typeFilter" class="am-select" title="按类型筛选">
-        <option v-for="f in TYPE_FILTERS" :key="f.id" :value="f.id">{{ f.label }}</option>
-      </select>
-      <select v-model="sortBy" class="am-select" title="排序">
-        <option value="name">按名称</option>
-        <option value="type">按类型</option>
-        <option value="size">按大小</option>
-      </select>
-      <div class="am-view-toggle" title="视图模式">
-        <button class="am-btn" :class="{ on: viewMode === 'grid' }" title="网格视图" @click="viewMode = 'grid'">▦</button>
-        <button class="am-btn" :class="{ on: viewMode === 'list' }" title="列表视图" @click="viewMode = 'list'">☰</button>
-      </div>
-      <button
-        class="am-btn"
-        :disabled="!projectStore.currentPath || !importAllowedDir(currentDir)"
-        title="导入文件到当前目录"
-        @click="() => doImport()"
-      >
-        导入
-      </button>
-      <button
-        class="am-btn"
-        :disabled="!projectStore.currentPath || !importAllowedDir(currentDir)"
-        title="导入文件夹到当前目录"
-        @click="() => doImportFolder()"
-      >
-        导入目录
-      </button>
-      <button class="am-btn" title="刷新资产" @click="assetsStore.refresh">⟳</button>
-    </div>
+    <!-- 顶部工具栏：导航 + 面包屑 + 搜索 + 筛选 + 排序 + 视图 + 导入/刷新（AssetToolbar） -->
+    <AssetToolbar
+      :back-enabled="backStack.length > 0"
+      :forward-enabled="fwdStack.length > 0"
+      :up-enabled="currentDir !== ''"
+      :crumbs="crumbs"
+      :query="query"
+      :type-filter="typeFilter"
+      :sort-by="sortBy"
+      :view-mode="viewMode"
+      :can-import="!!projectStore.currentPath && importAllowedDir(currentDir)"
+      @back="goBack"
+      @forward="goForward"
+      @up="goUp"
+      @navigate="navigate"
+      @update:query="query = $event"
+      @update:type-filter="typeFilter = $event"
+      @update:sort-by="sortBy = $event"
+      @update:view-mode="viewMode = $event"
+      @import="doImport()"
+      @import-folder="doImportFolder()"
+      @refresh="assetsStore.refresh"
+    />
 
     <!-- 主体：左栏文件夹树 + 右栏资产内容 -->
     <div class="am-body">
