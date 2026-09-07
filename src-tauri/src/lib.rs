@@ -404,6 +404,22 @@ async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), Str
     writeln!(f, "[{:?}] {}", now.as_secs(), line).map_err(|e| e.to_string())
 }
 
+/// 打开 WebView 开发者工具（调试构建默认可用；发行构建未启用 devtools 时提示）
+#[tauri::command]
+async fn open_devtools(window: tauri::WebviewWindow) -> Result<(), String> {
+    // tauri 的 devtools 能力默认随 debug 构建启用（发行构建需显式开启 tauri/devtools）
+    #[cfg(debug_assertions)]
+    {
+        window.open_devtools();
+        Ok(())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = window;
+        Err("当前为发行构建，未启用开发者工具".to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // base64（免第三方依赖：预览二进制贴图导出 + 前端纹理读取共用）
 // ---------------------------------------------------------------------------
@@ -598,6 +614,7 @@ pub fn run() {
             rename_asset,
             create_folder,
             append_debug_log,
+            open_devtools,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,

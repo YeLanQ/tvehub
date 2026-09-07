@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
+import { version as vueVersion } from "vue";
+import { REVISION as threeRevision } from "three";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import "../../styles/components/home-view.scss";
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
+import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
+import { isTauri } from "../../lib/tauri-env";
+import { debugLog } from "../../lib/debug-log";
 import { BUILTIN_PROJECT_TEMPLATES, type ProjectTemplate } from "../lib/project-templates";
 import { PREFS_CATS, THEME_COLOR_DEFS } from "../lib/home-helpers";
 import {
@@ -15,7 +20,7 @@ import {
 
 const projectStore = getProjectStore();
 
-type Section = "projects" | "templates" | "prefs";
+type Section = "projects" | "templates" | "prefs" | "dev";
 const section = ref<Section>("projects");
 const prefsCat = ref("theme");
 
@@ -30,11 +35,39 @@ const prefBusy = ref(false);
 /** 工程模板（内置数据驱动；后续可接入后端自定义模板） */
 const templates = ref<ProjectTemplate[]>(BUILTIN_PROJECT_TEMPLATES);
 
+/** 运行环境信息（开发者服务页展示） */
+const inTauri = isTauri();
+const tauriVersion = ref("");
+
+/** 开发文档外链（开发者服务页展示） */
+const DOC_LINKS = [
+  {
+    name: "three.js 文档",
+    desc: "场景、材质、相机等底层渲染 API 参考",
+    url: "https://threejs.org/docs/",
+  },
+  {
+    name: "Tauri v2 文档",
+    desc: "桌面端窗口、文件系统与插件能力",
+    url: "https://tauri.app/start/",
+  },
+  {
+    name: "TypeScript 手册",
+    desc: "脚本与插件开发的语言参考",
+    url: "https://www.typescriptlang.org/docs/",
+  },
+];
+
 onMounted(() => {
   projectStore.refreshRecent();
   void loadDefaultProjectDir().then((dir) => {
     defaultProjectDir.value = dir;
   });
+  if (inTauri) {
+    getVersion()
+      .then((v) => (tauriVersion.value = v))
+      .catch(() => (tauriVersion.value = ""));
+  }
 });
 
 async function browseAndOpen() {
@@ -130,6 +163,36 @@ function closeMenu() {
   menuPath.value = null;
 }
 
+// ---------------------------------------------------------------------------
+// 开发者服务：运行环境信息、调试工具与开发文档入口
+// ---------------------------------------------------------------------------
+
+/** 打开 WebView 开发者工具（调试构建可用；发行构建未启用 devtools 时报错提示） */
+async function openDevtools() {
+  try {
+    await invoke("open_devtools");
+  } catch (e) {
+    console.error("打开开发者工具失败:", e);
+    alert("打开开发者工具失败：" + e);
+  }
+}
+
+/** 写入一条调试日志（应用配置目录 debug.log），验证日志链路是否可用 */
+function writeTestDebugLog() {
+  debugLog("dev", `来自首页的测试日志 ${new Date().toLocaleString()}`);
+  alert("已写入测试日志。\n日志文件：应用配置目录下的 debug.log");
+}
+
+/** 打开开发文档外链（Tauri 内走 opener 插件，浏览器环境回退新标签页） */
+async function openDocLink(url: string) {
+  try {
+    if (inTauri) await openUrl(url);
+    else window.open(url, "_blank", "noopener");
+  } catch (e) {
+    console.error("打开链接失败:", e);
+  }
+}
+
 async function browseDefaultDir() {
   prefBusy.value = true;
   try {
@@ -191,6 +254,16 @@ watch(showNewProject, (val) => {
             <circle cx="6.5" cy="11.5" r="1.7" fill="var(--bg-panel)" />
           </svg>
           <span>偏好设置</span>
+        </button>
+        <button
+          :class="{ active: section === 'dev' }"
+          @click="section = 'dev'"
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5.5 4 2.5 8l3 4" />
+            <path d="M10.5 4l3 4-3 4" />
+          </svg>
+          <span>开发者服务</span>
         </button>
       </nav>
 
@@ -360,6 +433,71 @@ watch(showNewProject, (val) => {
               </div>
             </div>
           </template>
+        </section>
+
+        <!-- ========== 开发者服务 ========== -->
+        <section v-if="section === 'dev'" class="page">
+          <div class="page-head">
+            <div>
+              <h2>开发者服务</h2>
+              <p class="sub">调试工具、运行信息与开发文档</p>
+            </div>
+          </div>
+
+          <!-- 运行环境 -->
+          <div class="settings-card">
+            <h3>运行环境</h3>
+            <div class="about-row">
+              <span>应用版本</span>
+              <span class="dim">v0.1.0</span>
+            </div>
+            <div class="about-row">
+              <span>运行环境</span>
+              <span class="dim">
+                {{ inTauri ? `Tauri${tauriVersion ? ` · ${tauriVersion}` : ""}` : "浏览器（无桌面后端）" }}
+              </span>
+            </div>
+            <div class="about-row">
+              <span>渲染引擎</span>
+              <span class="dim">three.js r{{ threeRevision }}</span>
+            </div>
+            <div class="about-row">
+              <span>界面框架</span>
+              <span class="dim">Vue {{ vueVersion }}</span>
+            </div>
+          </div>
+
+          <!-- 调试工具 -->
+          <div class="settings-card">
+            <h3>调试工具</h3>
+            <template v-if="inTauri">
+              <div class="set-row">
+                <label>WebView 开发者工具</label>
+                <button @click="openDevtools">打开 DevTools</button>
+              </div>
+              <p class="hint">检查页面元素、控制台输出与网络请求（调试构建可用）。</p>
+              <div class="set-row">
+                <label>调试日志</label>
+                <button @click="writeTestDebugLog">写入测试日志</button>
+              </div>
+              <p class="hint">日志写入应用配置目录下的 debug.log，WebView 白屏时也可用于排查。</p>
+            </template>
+            <p v-else class="hint">
+              当前为浏览器直开环境，桌面调试工具不可用；DevTools 与调试日志需在 Tauri 应用内使用。
+            </p>
+          </div>
+
+          <!-- 文档与资源 -->
+          <div class="settings-card">
+            <h3>文档与资源</h3>
+            <div v-for="d in DOC_LINKS" :key="d.url" class="tpl-row">
+              <div class="tpl-info">
+                <div class="tpl-name">{{ d.name }}</div>
+                <div class="tpl-desc">{{ d.desc }}</div>
+              </div>
+              <button @click="openDocLink(d.url)">打开</button>
+            </div>
+          </div>
         </section>
       </main>
     </div>

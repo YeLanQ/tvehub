@@ -391,6 +391,11 @@
   gap: 10px;
 }
 
+/* 多行信息（开发者服务·运行环境）：行间留出间距 */
+.about-row + .about-row {
+  margin-top: 8px;
+}
+
 /* ---------- 模板管理 ---------- */
 .tpl-row {
   display: flex;
