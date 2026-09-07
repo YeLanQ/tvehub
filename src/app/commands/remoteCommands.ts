@@ -390,6 +390,25 @@ registerCommand({
 });
 
 registerCommand({
+  id: "asset.select",
+  label: "选中资源",
+  group: "资源",
+  expose: true,
+  description: "选中资产（path：项目相对路径；属性面板切换到资产预览/属性）",
+  run: async (_ctx, args: any) => {
+    const rel = String(args?.path ?? "");
+    if (!rel) throw new Error("缺少 path（资产相对路径）");
+    const store = getAssetsStore();
+    await store.load(requireRoot());
+    if (!store.assets.some((a) => a.path === rel)) {
+      throw new Error(`资产不存在: ${rel}`);
+    }
+    store.select(rel);
+    return { ok: true, selected: rel };
+  },
+});
+
+registerCommand({
   id: "asset.delete",
   label: "删除资源",
   group: "资源",

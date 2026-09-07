@@ -119,6 +119,7 @@ const TOOL_CATALOG: &[(&str, &str, &str)] = &[
     ("screenScreenshot", "截图", "屏幕快照"),
     ("assetList", "资源列表", "资源"),
     ("assetCreate", "新建资源", "资源"),
+    ("assetSelect", "选中资源", "资源"),
     ("assetDelete", "删除资源", "资源"),
     ("assetRename", "重命名资源", "资源"),
 ];
@@ -147,6 +148,7 @@ const METHOD_TO_TOOL: &[(&str, &str)] = &[
     ("state.restore", "state"),
     ("asset.list", "assetList"),
     ("asset.create", "assetCreate"),
+    ("asset.select", "assetSelect"),
     ("asset.delete", "assetDelete"),
     ("asset.rename", "assetRename"),
 ];

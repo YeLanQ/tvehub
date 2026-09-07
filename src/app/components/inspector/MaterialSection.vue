@@ -4,19 +4,15 @@
  *   PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）
  *   Unlit（MeshBasicMaterial，基础色/贴图/输出子集）。
  * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 类型切换；
- * - 中部：当前材质类型的全部参数（颜色用取色器、数值用 NumberField）；
+ * - 中部：当前材质类型的全部参数（共享 MaterialParamsEditor 渲染，资产检查器复用同一实现）；
  * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换类型。
  */
 import { computed, reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import {
   DEFAULT_MATERIAL_TYPE,
-  colorToHexString,
-  materialParamMax,
   materialTypeRegistry,
-  parseColorHex,
   type MaterialEnableKey,
-  type MaterialParamDef,
   type MaterialParamGroup,
   type MaterialParamKey,
 } from "../../../framework/material";
@@ -24,7 +20,7 @@ import { isInternalAsset } from "../../../lib/internal-assets";
 import { useMaterialAssetOptions } from "../../lib/material-options";
 import { getAssetsStore } from "../../stores/assets";
 import { getEditorStore } from "../../stores/editor";
-import NumberField from "../NumberField.vue";
+import MaterialParamsEditor from "./MaterialParamsEditor.vue";
 
 const props = defineProps<{ node: MeshNode; rev?: number }>();
 
@@ -94,93 +90,6 @@ function onTypeSelect(e: Event): void {
     emit("changeType", v);
   }
 }
-
-// —— 通用参数读写（按 defs 渲染，避免每个参数手写控件）——
-function paramValue(key: MaterialParamKey): unknown {
-  return (local as unknown as Record<string, unknown>)[key];
-}
-
-function numberValue(key: MaterialParamKey): number {
-  const v = paramValue(key);
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
-function colorValue(key: MaterialParamKey): string {
-  const v = paramValue(key);
-  return typeof v === "number" ? colorToHexString(v) : "#000000";
-}
-
-function boolValue(key: MaterialParamKey | MaterialEnableKey): boolean {
-  return (local as unknown as Record<string, unknown>)[key] === true;
-}
-
-function onColorEdit(def: MaterialParamDef, e: Event): void {
-  const hex = (e.target as HTMLInputElement).value;
-  // 先就地更新镜像（即时反馈），再交给父层持久化（内置材质只读不会触发）
-  (local as unknown as Record<string, unknown>)[def.key] = parseColorHex(hex);
-  emit("editParam", def.key, parseColorHex(hex));
-}
-
-function onNumberEdit(def: MaterialParamDef, v: number): void {
-  (local as unknown as Record<string, unknown>)[def.key] = v;
-  emit("editParam", def.key, v);
-}
-
-function onBoolEdit(def: MaterialParamDef, e: Event): void {
-  const v = (e.target as HTMLInputElement).checked;
-  (local as unknown as Record<string, unknown>)[def.key] = v;
-  emit("editParam", def.key, v);
-}
-
-function onEnableEdit(key: MaterialEnableKey, e: Event): void {
-  const v = (e.target as HTMLInputElement).checked;
-  (local as unknown as Record<string, unknown>)[key] = v;
-  emit("editParam", key, v);
-}
-
-/** 分组是否启用：无开关的分组恒为启用；有开关的分组由开关值决定 */
-function groupEnabled(group: MaterialParamGroup): boolean {
-  return !group.enableKey || boolValue(group.enableKey);
-}
-
-function paramMax(key: MaterialParamKey): number {
-  return materialParamMax(key);
-}
-
-// —— 贴图通道：内置 + 项目图片资产选择（png/jpg/webp/gif…；空 = 无贴图）——
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "tga", "svg"]);
-const textureOptions = computed(() => {
-  const internal: { rel: string; name: string; internal: boolean }[] = [];
-  const project: { rel: string; name: string; internal: boolean }[] = [];
-  for (const a of assetsStore.assets) {
-    if (!IMAGE_EXTS.has(a.kind)) continue;
-    if (isInternalAsset(a.path)) {
-      internal.push({ rel: a.path, name: a.name, internal: true });
-    } else if (a.path.startsWith("assets/")) {
-      project.push({ rel: a.path, name: a.name, internal: false });
-    }
-  }
-  return { internal, project };
-});
-
-function textureValue(key: MaterialParamKey): string {
-  const v = paramValue(key);
-  return typeof v === "string" ? v : "";
-}
-
-function isTextureValueListed(key: MaterialParamKey): boolean {
-  const cur = textureValue(key);
-  if (!cur) return true;
-  return textureOptions.value.internal.some((o) => o.rel === cur)
-    || textureOptions.value.project.some((o) => o.rel === cur);
-}
-
-function onTextureEdit(def: MaterialParamDef, e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  (local as unknown as Record<string, unknown>)[def.key] = v;
-  emit("editParam", def.key, v);
-}
-
 </script>
 
 <template>
@@ -232,83 +141,12 @@ function onTextureEdit(def: MaterialParamDef, e: Event): void {
     <div v-if="isInternal" class="hint">内置材质只读；如需调整参数，请先「复制到项目材质」。</div>
     <div v-else class="hint">参数写入 .mat 资产文件，引用该材质的所有网格同步更新。</div>
 
-    <template v-for="group in groups" :key="group.title">
-      <div class="mat-group">
-        <span class="mat-group-title">{{ group.title }}</span>
-        <label v-if="group.enableKey" class="mat-enable" @click.stop>
-          <input
-            type="checkbox"
-            :checked="boolValue(group.enableKey)"
-            :disabled="isInternal"
-            @change="(e) => onEnableEdit(group.enableKey!, e)"
-          />
-          <span>{{ group.enableLabel }}</span>
-        </label>
-      </div>
-      <template v-for="def in group.defs" :key="def.key">
-        <!-- 颜色 -->
-        <div v-if="def.kind === 'color'" class="field">
-          <label :title="`${def.en}`">{{ def.label }}</label>
-          <input
-            type="color"
-            :value="colorValue(def.key)"
-            :disabled="isInternal || !groupEnabled(group)"
-            @input="(e) => onColorEdit(def, e)"
-            @change="(e) => onColorEdit(def, e)"
-          />
-        </div>
-        <!-- 数值 -->
-        <div v-else-if="def.kind === 'number'" class="field">
-          <label :title="`${def.en}`">{{ def.label }}</label>
-          <NumberField
-            :model-value="numberValue(def.key)"
-            :step="def.step ?? 0.01"
-            :min="0"
-            :max="paramMax(def.key)"
-            :disabled="isInternal || !groupEnabled(group)"
-            :title="def.en"
-            @commit="(v) => onNumberEdit(def, v)"
-          />
-        </div>
-        <!-- 布尔 -->
-        <div v-else-if="def.kind === 'bool'" class="field">
-          <label :title="`${def.en}`">{{ def.label }}</label>
-          <input
-            type="checkbox"
-            :checked="boolValue(def.key)"
-            :disabled="isInternal"
-            @change="(e) => onBoolEdit(def, e)"
-          />
-        </div>
-        <!-- 贴图 -->
-        <div v-else class="field">
-          <label :title="`${def.en} 贴图`">{{ def.label }}</label>
-          <select
-            :value="textureValue(def.key)"
-            :disabled="isInternal"
-            @change="(e) => onTextureEdit(def, e)"
-          >
-            <option value="">（无贴图）</option>
-            <option v-if="!isTextureValueListed(def.key)" :value="textureValue(def.key)" disabled>
-              {{ textureValue(def.key) }}
-            </option>
-            <optgroup label="内置贴图">
-              <option v-for="o in textureOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-            <optgroup label="项目贴图">
-              <option v-if="textureOptions.project.length === 0" value="" disabled>
-                （项目中暂无图片资产）
-              </option>
-              <option v-for="o in textureOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-          </select>
-        </div>
-      </template>
-    </template>
+    <MaterialParamsEditor
+      :local="local"
+      :groups="groups"
+      :disabled="isInternal"
+      @editParam="(k, v) => emit('editParam', k, v)"
+    />
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
@@ -33,6 +33,7 @@ import AnimationSection from "./inspector/AnimationSection.vue";
 import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
+import AssetInspector from "./inspector/AssetInspector.vue";
 import ComponentsSection from "./inspector/ComponentsSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
@@ -43,6 +44,26 @@ const { state, engine } = store;
 
 const node = computed<Node | undefined>(() => store.nodeById(state.selectedId ?? undefined));
 const revision = computed(() => store.revision());
+
+// ---------------------------------------------------------------------------
+// 资产检查器模式（最后点击优先）：点击资产面板条目 → 显示资产预览与属性；
+// 点击节点（层级/视口）→ 回到节点检查器。selectedAsset 清空时保持现状，
+// 直到下一次节点选中。
+// ---------------------------------------------------------------------------
+const assetMode = ref(false);
+const assetRel = computed(() => assetsStore.selectedAsset);
+watch(
+  () => assetsStore.selectedAsset,
+  (rel) => {
+    if (rel) assetMode.value = true;
+  },
+);
+watch(
+  () => state.selectedId,
+  (id) => {
+    if (id) assetMode.value = false;
+  },
+);
 
 /**
  * 模型网格的解析信息（剪辑/骨骼/内嵌材质）。
@@ -582,7 +603,14 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
 
 <template>
   <div class="panel inspector">
-    <div v-if="!node" class="empty muted">未选择节点</div>
+    <!-- 资产模式：资产面板选中资产 → 预览 + 暴露属性（最后点击优先于节点检查器） -->
+    <div v-if="assetMode && assetRel" class="inspector-body mono">
+      <ComponentCard title="Asset" :open="true" :type="assetRel.split('.').pop()">
+        <AssetInspector :rel="assetRel" />
+      </ComponentCard>
+    </div>
+
+    <div v-else-if="!node" class="empty muted">未选择节点</div>
 
     <div v-else class="inspector-body mono">
       <ComponentCard title="Node" :open="true" :type="node.typeKey">

@@ -50,6 +50,7 @@ const DEFAULT_TOOLS: DevToolPerm[] = [
   // 资源组（新建/删除/重命名/列出资产文件）
   { id: "assetList", name: "资源列表", group: "资源", enabled: true },
   { id: "assetCreate", name: "新建资源", group: "资源", enabled: true },
+  { id: "assetSelect", name: "选中资源", group: "资源", enabled: true },
   { id: "assetDelete", name: "删除资源", group: "资源", enabled: true },
   { id: "assetRename", name: "重命名资源", group: "资源", enabled: true },
 ];
@@ -77,7 +78,8 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "state.snapshot", description: "场景状态快照（完整 JSON 文档）" },
   { name: "state.restore", description: "恢复场景快照（传入 state.snapshot 返回的 doc）" },
   { name: "asset.list", description: "列出项目资源（脚本/场景/材质/贴图/目录等，含相对路径与类型）" },
-  { name: "asset.create", description: "新建资源文件或目录（type: scene/script/material/folder；dir 目标目录；name 名称）" },
+  { name: "asset.create", description: "新建资源文件或目录（type: scene/script/material/texcube/folder；dir 目标目录；name 名称）" },
+  { name: "asset.select", description: "选中资产（path：项目相对路径；属性面板切换到资产预览/属性）" },
   { name: "asset.delete", description: "删除资源文件或目录（path：项目相对路径）" },
   { name: "asset.rename", description: "重命名资源文件或目录（path + newName）" },
 ];
@@ -106,6 +108,7 @@ const METHOD_TOOL: Record<string, string> = {
   "state.restore": "state",
   "asset.list": "assetList",
   "asset.create": "assetCreate",
+  "asset.select": "assetSelect",
   "asset.delete": "assetDelete",
   "asset.rename": "assetRename",
 };
@@ -138,6 +141,7 @@ export const METHOD_TO_COMMAND: Record<string, string> = {
   "state.restore": "state.restore",
   "asset.list": "asset.list",
   "asset.create": "asset.create",
+  "asset.select": "asset.select",
   "asset.delete": "asset.delete",
   "asset.rename": "asset.rename",
 };
