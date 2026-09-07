@@ -44,6 +44,28 @@ export interface EditorStore {
 let singleton: EditorStore | null = null;
 /** 挂载任务去重：引擎挂载是异步的（渲染后端可能动态加载），并发调用共享同一任务 */
 let mountTask: Promise<void> | null = null;
+/** 首页窗口交接的项目挂起项：编辑器尚未挂载完成时暂存，就绪后由 mountEditor 补装载 */
+let pendingProject: { root: string; rel: string } | null = null;
+
+/**
+ * 收到首页窗口的项目交接（home:project-opened 事件，编辑器窗口入口转发）：
+ * 同步本地项目状态后，编辑器已挂载 → 立即重装载场景；
+ * 尚在挂载中（编辑器窗口刚启动）→ 挂起，由 mountEditor 在就绪后补装载。
+ */
+export async function handleProjectOpenedFromHome(
+  root: string,
+  name: string,
+  rel: string,
+): Promise<void> {
+  const projectStore = getProjectStore();
+  projectStore.applyOpenedProject(root, name, rel);
+  const store = getEditorStore();
+  if (store.state.mounted && !store.engine.isDisposed()) {
+    await reloadEditorScene(root, rel);
+  } else {
+    pendingProject = { root, rel };
+  }
+}
 
 /**
  * 应用层状态桥接：让框架引擎的事件（graph / selection / gizmo / history）
@@ -218,18 +240,32 @@ export function mountEditor(container: HTMLElement): Promise<void> {
       if (!loaded && !engine.isDisposed()) {
         // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话；
         // 携带保存目标，新项目首次保存时创建场景文件）
-        await engine.materials.preload([DEFAULT_MATERIAL_REL]);
-        if (engine.isDisposed()) return;
-        const result = await sceneApi.loadDoc(
-          buildStarterSceneDoc(engine.factory),
-          root ?? undefined,
-          sceneRel || undefined,
-        );
-        if (engine.isDisposed()) return;
-        await applySceneLoadResult(engine, result);
+        try {
+          await engine.materials.preload([DEFAULT_MATERIAL_REL]);
+          if (engine.isDisposed()) return;
+          const result = await sceneApi.loadDoc(
+            buildStarterSceneDoc(engine.factory),
+            root ?? undefined,
+            sceneRel || undefined,
+          );
+          if (engine.isDisposed()) return;
+          await applySceneLoadResult(engine, result);
+        } catch (e) {
+          // 无后端（浏览器直开）或会话异常时保留空场景，编辑器仍视为就绪
+          logStore.log("warn", `初始场景装载失败: ${e}`, "engine");
+        }
       }
       store.markMounted();
       store.markSaved();
+      // 首页窗口在挂载期间交接的项目：就绪后补装载（若挂载流程已按同一项目
+      // 装载成功则跳过，避免重复 scene_open）
+      if (pendingProject) {
+        const p = pendingProject;
+        pendingProject = null;
+        if (!(loaded && root === p.root && sceneRel === p.rel)) {
+          await reloadEditorScene(p.root, p.rel);
+        }
+      }
       logStore.log("info", "编辑器已就绪", "engine");
     })();
   }

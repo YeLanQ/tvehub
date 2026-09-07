@@ -6,11 +6,14 @@ import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import "../../styles/components/home-view.scss";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { revealItemInDir, openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
 import { isTauri } from "../../lib/tauri-env";
 import { debugLog } from "../../lib/debug-log";
+import { api } from "../../lib/api";
 import { BUILTIN_PROJECT_TEMPLATES, type ProjectTemplate } from "../lib/project-templates";
 import { PREFS_CATS, THEME_COLOR_DEFS } from "../lib/home-helpers";
 import {
@@ -67,6 +70,11 @@ onMounted(() => {
     getVersion()
       .then((v) => (tauriVersion.value = v))
       .catch(() => (tauriVersion.value = ""));
+    // 应用目录（开发者服务·桌面客户端卡片展示 + openPath 打开）
+    void invoke<Array<[string, string]>>("dev_app_dirs")
+      .then((dirs) => (appDirs.value = dirs))
+      .catch(() => (appDirs.value = []));
+    void refreshWindowState();
   }
 });
 
@@ -87,6 +95,34 @@ async function openProject(project: RecentProject | string) {
   busy.value = false;
   if (!success) {
     alert("打开项目失败");
+    return;
+  }
+  await handoffToEditor();
+}
+
+/**
+ * 打开/新建项目成功后交接给编辑器窗口（双窗口架构）：
+ * 广播 home:project-opened（编辑器窗口同步状态并装载场景），
+ * 再请求 Rust 显示编辑器窗口并隐藏首页。
+ */
+async function handoffToEditor(): Promise<void> {
+  if (!inTauri) {
+    // 浏览器环境无窗口系统，回退单窗口视图切换
+    projectStore.setView("editor");
+    return;
+  }
+  const root = projectStore.currentPath;
+  if (!root) return;
+  try {
+    await emit("home:project-opened", {
+      root,
+      name: projectStore.projectName ?? "",
+      rel: projectStore.sceneRel,
+    });
+    await invoke("show_editor_window");
+  } catch (e) {
+    console.error("切换到编辑器窗口失败:", e);
+    alert("切换到编辑器窗口失败：" + e);
   }
 }
 
@@ -104,10 +140,10 @@ function closeNewProject() {
   showNewProject.value = false;
 }
 
-function handleProjectCreated(project: RecentProject) {
+async function handleProjectCreated(project: RecentProject) {
   projectStore.addRecent(project);
-  projectStore.setView("editor");
   showNewProject.value = false;
+  await handoffToEditor();
 }
 
 async function removeProject(path: string) {
@@ -191,6 +227,194 @@ async function openDocLink(url: string) {
   } catch (e) {
     console.error("打开链接失败:", e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 开发者服务·桌面客户端：窗口操作 / WebView 重载 / 应用目录
+// ---------------------------------------------------------------------------
+
+const appDirs = ref<Array<[string, string]>>([]);
+
+/** 窗口状态（操作后刷新；置顶无法查询，本地跟踪开关状态） */
+const winMaximized = ref(false);
+const winFullscreen = ref(false);
+const winAlwaysOnTop = ref(false);
+
+async function refreshWindowState(): Promise<void> {
+  try {
+    const w = getCurrentWindow();
+    winMaximized.value = await w.isMaximized();
+    winFullscreen.value = await w.isFullscreen();
+  } catch {
+    /* 权限缺失时忽略 */
+  }
+}
+
+/** 用系统文件管理器打开本地目录 */
+async function openDir(path: string): Promise<void> {
+  try {
+    await openPath(path);
+  } catch (e) {
+    console.error("打开目录失败:", e);
+    alert("打开目录失败：" + e);
+  }
+}
+
+function winMinimize(): void {
+  void getCurrentWindow().minimize();
+}
+
+function winToggleMaximize(): void {
+  void getCurrentWindow()
+    .toggleMaximize()
+    .then(() => refreshWindowState());
+}
+
+function winToggleAlwaysOnTop(): void {
+  winAlwaysOnTop.value = !winAlwaysOnTop.value;
+  void getCurrentWindow().setAlwaysOnTop(winAlwaysOnTop.value);
+}
+
+function winToggleFullscreen(): void {
+  winFullscreen.value = !winFullscreen.value;
+  void getCurrentWindow().setFullscreen(winFullscreen.value);
+}
+
+function winCenter(): void {
+  void getCurrentWindow().center();
+}
+
+/** 重载 WebView 内容（开发期刷新界面状态） */
+function reloadWebview(): void {
+  location.reload();
+}
+
+// ---------------------------------------------------------------------------
+// 开发者服务·项目操作：项目目录 / 资产统计 / 元数据补齐
+// ---------------------------------------------------------------------------
+
+const devBusy = ref(false);
+/** 资产统计结果文本（扫描后填充） */
+const assetStats = ref("");
+
+async function revealProject(): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  try {
+    await revealItemInDir(root);
+  } catch (e) {
+    console.error("打开项目目录失败:", e);
+    alert("打开项目目录失败：" + e);
+  }
+}
+
+async function scanProjectAssets(): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  devBusy.value = true;
+  try {
+    const list = await api.scanAssets(root);
+    const counts = new Map<string, number>();
+    for (const e of list) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
+    assetStats.value =
+      `共 ${list.length} 项 · ` +
+      [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([kind, n]) => `${kind} ${n}`)
+        .join(" · ");
+  } catch (e) {
+    assetStats.value = "";
+    alert("扫描资产失败：" + e);
+  } finally {
+    devBusy.value = false;
+  }
+}
+
+async function fillProjectMeta(): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  devBusy.value = true;
+  try {
+    await api.ensureProjectMeta(root);
+    alert("已为缺失 .meta 的资产补齐元数据。");
+  } catch (e) {
+    alert("补齐元数据失败：" + e);
+  } finally {
+    devBusy.value = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 开发者服务·命令操作：快捷调试命令 + 自由命令执行器 + 输出区
+// ---------------------------------------------------------------------------
+
+const cmdOutput = ref<string[]>([]);
+
+function logCmd(line: string): void {
+  cmdOutput.value.unshift(`[${new Date().toLocaleTimeString()}] ${line}`);
+  if (cmdOutput.value.length > 30) cmdOutput.value.pop();
+}
+
+/** 执行一条 Tauri 命令，结果/错误追加到输出区（长结果截断显示） */
+async function runCmd(name: string, args?: Record<string, unknown>): Promise<unknown> {
+  try {
+    const r = await invoke(name, args);
+    let text = "";
+    if (r !== undefined) {
+      text = JSON.stringify(r);
+      if (text.length > 400) text = `${text.slice(0, 400)}…(共 ${text.length} 字符)`;
+    }
+    logCmd(`${name} → 成功${text ? `: ${text}` : ""}`);
+    return r;
+  } catch (e) {
+    logCmd(`${name} → 失败: ${String(e)}`);
+    return undefined;
+  }
+}
+
+function runSceneDirty(): void {
+  void runCmd("scene_dirty");
+}
+
+function runSceneSave(): void {
+  void runCmd("scene_save");
+}
+
+function runScanInternal(): void {
+  void runCmd("scan_internal_assets");
+}
+
+function runStartPreview(): void {
+  const root = projectStore.currentPath;
+  if (!root) {
+    logCmd("start_web_preview_server → 失败: 未打开项目");
+    return;
+  }
+  void runCmd("start_web_preview_server", { root });
+}
+
+function runStopPreview(): void {
+  void runCmd("stop_web_preview");
+}
+
+/** 自由命令执行器（命令名 + JSON 参数；键与后端命令签名一致） */
+const customCmd = ref("");
+const customArgs = ref("{}");
+
+async function runCustom(): Promise<void> {
+  const name = customCmd.value.trim();
+  if (!name) return;
+  let args: Record<string, unknown> | undefined;
+  const raw = customArgs.value.trim();
+  if (raw) {
+    try {
+      args = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      logCmd(`${name} → 参数 JSON 解析失败: ${raw}`);
+      return;
+    }
+  }
+  await runCmd(name, args);
 }
 
 async function browseDefaultDir() {
@@ -467,24 +691,107 @@ watch(showNewProject, (val) => {
             </div>
           </div>
 
-          <!-- 调试工具 -->
+          <!-- 桌面客户端：窗口操作 / WebView / 应用目录 -->
           <div class="settings-card">
-            <h3>调试工具</h3>
+            <h3>桌面客户端</h3>
             <template v-if="inTauri">
               <div class="set-row">
-                <label>WebView 开发者工具</label>
-                <button @click="openDevtools">打开 DevTools</button>
+                <label>窗口</label>
+                <div class="dev-btn-row">
+                  <button @click="winMinimize">最小化</button>
+                  <button @click="winToggleMaximize">
+                    {{ winMaximized ? "还原窗口" : "最大化窗口" }}
+                  </button>
+                  <button @click="winToggleAlwaysOnTop">
+                    {{ winAlwaysOnTop ? "取消置顶" : "窗口置顶" }}
+                  </button>
+                  <button @click="winToggleFullscreen">
+                    {{ winFullscreen ? "退出全屏" : "进入全屏" }}
+                  </button>
+                  <button @click="winCenter">窗口居中</button>
+                </div>
               </div>
-              <p class="hint">检查页面元素、控制台输出与网络请求（调试构建可用）。</p>
               <div class="set-row">
-                <label>调试日志</label>
-                <button @click="writeTestDebugLog">写入测试日志</button>
+                <label>WebView</label>
+                <div class="dev-btn-row">
+                  <button @click="reloadWebview">重新加载界面</button>
+                  <button @click="openDevtools">打开 DevTools</button>
+                  <button @click="writeTestDebugLog">写入测试日志</button>
+                </div>
               </div>
-              <p class="hint">日志写入应用配置目录下的 debug.log，WebView 白屏时也可用于排查。</p>
+              <p class="hint">
+                调试日志写入应用配置目录下的 debug.log，WebView 白屏时也可用于排查。
+              </p>
+              <div v-for="[name, p] in appDirs" :key="name" class="dev-dir-row">
+                <span class="dev-dir-name">{{ name }}</span>
+                <span class="dev-dir-path mono" :title="p">{{ p }}</span>
+                <button @click="openDir(p)">打开</button>
+              </div>
             </template>
             <p v-else class="hint">
-              当前为浏览器直开环境，桌面调试工具不可用；DevTools 与调试日志需在 Tauri 应用内使用。
+              当前为浏览器直开环境，桌面客户端操作不可用；需在 Tauri 应用内使用。
             </p>
+          </div>
+
+          <!-- 项目操作：目录 / 资产统计 / 元数据 -->
+          <div class="settings-card">
+            <h3>项目操作</h3>
+            <template v-if="projectStore.currentPath">
+              <div class="set-row">
+                <label>当前项目</label>
+                <span class="dev-dir-path mono" :title="projectStore.currentPath">
+                  {{ projectStore.projectName }} · {{ projectStore.currentPath }}
+                </span>
+                <button @click="revealProject">打开目录</button>
+              </div>
+              <div class="set-row">
+                <label>资产统计</label>
+                <div class="dev-btn-row">
+                  <button :disabled="devBusy" @click="scanProjectAssets">扫描资产</button>
+                </div>
+              </div>
+              <p v-if="assetStats" class="hint mono">{{ assetStats }}</p>
+              <div class="set-row">
+                <label>元数据</label>
+                <div class="dev-btn-row">
+                  <button :disabled="devBusy" @click="fillProjectMeta">补齐缺失 .meta</button>
+                </div>
+              </div>
+              <p class="hint">只补建缺失的 .meta 文件（uuid/引用映射），不改动已有元数据。</p>
+            </template>
+            <p v-else class="hint">尚未打开项目；先在「项目」页打开或新建一个项目。</p>
+          </div>
+
+          <!-- 命令操作：快捷调试命令 + 自由命令执行器 -->
+          <div class="settings-card">
+            <h3>命令操作</h3>
+            <div class="dev-btn-row">
+              <button @click="runSceneDirty">查询场景脏状态</button>
+              <button @click="runSceneSave">保存场景会话</button>
+              <button @click="runScanInternal">扫描内置资产</button>
+              <button @click="runStartPreview">启动预览服务器</button>
+              <button @click="runStopPreview">停止预览服务器</button>
+            </div>
+            <div class="set-row dev-custom-cmd">
+              <input
+                v-model="customCmd"
+                placeholder="命令名，如 scan_assets"
+                spellcheck="false"
+                @keydown.enter="runCustom"
+              />
+              <input
+                v-model="customArgs"
+                placeholder='参数 JSON，如 {"root":"C:/proj"}'
+                spellcheck="false"
+                @keydown.enter="runCustom"
+              />
+              <button @click="runCustom">执行</button>
+            </div>
+            <div class="dev-cmd-out-head">
+              <span>输出（最近 {{ cmdOutput.length }} 条）</span>
+              <button @click="cmdOutput = []">清空</button>
+            </div>
+            <pre class="dev-cmd-output">{{ cmdOutput.join("\n") || "—" }}</pre>
           </div>
 
           <!-- 文档与资源 -->

@@ -13,7 +13,6 @@ import HierarchyPanel from "./app/components/HierarchyPanel.vue";
 import InspectorPanel from "./app/components/InspectorPanel.vue";
 import ConsolePanel from "./app/components/ConsolePanel.vue";
 import AssetsPanel from "./app/components/AssetsPanel.vue";
-import HomeView from "./app/components/HomeView.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
@@ -27,8 +26,6 @@ import "./styles/components/app.scss";
 
 const projectStore = getProjectStore();
 const editorStore = getEditorStore();
-
-const isHome = computed(() => projectStore.view === "home");
 
 /** 退出预览（网页预览面板）返回场景编辑 */
 function goScene() {
@@ -75,9 +72,25 @@ const previewStyle = computed(() => {
 /** 订阅 Rust 原生菜单/快捷键事件（撤销/保存/关闭 → 前端执行） */
 let unlistenNative: UnlistenFn | null = null;
 
+/** 窗口级快捷键：Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
+function onWindowKeyDown(e: KeyboardEvent): void {
+  if (!e.ctrlKey || e.shiftKey || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (key === "z") {
+    e.preventDefault();
+    void runEditorCommand("undo");
+  } else if (key === "s") {
+    e.preventDefault();
+    void runEditorCommand("save");
+  } else if (key === "w") {
+    e.preventDefault();
+    void runEditorCommand("close");
+  }
+}
+
 /** 编辑器挂载到 DOM */
 onMounted(async () => {
-  // 原生菜单命令通道：桌面端菜单/快捷键经 Rust 发来 editor-command 事件
+  // 原生菜单已移除：快捷键由本窗口 keydown 直接处理；保留菜单事件通道以兼容
   try {
     unlistenNative = await listen<string>("editor-command", (e) => {
       const cmd = e.payload as EditorCommand;
@@ -86,6 +99,7 @@ onMounted(async () => {
   } catch {
     /* 浏览器开发环境没有原生菜单事件源，忽略 */
   }
+  window.addEventListener("keydown", onWindowKeyDown);
   const container = document.querySelector<HTMLElement>(".center");
   if (container && !editorStore.state.mounted) {
     mountEditor(container);
@@ -95,20 +109,17 @@ onMounted(async () => {
 onUnmounted(() => {
   unlistenNative?.();
   unlistenNative = null;
+  window.removeEventListener("keydown", onWindowKeyDown);
 });
 </script>
 
 <template>
   <div class="editor" @contextmenu.prevent>
-    <!-- 项目管理器首页 -->
-    <HomeView v-if="isHome" />
-
-    <!-- 编辑器界面 -->
-    <template v-else>
-      <!-- 顶部工具栏 -->
-      <header class="toolbar">
-        <Toolbar />
-      </header>
+    <!-- 编辑器界面（首页在独立窗口 home.html 中；本窗口常驻编辑器视图） -->
+    <!-- 顶部工具栏 -->
+    <header class="toolbar">
+      <Toolbar />
+    </header>
 
       <!-- 主体（Unity 风格停靠布局：左侧/右侧停靠区 + 中央视口） -->
       <div class="editor-body">
@@ -175,15 +186,14 @@ onUnmounted(() => {
 
       <!-- 全局右键菜单 -->
       <ContextMenu />
-    </template>
 
-    <!-- 全局确认弹窗 -->
-    <ConfirmDialog />
-    <!-- 全局输入弹窗 -->
-    <PromptDialog />
-    <!-- 项目设置面板（点击工具栏“项目信息”打开） -->
-    <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
-    <!-- 构建导出面板（点击工具栏“构建”打开） -->
-    <BuildPanel v-if="projectStore.buildOpen" />
+      <!-- 全局确认弹窗 -->
+      <ConfirmDialog />
+      <!-- 全局输入弹窗 -->
+      <PromptDialog />
+      <!-- 项目设置面板（点击工具栏“项目信息”打开） -->
+      <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
+      <!-- 构建导出面板（点击工具栏“构建”打开） -->
+      <BuildPanel v-if="projectStore.buildOpen" />
   </div>
 </template>

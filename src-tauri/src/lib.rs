@@ -20,27 +20,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::Manager;
 
-/// 应用主菜单：把「撤销 / 保存场景 / 关闭项目」做成原生菜单 + 快捷键命令，
-/// 点击后经 Tauri 事件（editor-command）通知前端执行，不再依赖前端 UI 生命周期。
-fn build_main_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
-    use tauri::menu::{IsMenuItem, Menu, MenuItem, Submenu};
-
-    let undo = MenuItem::with_id(app, "app-undo", "撤销", true, Some("CmdOrCtrl+Z"))?;
-    let save = MenuItem::with_id(app, "app-save", "保存场景", true, Some("CmdOrCtrl+S"))?;
-    let close = MenuItem::with_id(app, "app-close", "关闭项目", true, Some("CmdOrCtrl+W"))?;
-
-    let edit_menu = Submenu::with_items(app, "编辑", true, &[&undo as &dyn IsMenuItem<R>])?;
-    let file_menu = Submenu::with_items(
-        app,
-        "文件",
-        true,
-        &[&save as &dyn IsMenuItem<R>, &close as &dyn IsMenuItem<R>],
-    )?;
-    Menu::with_items(
-        app,
-        &[&file_menu as &dyn IsMenuItem<R>, &edit_menu as &dyn IsMenuItem<R>],
-    )
-}
+/// 应用主菜单已移除（双窗口均不显示原生菜单栏，快捷键由前端 keydown 处理）。
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -420,6 +400,53 @@ async fn open_devtools(window: tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
+/// 开发者服务：返回应用相关目录路径（名称有序，前端展示 + openPath 打开）
+#[tauri::command]
+async fn dev_app_dirs(app: tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
+    let path = app.path();
+    let dirs: [(&str, Result<std::path::PathBuf, tauri::Error>); 4] = [
+        ("配置目录", path.app_config_dir()),
+        ("数据目录", path.app_data_dir()),
+        ("日志目录", path.app_log_dir()),
+        ("程序目录", path.executable_dir()),
+    ];
+    Ok(dirs
+        .into_iter()
+        .filter_map(|(name, p)| {
+            p.ok().map(|p| (name.to_string(), p.display().to_string()))
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// 双窗口生命周期：home（首页窗口）/ main（编辑器窗口）互相独立，
+// 打开项目时由首页切换到编辑器，编辑器"关闭项目"切回首页。
+// ---------------------------------------------------------------------------
+
+/// 显示编辑器窗口（首页窗口保持打开，仅把焦点切到编辑器；
+/// 打开/新建项目成功后由首页调用）
+#[tauri::command]
+async fn show_editor_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+/// 显示首页窗口并隐藏编辑器（编辑器"关闭项目"后调用）
+#[tauri::command]
+async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    if let Some(home) = app.get_webview_window("home") {
+        let _ = home.show();
+        let _ = home.set_focus();
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // base64（免第三方依赖：预览二进制贴图导出 + 前端纹理读取共用）
 // ---------------------------------------------------------------------------
@@ -574,18 +601,29 @@ pub fn run() {
             let state = ctx.app_handle().state::<asset_protocol::AssetProtocolState>();
             asset_protocol::handle_asset_protocol(&state, request)
         })
-        .menu(build_main_menu)
-        .on_menu_event(|app, event| {
-            // 原生菜单/快捷键 → 统一命令事件（前端 runEditorCommand 消费）
-            let cmd = match event.id().as_ref() {
-                "app-undo" => Some("undo"),
-                "app-save" => Some("save"),
-                "app-close" => Some("close"),
-                _ => None,
-            };
-            if let Some(cmd) = cmd {
-                use tauri::Emitter;
-                let _ = app.emit("editor-command", cmd);
+        // 双窗口均不显示原生菜单栏；编辑器快捷键由前端 keydown 统一处理
+        .on_window_event(|window, event| {
+            // 双窗口生命周期：
+            // - 编辑器窗口关闭 = "关闭项目" → 隐藏编辑器（保留前端状态），显示首页；
+            // - 首页窗口关闭 = 退出应用（一并结束隐藏中的编辑器窗口）。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                match window.label() {
+                    "main" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        if let Some(home) = window
+                            .app_handle()
+                            .get_webview_window("home")
+                        {
+                            let _ = home.show();
+                            let _ = home.set_focus();
+                        }
+                    }
+                    "home" => {
+                        window.app_handle().exit(0);
+                    }
+                    _ => {}
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -615,6 +653,9 @@ pub fn run() {
             create_folder,
             append_debug_log,
             open_devtools,
+            dev_app_dirs,
+            show_editor_window,
+            show_home_window,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,

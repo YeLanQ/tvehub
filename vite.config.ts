@@ -104,6 +104,16 @@ function templateIndexPlugin(): Plugin {
 export default defineConfig(async () => ({
   plugins: [vue(), templateIndexPlugin()],
 
+  // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"）
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        home: path.resolve(__dirname, "home.html"),
+      },
+    },
+  },
+
   // Monaco 的 editor/ts worker 以 ESM 打包（?worker 导入）
   worker: {
     format: "es",

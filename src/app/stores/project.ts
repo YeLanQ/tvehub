@@ -42,6 +42,11 @@ export interface ProjectStore {
   setHDRMode: (v: "hdr" | "ldr") => void;
   setDesignSize: (width: number, height: number) => void;
   setView: (view: "home" | "editor") => void;
+  /**
+   * 首页窗口打开/新建项目后由编辑器窗口调用：仅同步本地状态与渲染配置，
+   * 不重复后端流程（open_project / 项目根 / 场景会话已在首页窗口侧就绪）。
+   */
+  applyOpenedProject: (root: string, name: string, rel: string) => void;
   setProjectName: (name: string | null) => void;
   /** 场景资产被移动/重命名后改写当前打开场景指针（保存仍写到新路径） */
   setSceneRel: (rel: string) => void;
@@ -73,7 +78,8 @@ export function getProjectStore(): ProjectStore {
 
   const state = reactive({
     recent: [] as RecentProject[],
-    view: "home" as "home" | "editor",
+    // 编辑器窗口（main）常驻编辑器视图；首页由独立窗口（home）承担
+    view: "editor" as "home" | "editor",
     loading: false,
     currentSceneRel: DEFAULT_SCENE_REL as string,
     currentPath: null as string | null,
@@ -225,6 +231,14 @@ export function getProjectStore(): ProjectStore {
     },
     setView(view) {
       state.view = view;
+    },
+    applyOpenedProject(root, name, rel) {
+      state.currentPath = root;
+      state.projectName = name;
+      state.currentSceneRel = rel;
+      state.settingsOpen = false;
+      state.view = "editor";
+      void loadProjectRenderConfig(root);
     },
     setProjectName(name) {
       state.projectName = name;

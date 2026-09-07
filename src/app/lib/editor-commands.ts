@@ -7,8 +7,10 @@ import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
+import { invoke } from "@tauri-apps/api/core";
 import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
+import { isTauri } from "../../lib/tauri-env";
 import { saveCurrentSceneToMain } from "./save-scene";
 import { confirm } from "./confirm";
 
@@ -82,10 +84,16 @@ export async function runEditorCommand(cmd: EditorCommand): Promise<void> {
           if (!discard) return;
         }
       }
-      project.setView("home");
       // 关闭后端场景会话与 asset:// 协议项目根（下次打开项目时重建）
       void sceneApi.close().catch(() => {});
       void api.setCurrentProjectRoot(null).catch(() => {});
+      // 双窗口：显示首页窗口（Rust 侧隐藏编辑器窗口，保留编辑器前端状态）；
+      // 浏览器环境无窗口系统，回退单窗口内的视图切换
+      if (isTauri()) {
+        await invoke("show_home_window");
+      } else {
+        project.setView("home");
+      }
       break;
     }
   }
