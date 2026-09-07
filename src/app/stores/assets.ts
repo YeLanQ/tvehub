@@ -1,8 +1,10 @@
 import { reactive } from "vue";
 import { api, type AssetEntry } from "../../lib/api";
+import { sceneApi } from "../../lib/scene-api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { assetService } from "../services/assetService";
 import { logStore } from "./log";
+import { getProjectStore } from "./project";
 
 /**
  * 资产状态层：持有资产列表/meta/选中项，并把写操作委托给 assetService。
@@ -51,6 +53,38 @@ export function getAssetsStore(): AssetsStore {
   /** 写操作成功后重扫列表（业务逻辑不接触状态，由本层统一刷新） */
   const reload = (root: string) => store.load(root);
 
+  /** 被移动/重命名的路径是否影响当前打开的场景（场景本身或位于被移动目录内） */
+  function affectsOpenScene(rel: string): boolean {
+    const openRel = getProjectStore().sceneRel;
+    return !!openRel && (openRel === rel || openRel.startsWith(rel + "/"));
+  }
+
+  /**
+   * 移动/重命名当前打开的场景前先落盘脏改动：磁盘文件随后被移到新路径，
+   * 避免“未保存内容留在旧路径、随后重建旧文件”的数据分裂。
+   */
+  async function flushOpenSceneSave(): Promise<void> {
+    const { getEditorStore } = await import("./editor");
+    const editor = getEditorStore();
+    if (editor.state.mounted && editor.dirty()) {
+      try {
+        await sceneApi.save();
+      } catch (e) {
+        console.warn("移动场景前保存失败（按磁盘现有内容移动）:", e);
+      }
+    }
+  }
+
+  /**
+   * 当前打开场景被移动/重命名后重绑编辑器会话：assetService 已更新 sceneRel 指向新路径，
+   * 这里按新路径 scene_open 重装会话，避免后端保存目标停留在旧路径（旧路径被重建/重复 Main）。
+   */
+  async function rebindOpenScene(root: string): Promise<void> {
+    const { reloadEditorScene } = await import("../services/editorService");
+    const rel = getProjectStore().sceneRel;
+    if (rel) await reloadEditorScene(root, rel);
+  }
+
   const store: AssetsStore = {
     get assets() {
       return state.assets;
@@ -93,8 +127,13 @@ export function getAssetsStore(): AssetsStore {
       return r;
     },
     async rename(root, rel, newName) {
+      const movingOpenScene = affectsOpenScene(rel);
+      if (movingOpenScene) await flushOpenSceneSave();
       const r = await assetService.rename(root, rel, newName);
-      if (r) await reload(root);
+      if (r) {
+        await reload(root);
+        if (movingOpenScene) await rebindOpenScene(root);
+      }
       return r;
     },
     async duplicate(root, rel) {
@@ -111,8 +150,13 @@ export function getAssetsStore(): AssetsStore {
       return ok;
     },
     async moveTo(root, rel, destDir) {
+      const movingOpenScene = affectsOpenScene(rel);
+      if (movingOpenScene) await flushOpenSceneSave();
       const r = await assetService.moveTo(root, rel, destDir);
-      if (r) await reload(root);
+      if (r) {
+        await reload(root);
+        if (movingOpenScene) await rebindOpenScene(root);
+      }
       return r;
     },
     async importPaths(root, destDir, sourcePaths) {
