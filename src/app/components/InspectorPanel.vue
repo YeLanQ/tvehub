@@ -209,10 +209,6 @@ function onNodeRename(name: string): void {
   void dispatchCommand("node.rename", { name });
 }
 
-function onNodeToggleActive(value: boolean): void {
-  commit((n) => { n.active = value; }, "Toggle Active");
-}
-
 function onNodeToggleVisible(value: boolean): void {
   commit((n) => { n.visible = value; }, "Toggle Visible");
 }
@@ -1059,22 +1055,11 @@ function onNodeSetTag(tag: string): void {
 
     <div v-else class="inspector-body mono">
       <ComponentCard title="Node" :open="true" :type="node.typeKey">
-        <template #head>
-          <label class="active-toggle" title="是否激活（失活后视口隐藏）" @click.stop>
-            <input
-              type="checkbox"
-              :checked="node.active"
-              @change="onNodeToggleActive(($event.target as HTMLInputElement).checked)"
-            />
-            <span>激活</span>
-          </label>
-        </template>
         <NodeSection
           :node="node"
           :rev="revision"
           @rename="onNodeRename"
           @setTag="onNodeSetTag"
-          @toggleActive="onNodeToggleActive"
           @toggleVisible="onNodeToggleVisible"
         />
       </ComponentCard>

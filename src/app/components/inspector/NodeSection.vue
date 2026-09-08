@@ -7,7 +7,6 @@ const props = defineProps<{ node: Node; rev?: number }>();
 const emit = defineEmits<{
   rename: [name: string];
   setTag: [tag: string];
-  toggleActive: [value: boolean];
   toggleVisible: [value: boolean];
 }>();
 
@@ -84,14 +83,6 @@ function commitTag(): void {
     <span class="mono comp-type" :title="node.prefab">
       {{ node.prefab.split("/").pop() ?? node.prefab }}
     </span>
-  </div>
-  <div class="field">
-    <label>ID</label>
-    <span class="mono">{{ node.id }}</span>
-  </div>
-  <div class="field">
-    <label>子节点</label>
-    <span>{{ node.childIds.length }}</span>
   </div>
   <div class="field">
     <label>可见</label>
