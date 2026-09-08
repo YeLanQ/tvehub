@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
 import type { GraphLike, SceneChange } from "../../scene/SceneClient";
+import { ColliderNodeHelper } from "./helpers/ColliderNodeHelper";
 import { createNodeHelper } from "./helpers/createNodeHelper";
 import type { HelperContext, NodeHelper } from "./helpers/types";
 
@@ -15,12 +16,15 @@ interface HelperEntry {
  * 模块化职责：
  * - 持有一个独立于场景节点树的 helperRoot（world 空间定位，可整体显隐/拾取豁免）；
  * - 按 SceneGraph 事件维护 CameraNode/LightNode 的辅助线实例（增删/变换/属性）；
+ * - 碰撞体线框只在节点选中时显示（setSelectedIds 由引擎选择变化时调用）；
  * - 每帧 tick 轻量贴合世界变换，保证 gizmo 拖拽过程辅助线实时跟随；
  * - 不感知具体绘制内容，具体形状由 helpers/* 里的 NodeHelper 负责。
  */
 export class HelperSystem {
   private readonly root: THREE.Group;
   private entries = new Map<string, HelperEntry>();
+  /** 当前选中节点（碰撞体线框仅对这些节点显示；空 = 无选中） */
+  private selectedIds = new Set<string>();
 
   constructor(scene: THREE.Scene, private readonly ctx: HelperContext) {
     this.root = new THREE.Group();
@@ -74,6 +78,19 @@ export class HelperSystem {
     }
   }
 
+  /**
+   * 选中集变化（引擎选择变化时调用）：碰撞体线框只对选中节点显示。
+   * 立即重贴一次碰撞体辅助线显隐（不等下一帧 tick）。
+   */
+  setSelectedIds(ids: string[]): void {
+    this.selectedIds = new Set(ids);
+    for (const entry of this.entries.values()) {
+      if (entry.helper instanceof ColliderNodeHelper) {
+        entry.helper.object.visible = this.selectedIds.has(entry.node.id);
+      }
+    }
+  }
+
   dispose(): void {
     this.clearAll();
     this.root.parent?.remove(this.root);
@@ -98,6 +115,11 @@ export class HelperSystem {
 
   private syncEntry(entry: HelperEntry, obj: THREE.Object3D | undefined): void {
     entry.helper.sync(entry.node, obj, this.ctx);
+    // 碰撞体线框叠加选中过滤（helper.sync 会按组件启停自设 visible，这里取交集；
+    // 未选中的碰撞体仍保持同步，选中即现、数据变化照常重建）
+    if (entry.helper instanceof ColliderNodeHelper) {
+      if (!this.selectedIds.has(entry.node.id)) entry.helper.object.visible = false;
+    }
   }
 
   private clearAll(): void {

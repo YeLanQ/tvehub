@@ -257,7 +257,6 @@ export class EditorEngine {
         this.renderer.orbitControls.enabled = !val;
       },
       onGizmoObjectChange: () => {
-        this.gizmo.updateSelectionBox();
         // 拖动中把 three 对象的当前变换实时回写数据节点并广播，
         // 属性面板的 Transform 数值与视口 gizmo 同步变化（松手才写历史）
         if (this.gizmo.isDragging()) this.syncGizmoTransformToNode();
@@ -327,7 +326,6 @@ export class EditorEngine {
       const activeCam = this.renderer.getActiveCamera();
       if (activeCam) this.audio.attachListener(activeCam);
       this.audio.update();
-      this.gizmo.updateSelectionBox();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
       // 正交预览的天空背景面跟随（渲染前更新 uniforms）
@@ -724,6 +722,7 @@ export class EditorEngine {
     this.selectedIds = id ? [id] : [];
     this.selectedId = id;
     this.gizmo.select(id, this.synchronizer.getObjectMap());
+    this.helperSystem.setSelectedIds(this.selectedIds);
     this.events.emit("select:changed", { nodeId: this.selectedId });
   }
 
@@ -761,6 +760,7 @@ export class EditorEngine {
 
   private syncGizmo(): void {
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
+    this.helperSystem.setSelectedIds(this.selectedIds);
   }
 
   getTransform(id: string): TransformSnapshot | null {
