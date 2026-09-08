@@ -16,8 +16,7 @@ import NumberField from "../NumberField.vue";
 const props = defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
-  addRigidBody: [];
-  addCollider: [];
+
   removeComponent: [compId: string];
   toggleComponent: [compId: string, enabled: boolean];
   updateRigidBody: [label: string, value: unknown];
@@ -263,13 +262,6 @@ const SHAPE_OPTIONS: { value: string; label: string }[] = [
       </template>
     </div>
 
-    <!-- 添加组件 -->
-    <div class="phys-add">
-      <button v-if="rbComps.length === 0" title="添加刚体组件" @click="emit('addRigidBody')">
-        ＋ 刚体
-      </button>
-      <button title="添加碰撞体组件" @click="emit('addCollider')">＋ 碰撞体</button>
-    </div>
 
     <!-- 模拟控制（编辑器视口运行时控制，不落盘；配置在项目设置「物理」分类） -->
     <div class="phys-sim">
@@ -342,24 +334,7 @@ const SHAPE_OPTIONS: { value: string; label: string }[] = [
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
 }
-.phys-add {
-  display: flex;
-  gap: 6px;
-}
-.phys-add button {
-  flex: 1;
-  font-size: 11px;
-  padding: 4px 0;
-  border-radius: 3px;
-  border: 1px dashed var(--text-dim, #666);
-  background: transparent;
-  color: var(--text, #ddd);
-  cursor: pointer;
-}
-.phys-add button:hover {
-  border-color: var(--accent, #4a9eff);
-  color: var(--accent, #4a9eff);
-}
+
 .phys-sim {
   display: flex;
   align-items: center;

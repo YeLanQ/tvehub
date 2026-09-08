@@ -12,15 +12,14 @@ import { MeshNode, LightNode, CameraNode, SkyboxNode } from "../../../framework/
 import { getEditorStore } from "../../stores/editor";
 import { getScriptsStore } from "../../stores/scripts";
 import { getProjectStore } from "../../stores/project";
-import { prompt } from "../../lib/prompt";
-import { openContextMenu, menuSeparator, type CtxMenuItem } from "../../../lib/editor/context-menu";
+
 import type { ScriptPropDef } from "../../lib/script-compile";
 import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
-  addComponent: [scriptRel: string];
+
   removeComponent: [compId: string];
   toggleComponent: [compId: string, enabled: boolean];
   setProp: [compId: string, key: string, value: unknown];
@@ -165,35 +164,6 @@ function vecAxis(v: unknown, axis: "x" | "y" | "z"): number {
   return typeof n === "number" ? n : 0;
 }
 
-/** 添加脚本组件：菜单列出项目脚本（可跳转新建） */
-function onAddMenu(e: MouseEvent): void {
-  const items: CtxMenuItem[] = scriptList.value.map((rel) => ({
-    label: baseName(rel),
-    onClick: () => emit("addComponent", rel),
-  }));
-  if (!items.length) {
-    items.push({ label: "（src/ 内暂无脚本）", disabled: true });
-  }
-  items.push(
-    menuSeparator(),
-    {
-      label: "新建脚本…",
-      onClick: async () => {
-        const editorStore = getEditorStore();
-        editorStore.setViewMode("script");
-        const name = await prompt({
-          title: "新建脚本",
-          label: "脚本名（创建在 src/ 目录）",
-          placeholder: "MyScript",
-        });
-        if (!name?.trim()) return;
-        const rel = await scriptsStore.createScript(name.trim());
-        if (rel) emit("addComponent", rel);
-      },
-    },
-  );
-  openContextMenu(e, items);
-}
 
 /** 模型解析信息（蒙皮/剪辑；随 model:changed 的 rev 刷新） */
 const modelMeta = computed(() => {
@@ -306,9 +276,6 @@ const modelMeta = computed(() => {
       </template>
     </div>
 
-    <button class="add-script-comp" title="从项目脚本中选择挂载" @click="onAddMenu">
-      ＋ 添加脚本组件
-    </button>
   </div>
 
   <!-- —— 原生组件（随节点类型自动创建，只读展示） —— -->

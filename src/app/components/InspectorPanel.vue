@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
+import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import type { Node } from "../../framework/prototype/Node";
 import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, DirectionalLightNode, PointLightNode, SpotLightNode } from "../../framework/prototype/derived/Primitives";
@@ -34,6 +35,8 @@ import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
 import { isModelAssetRel } from "../../framework/mesh";
 import { dispatchCommand } from "../commands";
+import { prompt } from "../lib/prompt";
+import { openContextMenu, menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
@@ -53,6 +56,7 @@ import "../../styles/components/inspector-panel.scss";
 const store = getEditorStore();
 const projectStore = getProjectStore();
 const assetsStore = getAssetsStore();
+const scriptsStore = getScriptsStore();
 const { state, engine } = store;
 
 const node = computed<Node | undefined>(() => store.nodeById(state.selectedId ?? undefined));
@@ -531,6 +535,61 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 添加组件菜单（集中入口）：物理 / 脚本按类别分类，支持子级子菜单
+// ---------------------------------------------------------------------------
+
+const scriptList = computed<string[]>(() => {
+  void projectStore.currentPath;
+  return scriptsStore.listScripts();
+});
+
+function baseName(rel: string): string {
+  return rel.slice(rel.lastIndexOf("/") + 1).replace(/\.ts$/, "");
+}
+
+/** 新建脚本：切换到脚本视图，输入名称后在 src/ 下创建并挂载到当前节点 */
+async function onCreateScript(): Promise<void> {
+  store.setViewMode("script");
+  const name = await prompt({
+    title: "新建脚本",
+    label: "脚本名（创建在 src/ 目录）",
+    placeholder: "MyScript",
+  });
+  if (!name?.trim()) return;
+  const rel = await scriptsStore.createScript(name.trim());
+  if (rel) onAddScriptComponent(rel);
+}
+
+/** 集中式「添加组件」按钮：弹出按类别分类（物理 / 脚本）的子菜单 */
+function onAddComponentMenu(e: MouseEvent): void {
+  const n = node.value;
+  if (!n) return;
+  const hasRigidBody = n.components.some(isRigidBodyComponent);
+
+  const scriptItems: CtxMenuItem[] = scriptList.value.map((rel) => ({
+    label: baseName(rel),
+    onClick: () => onAddScriptComponent(rel),
+  }));
+  if (!scriptItems.length) {
+    scriptItems.push({ label: "（src/ 内暂无脚本）", disabled: true });
+  }
+  scriptItems.push(menuSeparator(), { label: "新建脚本…", onClick: () => void onCreateScript() });
+
+  const items: CtxMenuItem[] = [
+    {
+      label: "物理",
+      children: [
+        { label: "刚体 Rigid Body", disabled: hasRigidBody, onClick: () => onAddRigidBodyComponent() },
+        { label: "碰撞体 Collider", onClick: () => onAddColliderComponent() },
+      ],
+    },
+    menuSeparator(),
+    { label: "脚本", children: scriptItems },
+  ];
+  openContextMenu(e, items);
+}
+
+// ---------------------------------------------------------------------------
 // 脚本组件（Components 卡片）：增删改走 commit → patchNode（可撤销）
 // ---------------------------------------------------------------------------
 
@@ -822,8 +881,6 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
         <PhysicsSection
           :node="node"
           :rev="revision"
-          @addRigidBody="onAddRigidBodyComponent"
-          @addCollider="onAddColliderComponent"
           @removeComponent="onRemovePhysicsComponent"
           @toggleComponent="onTogglePhysicsComponent"
           @updateRigidBody="onRigidBodyUpdate"
@@ -835,12 +892,14 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
         <ComponentsSection
           :node="node"
           :rev="revision"
-          @addComponent="onAddScriptComponent"
           @removeComponent="onRemoveScriptComponent"
           @toggleComponent="onToggleScriptComponent"
           @setProp="onScriptComponentProp"
         />
       </ComponentCard>
+
+      <!-- 集中式添加组件入口：按类别（物理/脚本）分类，弹出子菜单 -->
+      <button class="add-comp-btn" @click="onAddComponentMenu">＋ 添加组件</button>
     </div>
   </div>
 </template>
