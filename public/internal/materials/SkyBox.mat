@@ -2,7 +2,7 @@
   "$type": "material",
   "$ver": 1,
   "name": "SkyBox",
-  "shader": "SkyBox",
+  "shader": "internal/shaders/SkyBox.shader",
   "kind": "cube",
   "cubeMap": "internal/skybox/DefaultSkybox.texcube",
   "rotation": 0,

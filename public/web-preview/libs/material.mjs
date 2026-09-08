@@ -163,11 +163,17 @@ function parseMaterialDoc(j) {
 }
 
 /** ShaderLab 源文本 → 渲染分支 key（与后端 parse_shader_doc 同规则）：
- * surface 光照模型 Toon → toon / Standard → physical（其余 surface 模型归 physical）；
- * 无 surface pragma 但有顶点片元 pragma（#pragma fragment/vertex）→ unlit。 */
+ * 天空程序（PreviewType=Skybox 标签）→ skyprocedural/skycube（不属于网格渲染
+ * 分支，fetchShaderKind 校验时回退）；surface 光照模型 Toon → toon / Standard →
+ * physical（其余 surface 模型归 physical）；无 surface pragma 但有顶点片元
+ * pragma（#pragma fragment/vertex）→ unlit。 */
 function shaderKindFromSource(text) {
+  const src = String(text ?? "");
+  if (src.includes('"PreviewType"="Skybox"')) {
+    return src.includes("samplerCUBE") ? "skycube" : "skyprocedural";
+  }
   let kind = "";
-  for (const line of String(text ?? "").split(/\r?\n/)) {
+  for (const line of src.split(/\r?\n/)) {
     const t = line.trim();
     const m = t.match(/^#pragma\s+surface\s+\S+\s+(\S+)/);
     if (m) {

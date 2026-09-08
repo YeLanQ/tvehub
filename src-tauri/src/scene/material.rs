@@ -276,6 +276,15 @@ mod tests {
         let (_, kind3) =
             parse_shader_doc(&serialize_shader_file("assets/shaders/Y.shader", "whatever")).unwrap();
         assert_eq!(kind3, "physical");
+        // 天空程序：PreviewType=Skybox 标签识别（_SUNDISK → 散射 / samplerCUBE → 立方体）
+        let (_, sky1) =
+            parse_shader_doc(&serialize_shader_file("internal/shaders/SkyProcedural.shader", "skyprocedural"))
+                .unwrap();
+        assert_eq!(sky1, "skyprocedural");
+        let (_, sky2) =
+            parse_shader_doc(&serialize_shader_file("internal/shaders/SkyBox.shader", "skycube"))
+                .unwrap();
+        assert_eq!(sky2, "skycube");
 
         // 无 Shader 指令的文本拒绝
         assert!(parse_shader_doc("not a shader").is_none());
@@ -291,7 +300,13 @@ mod tests {
     #[test]
     fn internal_shader_files_match_templates() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../public/internal/shaders");
-        for (stem, kind) in [("PBR", "physical"), ("Unlit", "unlit"), ("Toon", "toon")] {
+        for (stem, kind) in [
+            ("PBR", "physical"),
+            ("Unlit", "unlit"),
+            ("Toon", "toon"),
+            ("SkyProcedural", "skyprocedural"),
+            ("SkyBox", "skycube"),
+        ] {
             let rel = format!("internal/shaders/{stem}.shader");
             let text = std::fs::read_to_string(dir.join(format!("{stem}.shader")))
                 .expect("内置着色器文件缺失");
@@ -320,6 +335,31 @@ mod tests {
         // 非 .shader 引用（天空等内置名）不走解析
         assert_eq!(resolve_shader_kind(&dir, "SkyBox", ""), "physical");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn serialize_sky_material_references_shaders() {
+        // 天空材质 shader 字段引用内置天空着色器资产（材质 ↔ 着色器分离）；kind 保留为快照判别
+        let v: Value = serde_json::from_str(
+            &crate::scene::migrate::serialize_sky_material_file("MySky", "procedural"),
+        )
+        .unwrap();
+        assert_eq!(v["shader"], "internal/shaders/SkyProcedural.shader");
+        assert_eq!(v["kind"], "procedural");
+        let v2: Value = serde_json::from_str(
+            &crate::scene::migrate::serialize_sky_material_file("X", "cube"),
+        )
+        .unwrap();
+        assert_eq!(v2["shader"], "internal/shaders/SkyBox.shader");
+        assert_eq!(v2["kind"], "cube");
+        assert_eq!(v2["cubeMap"], "internal/skybox/DefaultSkybox.texcube");
+        // 未知 kind 归一为 cube
+        let v3: Value = serde_json::from_str(
+            &crate::scene::migrate::serialize_sky_material_file("Y", "whatever"),
+        )
+        .unwrap();
+        assert_eq!(v3["shader"], "internal/shaders/SkyBox.shader");
+        assert_eq!(v3["kind"], "cube");
     }
 
     #[test]

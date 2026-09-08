@@ -4,8 +4,8 @@
  * - 纹理（png/jpg/webp/bmp/gif/svg）：原图预览 + 尺寸/大小；
  * - hdr / TextureCube：全景背景预览 + 引用信息；
  * - 材质（.mat）：材质球实时预览 + 挂载着色器暴露的全部参数（项目资产可编辑，
- *   300ms 防抖写盘；写入引擎缓存使引用网格即时刷新）；天空材质（shader=
- *   SkyBox/SkyProcedural）暴露类型与三段配色，整卡 JSON 写回；
+ *   300ms 防抖写盘；写入引擎缓存使引用网格即时刷新）；天空材质（引用内置
+ *   天空着色器）暴露类型与三段配色，整卡 JSON 写回；
  * - 着色器（.shader）：渲染程序源码展示（PBR/Unlit/卡通，类型创建时固定），
  *   决定引用它的材质走哪个渲染分支；
  * - 模型（glb/gltf/fbx/obj）：模型实例预览 + 动画/内嵌材质/骨骼信息；
@@ -136,9 +136,14 @@ const shaderOptions = computed(() => {
 const shaderDoc = ref<ShaderDoc | null>(null);
 const shaderReady = ref(false);
 
-// —— 天空材质（shader=SkyBox/SkyProcedural）——
+// —— 天空材质（shader 引用内置天空着色器资产）——
 const isSkyMat = ref(false);
 const skyDoc = ref<SkyMatDoc | null>(null);
+/** 挂载的天空着色器引用（创建时固定；旧格式为魔法串 SkyBox/SkyProcedural） */
+const skyShaderRef = computed(() => {
+  const s = skyDoc.value?.raw.shader;
+  return typeof s === "string" ? s : "";
+});
 
 // —— TextureCube：来源与贴图引用编辑（项目资产可写；保存后刷新天空/预览）——
 const texcubeDoc = ref<TexCubeAssetDoc | null>(null);
@@ -552,6 +557,10 @@ function onImgLoad(e: Event): void {
           <span class="type-tag">
             {{ skyDoc.kind === "cube" ? "立方体天空盒（创建时固定）" : "程序化天空（创建时固定）" }}
           </span>
+        </div>
+        <div class="field">
+          <label>挂载着色器</label>
+          <span class="muted mono asset-rel">{{ skyShaderRef }}</span>
         </div>
 
         <!-- 立方体：TextureCube 纹理 + 旋转/强度/世界不透明度/模糊 -->

@@ -259,7 +259,12 @@ export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | nul
     if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
     const kind = typeof doc.kind === "string" ? doc.kind : "";
     const shader = typeof doc.shader === "string" ? doc.shader : "";
-    if (kind !== "cube" && kind !== "procedural" && shader !== "SkyBox" && shader !== "SkyProcedural") {
+    // 天空材质 shader 字段引用天空着色器资产；旧格式为魔法串（SkyBox/SkyProcedural），
+    // kind 字段为渲染快路径判别（新老格式均写入）
+    const shaderRef = shader.endsWith(".shader");
+    const legacyProcedural =
+      shader === "SkyProcedural" || (shaderRef && shader.includes("SkyProcedural"));
+    if (kind !== "cube" && kind !== "procedural" && shader !== "SkyBox" && shader !== "SkyProcedural" && !shaderRef) {
       return null;
     }
     const num = (v: unknown, fallback: number): number =>
@@ -269,7 +274,7 @@ export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | nul
     const str = (v: unknown, fallback: string): string =>
       typeof v === "string" ? v : fallback;
     return {
-      kind: kind === "procedural" || shader === "SkyProcedural" ? "procedural" : "cube",
+      kind: kind === "procedural" || legacyProcedural ? "procedural" : "cube",
       cubeMap: str(doc.cubeMap, ""),
       rotation: num(doc.rotation, 0),
       strength: num(doc.strength, 1),

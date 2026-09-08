@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
-// 天空盒材质（.mat 中 shader=SkyBox/SkyProcedural 的特殊材质）文档读写：
-// - procedural：三段配色（顶/地平线/下方地面）；
-// - cube：TextureCube 引用（cubeMap）+ 旋转/强度/世界不透明度/模糊。
-// material_read/paramsFor 不携带天空字段，资产检查器对这类资产走文本直读 →
-// 局部解析 → 整卡写回（保留全部原始字段，仅更新已知键）。
+// 天空盒材质（.mat，shader 字段引用天空着色器资产的程序材质）文档读写：
+// - procedural（挂 internal/shaders/SkyProcedural.shader）：Nishita 大气散射参数；
+// - cube（挂 internal/shaders/SkyBox.shader）：TextureCube 引用 + 旋转/强度/模糊。
+// kind 字段保留为渲染快路径判别；旧格式（shader="SkyBox"/"SkyProcedural" 魔法串）
+// 兼容读取。material_read/paramsFor 不携带天空字段，资产检查器对这类资产走文本
+// 直读 → 局部解析 → 整卡写回（保留全部原始字段，仅更新已知键）。
 // 内置（internal/…）只读；写回仅限项目内资产。
 // ---------------------------------------------------------------------------
 
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
+import { DEFAULT_SHADER_RELS } from "../../framework/material";
 
 export type SkyMatKind = "cube" | "procedural";
 
@@ -52,18 +54,21 @@ function parseBool(v: unknown, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
 
-/** 解析天空材质文本；非天空材质（普通 material/非 JSON）返回 null */
+/** 解析天空材质文本；非天空材质（普通 material/非 JSON）返回 null。
+ * kind 字段优先；缺失时按 shader 字段推断（新格式 .shader 引用按路径、
+ * 旧格式魔法串按字面值）。 */
 export function parseSkyMatDoc(text: string): SkyMatDoc | null {
   try {
     const obj = JSON.parse(text) as Record<string, unknown>;
     if (!obj || obj.$type !== "material") return null;
     const shader = typeof obj.shader === "string" ? obj.shader : "";
     const kind = typeof obj.kind === "string" ? obj.kind : "";
-    if (!["cube", "procedural"].includes(kind) && shader !== "SkyBox" && shader !== "SkyProcedural") {
+    const shaderRef = shader.endsWith(".shader");
+    const legacyProcedural = shader === "SkyProcedural" || (shaderRef && shader.includes("SkyProcedural"));
+    if (!["cube", "procedural"].includes(kind) && shader !== "SkyBox" && shader !== "SkyProcedural" && !shaderRef) {
       return null;
     }
-    const docKind: SkyMatKind =
-      kind === "procedural" || shader === "SkyProcedural" ? "procedural" : "cube";
+    const docKind: SkyMatKind = kind === "procedural" || legacyProcedural ? "procedural" : "cube";
     return {
       kind: docKind,
       cubeMap: parseStr(obj.cubeMap, "internal/skybox/DefaultSkybox.texcube"),
@@ -102,10 +107,12 @@ export async function loadSkyMatDoc(root: string | null, rel: string): Promise<S
   }
 }
 
-/** 写回天空材质（项目资产；保留原始字段，仅更新已知键） */
+/** 写回天空材质（项目资产；保留原始字段，仅更新已知键；shader 字段写内置
+ * 天空着色器引用——着色器类型创建时固定） */
 export async function saveSkyMatDoc(root: string, rel: string, doc: SkyMatDoc): Promise<void> {
   doc.raw.kind = doc.kind;
-  doc.raw.shader = doc.kind === "procedural" ? "SkyProcedural" : "SkyBox";
+  doc.raw.shader =
+    doc.kind === "procedural" ? DEFAULT_SHADER_RELS.skyprocedural : DEFAULT_SHADER_RELS.skycube;
   doc.raw.cubeMap = doc.cubeMap;
   doc.raw.rotation = doc.rotation;
   doc.raw.strength = doc.strength;

@@ -203,14 +203,21 @@ pub fn material_params_from(o: &Map<String, Value>) -> MaterialParams {
 /// 内置默认着色器引用（.mat shader 字段缺省写入值；与 public/internal/shaders 一致）
 pub(crate) const DEFAULT_SHADER_REL: &str = "internal/shaders/PBR.shader";
 
-/// 着色器种类归一（未知/空值回退 physical；与前端 normalizeShaderKind 一致）
+/// 着色器种类归一（未知/空值回退 physical；与前端 normalizeShaderKind 一致）。
+/// 天空程序：skyprocedural（大气散射）/ skycube（立方体贴图天空盒）。
 pub(crate) fn normalize_shader_kind(kind: &str) -> &'static str {
     match kind.trim() {
         "unlit" => "unlit",
         "toon" => "toon",
+        "skyprocedural" => "skyprocedural",
+        "skycube" => "skycube",
         _ => "physical",
     }
 }
+
+/// 内置天空着色器引用（天空材质 shader 字段的正形值）
+pub const SKY_PROCEDURAL_SHADER_REL: &str = "internal/shaders/SkyProcedural.shader";
+pub const SKY_CUBE_SHADER_REL: &str = "internal/shaders/SkyBox.shader";
 
 // ---------------------------------------------------------------------------
 // .shader = Unity ShaderLab 风格着色器源码（渲染程序资产，材质经 shader 字段引用）。
@@ -402,12 +409,178 @@ Shader "{NAME}"
 }
 "##;
 
+// 天空程序（Unity 天空盒着色器惯例）：Tags 携带 "PreviewType"="Skybox" 标记，
+// TVE 引擎据此与材质 .mat 的 kind 字段映射渲染（skyprocedural→大气散射 / skycube→立方体贴图）。
+
+const SKY_PROCEDURAL_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// 天空程序：PreviewType=Skybox 标签 + _SUNDISK 关键字标记程序化大气散射
+// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现，对齐 Blender 天空纹理）。
+Shader "{NAME}"
+{
+    Properties
+    {
+        _SunSize ("Sun Size", Range(0.1, 30)) = 1
+        _SunStrength ("Sun Strength", Range(0, 20)) = 1
+        _SunElevation ("Sun Elevation", Range(-90, 90)) = 25
+        _SunRotation ("Sun Rotation", Range(0, 360)) = 0
+        _Altitude ("Altitude", Range(0, 20000)) = 0
+        _Air ("Air Density", Range(0, 10)) = 1
+        _Dust ("Dust Density", Range(0, 10)) = 1
+        _Ozone ("Ozone Density", Range(0, 10)) = 1
+        [Toggle] _ms ("Multiple Scattering", Float) = 1
+    }
+    SubShader
+    {
+        Tags { "Queue"="Background" "RenderType"="Background" "PreviewType"="Skybox" }
+        Cull Off ZWrite Off
+
+        CGPROGRAM
+        // Nishita 大气散射（Blender 天空纹理风格）：太阳方向由高度角/方位角给出，
+        // 散射沿视线解析积分；_SUNDISK 关键字同时作为 TVE 的种类识别标记
+        #pragma vertex vert
+        #pragma fragment frag
+        #pragma multi_compile _ _SUNDISK_NONE _SUNDISK_SIMPLE _SUNDISK_HIGH_QUALITY
+        #pragma target 3.0
+
+        #include "UnityCG.cginc"
+
+        half _SunSize;
+        half _SunStrength;
+        half _SunElevation;
+        half _SunRotation;
+        half _Altitude;
+        half _Air;
+        half _Dust;
+        half _Ozone;
+        half _ms;
+
+        struct appdata
+        {
+            float4 vertex : POSITION;
+        };
+
+        struct v2f
+        {
+            float4 pos : SV_POSITION;
+            float3 dir : TEXCOORD0;
+        };
+
+        v2f vert (appdata v)
+        {
+            v2f o;
+            o.pos = UnityObjectToClipPos(v.vertex);
+            float3 w = mul((float3x3)unity_ObjectToWorld, v.vertex.xyz);
+            o.dir = normalize(w - _WorldSpaceCameraPos);
+            return o;
+        }
+
+        // 太阳方向：高度角 + 方位角（度）
+        float3 SunDirection ()
+        {
+            half el = radians(_SunElevation);
+            half az = radians(_SunRotation);
+            return normalize(float3(cos(el) * sin(az), sin(el), cos(el) * cos(az)));
+        }
+
+        fixed4 frag (v2f i) : SV_Target
+        {
+            float3 dir = normalize(i.dir);
+            float3 sun = SunDirection();
+            half cosSun = dot(dir, sun);
+            // 瑞利 + 米氏相位近似：空气/气溶胶密度缩放，地平线方向增厚，臭氧吸收
+            half horizon = 1 - abs(dir.y);
+            float3 rayleigh = float3(0.18, 0.42, 0.92) * (0.055 + 0.35 * horizon * horizon) * _Air;
+            float3 mie = float3(1.0, 0.86, 0.68) * (0.018 + 0.12 * pow(saturate(cosSun * 0.5 + 0.5), 8)) * _Dust;
+            float3 col = rayleigh + mie;
+            #if defined(_SUNDISK_SIMPLE) || defined(_SUNDISK_HIGH_QUALITY)
+            // 日轮：平台高斯软边缘（小尺寸亮核不缩水、无硬边锯齿）
+            half d = distance(dir, sun);
+            half disc = exp(-6.0 * pow(saturate(d / max(_SunSize * 0.01, 0.001) - 0.5), 2.0));
+            col += _SunStrength * disc * float3(1.0, 0.95, 0.85);
+            #endif
+            return fixed4(col, 1);
+        }
+        ENDCG
+    }
+    FallBack Off
+}
+"##;
+
+const SKY_CUBE_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// 天空程序：PreviewType=Skybox 标签 + samplerCUBE 采样标记立方体贴图天空盒
+// （贴图引用与渲染参数存于材质 .mat 的 cubeMap/rotation/strength/blur 字段）。
+Shader "{NAME}"
+{
+    Properties
+    {
+        _CubeMap ("Cubemap (HDR)", CUBE) = "" {}
+        _Rotation ("Rotation", Range(0, 360)) = 0
+        _Strength ("Strength", Range(0, 16)) = 1
+        _Blur ("Blur", Range(0, 1)) = 0
+    }
+    SubShader
+    {
+        Tags { "Queue"="Background" "RenderType"="Background" "PreviewType"="Skybox" }
+        Cull Off ZWrite Off
+
+        CGPROGRAM
+        // 立方体贴图天空：视线方向绕世界 Y 轴旋转后采样 CUBE（mip 级别近似模糊）
+        #pragma vertex vert
+        #pragma fragment frag
+        #pragma target 3.0
+
+        #include "UnityCG.cginc"
+
+        samplerCUBE _CubeMap;
+        half _Rotation;
+        half _Strength;
+        half _Blur;
+
+        struct appdata
+        {
+            float4 vertex : POSITION;
+        };
+
+        struct v2f
+        {
+            float4 pos : SV_POSITION;
+            float3 dir : TEXCOORD0;
+        };
+
+        v2f vert (appdata v)
+        {
+            v2f o;
+            o.pos = UnityObjectToClipPos(v.vertex);
+            float3 w = mul((float3x3)unity_ObjectToWorld, v.vertex.xyz);
+            o.dir = normalize(w - _WorldSpaceCameraPos);
+            return o;
+        }
+
+        fixed4 frag (v2f i) : SV_Target
+        {
+            float3 dir = normalize(i.dir);
+            half rad = radians(_Rotation);
+            float3 rotated = float3(
+                cos(rad) * dir.x + sin(rad) * dir.z,
+                dir.y,
+                -sin(rad) * dir.x + cos(rad) * dir.z);
+            half mip = _Blur * 8.0;
+            return fixed4(texCUBElod(_CubeMap, float4(rotated, mip)).rgb * _Strength, 1);
+        }
+        ENDCG
+    }
+    FallBack Off
+}
+"##;
+
 /// 着色器文档 → .shader 源码（Unity ShaderLab 风格；kind 决定模板）。
 /// rel 为着色器资产相对路径：Shader 指令名 = 路径去扩展名，保证与资产位置一致。
 pub fn serialize_shader_file(rel: &str, kind: &str) -> String {
     let template = match normalize_shader_kind(kind) {
         "unlit" => UNLIT_SHADER_TEMPLATE,
         "toon" => TOON_SHADER_TEMPLATE,
+        "skyprocedural" => SKY_PROCEDURAL_SHADER_TEMPLATE,
+        "skycube" => SKY_CUBE_SHADER_TEMPLATE,
         _ => PBR_SHADER_TEMPLATE,
     };
     template.replace("{NAME}", &shader_directive_name(rel))
@@ -508,7 +681,20 @@ pub(crate) fn parse_shader_doc(text: &str) -> Option<(String, String)> {
         return Some((name, kind.to_string()));
     }
     let mut name: Option<String> = None;
-    let mut kind: Option<String> = None;
+    // 天空程序（Unity 天空盒惯例 PreviewType=Skybox 标签）：_SUNDISK → 程序化散射 /
+    // samplerCUBE → 立方体贴图。先于 pragma 检查（天空是顶点片元着色器，否则误判 unlit）。
+    let mut kind: Option<String> = if text.contains(r#""PreviewType"="Skybox""#) {
+        Some(
+            if text.contains("samplerCUBE") {
+                "skycube"
+            } else {
+                "skyprocedural"
+            }
+            .to_string(),
+        )
+    } else {
+        None
+    };
     for line in text.lines() {
         let t = line.trim();
         if name.is_none() {
@@ -610,17 +796,18 @@ pub fn serialize_material_file(name: &str, shader: &str, fallback_type: &str, p:
     serde_json::to_string_pretty(&Value::Object(v)).unwrap_or_default()
 }
 
-/// 天空盒材质序列化（.mat 中 shader=SkyBox/SkyProcedural 的特殊材质）：
+/// 天空盒材质序列化（.mat 中 shader=天空着色器引用的特殊材质）：
 /// - cube：持有 TextureCube 引用（cubeMap）+ 旋转/强度/世界不透明度/模糊；
 /// - procedural：三段配色；
-/// 与内置 internal/materials/SkyBox.mat 同构；kind 未知值归一为 cube。
+/// shader 字段引用内置天空着色器资产（材质 ↔ 着色器分离）；kind 为渲染快照
+/// 判别字段（与旧格式一致，读取端以 kind 优先）。kind 未知值归一为 cube。
 pub fn serialize_sky_material_file(name: &str, kind: &str) -> String {
     let procedural = kind.trim() == "procedural";
     let v = json!({
         "$type": "material",
         "$ver": 1,
         "name": sanitize_asset_stem(name),
-        "shader": if procedural { "SkyProcedural" } else { "SkyBox" },
+        "shader": if procedural { SKY_PROCEDURAL_SHADER_REL } else { SKY_CUBE_SHADER_REL },
         "kind": if procedural { "procedural" } else { "cube" },
         // cube 专属：TextureCube 引用 + 渲染参数（默认与引擎兜底一致）
         "cubeMap": "internal/skybox/DefaultSkybox.texcube",

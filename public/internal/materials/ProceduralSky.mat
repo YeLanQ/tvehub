@@ -2,7 +2,7 @@
   "$type": "material",
   "$ver": 1,
   "name": "ProceduralSky",
-  "shader": "SkyProcedural",
+  "shader": "internal/shaders/SkyProcedural.shader",
   "kind": "procedural",
   "sunDisc": true,
   "sunSize": 1,
