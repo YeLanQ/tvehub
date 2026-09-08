@@ -24,10 +24,15 @@ pub struct PreviewServerState {
 }
 
 struct PreviewServer {
+    root: PathBuf,
     base_url: String,
     shutdown: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
 }
+
+/// 预览服务器固定端口：避免每次重启端口漂移导致外部引用（书签/控制端抓取）失效。
+/// 被占用（其他进程或旧实例未退净）时回退随机端口，保证功能可用。
+const PREVIEW_FIXED_PORT: u16 = 39110;
 
 /// 清空并重建导出目录，写入文本与二进制产物（路径守卫：拒绝绝对路径/越界段）
 fn write_export(
@@ -287,7 +292,8 @@ pub(crate) fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
 
 /// 启动网页预览服务器（服务项目内指定目录），返回可内嵌的 base URL。
 /// dir 缺省服务 `<root>/.tmp/web-preview`（编辑器内嵌预览）；构建面板传
-/// "build/web" 预览构建产物。已存在服务器时先停止旧服务器（端口与目录都会切换）。
+/// "build/web" 预览构建产物。同目录已有服务器时直接复用（URL 稳定不漂移）；
+/// 切换目录（如网页预览 ↔ 构建预览）才停旧起新。
 #[tauri::command]
 pub async fn start_web_preview_server(
     state: tauri::State<'_, PreviewServerState>,
@@ -304,6 +310,12 @@ pub async fn start_web_preview_server(
         return Err(format!("预览产物目录不存在，请先导出: '{}'", out.display()));
     }
     let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
+    // 幂等：同目录重复启动直接复用现有服务器（外部引用的 URL 保持有效）
+    if let Some(old) = guard.as_ref() {
+        if old.root == out {
+            return Ok(old.base_url.clone());
+        }
+    }
     if let Some(old) = guard.take() {
         stop_server(old);
     }
@@ -324,15 +336,21 @@ pub async fn stop_web_preview(state: tauri::State<'_, PreviewServerState>) -> Re
 }
 
 fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("绑定预览服务器端口失败: {}", e))?;
+    // 先绑固定端口（URL 稳定）；被占用时回退随机端口保证可用
+    let listener = match TcpListener::bind(("127.0.0.1", PREVIEW_FIXED_PORT)) {
+        Ok(l) => l,
+        Err(_) => TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("绑定预览服务器端口失败: {}", e))?,
+    };
     let addr = listener
         .local_addr()
         .map_err(|e| format!("读取预览服务器地址失败: {}", e))?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let flag = shutdown.clone();
-    let handle = thread::spawn(move || accept_loop(listener, root, flag));
+    let loop_root = root.clone();
+    let handle = thread::spawn(move || accept_loop(listener, loop_root, flag));
     Ok(PreviewServer {
+        root,
         base_url: format!("http://{addr}"),
         shutdown,
         handle: Some(handle),
@@ -517,7 +535,24 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
 
 #[cfg(test)]
 mod tests {
-    use super::gltf_sibling_rel;
+    use std::fs;
+    use super::{gltf_sibling_rel, start_server, stop_server, PREVIEW_FIXED_PORT};
+
+    #[test]
+    fn preview_server_reuses_fixed_port() {
+        // 固定端口：连续启动/停止，端口不漂移（外部引用的 URL 保持有效）
+        let root = std::env::temp_dir().join("tve-preview-port-test");
+        fs::create_dir_all(&root).unwrap();
+        let a = start_server(root.clone()).unwrap();
+        let url_a = a.base_url.clone();
+        assert!(url_a.ends_with(&PREVIEW_FIXED_PORT.to_string()));
+        // 真实生命周期：停旧 → 起新，端口不漂移
+        stop_server(a);
+        let b = start_server(root).unwrap();
+        assert_eq!(url_a, b.base_url);
+        stop_server(b);
+    }
+
 
     #[test]
     fn gltf_sibling_resolves_against_model_dir() {
