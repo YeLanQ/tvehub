@@ -1067,6 +1067,9 @@ function onNodeSetTag(tag: string): void {
     n.tag = tag;
   }, "设置标签");
 }
+
+/** 材质卡折叠状态（面板内存，不持久化） */
+const materialOpen = ref(true);
 </script>
 
 <template>
@@ -1104,29 +1107,6 @@ function onNodeSetTag(tag: string): void {
 
       <ComponentCard v-if="node instanceof MeshNode" title="Mesh" :open="true">
         <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
-      </ComponentCard>
-
-      <!-- 材质卡片：基元 = .mat 资产编辑；模型 = 内嵌材质清单（按模型内容显隐） -->
-      <ComponentCard
-        v-if="node instanceof MeshNode && node.source === 'primitive'"
-        title="Material"
-        :open="true"
-      >
-        <MaterialSection
-          :node="node"
-          :rev="revision"
-          @setMaterial="onSetMaterial"
-          @editParam="onMaterialEdit"
-          @changeShader="onMaterialChangeShader"
-          @copyToProject="onMaterialCopyToProject"
-        />
-      </ComponentCard>
-      <ComponentCard
-        v-else-if="node instanceof MeshNode && modelHasMaterials"
-        title="Material"
-        :open="true"
-      >
-        <ModelMaterialSection :node="node" :rev="revision" />
       </ComponentCard>
 
       <!-- 动画卡片：模型携带动画剪辑时显示（静态模型不出卡片） -->
@@ -1239,6 +1219,35 @@ function onNodeSetTag(tag: string): void {
 
       <!-- 集中式添加组件入口：注册表驱动（物理/光照/音频/脚本），弹出子菜单 -->
       <button class="add-comp-btn" @click="onAddComponentMenu">＋ 添加组件</button>
+
+      <!-- 材质区：与组件层分离，置于面板底部（组件增删不影响此区）；卡片可折叠 -->
+      <template v-if="node instanceof MeshNode && node.source === 'primitive'">
+        <div class="inspector-divider">材质</div>
+        <ComponentCard
+          title="Material"
+          :open="materialOpen"
+          @toggle="materialOpen = !materialOpen"
+        >
+          <MaterialSection
+            :node="node"
+            :rev="revision"
+            @setMaterial="onSetMaterial"
+            @editParam="onMaterialEdit"
+            @changeShader="onMaterialChangeShader"
+            @copyToProject="onMaterialCopyToProject"
+          />
+        </ComponentCard>
+      </template>
+      <template v-else-if="node instanceof MeshNode && modelHasMaterials">
+        <div class="inspector-divider">材质</div>
+        <ComponentCard
+          title="Material"
+          :open="materialOpen"
+          @toggle="materialOpen = !materialOpen"
+        >
+          <ModelMaterialSection :node="node" :rev="revision" />
+        </ComponentCard>
+      </template>
     </div>
   </div>
 </template>
