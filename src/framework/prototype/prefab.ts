@@ -14,22 +14,35 @@ import { nextId } from "../../platform_abstraction/id";
 import type { Node } from "./Node";
 import type { JsonRecord } from "./types";
 
+export interface SerializePrefabOptions {
+  /**
+   * 资产形态（默认 true）：剥掉 prefab 自引用与组件实例 id（资产不携带实例数据，
+   * 实例化时全部重生成）。提交实例文档到场景（scene_add_tree）时传 false——
+   * 保留 prefab 来源引用（applyJSON 回灌不清空）与已重生成的组件 id（保持稳定）。
+   */
+  forAsset?: boolean;
+}
+
 /** 节点子树 → 嵌套 prefab 文档（childrenOf 提供子节点解析，如 graph.childrenOf） */
 export function serializePrefabTree(
   root: Node,
   childrenOf: (id: string) => Node[],
+  opts: SerializePrefabOptions = {},
 ): JsonRecord {
+  const forAsset = opts.forAsset !== false;
   const build = (node: Node): JsonRecord => {
     const json = { ...(node.toJSON() as JsonRecord) };
-    // 资产不含实例引用与组件实例 id（实例化时重生成，避免共享 id）
-    delete json.prefab;
-    const components = json.components;
-    if (Array.isArray(components)) {
-      json.components = components.map((c) => {
-        const rec = { ...(c as JsonRecord) };
-        delete rec.id;
-        return rec;
-      });
+    if (forAsset) {
+      // 资产不含实例引用与组件实例 id（实例化时重生成，避免共享 id）
+      delete json.prefab;
+      const components = json.components;
+      if (Array.isArray(components)) {
+        json.components = components.map((c) => {
+          const rec = { ...(c as JsonRecord) };
+          delete rec.id;
+          return rec;
+        });
+      }
     }
     const children = childrenOf(node.id).map(build);
     if (children.length) json.children = children;

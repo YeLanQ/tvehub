@@ -16,6 +16,8 @@ export interface AssetsStore {
   assets: AssetEntry[];
   metaMap: Map<string, string>;
   selectedAsset: string | null;
+  /** 选择序号（每次 select 调用递增，即使同一资产；检查器据此重切资产模式） */
+  selectedAssetSeq: number;
   loadedPath: string | null;
   load: (root: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -68,6 +70,7 @@ export function getAssetsStore(): AssetsStore {
     assets: [] as AssetEntry[],
     metaMap: new Map<string, string>(),
     selectedAsset: null as string | null,
+    selectedAssetSeq: 0,
     loadedPath: null as string | null,
   });
 
@@ -116,6 +119,9 @@ export function getAssetsStore(): AssetsStore {
     get selectedAsset() {
       return state.selectedAsset;
     },
+    get selectedAssetSeq() {
+      return state.selectedAssetSeq;
+    },
     get loadedPath() {
       return state.loadedPath;
     },
@@ -141,6 +147,7 @@ export function getAssetsStore(): AssetsStore {
     },
     select(rel) {
       state.selectedAsset = rel;
+      state.selectedAssetSeq += 1;
     },
     async createFolder(root, rel) {
       const r = await assetService.createFolder(root, rel);

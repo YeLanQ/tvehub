@@ -268,6 +268,27 @@ function check(name: string, cond: boolean, detail = ""): void {
     "再序列化结构一致（忽略 id）",
     JSON.stringify(strip(doc)) === JSON.stringify(strip(doc2 as Record<string, unknown>)),
   );
+
+  // 提交实例文档（forAsset:false）：保留 prefab 来源引用与组件 id（回灌不清空）
+  const srcNode = new Node({ name: "r2" });
+  srcNode.prefab = "assets/prefabs/Self.prefab";
+  srcNode.components.push({
+    id: "s9",
+    type: "script",
+    script: "src/y.ts",
+    enabled: true,
+    executionOrder: 0,
+    props: {},
+  });
+  const docInst = serializePrefabTree(srcNode, () => [], { forAsset: false }) as Record<
+    string,
+    unknown
+  >;
+  const instComps = docInst.components as Record<string, unknown>[];
+  check(
+    "提交文档（forAsset:false）保留 prefab 引用与组件 id",
+    docInst.prefab === "assets/prefabs/Self.prefab" && instComps[0].id === "s9",
+  );
 }
 
 if (failed) {

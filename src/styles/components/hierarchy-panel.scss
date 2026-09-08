@@ -106,6 +106,33 @@
   white-space: nowrap;
 }
 
+/* 折叠箭头（叶子节点占位对齐） */
+.h-caret {
+  width: 12px;
+  height: 15px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.leaf {
+    cursor: default;
+  }
+}
+
+/* 预制体实例图标（绿色区分） */
+.badge.prefab {
+  filter: drop-shadow(0 0 3px rgba(53, 194, 111, 0.35));
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -131,10 +158,42 @@
   text-overflow: ellipsis;
 }
 
-.off {
+/* 可见性小眼睛：可见态仅悬停行时显示，隐藏态常驻（琥珀色提醒） */
+.h-eye {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+
+  svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.off {
+    opacity: 1;
+    color: var(--warn, #d7b45a);
+  }
 }
+
+.node-row:hover .h-eye {
+  opacity: 1;
+}
+
 
 .empty {
   padding: 10px;

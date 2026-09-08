@@ -80,10 +80,11 @@ const revision = computed(() => store.revision());
 // ---------------------------------------------------------------------------
 const assetMode = ref(false);
 const assetRel = computed(() => assetsStore.selectedAsset);
+// 监听选择序号而非值：同一资产重复点击（先点了场景节点再点回它）也要切回资产模式
 watch(
-  () => assetsStore.selectedAsset,
-  (rel) => {
-    if (rel) assetMode.value = true;
+  () => assetsStore.selectedAssetSeq,
+  () => {
+    if (assetsStore.selectedAsset) assetMode.value = true;
   },
 );
 watch(

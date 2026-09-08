@@ -57,6 +57,40 @@ const FALLBACK_BADGE: Record<string, string> = {
   audioNode: "AU",
 };
 
+/** 预制体实例：图标统一绿色（与其他对象区分；仅实例根节点带 prefab 来源引用） */
+const PREFAB_ICON_COLOR = "#35c26f";
+
+function nodeIconColor(node: Node): string {
+  return node.prefab ? PREFAB_ICON_COLOR : (NODE_ICONS[node.typeKey]?.color ?? "");
+}
+
+// ---------- 可见性（小眼睛） ----------
+const EYE_PATHS = [
+  "M2.5 12s3.5-6.2 9.5-6.2 9.5 6.2 9.5 6.2-3.5 6.2-9.5 6.2S2.5 12 2.5 12z",
+  "M12 14.8a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6z",
+];
+const EYE_OFF_PATHS = [...EYE_PATHS, "M4.5 4.5l15 15"];
+
+/** 眼睛状态 = 实际是否渲染（可见 且 激活） */
+function isEyeOn(node: Node): boolean {
+  return node.visible && node.active;
+}
+
+/** 眼睛点击：渲染中 → 隐藏（visible=false）；隐藏中 → 显示并恢复激活（一步到位） */
+function toggleVisible(node: Node): void {
+  const value = !isEyeOn(node);
+  const before = node.toJSON() as Record<string, unknown>;
+  node.visible = value;
+  if (value) node.active = true;
+  const after = node.toJSON() as Record<string, unknown>;
+  void dispatchCommand("node.patch", {
+    id: node.id,
+    before,
+    after,
+    label: value ? "显示节点" : "隐藏节点",
+  });
+}
+
 const search = ref("");
 const treeEl = ref<HTMLElement | null>(null);
 
@@ -65,19 +99,46 @@ interface FlatNode {
   depth: number;
 }
 
+// ---------- 折叠/展开 ----------
+/** 已折叠节点 id 集（仅记忆状态；缺省全部展开） */
+const collapsedIds = ref(new Set<string>());
+
+function hasChildren(node: Node): boolean {
+  return node.childIds.length > 0;
+}
+function isCollapsed(node: Node): boolean {
+  return collapsedIds.value.has(node.id);
+}
+function toggleCollapse(node: Node): void {
+  if (!hasChildren(node)) return;
+  const next = new Set(collapsedIds.value);
+  if (next.has(node.id)) next.delete(node.id);
+  else next.add(node.id);
+  collapsedIds.value = next;
+}
+/** 拖拽悬停目标为折叠节点时自动展开（放入的子级立即可见） */
+function expandIfCollapsed(id: string): void {
+  if (!collapsedIds.value.has(id)) return;
+  const next = new Set(collapsedIds.value);
+  next.delete(id);
+  collapsedIds.value = next;
+}
+
 const flat = computed<FlatNode[]>(() => {
   void state.selectedId;
   void state.selectionIds;
   void store.revision();
+  const q = search.value.trim().toLowerCase();
   const root = engine.graph.root;
   const out: FlatNode[] = [];
   if (!root) return out;
+  // 搜索时忽略折叠（子树中的匹配项保持可见），平时按折叠状态裁剪子级
   const walk = (n: Node, depth: number) => {
     out.push({ node: n, depth });
+    if (!q && collapsedIds.value.has(n.id)) return;
     engine.graph.childrenOf(n.id).forEach((c) => walk(c, depth + 1));
   };
   walk(root, 0);
-  const q = search.value.trim().toLowerCase();
   if (!q) return out;
   return out.filter((f) => f.node.name.toLowerCase().includes(q));
 });
@@ -340,6 +401,7 @@ function resolveDrop(clientX: number, clientY: number): void {
   const rel = (clientY - rect.top) / rect.height;
   const mode: "before" | "after" | "inside" = rel < 0.25 ? "before" : rel > 0.75 ? "after" : "inside";
   dnd.target = { id, mode };
+  if (mode === "inside") expandIfCollapsed(id);
 }
 
 function onWindowMouseUp(): void {
@@ -429,9 +491,15 @@ onUnmounted(() => {
         @contextmenu.prevent="onNodeContext($event, node.id)"
       >
         <span
+          class="h-caret"
+          :class="{ leaf: !hasChildren(node) }"
+          :title="hasChildren(node) ? (isCollapsed(node) ? '展开子级' : '折叠子级') : ''"
+          @click.stop="toggleCollapse(node)"
+        >{{ hasChildren(node) ? (isCollapsed(node) ? "▸" : "▾") : "" }}</span>
+        <span
           class="badge"
-          :class="node.typeKey"
-          :style="{ color: NODE_ICONS[node.typeKey]?.color }"
+          :class="[node.typeKey, { prefab: !!node.prefab }]"
+          :style="{ color: nodeIconColor(node) }"
         >
           <svg
             v-if="NODE_ICONS[node.typeKey]"
@@ -449,7 +517,24 @@ onUnmounted(() => {
           <template v-else>{{ FALLBACK_BADGE[node.typeKey] ?? "?" }}</template>
         </span>
         <span class="name">{{ node.name }}</span>
-        <span v-if="!node.visible || !node.active" class="off mono">off</span>
+        <button
+          class="h-eye"
+          :class="{ off: !isEyeOn(node) }"
+          :title="isEyeOn(node) ? '隐藏（子级随对象树一并隐藏）' : '已隐藏，点击显示'"
+          @click.stop="toggleVisible(node)"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path v-for="d in isEyeOn(node) ? EYE_PATHS : EYE_OFF_PATHS" :key="d" :d="d" />
+          </svg>
+        </button>
       </div>
       <div v-if="!flat.length" class="empty muted">
         {{ search.trim() ? "无匹配节点" : "场景为空" }}

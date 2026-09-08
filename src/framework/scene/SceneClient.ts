@@ -340,7 +340,8 @@ export class SceneClient implements GraphLike {
     };
     walk(root);
     added.forEach((n) => this.emit({ kind: "add", nodeId: n.id }));
-    const doc = serializePrefabTree(root, childrenInTree);
+    // 提交文档保留 prefab 来源引用与组件 id（实例身份与绑定键稳定）
+    const doc = serializePrefabTree(root, childrenInTree, { forAsset: false });
     this.transport
       ?.addTree(doc, parentId, label)
       .catch((e) => {

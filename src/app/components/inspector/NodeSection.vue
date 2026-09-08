@@ -79,6 +79,12 @@ function commitTag(): void {
       @change="commitTag"
     />
   </div>
+  <div v-if="node.prefab" class="field">
+    <label title="实例来源的预制体资产（右键层级可「更新预制体」回写）">预制体</label>
+    <span class="mono comp-type" :title="node.prefab">
+      {{ node.prefab.split("/").pop() ?? node.prefab }}
+    </span>
+  </div>
   <div class="field">
     <label>ID</label>
     <span class="mono">{{ node.id }}</span>
