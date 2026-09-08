@@ -112,6 +112,8 @@ export class SkyboxNode extends Node {
       name: this.name,
       transform: this.transform,
       properties: cloneRecord(this.properties),
+      tag: this.tag,
+      components: this.components,
       skyKind: this.skyKind,
       material: this.material,
       cubeMap: this.cubeMap,

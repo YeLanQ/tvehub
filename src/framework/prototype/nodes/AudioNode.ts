@@ -36,6 +36,8 @@ export class AudioNode extends Node {
       name: this.name,
       transform: this.transform,
       properties: cloneRecord(this.properties),
+      tag: this.tag,
+      components: this.components,
       audio: cloneAudioSettings(this.audio),
     });
   }

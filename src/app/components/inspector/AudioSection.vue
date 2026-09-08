@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /**
- * Audio 卡片（audioNode 音源节点）：
+ * 音源设置编辑区（通用）：同时服务音源节点（AudioNode 卡）与音源组件
+ * （audioSource 组件卡，组件模式）——settings 为 AudioSourceSettings 形状，
+ * runtimeId 为运行时寻址键（节点 id 或组件 id，AudioSystem 按 id 绑定）。
  * - 音源：音频资产下拉（内置 internal/… + 项目 assets/…，经导入/复制进项目）；
  * - 播放参数（自动播放/循环/音量/倍速）为节点数据（随场景保存）；
  * - 空间化：2D 全局 / 3D 位置音源（参考距离/最大距离/衰减）；
@@ -9,11 +11,11 @@
 import { computed } from "vue";
 import { getEditorStore } from "../../stores/editor";
 import { getAssetsStore } from "../../stores/assets";
-import type { AudioNode } from "../../../framework/prototype/nodes/AudioNode";
+import type { AudioSourceSettings } from "../../../framework/audio";
 import { isAudioAssetRel } from "../../../framework/audio";
 import NumberField from "../NumberField.vue";
 
-const props = defineProps<{ node: AudioNode; rev?: number }>();
+const props = defineProps<{ settings: AudioSourceSettings; runtimeId: string; rev?: number }>();
 
 const emit = defineEmits<{
   update: [label: string, value: unknown];
@@ -38,12 +40,12 @@ const audioOptions = computed(() => {
 /** 运行时状态（绑定/就绪/播放中；随 audio:changed 的 rev 刷新） */
 const runtime = computed(() => {
   void props.rev;
-  return engine.audio.stateFor(props.node.id);
+  return engine.audio.stateFor(props.runtimeId);
 });
 
 const stateText = computed(() => {
   const rt = runtime.value;
-  if (!props.node.audio.source) return "未绑定音频";
+  if (!props.settings.source) return "未绑定音频";
   if (rt?.error) return rt.error;
   if (!rt) return "等待入图…";
   if (!rt.ready) return "音频加载中…";
@@ -82,13 +84,13 @@ function onRolloffChange(v: number): void {
 
 // —— 运行时控制（不落盘）——
 function rtPlay(): void {
-  engine.audio.play(props.node.id);
+  engine.audio.play(props.runtimeId);
 }
 function rtPause(): void {
-  engine.audio.pause(props.node.id);
+  engine.audio.pause(props.runtimeId);
 }
 function rtStop(): void {
-  engine.audio.stop(props.node.id);
+  engine.audio.stop(props.runtimeId);
 }
 </script>
 
@@ -96,7 +98,7 @@ function rtStop(): void {
   <div class="audio-section" :data-rev="rev">
     <div class="field">
       <label>音频源</label>
-      <select :value="node.audio.source" @change="onSourceChange($event)">
+      <select :value="settings.source" @change="onSourceChange($event)">
         <option value="">（未绑定）</option>
         <optgroup v-if="audioOptions.internal.length" label="内置音频">
           <option v-for="o in audioOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
@@ -117,8 +119,8 @@ function rtStop(): void {
     <label class="audio-toggle" @click.stop>
       <input
         type="checkbox"
-        :checked="node.audio.autoplay"
-        :disabled="!node.audio.source"
+        :checked="settings.autoplay"
+        :disabled="!settings.source"
         @change="onAutoplayChange($event)"
       />
       <span>自动播放</span>
@@ -126,18 +128,18 @@ function rtStop(): void {
     <label class="audio-toggle" @click.stop>
       <input
         type="checkbox"
-        :checked="node.audio.loop"
-        :disabled="!node.audio.source"
+        :checked="settings.loop"
+        :disabled="!settings.source"
         @change="onLoopChange($event)"
       />
       <span>循环</span>
     </label>
 
-    <template v-if="node.audio.source">
+    <template v-if="settings.source">
       <div class="field">
         <label>音量</label>
         <NumberField
-          :model-value="node.audio.volume"
+          :model-value="settings.volume"
           :step="0.05"
           :min="0"
           :max="1"
@@ -147,7 +149,7 @@ function rtStop(): void {
       <div class="field">
         <label>倍速</label>
         <NumberField
-          :model-value="node.audio.speed"
+          :model-value="settings.speed"
           :step="0.05"
           :min="0.1"
           :max="4"
@@ -157,17 +159,17 @@ function rtStop(): void {
       </div>
       <div class="field">
         <label>空间化</label>
-        <select :value="node.audio.spatial" @change="onSpatialChange($event)">
+        <select :value="settings.spatial" @change="onSpatialChange($event)">
           <option value="2d">2D（全局）</option>
           <option value="3d">3D（位置音源）</option>
         </select>
       </div>
 
-      <template v-if="node.audio.spatial === '3d'">
+      <template v-if="settings.spatial === '3d'">
         <div class="field">
           <label>参考距离</label>
           <NumberField
-            :model-value="node.audio.refDistance"
+            :model-value="settings.refDistance"
             :step="0.5"
             :min="0.01"
             title="该距离内保持全音量（世界单位）"
@@ -177,7 +179,7 @@ function rtStop(): void {
         <div class="field">
           <label>最大距离</label>
           <NumberField
-            :model-value="node.audio.maxDistance"
+            :model-value="settings.maxDistance"
             :step="1"
             :min="0.01"
             title="衰减范围（世界单位）"
@@ -187,7 +189,7 @@ function rtStop(): void {
         <div class="field">
           <label>衰减系数</label>
           <NumberField
-            :model-value="node.audio.rolloff"
+            :model-value="settings.rolloff"
             :step="0.1"
             :min="0"
             title="距离衰减速率（越大衰减越快）"

@@ -45,10 +45,69 @@
   font-weight: 600;
 }
 
+/* 组件卡置灰（组件停用时整卡弱化，标题与主体可读性保留） */
+.inspector .section.dim .section-head .title,
+.inspector .section.dim .comp-type {
+  opacity: 0.55;
+}
+
 .inspector .comp-type {
   color: var(--text-dim);
   font-size: 11px;
   flex-shrink: 0;
+}
+
+/* 组件卡头：启用勾选 + ⋮ 操作菜单（组件模式） */
+.inspector .comp-card-toggle {
+  display: inline-flex;
+  align-items: center;
+
+  input {
+    margin: 0;
+    accent-color: var(--accent);
+  }
+}
+
+.inspector .comp-card-menu {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+}
+
+/* 组件字段区的勾选行（替代旧 Physics 卡的 phys-toggle） */
+.inspector .comp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text, #ddd);
+  cursor: pointer;
+  padding: 2px 0;
+
+  input {
+    margin: 0;
+    accent-color: var(--accent);
+  }
+}
+
+/* 组件字段区的三轴数值组（尺寸/偏移） */
+.inspector .comp-vec {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
 }
 
 .inspector .section-body {

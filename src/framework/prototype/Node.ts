@@ -8,6 +8,16 @@ import {
   parseColliderSettings,
   parseRigidBodySettings,
 } from "../physics/types";
+import {
+  cloneAudioSettings,
+  parseAudioSettings,
+  type AudioSourceSettings,
+} from "../audio/types";
+import {
+  cloneLightComponentSettings,
+  parseLightComponentSettings,
+  type LightComponentSettings,
+} from "../lighting/types";
 
 /**
  * 节点上的脚本组件引用（组件模式）。
@@ -23,6 +33,8 @@ export interface ScriptComponentRef {
   script: string;
   /** 是否启用（禁用的组件不参与运行） */
   enabled: boolean;
+  /** 执行顺序（小者先跑；同序按挂载顺序。0 = 缺省，序列化时省略保持旧文件字节兼容） */
+  executionOrder: number;
   /** 属性值（检查器按脚本 static props 声明渲染编辑） */
   props: JsonRecord;
 }
@@ -49,8 +61,37 @@ export interface ColliderComponentRef {
   collider: import("../physics/types").ColliderSettings;
 }
 
+/**
+ * 灯光组件引用：给任意节点附加一盏灯（组件模式；与灯光节点类层级并存）。
+ * 编辑器由 SceneSynchronizer 在节点对象下同步真实 three 灯光 + 图标；
+ * 播放器由 nodes.mjs 按组件数据重建灯光（与灯光节点同一光照语义）。
+ */
+export interface LightComponentRef {
+  id: string;
+  type: "light";
+  enabled: boolean;
+  light: LightComponentSettings;
+}
+
+/**
+ * 音源组件引用：给任意节点附加一个声音发射器（复用 AudioNode 的音源设置）。
+ * 编辑器由 AudioSystem 以组件 id 绑定（播放/暂停等运行时控制按组件 id 寻址）；
+ * 播放器由 nodes.mjs 收集、audio.mjs 绑定（节点 id 命中首个音源，兼容 SDK 寻址）。
+ */
+export interface AudioSourceComponentRef {
+  id: string;
+  type: "audioSource";
+  enabled: boolean;
+  audio: AudioSourceSettings;
+}
+
 /** 节点组件引用（可辨识联合，按 type 收敛） */
-export type NodeComponentRef = ScriptComponentRef | RigidBodyComponentRef | ColliderComponentRef;
+export type NodeComponentRef =
+  | ScriptComponentRef
+  | RigidBodyComponentRef
+  | ColliderComponentRef
+  | LightComponentRef
+  | AudioSourceComponentRef;
 
 export function isScriptComponent(c: NodeComponentRef): c is ScriptComponentRef {
   return c.type === "script";
@@ -60,6 +101,12 @@ export function isRigidBodyComponent(c: NodeComponentRef): c is RigidBodyCompone
 }
 export function isColliderComponent(c: NodeComponentRef): c is ColliderComponentRef {
   return c.type === "collider";
+}
+export function isLightComponent(c: NodeComponentRef): c is LightComponentRef {
+  return c.type === "light";
+}
+export function isAudioSourceComponent(c: NodeComponentRef): c is AudioSourceComponentRef {
+  return c.type === "audioSource";
 }
 
 /** 组件引用 JSON 收敛（非法项剔除；各类型字段缺失回退默认） */
@@ -77,6 +124,10 @@ export function parseNodeComponents(value: unknown): NodeComponentRef[] {
       out.push({ id, type: "rigidBody", enabled, rigidBody: parseRigidBodySettings(rec.rigidBody) });
     } else if (type === "collider") {
       out.push({ id, type: "collider", enabled, collider: parseColliderSettings(rec.collider) });
+    } else if (type === "light") {
+      out.push({ id, type: "light", enabled, light: parseLightComponentSettings(rec.light) });
+    } else if (type === "audioSource") {
+      out.push({ id, type: "audioSource", enabled, audio: parseAudioSettings(rec.audio) });
     } else {
       if (typeof rec.script !== "string" || !rec.script) continue;
       out.push({
@@ -84,6 +135,10 @@ export function parseNodeComponents(value: unknown): NodeComponentRef[] {
         type: "script",
         script: rec.script,
         enabled,
+        executionOrder:
+          typeof rec.executionOrder === "number" && Number.isFinite(rec.executionOrder)
+            ? rec.executionOrder
+            : 0,
         props: rec.props && typeof rec.props === "object" ? cloneRecord(rec.props as JsonRecord) : {},
       });
     }
@@ -97,6 +152,8 @@ function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
     const id = nextId("comp");
     if (c.type === "rigidBody") return { ...c, id, rigidBody: cloneRigidBodySettings(c.rigidBody) };
     if (c.type === "collider") return { ...c, id, collider: cloneColliderSettings(c.collider) };
+    if (c.type === "light") return { ...c, id, light: cloneLightComponentSettings(c.light) };
+    if (c.type === "audioSource") return { ...c, id, audio: cloneAudioSettings(c.audio) };
     return { ...c, id, props: cloneRecord(c.props) };
   });
 }
@@ -105,13 +162,20 @@ function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
 function cloneComponentForWrite(c: NodeComponentRef): NodeComponentRef {
   if (c.type === "rigidBody") return { ...c, rigidBody: cloneRigidBodySettings(c.rigidBody) };
   if (c.type === "collider") return { ...c, collider: cloneColliderSettings(c.collider) };
-  return { ...c, props: cloneRecord(c.props) };
+  if (c.type === "light") return { ...c, light: cloneLightComponentSettings(c.light) };
+  if (c.type === "audioSource") return { ...c, audio: cloneAudioSettings(c.audio) };
+  const out: NodeComponentRef = { ...c, props: cloneRecord(c.props) };
+  // 执行顺序 0 = 缺省不写（旧场景文件保持字节兼容）
+  if (!c.executionOrder) delete (out as unknown as Record<string, unknown>).executionOrder;
+  return out;
 }
 
 export interface NodeInit {
   id?: string;
   name?: string;
   parentId?: string | null;
+  /** GameObject 标签（Unity Tag 语义：脚本按标签查找实体；空串 = 无标签） */
+  tag?: string;
   transform?: Transform;
   properties?: JsonRecord;
   components?: NodeComponentRef[];
@@ -134,6 +198,8 @@ export class Node extends Prototype {
   childIds: string[];
   active: boolean;
   visible: boolean;
+  /** GameObject 标签（Unity Tag 语义；播放器 SDK 经 entity.tag / findByTag 查询） */
+  tag: string;
   /** 组合的变换基元原型 */
   transform: Transform;
   /** 编辑器扩展的任意属性槽 */
@@ -149,6 +215,7 @@ export class Node extends Prototype {
     this.childIds = [];
     this.active = true;
     this.visible = true;
+    this.tag = init.tag ?? "";
     this.transform = init.transform ? init.transform.clone() : new Transform();
     this.properties = { ...(init.properties ?? {}) };
     this.components = init.components ? cloneNodeComponents(init.components) : [];
@@ -160,6 +227,7 @@ export class Node extends Prototype {
       id: nextId(this.typeKey),
       name: this.name,
       parentId: null,
+      tag: this.tag,
       transform: this.transform.clone(),
       properties: cloneRecord(this.properties),
       components: this.components,
@@ -208,6 +276,8 @@ export class Node extends Prototype {
       transform: this.transform.toJSON(),
       properties: cloneRecord(this.properties),
     };
+    // 标签非空才写入（旧场景文件保持字节兼容）
+    if (this.tag) record.tag = this.tag;
     // 组件列表非空才写入（旧场景文件保持字节兼容）
     if (this.components.length) {
       record.components = this.components.map(
@@ -225,6 +295,7 @@ export class Node extends Prototype {
     this.childIds = Array.isArray(json.childIds) ? [...(json.childIds as string[])] : [];
     this.active = (json.active as boolean) ?? this.active;
     this.visible = (json.visible as boolean) ?? this.visible;
+    this.tag = typeof json.tag === "string" ? json.tag : "";
     if (json.transform) {
       this.transform = Transform.fromJSON(json.transform as JsonRecord);
     }

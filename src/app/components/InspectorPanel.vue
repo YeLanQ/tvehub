@@ -10,20 +10,26 @@ import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, DirectionalLigh
 import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../framework/material";
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../framework/camera";
-import { nextId } from "../../platform_abstraction/id";
 import {
+  isAudioSourceComponent,
   isColliderComponent,
+  isLightComponent,
   isRigidBodyComponent,
   isScriptComponent,
+  type AudioSourceComponentRef,
   type ColliderComponentRef,
+  type LightComponentRef,
   type NodeComponentRef,
 } from "../../framework/prototype/Node";
 import {
-  DEFAULT_COLLIDER_SETTINGS,
-  DEFAULT_RIGID_BODY_SETTINGS,
-  type ColliderSettings,
-  type RigidBodySettings,
-} from "../../framework/physics";
+  canAddComponent,
+  componentMetaOf,
+  createComponentRef,
+  createScriptComponentRef,
+  resetComponentSettings,
+  LIGHT_KIND_OPTIONS,
+} from "../lib/component-registry";
+import type { ColliderSettings, RigidBodySettings } from "../../framework/physics";
 import { isInternalAsset } from "../../lib/internal-assets";
 import {
   duplicateMaterialToProject,
@@ -50,8 +56,11 @@ import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
 import AssetInspector from "./inspector/AssetInspector.vue";
-import ComponentsSection from "./inspector/ComponentsSection.vue";
-import PhysicsSection from "./inspector/PhysicsSection.vue";
+import ScriptFields from "./inspector/ScriptFields.vue";
+import RigidBodyFields from "./inspector/RigidBodyFields.vue";
+import ColliderFields from "./inspector/ColliderFields.vue";
+import LightComponentFields from "./inspector/LightComponentFields.vue";
+import PhysicsSimSection from "./inspector/PhysicsSimSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
 const store = getEditorStore();
@@ -548,7 +557,11 @@ async function onSkyMaterialCopyToProject(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 添加组件菜单（集中入口）：物理 / 脚本按类别分类，支持子级子菜单
+// 组件模式（Unity 组件卡语义）：
+// - 节点上每个已挂组件（脚本/刚体/碰撞体/灯光/音源）渲染为独立卡片，按挂载
+//   顺序排列；卡片头 = 启用勾选 + ⋮ 菜单（上移/下移/重置/移除）；
+// - 「添加组件」菜单由组件注册表驱动（分类 + 多实例约束）；
+// - 全部增删改走 commit → mutateNode（整节点快照进撤销历史）。
 // ---------------------------------------------------------------------------
 
 const scriptList = computed<string[]>(() => {
@@ -573,11 +586,10 @@ async function onCreateScript(): Promise<void> {
   if (rel) onAddScriptComponent(rel);
 }
 
-/** 集中式「添加组件」按钮：弹出按类别分类（物理 / 脚本）的子菜单 */
+/** 集中式「添加组件」菜单：注册表驱动（分类分组 + 多实例约束 + 脚本清单） */
 function onAddComponentMenu(e: MouseEvent): void {
   const n = node.value;
   if (!n) return;
-  const hasRigidBody = n.components.some(isRigidBodyComponent);
 
   const scriptItems: CtxMenuItem[] = scriptList.value.map((rel) => ({
     label: baseName(rel),
@@ -588,60 +600,129 @@ function onAddComponentMenu(e: MouseEvent): void {
   }
   scriptItems.push(menuSeparator(), { label: "新建脚本…", onClick: () => void onCreateScript() });
 
+  const physicsChildren: CtxMenuItem[] = (["rigidBody", "collider"] as const).map((type) => {
+    const meta = componentMetaOf(type);
+    return {
+      label: meta.label,
+      disabled: !canAddComponent(n, type),
+      onClick: () => onAddBuiltinComponent(type),
+    };
+  });
+  // 灯光组件单实例：已挂载时各灯光类型菜单项禁用；子项直接落到对应类型
+  const lightingChildren: CtxMenuItem[] = LIGHT_KIND_OPTIONS.map((k) => ({
+    label: k.label,
+    disabled: !canAddComponent(n, "light"),
+    onClick: () => onAddBuiltinComponent("light", k.value),
+  }));
+  const audioChildren: CtxMenuItem[] = [
+    { label: componentMetaOf("audioSource").label, onClick: () => onAddBuiltinComponent("audioSource") },
+  ];
+
   const items: CtxMenuItem[] = [
-    {
-      label: "物理",
-      children: [
-        { label: "刚体 Rigid Body", disabled: hasRigidBody, onClick: () => onAddRigidBodyComponent() },
-        { label: "碰撞体 Collider", onClick: () => onAddColliderComponent() },
-      ],
-    },
+    { label: "物理", children: physicsChildren },
+    { label: "光照", children: lightingChildren },
+    { label: "音频", children: audioChildren },
     menuSeparator(),
     { label: "脚本", children: scriptItems },
   ];
   openContextMenu(e, items);
 }
 
-// ---------------------------------------------------------------------------
-// 脚本组件（Components 卡片）：增删改走 commit → patchNode（可撤销）
-// ---------------------------------------------------------------------------
+/** 添加内置组件（注册表工厂建默认引用；可撤销） */
+function onAddBuiltinComponent(type: "rigidBody" | "collider" | "light" | "audioSource", lightKind?: "point" | "directional" | "ambient" | "spot"): void {
+  const n = node.value;
+  if (!n || !canAddComponent(n, type)) return;
+  const comp = createComponentRef(type, { lightKind });
+  commit((target) => {
+    target.components = [...target.components, comp];
+  }, `添加${componentMetaOf(type).label.split(" ")[0]}组件`);
+}
 
 function onAddScriptComponent(scriptRel: string): void {
   const n = node.value;
   if (!n || !scriptRel) return;
+  const comp = createScriptComponentRef(scriptRel);
   commit((target) => {
-    const comp: NodeComponentRef = {
-      id: nextId("comp"),
-      type: "script",
-      script: scriptRel,
-      enabled: true,
-      props: {},
-    };
     target.components = [...target.components, comp];
   }, "添加脚本组件");
 }
 
-function onRemoveScriptComponent(compId: string): void {
-  const n = node.value;
-  if (!n) return;
-  commit((target) => {
-    target.components = target.components.filter((c) => c.id !== compId);
-  }, "移除脚本组件");
+// —— 组件卡通用操作（启用/移除/排序/重置） ——
+
+/** 卡片折叠状态（记录已折叠的组件 id；缺省展开） */
+const closedComps = ref(new Set<string>());
+
+function onToggleCompCard(compId: string): void {
+  const next = new Set(closedComps.value);
+  if (next.has(compId)) next.delete(compId);
+  else next.add(compId);
+  closedComps.value = next;
 }
 
-function onToggleScriptComponent(compId: string, enabled: boolean): void {
-  const n = node.value;
-  if (!n) return;
+function onToggleComponent(compId: string, enabled: boolean): void {
   commit((target) => {
     target.components = target.components.map((c) =>
       c.id === compId ? { ...c, enabled } : c,
     );
-  }, enabled ? "启用脚本组件" : "停用脚本组件");
+  }, enabled ? "启用组件" : "停用组件");
 }
 
-function onScriptComponentProp(compId: string, key: string, value: unknown): void {
+function onRemoveComponent(compId: string): void {
+  commit((target) => {
+    target.components = target.components.filter((c) => c.id !== compId);
+  }, "移除组件");
+}
+
+/** 上移/下移组件（挂载顺序 = 卡片顺序 = 脚本同序执行顺序） */
+function onMoveComponent(compId: string, dir: -1 | 1): void {
+  commit((target) => {
+    const list = [...target.components];
+    const i = list.findIndex((c) => c.id === compId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    target.components = list;
+  }, dir < 0 ? "上移组件" : "下移组件");
+}
+
+/** 重置组件设置为该类型默认值（保留 id/启用状态；脚本保留路径与执行顺序） */
+function onResetComponent(compId: string): void {
+  commit((target) => {
+    const comp = target.components.find((c) => c.id === compId);
+    if (comp) resetComponentSettings(comp);
+  }, "重置组件");
+}
+
+/** 组件卡 ⋮ 菜单（Unity 组件上下文菜单语义：Move Up/Down/Reset/Remove） */
+function onComponentMenu(e: MouseEvent, comp: NodeComponentRef): void {
   const n = node.value;
   if (!n) return;
+  const idx = n.components.findIndex((c) => c.id === comp.id);
+  const items: CtxMenuItem[] = [
+    { label: "上移", disabled: idx <= 0, onClick: () => onMoveComponent(comp.id, -1) },
+    {
+      label: "下移",
+      disabled: idx < 0 || idx >= n.components.length - 1,
+      onClick: () => onMoveComponent(comp.id, 1),
+    },
+    { label: "重置", onClick: () => onResetComponent(comp.id) },
+  ];
+  if (isScriptComponent(comp)) {
+    items.unshift({
+      label: "编辑脚本",
+      onClick: () => {
+        store.setViewMode("script");
+        void scriptsStore.openScript(comp.script);
+      },
+    });
+  }
+  items.push(menuSeparator(), { label: "移除组件", danger: true, onClick: () => onRemoveComponent(comp.id) });
+  openContextMenu(e, items);
+}
+
+// —— 各类型组件的字段编辑（可撤销） ——
+
+function onScriptComponentProp(compId: string, key: string, value: unknown): void {
   commit((target) => {
     target.components = target.components.map((c) => {
       if (c.id !== compId || !isScriptComponent(c)) return c;
@@ -653,58 +734,12 @@ function onScriptComponentProp(compId: string, key: string, value: unknown): voi
   }, "设置组件属性");
 }
 
-// ---------------------------------------------------------------------------
-// 物理组件（Physics 卡片）：刚体/碰撞体增删改走 commit → patchNode（可撤销）
-// ---------------------------------------------------------------------------
-
-function onAddRigidBodyComponent(): void {
-  const n = node.value;
-  if (!n || n.components.some(isRigidBodyComponent)) return;
-  commit((target) => {
-    const comp: NodeComponentRef = {
-      id: nextId("comp"),
-      type: "rigidBody",
-      enabled: true,
-      rigidBody: { ...DEFAULT_RIGID_BODY_SETTINGS },
-    };
-    target.components = [...target.components, comp];
-  }, "添加刚体组件");
-}
-
-function onAddColliderComponent(): void {
-  const n = node.value;
-  if (!n) return;
-  commit((target) => {
-    const comp: NodeComponentRef = {
-      id: nextId("comp"),
-      type: "collider",
-      enabled: true,
-      collider: {
-        ...DEFAULT_COLLIDER_SETTINGS,
-        size: { ...DEFAULT_COLLIDER_SETTINGS.size },
-        offset: { ...DEFAULT_COLLIDER_SETTINGS.offset },
-      },
-    };
-    target.components = [...target.components, comp];
-  }, "添加碰撞体组件");
-}
-
-function onRemovePhysicsComponent(compId: string): void {
-  const n = node.value;
-  if (!n) return;
-  commit((target) => {
-    target.components = target.components.filter((c) => c.id !== compId);
-  }, "移除物理组件");
-}
-
-function onTogglePhysicsComponent(compId: string, enabled: boolean): void {
-  const n = node.value;
-  if (!n) return;
+function onScriptExecutionOrder(compId: string, value: number): void {
   commit((target) => {
     target.components = target.components.map((c) =>
-      c.id === compId ? { ...c, enabled } : c,
+      c.id === compId && isScriptComponent(c) ? { ...c, executionOrder: value } : c,
     );
-  }, enabled ? "启用物理组件" : "停用物理组件");
+  }, "设置执行顺序");
 }
 
 function onRigidBodyUpdate(label: string, value: unknown): void {
@@ -782,6 +817,137 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
     }
   }, label);
 }
+
+/** 灯光组件编辑（类型切换 + 参数；光照语义与灯光节点一致） */
+function onLightComponentUpdate(compId: string, label: string, value: unknown): void {
+  commit((target) => {
+    const comp = target.components.find(
+      (c): c is LightComponentRef => c.id === compId && isLightComponent(c),
+    );
+    if (!comp) return;
+    const s = comp.light;
+    switch (label) {
+      case "Set Light Kind":
+        if (value === "point" || value === "directional" || value === "ambient" || value === "spot") {
+          s.kind = value;
+        }
+        break;
+      case "Set Color":
+        s.lightColor = (value as number) & 0xffffff;
+        break;
+      case "Set Intensity":
+        s.intensity = Math.max(0, typeof value === "number" ? value : 1);
+        break;
+      case "Toggle Shadow":
+        s.castShadow = value === true;
+        break;
+      case "Set Distance":
+        s.distance = Math.max(0, typeof value === "number" ? value : 0);
+        break;
+      case "Set Decay":
+        s.decay = Math.max(0, Math.min(10, typeof value === "number" ? value : 2));
+        break;
+      case "Set Angle":
+        s.angle = Math.max(0.1, Math.min(89.9, typeof value === "number" ? value : 45));
+        break;
+      case "Set Penumbra":
+        s.penumbra = Math.max(0, Math.min(1, typeof value === "number" ? value : 0.2));
+        break;
+    }
+  }, label);
+}
+
+/** 音源组件编辑（复用音源设置的标签语义） */
+function onAudioComponentUpdate(compId: string, label: string, value: unknown): void {
+  commit((target) => {
+    const comp = target.components.find(
+      (c): c is AudioSourceComponentRef => c.id === compId && isAudioSourceComponent(c),
+    );
+    if (!comp) return;
+    const a = comp.audio;
+    switch (label) {
+      case "Set Audio Source":
+        a.source = typeof value === "string" ? value : "";
+        break;
+      case "Set Audio Autoplay":
+        a.autoplay = value === true;
+        break;
+      case "Set Audio Loop":
+        a.loop = value === true;
+        break;
+      case "Set Audio Volume":
+        a.volume = typeof value === "number" ? Math.max(0, Math.min(1, value)) : 1;
+        break;
+      case "Set Audio Speed":
+        a.speed = typeof value === "number" ? Math.max(0.1, Math.min(4, value)) : 1;
+        break;
+      case "Set Audio Spatial":
+        a.spatial = value === "3d" ? "3d" : "2d";
+        break;
+      case "Set Audio RefDistance":
+        a.refDistance = typeof value === "number" ? Math.max(0.01, value) : 1;
+        break;
+      case "Set Audio MaxDistance":
+        a.maxDistance = typeof value === "number" ? Math.max(0.01, value) : 30;
+        break;
+      case "Set Audio Rolloff":
+        a.rolloff = typeof value === "number" ? Math.max(0, value) : 1;
+        break;
+    }
+  }, label);
+}
+
+// ---------------------------------------------------------------------------
+// 组件卡展示派生（标题/分类标签；rev 为失效信号）
+// ---------------------------------------------------------------------------
+
+/** 已挂组件列表（按挂载序 = 卡片序） */
+const mountedComponents = computed<NodeComponentRef[]>(() => {
+  void revision.value;
+  const n = node.value;
+  return n ? n.components : [];
+});
+
+const LIGHT_COMP_TITLES: Record<string, string> = {
+  point: "Point Light",
+  directional: "Directional Light",
+  ambient: "Ambient Light",
+  spot: "Spot Light",
+};
+
+function compCardTitle(c: NodeComponentRef): string {
+  switch (c.type) {
+    case "script":
+      return baseName(c.script);
+    case "light":
+      return LIGHT_COMP_TITLES[c.light.kind] ?? "Light";
+    case "rigidBody":
+      return "Rigid Body";
+    case "collider":
+      return "Collider";
+    case "audioSource":
+      return "Audio Source";
+  }
+}
+
+function compCardType(c: NodeComponentRef): string {
+  // 分类中文名（meta.label 形如 "刚体 Rigid Body"，取首段中文）
+  return componentMetaOf(c.type).label.split(" ")[0] ?? c.type;
+}
+
+/** 节点是否挂了物理组件（决定模拟控制卡显隐） */
+const hasPhysicsComps = computed<boolean>(() => {
+  void revision.value;
+  const n = node.value;
+  return !!n && n.components.some((c) => c.type === "rigidBody" || c.type === "collider");
+});
+
+/** 设置节点标签（GameObject Tag 语义） */
+function onNodeSetTag(tag: string): void {
+  commit((n) => {
+    n.tag = tag;
+  }, "设置标签");
+}
 </script>
 
 <template>
@@ -811,6 +977,7 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
           :node="node"
           :rev="revision"
           @rename="onNodeRename"
+          @setTag="onNodeSetTag"
           @toggleActive="onNodeToggleActive"
           @toggleVisible="onNodeToggleVisible"
         />
@@ -886,32 +1053,70 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof AudioNode" title="Audio" :open="true">
-        <AudioSection :node="node" :rev="revision" @update="onAudioUpdate" />
+        <AudioSection :settings="node.audio" :runtime-id="node.id" :rev="revision" @update="onAudioUpdate" />
       </ComponentCard>
 
-      <!-- 物理卡片：任意节点可挂刚体/碰撞体组件（增删改可撤销） -->
-      <ComponentCard title="Physics" :open="true">
-        <PhysicsSection
-          :node="node"
-          :rev="revision"
-          @removeComponent="onRemovePhysicsComponent"
-          @toggleComponent="onTogglePhysicsComponent"
-          @updateRigidBody="onRigidBodyUpdate"
-          @updateCollider="onColliderUpdate"
-        />
+      <!-- —— 已挂组件卡（按挂载序 = 卡片序；Unity 组件卡语义：启用勾选 + ⋮ 菜单） —— -->
+      <template v-for="c in mountedComponents" :key="c.id">
+        <ComponentCard
+          :title="compCardTitle(c)"
+          :type="compCardType(c)"
+          :open="!closedComps.has(c.id)"
+          :dim="!c.enabled"
+          @toggle="onToggleCompCard(c.id)"
+        >
+          <template #head>
+            <label class="comp-card-toggle" title="启用/停用组件" @click.stop>
+              <input
+                type="checkbox"
+                :checked="c.enabled"
+                @change="onToggleComponent(c.id, ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+            <button class="comp-card-menu" title="组件操作" @click.stop="onComponentMenu($event, c)">⋮</button>
+          </template>
+
+          <template v-if="c.enabled">
+            <ScriptFields
+              v-if="isScriptComponent(c)"
+              :comp="c"
+              :rev="revision"
+              @setProp="(key, value) => onScriptComponentProp(c.id, key, value)"
+              @setExecutionOrder="(v) => onScriptExecutionOrder(c.id, v)"
+            />
+            <RigidBodyFields
+              v-else-if="isRigidBodyComponent(c)"
+              :comp="c"
+              @update="(label, value) => onRigidBodyUpdate(label, value)"
+            />
+            <ColliderFields
+              v-else-if="isColliderComponent(c)"
+              :comp="c"
+              @update="(label, value) => onColliderUpdate(c.id, label, value)"
+            />
+            <LightComponentFields
+              v-else-if="isLightComponent(c)"
+              :comp="c"
+              @update="(label, value) => onLightComponentUpdate(c.id, label, value)"
+            />
+            <AudioSection
+              v-else-if="isAudioSourceComponent(c)"
+              :settings="c.audio"
+              :runtime-id="c.id"
+              :rev="revision"
+              @update="(label, value) => onAudioComponentUpdate(c.id, label, value)"
+            />
+          </template>
+          <div v-else class="hint">组件已停用</div>
+        </ComponentCard>
+      </template>
+
+      <!-- 物理模拟控制：挂了刚体/碰撞体组件时显示（运行时控制，不落盘） -->
+      <ComponentCard v-if="hasPhysicsComps" title="Simulation" :open="true" type="物理模拟">
+        <PhysicsSimSection :node="node" :rev="revision" />
       </ComponentCard>
 
-      <ComponentCard title="Components" :open="true">
-        <ComponentsSection
-          :node="node"
-          :rev="revision"
-          @removeComponent="onRemoveScriptComponent"
-          @toggleComponent="onToggleScriptComponent"
-          @setProp="onScriptComponentProp"
-        />
-      </ComponentCard>
-
-      <!-- 集中式添加组件入口：按类别（物理/脚本）分类，弹出子菜单 -->
+      <!-- 集中式添加组件入口：注册表驱动（物理/光照/音频/脚本），弹出子菜单 -->
       <button class="add-comp-btn" @click="onAddComponentMenu">＋ 添加组件</button>
     </div>
   </div>

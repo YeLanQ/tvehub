@@ -39,6 +39,8 @@ export class SpotLightNode extends LightNode {
       name: this.name,
       transform: this.transform,
       properties: cloneRecord(this.properties),
+      tag: this.tag,
+      components: this.components,
       intensity: this.intensity,
       lightColor: this.lightColor,
     });

@@ -58,6 +58,8 @@ export class CameraNode extends Node {
       name: this.name,
       transform: this.transform,
       properties: cloneRecord(this.properties),
+      tag: this.tag,
+      components: this.components,
       cameraType: this.cameraType,
       fov: this.fov,
       near: this.near,

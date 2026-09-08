@@ -228,6 +228,12 @@ class Entity {
     if (typeof value === "string" && value) this.__obj.name = value;
   }
 
+  /** 节点标签（GameObject Tag 语义；编辑器检查器设置，随场景序列化） */
+  get tag() {
+    const t = this.__obj.userData?.nodeTag;
+    return typeof t === "string" ? t : "";
+  }
+
   get visible() {
     return this.__obj.visible === true;
   }
@@ -548,6 +554,20 @@ const sceneApi = {
   },
   findAll() {
     return registry().map((e) => getEntity(e.obj)).filter(Boolean);
+  },
+  /** 按标签查实体（返回第一个命中；无命中/空标签返回 null） */
+  findByTag(tag) {
+    for (const e of registry()) {
+      if (e.obj?.userData?.nodeTag === tag) return getEntity(e.obj);
+    }
+    return null;
+  },
+  /** 按标签查实体（文档序全量；无命中返回空数组） */
+  findAllByTag(tag) {
+    return registry()
+      .filter((e) => e.obj?.userData?.nodeTag === tag)
+      .map((e) => getEntity(e.obj))
+      .filter(Boolean);
   },
 };
 

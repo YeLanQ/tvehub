@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
 // 脚本宿主：加载用户脚本（编辑器编译后的 src/**.js），按节点 components 数组与
-// config.entryScript 实例化 tve.Component，并驱动生命周期（onStart/onUpdate）。
+// config.entryScript 实例化 tve.Component，并驱动生命周期
+// （onEnable → onStart → onUpdate → onDisable/onDestroy）。
+//
+// 执行顺序：组件 executionOrder 升序稳定排序（同序按挂载顺序）。
 //
 // 模块寻址（与构建产物形态对应）：
 // - 文件模式（编辑器预览 / 多文件产物）：按页面地址 new URL(rel, baseURI) 导入；
@@ -124,14 +127,22 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     physics: physics ?? null,
   });
 
-  // 组件引用收集（注册表为文档序：先父后子）
+  // 组件引用收集（注册表为文档序：先父后子）；executionOrder 为执行顺序
+  // （小者先跑，同序按挂载顺序——与 Unity Script Execution Order 同语义）
   const bindings = [];
   for (const { json, obj } of nodes) {
     const comps = Array.isArray(json.components) ? json.components : [];
     for (const c of comps) {
       if (!c || typeof c !== "object" || c.type !== "script" || c.enabled === false) continue;
       if (typeof c.script !== "string" || !c.script) continue;
-      bindings.push({ obj, script: c.script, props: c.props });
+      bindings.push({
+        obj,
+        script: c.script,
+        props: c.props,
+        order: typeof c.executionOrder === "number" && Number.isFinite(c.executionOrder)
+          ? c.executionOrder
+          : 0,
+      });
     }
   }
   const entryRel = typeof cfg.entryScript === "string" ? cfg.entryScript.trim() : "";
@@ -155,7 +166,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     return p;
   }
 
-  /** @type {Array<{inst: object, script: string, dead: boolean}>} */
+  /** @type {Array<{inst: object, script: string, dead: boolean, order: number}>} */
   const instances = [];
   const failedScripts = new Set();
 
@@ -189,19 +200,38 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         continue;
       }
       registerComponent(entity.id, inst);
-      instances.push({ inst, script: item.script, dead: false });
+      instances.push({ inst, script: item.script, dead: false, order: item.order ?? 0 });
     }
   }
 
   await instantiate(bindings);
   // 入口脚本挂根节点（脚本模式：全局逻辑）
   if (entryRel && rootEntry) {
-    await instantiate([{ obj: rootEntry.obj, script: entryRel, props: {} }]);
+    await instantiate([{ obj: rootEntry.obj, script: entryRel, props: {}, order: 0 }]);
   }
   if (!instances.length) return noop;
 
+  // 执行顺序：按 executionOrder 升序稳定排序（同序保持挂载顺序；入口脚本 order=0）
+  instances.sort((a, b) => a.order - b.order);
+
+  // 生命周期：全部实例化后先统一 onEnable（组件就绪/可引用其他实体），再统一 onStart
+  // （对齐 Unity OnEnable → Start 的批次顺序）
+  for (const record of instances) callLifecycle(record, "onEnable");
   for (const record of instances) callLifecycle(record, "onStart");
   postLog("info", `[脚本] 已启动 ${instances.length} 个脚本实例`);
+
+  let disposed = false;
+  /** 页面卸载/宿主停机：onDisable → onDestroy（各一次；错误实例已停用则跳过） */
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const record of instances) {
+      if (record.dead) continue;
+      callLifecycle(record, "onDisable");
+      callLifecycle(record, "onDestroy");
+      record.dead = true;
+    }
+  }
 
   return {
     /** 每帧驱动：时间推进 + onUpdate（错误实例自动停用） */
@@ -212,5 +242,6 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         callLifecycle(record, "onUpdate", dt);
       }
     },
+    dispose,
   };
 }

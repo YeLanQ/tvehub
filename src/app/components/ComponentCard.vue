@@ -4,9 +4,12 @@ withDefaults(
     title: string;
     type?: string;
     open?: boolean;
+    /** 置灰（如组件被停用） */
+    dim?: boolean;
   }>(),
   {
     open: false,
+    dim: false,
   },
 );
 
@@ -16,7 +19,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="section">
+  <div class="section" :class="{ dim }">
     <div class="section-head" @click="emit('toggle')">
       <span class="caret">{{ open ? "▾" : "▸" }}</span>
       <span class="title">{{ title }}</span>

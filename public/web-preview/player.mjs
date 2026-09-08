@@ -317,7 +317,7 @@ async function main() {
   });
 
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
-  let scripts = { update() {} };
+  let scripts = { update() {}, dispose() {} };
   try {
     scripts = await createScripts({
       nodes,
@@ -330,6 +330,8 @@ async function main() {
   } catch (e) {
     postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
   }
+  // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
+  window.addEventListener("pagehide", () => scripts.dispose(), { once: true, capture: true });
 
   const clock = new THREE.Clock();
 

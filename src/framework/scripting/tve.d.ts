@@ -171,13 +171,25 @@ export class Component<P extends ComponentProps = ComponentProps> {
    */
   readonly props: Readonly<P>;
 
-  /** 生命周期：全部脚本实例创建后调用一次 */
+  /** 生命周期：全部脚本实例创建后、首个 onUpdate 前调用一次（初始化玩法逻辑） */
   onStart?(): void;
+
+  /**
+   * 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，
+   * 对齐 Unity 批次顺序）；此时可安全引用其他实体与组件。
+   */
+  onEnable?(): void;
 
   /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
   onUpdate?(delta: number): void;
 
-  /** 生命周期：实例销毁时调用（静态场景运行期保留，预留接口） */
+  /**
+   * 生命周期：页面卸载/预览停机时调用一次（先于 onDestroy），用于释放
+   * 定时器/事件订阅等外部资源。
+   */
+  onDisable?(): void;
+
+  /** 生命周期：实例销毁时调用（页面卸载/预览停机时先于本回调触发 onDisable） */
   onDestroy?(): void;
 }
 
@@ -195,6 +207,9 @@ export class Entity {
   /** 名称（可写，即时生效） */
   get name(): string;
   set name(value: string);
+
+  /** 节点标签（GameObject Tag 语义；检查器 Node 卡设置，空串 = 无标签） */
+  readonly tag: string;
 
   /** 可见性（可写，即时生效；含子级继承） */
   get visible(): boolean;
@@ -319,6 +334,10 @@ export interface SceneApi {
   find(nameOrPath: string): Entity | null;
   /** 全部实体（快照数组） */
   findAll(): Entity[];
+  /** 按标签查实体（返回第一个命中；无命中/空标签返回 null） */
+  findByTag(tag: string): Entity | null;
+  /** 按标签查实体（文档序全量；无命中返回空数组） */
+  findAllByTag(tag: string): Entity[];
 }
 
 /** 模型动画运行期控制（按实体寻址；仅模型网格节点有效） */
@@ -333,7 +352,10 @@ export interface AnimationApi {
   resume(entity: Entity): void;
 }
 
-/** 音频运行期控制（按实体寻址；仅音源节点有效） */
+/**
+ * 音频运行期控制（按实体寻址；音源节点与挂音源组件的节点有效，
+ * 实体上多个音源时寻址首个）
+ */
 export interface AudioApi {
   /** 播放（暂停态续播；停止/播完态从头播） */
   play(entity: Entity): void;

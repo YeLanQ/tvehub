@@ -92,7 +92,11 @@ function loadTexture(kind: SpriteIconKind): Promise<THREE.Texture> {
   });
 
   pendingLoad.set(kind, task);
-  void task.finally(() => pendingLoad.delete(kind));
+  // catch 先吞掉拒绝再 finally：无 DOM 环境（headless）下 finally 的衍生
+  // Promise 若带拒绝会成为未处理拒绝（createIconSprite 的主链已自行兜底）
+  void task
+    .catch(() => {})
+    .finally(() => pendingLoad.delete(kind));
   return task;
 }
 

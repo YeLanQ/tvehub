@@ -11,6 +11,7 @@ import {
   type TransformSnapshot,
 } from "../scene/SceneClient";
 import type { Node } from "../prototype/Node";
+import { isAudioSourceComponent } from "../prototype/Node";
 import {
   AudioNode,
   CameraNode,
@@ -76,6 +77,8 @@ export class EditorEngine {
   readonly animation = new AnimationSystem();
   /** 音频系统（音源节点的 2D/3D Web Audio 播放；渲染循环推进监听器与可见性） */
   readonly audio = new AudioSystem();
+  /** 音源组件绑定登记（节点 id → 该节点上已绑定音源组件的组件 id 集；移除时集中解绑） */
+  private audioCompBindings = new Map<string, Set<string>>();
   /** 物理系统（刚体/碰撞体节点模拟；固定步长推进，动力学体回写渲染变换） */
   readonly physics = new PhysicsSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
@@ -571,6 +574,7 @@ export class EditorEngine {
         type: "script",
         script: scriptRel,
         enabled: true,
+        executionOrder: 0,
         props: {},
       },
     ];
@@ -743,6 +747,14 @@ export class EditorEngine {
         if (obj) this.audio.syncNode(n, obj);
       }
     }
+    // 音源组件（组件模式）：入图/属性变更 → 按组件数据增量化同步；移除 → 全部解绑
+    if (c.kind === "remove") {
+      for (const compId of this.audioCompBindings.get(c.nodeId) ?? []) this.audio.unbind(compId);
+      this.audioCompBindings.delete(c.nodeId);
+    } else if (c.kind === "add" || c.kind === "properties" || c.kind === "replace") {
+      const n = this.graph.get(c.nodeId);
+      if (n) this.syncAudioComponents(n);
+    }
     // 物理组件：入图/属性变更 → 差异同步刚体/碰撞体；移除 → 解绑
     if (c.kind === "remove") {
       this.physics.unbind(c.nodeId);
@@ -786,6 +798,7 @@ export class EditorEngine {
     this.animation.unbindAll();
     // 音频绑定同样指向旧场景对象：整体重建后按新对象重绑
     this.audio.unbindAll();
+    this.audioCompBindings.clear();
     // 物理绑定指向旧场景对象：模拟中一并停止（世界里的体按旧位姿建出）
     this.physics.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
@@ -797,6 +810,7 @@ export class EditorEngine {
         const obj = this.synchronizer.getObjectMap().get(node.id);
         if (obj) this.audio.syncNode(node, obj);
       }
+      this.syncAudioComponents(node);
       this.syncPhysicsNode(node);
     }
     this.applySkyFromGraph();
@@ -811,6 +825,28 @@ export class EditorEngine {
     if (!obj) return;
     if (hasPhysics) this.physics.syncNode(node, obj);
     else this.physics.unbind(node.id);
+  }
+
+  /**
+   * 音源组件同步（组件模式）：按节点上 audioSource 组件增量化绑定 AudioSystem
+   * （以组件 id 为绑定键，运行时播放/暂停控制同 id 寻址）；组件被移除/停用后
+   * 解绑。绑定键集合记录在 audioCompBindings，供节点移除时集中解除。
+   */
+  private syncAudioComponents(node: Node): void {
+    const obj = this.synchronizer.getObjectMap().get(node.id);
+    if (!obj) return;
+    const prev = this.audioCompBindings.get(node.id) ?? new Set<string>();
+    const next = new Set<string>();
+    for (const c of node.components) {
+      if (!isAudioSourceComponent(c) || !c.enabled) continue;
+      next.add(c.id);
+      this.audio.syncNode({ id: c.id, audio: c.audio }, obj);
+    }
+    for (const compId of prev) {
+      if (!next.has(compId)) this.audio.unbind(compId);
+    }
+    if (next.size) this.audioCompBindings.set(node.id, next);
+    else this.audioCompBindings.delete(node.id);
   }
 
   /**

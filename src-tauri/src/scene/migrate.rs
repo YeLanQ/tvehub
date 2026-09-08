@@ -982,11 +982,29 @@ pub fn collect_texcube_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
-/// 遍历场景 JSON 收集音源节点的音频资产引用（去重、按扩展名过滤）
+/// 遍历场景 JSON 收集音频资产引用（去重、按扩展名过滤）：
+/// 音源节点（audioNode.audio.source）+ 音源组件（任意节点 components 中
+/// type=audioSource 的 audio.source，组件模式）。
 pub fn collect_audio_refs(v: &Value, out: &mut Vec<String>) {
     fn is_audio_rel(rel: &str) -> bool {
         let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
         matches!(ext.as_str(), "mp3" | "wav" | "ogg" | "m4a" | "aac" | "flac") && rel.contains('.')
+    }
+    // 音源组件引用收集（任意节点可挂，组件模式）
+    fn push_audio_comp(o: &Map<String, Value>, out: &mut Vec<String>) {
+        let Some(Value::Array(comps)) = o.get("components") else {
+            return;
+        };
+        for c in comps {
+            let Some(cobj) = c.as_object() else { continue };
+            if cobj.get("type").and_then(Value::as_str) == Some("audioSource") {
+                if let Some(Value::String(rel)) = cobj.get("audio").and_then(|a| a.get("source")) {
+                    if is_audio_rel(rel) && !out.contains(rel) {
+                        out.push(rel.clone());
+                    }
+                }
+            }
+        }
     }
     match v {
         Value::Array(items) => {
@@ -1002,6 +1020,7 @@ pub fn collect_audio_refs(v: &Value, out: &mut Vec<String>) {
                     }
                 }
             }
+            push_audio_comp(o, out);
             if let Some(children) = o.get("children") {
                 collect_audio_refs(children, out);
             }
@@ -1168,6 +1187,41 @@ mod tests {
         let mut models = Vec::new();
         collect_model_refs(&doc, &mut models);
         assert_eq!(models, vec!["assets/models/x.glb".to_string()]);
+    }
+
+    /// 组件模式：音源组件（任意节点 components 中 type=audioSource）引用的音频
+    /// 随音源节点引用一并通过 collect_audio_refs 收集（构建导出打包用）。
+    #[test]
+    fn collect_audio_refs_includes_audio_source_components() {
+        let doc = json!({
+            "type": "scene",
+            "root": {
+                "type": "node", "id": "r",
+                "components": [
+                    { "id": "c1", "type": "light", "enabled": true, "light": { "kind": "point" } },
+                    { "id": "c2", "type": "audioSource", "enabled": true, "audio": { "source": "assets/audio/hit.wav" } },
+                    { "id": "c3", "type": "audioSource", "enabled": false, "audio": { "source": "assets/audio/disabled.mp3" } },
+                    { "id": "c4", "type": "script", "script": "src/a.ts", "enabled": true, "props": {} }
+                ],
+                "children": [
+                    { "type": "audioNode", "id": "s", "audio": { "source": "internal/audio/bgm.ogg" } },
+                    { "type": "node", "id": "n", "components": [
+                        { "id": "c5", "type": "audioSource", "enabled": true, "audio": { "source": "assets/audio/hit.wav" } }
+                    ] }
+                ]
+            }
+        });
+        let mut refs = Vec::new();
+        collect_audio_refs(&doc, &mut refs);
+        assert_eq!(
+            refs,
+            vec![
+                "assets/audio/hit.wav".to_string(),
+                "assets/audio/disabled.mp3".to_string(),
+                "internal/audio/bgm.ogg".to_string(),
+            ],
+            "组件引用去重收集（不看 enabled：导出兜底宁多勿缺，播放端按 enabled 决定是否实例化）"
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
+import { isLightComponent } from "../../prototype/Node";
 import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import {
   AudioNode,
@@ -50,6 +51,22 @@ const MODEL_CHILD_NAME = "__modelRoot";
 const MODEL_PENDING_NAME = "__modelPending";
 /** 音源节点图标着色（就绪态；加载中黄/失败红/未绑定灰见 refreshAudio） */
 const AUDIO_ICON_COLOR = 0x7ed49a;
+/** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
+const COMP_LIGHT_NAME = "__compLight";
+
+/** 灯光组件类型 → 图标精灵种类（与灯光节点同一套图标） */
+function compLightIconKind(kind: string): SpriteIconKind {
+  switch (kind) {
+    case "directional":
+      return "light-directional";
+    case "spot":
+      return "light-spot";
+    case "ambient":
+      return "light-ambient";
+    default:
+      return "light-point";
+  }
+}
 
 /**
  * 拷贝几何并沿顶点外扩 offset（对象空间单位），用作轮廓体的独立几何，避免污染主网格几何。
@@ -249,7 +266,90 @@ export class SceneSynchronizer {
     else if (node instanceof LightNode) this.refreshLight(node, obj);
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
     else if (node instanceof AudioNode) this.refreshAudio(node, obj);
+    // 组件模式：灯光组件挂任意节点（含网格/空组），与节点类型原生能力并存
+    this.refreshComponentLights(node, obj);
     this.applyTransform(node);
+  }
+
+  /**
+   * 灯光组件刷新（组件模式）：
+   * - 节点挂启用中的灯光组件 → 在节点对象下挂 __compLight 子组（真实 three 灯光 +
+   *   类型图标 + 方向目标点，光照语义与灯光节点一致）；
+   * - 组件被移除/停用 → 整组摘除释放（停用即场景中消失，与节点失活同表现）；
+   * - 参数变化按签名整组重建（与灯光节点的重建式刷新同策略；图标纹理有缓存）。
+   */
+  private refreshComponentLights(node: Node, obj: THREE.Object3D): void {
+    const comp = node.components.find(isLightComponent);
+    let wrapper = obj.children.find((c) => c.name === COMP_LIGHT_NAME) ?? null;
+    if (!comp || !comp.enabled) {
+      if (wrapper) {
+        obj.remove(wrapper);
+        disposeObject3D(wrapper);
+      }
+      return;
+    }
+    const s = comp.light;
+    const sig = [
+      s.kind,
+      s.lightColor,
+      s.intensity,
+      s.distance,
+      s.decay,
+      s.angle,
+      s.penumbra,
+      s.castShadow,
+    ].join("|");
+    if (wrapper && (wrapper.userData as { lightSig?: string }).lightSig === sig) return;
+    if (wrapper) {
+      obj.remove(wrapper);
+      disposeObject3D(wrapper);
+    }
+
+    wrapper = new THREE.Group();
+    wrapper.name = COMP_LIGHT_NAME;
+    (wrapper.userData as { lightSig?: string }).lightSig = sig;
+    // 平行光/聚光灯有方向语义：目标点挂在组件组内随节点变换（本地 -Z，同灯光节点）
+    let dirTarget: THREE.Object3D | null = null;
+    if (s.kind === "directional" || s.kind === "spot") {
+      dirTarget = new THREE.Object3D();
+      dirTarget.position.set(0, 0, -1);
+      wrapper.add(dirTarget);
+    }
+    let light: THREE.Light;
+    switch (s.kind) {
+      case "directional": {
+        const dl = new THREE.DirectionalLight(s.lightColor, s.intensity);
+        dl.castShadow = s.castShadow;
+        if (dirTarget) dl.target = dirTarget;
+        light = dl;
+        break;
+      }
+      case "spot": {
+        const sl = new THREE.SpotLight(
+          s.lightColor,
+          s.intensity,
+          s.distance,
+          (s.angle * Math.PI) / 180,
+          s.penumbra,
+          s.decay,
+        );
+        sl.castShadow = s.castShadow;
+        if (dirTarget) sl.target = dirTarget;
+        light = sl;
+        break;
+      }
+      case "ambient":
+        light = new THREE.AmbientLight(s.lightColor, s.intensity);
+        break;
+      default:
+        light = new THREE.PointLight(s.lightColor, s.intensity, s.distance, s.decay);
+        break;
+    }
+    wrapper.add(light);
+    const icon = createIconSprite(compLightIconKind(s.kind), s.lightColor, 0.8);
+    icon.name = "__lightIcon";
+    wrapper.add(icon);
+    obj.add(wrapper);
   }
 
   /** 网格刷新入口：按来源分派（基元 = 几何工厂 + 材质资产；模型 = 实例化克隆） */

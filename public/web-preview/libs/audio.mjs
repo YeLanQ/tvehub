@@ -181,6 +181,14 @@ export function createAudios(audios, cam) {
     bindings.push(b);
     if (typeof entry.json.id === "string" && entry.json.id) byId.set(entry.json.id, b);
   }
+  // 音源组件条目（nodes.mjs 附带 nodeId）：节点 id 命中首个音源，
+  // 兼容 SDK engine.audio 按实体寻址（组件 id 仍可精确寻址）
+  for (const entry of audios) {
+    const nodeId = entry.nodeId;
+    if (typeof nodeId !== "string" || !nodeId || byId.has(nodeId)) continue;
+    const b = byId.get(entry.json.id);
+    if (b) byId.set(nodeId, b);
+  }
 
   return {
     /** 每帧推进：可见性链断开 → 自动暂停；恢复 → 续播；autoplay 未起播过的自动开始 */
