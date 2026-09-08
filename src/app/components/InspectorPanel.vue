@@ -1015,12 +1015,20 @@ function onMultiAddComponentMenu(e: MouseEvent): void {
   openContextMenu(e, items);
 }
 
-/** 节点是否挂了物理组件（决定模拟控制卡显隐） */
-const hasPhysicsComps = computed<boolean>(() => {
-  void revision.value;
+/**
+ * 模拟控制并入物理组件卡：刚体卡始终带模拟控制；无刚体时由首个碰撞体卡承担
+ * （隐式静态碰撞体也参与模拟）。其余组件卡不显示。
+ */
+function showSimStrip(c: NodeComponentRef): boolean {
   const n = node.value;
-  return !!n && n.components.some((c) => c.type === "rigidBody" || c.type === "collider");
-});
+  if (!n) return false;
+  if (isRigidBodyComponent(c)) return true;
+  if (isColliderComponent(c)) {
+    const firstCollider = n.components.find(isColliderComponent);
+    return !n.components.some(isRigidBodyComponent) && firstCollider?.id === c.id;
+  }
+  return false;
+}
 
 /** 设置节点标签（GameObject Tag 语义） */
 function onNodeSetTag(tag: string): void {
@@ -1171,16 +1179,22 @@ function onNodeSetTag(tag: string): void {
               @setProp="(key, value) => onScriptComponentProp(c.id, key, value)"
               @setExecutionOrder="(v) => onScriptExecutionOrder(c.id, v)"
             />
-            <RigidBodyFields
-              v-else-if="isRigidBodyComponent(c)"
-              :comp="c"
-              @update="(label, value) => onRigidBodyUpdate(label, value)"
-            />
-            <ColliderFields
-              v-else-if="isColliderComponent(c)"
-              :comp="c"
-              @update="(label, value) => onColliderUpdate(c.id, label, value)"
-            />
+            <template v-else-if="isRigidBodyComponent(c)">
+              <RigidBodyFields
+                :comp="c"
+                @update="(label, value) => onRigidBodyUpdate(label, value)"
+              />
+              <!-- 模拟控制并入刚体卡（运行时控制，不落盘） -->
+              <PhysicsSimSection :node="node" :rev="revision" />
+            </template>
+            <template v-else-if="isColliderComponent(c)">
+              <ColliderFields
+                :comp="c"
+                @update="(label, value) => onColliderUpdate(c.id, label, value)"
+              />
+              <!-- 无刚体的碰撞体（隐式静态）：首个碰撞体卡承担模拟控制入口 -->
+              <PhysicsSimSection v-if="showSimStrip(c)" :node="node" :rev="revision" />
+            </template>
             <LightComponentFields
               v-else-if="isLightComponent(c)"
               :comp="c"
@@ -1197,11 +1211,6 @@ function onNodeSetTag(tag: string): void {
           <div v-else class="hint">组件已停用</div>
         </ComponentCard>
       </template>
-
-      <!-- 物理模拟控制：挂了刚体/碰撞体组件时显示（运行时控制，不落盘） -->
-      <ComponentCard v-if="hasPhysicsComps" title="Simulation" :open="true" type="物理模拟">
-        <PhysicsSimSection :node="node" :rev="revision" />
-      </ComponentCard>
 
       <!-- 集中式添加组件入口：注册表驱动（物理/光照/音频/脚本），弹出子菜单 -->
       <button class="add-comp-btn" @click="onAddComponentMenu">＋ 添加组件</button>
