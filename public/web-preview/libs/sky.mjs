@@ -211,6 +211,9 @@ export async function loadSkyMatParams(rel) {
 }
 
 // —— Nishita 程序化天空生成（与编辑器 framework/engine/modules/nishitaSky.ts 同一算法）——
+// 透射率 LUT 预计算（cosθ/海拔）+ 沿视线 Hillaire 解析积分的多重散射，对齐 Blender
+// sky_multiple_scattering：4 波长光谱解析拟合转 XYZ、平台高斯软边缘日轮（无硬边锯齿）、
+// 命中地面的视线叠加 Lambert 地表辐亮度（海拔 0 时地平线以下不再全黑）。
 const NISHITA_VERT = `
   varying vec2 vUv;
   void main() {
@@ -218,156 +221,395 @@ const NISHITA_VERT = `
     gl_Position = vec4(position.xy, 0.0, 1.0);
   }
 `;
-const NISHITA_FRAG = `
-  varying vec2 vUv;
-  uniform vec3 sunPosition;
-  uniform float rayleigh;
-  uniform float mie;
-  uniform float ozone;
-  uniform float altitude;
-  uniform float mieDirectionalG;
-  uniform float sunDisc;
-  uniform float sunSize;
-  uniform float sunStrength;
-  uniform float ms;
-  uniform vec3 up;
-  const float e = 2.718281828459045;
-  const float pi = 3.141592653589793;
-  const vec3 lambda = vec3(680E-9, 550E-9, 450E-9);
-  const vec3 totalRayleigh = vec3(5.804542996261093E-6, 1.3562911419845635E-5, 3.0265902468824876E-5);
-  const vec3 K = vec3(0.686, 0.678, 0.666);
-  const vec3 MieConst = vec3(1.8399918514433978E14, 2.7798023919660528E14, 4.0790479543861094E14);
-  const float cutoffAngle = 1.6110731556870734;
-  const float steepness = 1.5;
-  const float EE = 1000.0;
-  const float rayleighZenithLength = 8.4E3;
-  const float mieZenithLength = 1.25E3;
-  const float THREE_OVER_SIXTEENPI = 0.05968310365946075;
-  const float ONE_OVER_FOURPI = 0.07957747154594767;
-  float sunIntensity(float zenithAngleCos) {
-    zenithAngleCos = clamp(zenithAngleCos, -1.0, 1.0);
-    return EE * max(0.0, 1.0 - pow(e, -((cutoffAngle - acos(zenithAngleCos)) / steepness)));
+
+// —— 两个 pass 共用的无状态部分：物理常量 + 密度函数 + 几何函数 ——
+const SKY_COMMON = `
+  const float PI = 3.141592653589793;
+
+  // 地球/大气（km，Blender 约定）
+  const float EARTH_RADIUS = 6371.0;
+  const float ATMOSPHERE_THICKNESS = 100.0;
+  const float ATMOSPHERE_RADIUS = 6471.0;
+
+  // 地面反照率 / 各向同性相位 / 瑞利相位缩放
+  const float GROUND_ALBEDO = 0.3;
+  const float PHASE_ISOTROPIC = 0.0795774715459477;   // 1/(4π)
+  const float RAYLEIGH_PHASE_SCALE = 0.0596831036595; // (3/16)·(1/π)
+
+  // 气溶胶（米氏）各向异性
+  const float G = 0.8;
+  const float SQR_G = 0.64;
+
+  // 4 波长光谱数据（630, 560, 490, 430 nm，城市区）
+  const vec4 SUN_SPECTRAL_IRRADIANCE = vec4(1.679, 1.828, 1.986, 1.307);
+  const vec4 MOLECULAR_SCATTERING_BASE = vec4(6.605e-3, 1.067e-2, 1.842e-2, 3.156e-2);
+  const vec4 OZONE_ABSORPTION_CROSS = vec4(3.472e-25, 3.914e-25, 1.349e-25, 11.03e-27);
+  const float OZONE_MEAN_DOBSON = 334.5;
+  const vec4 AEROSOL_ABSORPTION_CROSS = vec4(2.8722e-24, 4.6168e-24, 7.9706e-24, 1.3578e-23);
+  const vec4 AEROSOL_SCATTERING_CROSS = vec4(1.5908e-22, 1.7711e-22, 2.0942e-22, 2.4033e-22);
+  const float AEROSOL_BASE_DENSITY = 1.3681e20;
+  const float AEROSOL_BACKGROUND_DENSITY = 2.0e6;
+  const float AEROSOL_HEIGHT_SCALE = 0.73;
+
+  // 光谱 → XYZ（4 波长的解析拟合系数）
+  const vec3 SPECTRAL_XYZ_0 = vec3(53.3869177386, 22.9813375067, 0.0);
+  const vec3 SPECTRAL_XYZ_1 = vec3(43.9048444664, 71.3477957001, 0.102506867966);
+  const vec3 SPECTRAL_XYZ_2 = vec3(1.61372782516, 18.4229605915, 31.7429211884);
+  const vec3 SPECTRAL_XYZ_3 = vec3(20.7626686738, 2.36142135233, 110.480096433);
+
+  // XYZ → 线性 sRGB（Rec.709）
+  const mat3 XYZ_TO_RGB = mat3(
+    3.2404542, -0.9692660, 0.0556434,
+    -1.5371385, 1.8760108, -0.2040259,
+    -0.4985314, 0.0415560, 1.0572252
+  );
+
+  // 高度 h (km) 处的分子散射系数（瑞利）
+  vec4 molecular_scattering_coeff(float h) {
+    return MOLECULAR_SCATTERING_BASE * exp(-0.07771971 * pow(h, 1.16364243));
   }
-  vec3 totalMie(float T) {
-    float c = (0.2 * T) * 10E-18;
-    return 0.434 * c * MieConst;
+
+  // 高度 h (km) 处的臭氧分子吸收系数
+  vec4 molecular_absorption_coeff(float h) {
+    float lh = log(max(h, 1e-4));
+    float density = 3.78547397e20 * exp(-(lh - 3.22261) * (lh - 3.22261) * 5.55555555 - lh);
+    return OZONE_ABSORPTION_CROSS * (OZONE_MEAN_DOBSON * density);
   }
-  float rayleighPhase(float cosTheta) {
-    return THREE_OVER_SIXTEENPI * (1.0 + pow(cosTheta, 2.0));
+
+  // 高度 h (km) 处的气溶胶数密度
+  float aerosol_density_fn(float h) {
+    return AEROSOL_BASE_DENSITY * (exp(-h / AEROSOL_HEIGHT_SCALE) + AEROSOL_BACKGROUND_DENSITY / AEROSOL_BASE_DENSITY);
   }
-  float hgPhase(float cosTheta, float g) {
-    float g2 = pow(g, 2.0);
-    float inverse = 1.0 / pow(1.0 - 2.0 * g * cosTheta + g2, 1.5);
-    return ONE_OVER_FOURPI * ((1.0 - g2) * inverse);
+
+  vec3 spectral_to_xyz(vec4 L) {
+    return SPECTRAL_XYZ_0 * L.x + SPECTRAL_XYZ_1 * L.y + SPECTRAL_XYZ_2 * L.z + SPECTRAL_XYZ_3 * L.w;
   }
-  void main() {
-    float phi = (vUv.x - 0.5) * 2.0 * pi;
-    float sy = sin((vUv.y - 0.5) * pi);
-    float sr = sqrt(max(0.0, 1.0 - sy * sy));
-    vec3 direction = normalize(vec3(sr * cos(phi), sy, sr * sin(phi)));
-    vec3 sunDir = normalize(sunPosition);
-    float density = exp(-max(altitude, 0.0) / 8500.0);
-    float sunfade = 1.0 - clamp(1.0 - exp((sunPosition.y / 450000.0)), 0.0, 1.0);
-    float rayleighCoefficient = rayleigh * density - (1.0 * (1.0 - sunfade));
-    vec3 betaR = totalRayleigh * max(rayleighCoefficient, 0.0);
-    vec3 betaM = totalMie(2.0) * mie * density;
-    float upDot = dot(up, direction);
-    float below = smoothstep(0.0, 0.35, -upDot);
-    float airmassUpDot = mix(upDot, abs(upDot), below);
-    float zenithAngle = acos(clamp(airmassUpDot, -1.0, 1.0));
-    float inverse = 1.0 / (cos(zenithAngle) + 0.15 * pow(93.885 - ((zenithAngle * 180.0) / pi), -1.253));
-    float sR = rayleighZenithLength * inverse;
-    float sM = mieZenithLength * inverse;
-    vec3 Fex = exp(-(betaR * sR + betaM * sM));
-    vec3 betaOz = ozone * vec3(0.650, 1.881, 0.085) * 2.5E-5;
-    Fex *= exp(-betaOz * sR * 0.35);
-    float cosTheta = dot(direction, sunDir);
-    vec3 betaRTheta = betaR * rayleighPhase(cosTheta * 0.5 + 0.5);
-    vec3 betaMTheta = betaM * hgPhase(cosTheta, mieDirectionalG);
-    float sunE = sunIntensity(dot(sunDir, up));
-    vec3 Lin = pow(sunE * ((betaRTheta + betaMTheta) / (betaR + betaM)) * (1.0 - Fex), vec3(1.5));
-    Lin *= mix(vec3(1.0), pow(sunE * ((betaRTheta + betaMTheta) / (betaR + betaM)) * Fex, vec3(1.0 / 2.0)), clamp(pow(1.0 - dot(up, sunDir), 5.0), 0.0, 1.0));
-    Lin *= mix(1.0, 0.22, below);
-    vec3 L0 = vec3(0.1) * Fex;
-    float halfSin = sin(radians(max(sunSize, 0.01)) * 0.5);
-    float sunCos = cos(radians(max(sunSize, 0.01)) * 0.5);
-    float sundisc = smoothstep(sunCos, sunCos + max(0.0001, halfSin * 0.12), cosTheta) * sunDisc;
-    L0 += (sunE * 19000.0 * Fex * sunStrength) * sundisc;
-    vec3 texColor = (Lin + L0) * 0.04 + vec3(0.0, 0.0003, 0.00075);
-    texColor += ms * (1.0 - Fex) * 0.035 * vec3(0.55, 0.7, 1.0) * (sunE / EE);
-    // 输出线性 HDR：色调映射交给渲染端（与编辑器 nishitaSky 同规则）
-    gl_FragColor = vec4(texColor, 1.0);
+
+  // 由天顶角余弦构造方向（太阳在 xz 平面，+z 为天顶）
+  vec3 sun_direction(float cos_theta) {
+    return vec3(-sqrt(max(1.0 - cos_theta * cos_theta, 0.0)), 0.0, cos_theta);
+  }
+
+  // 射线与球求交（返回最近正交点距离，无交点返回 -1）
+  float ray_sphere_intersection(vec3 pos, vec3 dir, float radius) {
+    float b = dot(pos, dir);
+    float c = dot(pos, pos) - radius * radius;
+    if (c > 0.0 && b > 0.0) return -1.0;
+    float d = b * b - c;
+    if (d < 0.0) return -1.0;
+    if (d >= b * b) return -b + sqrt(d);
+    return -b - sqrt(d);
   }
 `;
 
-let nishitaRT = null;
-let nishitaScene = null;
-let nishitaCam = null;
+// —— Pass 1：透射率 LUT（256×64）——
+// u = cosθ 映射到 [0,1]，v = 归一化海拔 [0,1]
+const TRANSMITTANCE_FRAG = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform float airDensity;
+  uniform float aerosolDensity;
+  uniform float ozoneDensity;
+
+  const int TRANSMITTANCE_STEPS = 64;
+
+  ${SKY_COMMON}
+
+  void main() {
+    float cosTheta = vUv.x * 2.0 - 1.0;
+    float normAlt = vUv.y;
+    vec3 sd = sun_direction(cosTheta);
+    float dCenter = mix(EARTH_RADIUS, ATMOSPHERE_RADIUS, normAlt);
+    vec3 ro = vec3(0.0, 0.0, dCenter);
+    float tD = ray_sphere_intersection(ro, sd, ATMOSPHERE_RADIUS);
+    float tStep = tD / float(TRANSMITTANCE_STEPS);
+    vec4 result = vec4(0.0);
+    for (int i = 0; i < TRANSMITTANCE_STEPS; i++) {
+      float t = (float(i) + 0.5) * tStep;
+      vec3 x_t = ro + sd * t;
+      float alt = max(length(x_t) - EARTH_RADIUS, 0.0);
+      float localAerosol = aerosol_density_fn(alt) * aerosolDensity;
+      vec4 extinction = AEROSOL_ABSORPTION_CROSS * localAerosol
+                      + AEROSOL_SCATTERING_CROSS * localAerosol
+                      + molecular_absorption_coeff(alt) * ozoneDensity
+                      + molecular_scattering_coeff(alt) * airDensity;
+      result += extinction * tStep;
+    }
+    gl_FragColor = exp(-result);
+  }
+`;
+
+// —— Pass 2：天空等距柱状全景 + 日轮 + 地面 ——
+const SKY_FRAG = `
+  precision highp float;
+  varying vec2 vUv;
+  uniform vec3 sunDir;             // z-up 太阳方向
+  uniform float angularDiameter;   // 太阳全角（弧度）
+  uniform float sunIntensity;      // 太阳强度（标量倍率）
+  uniform float sunDisc;           // 日轮开关
+  uniform float airDensity;
+  uniform float aerosolDensity;
+  uniform float ozoneDensity;
+  uniform float altitudeKm;
+  uniform float msOn;              // 多重散射开关
+  uniform sampler2D transmittanceLUT;
+
+  // —— 输出曝光（调参入口：整体亮度/显示映射）——
+  // 物理 radiance 天顶约 1~6（Blender 交给视图变换处理），本管线 LDR 无色调映射直出，
+  // 按旧实现的天顶线性亮度校准：0.05 → 常规蓝天观感
+  const float SKY_EXPOSURE = 0.05;
+
+  const int IN_SCATTERING_STEPS = 64;
+
+  ${SKY_COMMON}
+
+  vec4 lookup_transmittance(float cosTheta, float normAlt) {
+    float u = clamp(cosTheta * 0.5 + 0.5, 0.0, 1.0);
+    float v = clamp(normAlt, 0.0, 1.0);
+    return texture2D(transmittanceLUT, vec2(u, v));
+  }
+
+  // 多重散射：地面反照率二阶散射 + 大气多散射解析拟合
+  vec4 lookup_multiscattering(float cosTheta, float normAlt, float d) {
+    float rDivD = EARTH_RADIUS / max(d, 1e-4);
+    float omega = 2.0 * PI * (1.0 - sqrt(max(1.0 - rDivD * rDivD, 0.0)));
+    vec4 T_to_ground = lookup_transmittance(cosTheta, 0.0);
+    vec4 T_ground_to_sample = lookup_transmittance(1.0, 0.0) / lookup_transmittance(1.0, normAlt);
+    vec4 L_ground = PHASE_ISOTROPIC * omega * (GROUND_ALBEDO / PI) * T_to_ground * T_ground_to_sample * cosTheta;
+    vec4 L_ms = 0.02 * vec4(0.217, 0.347, 0.594, 1.0) / (1.0 + 5.0 * exp(-17.92 * cosTheta));
+    return (msOn > 0.5) ? (L_ms + L_ground) : vec4(0.0);
+  }
+
+  vec4 get_inscattering(vec3 rd, vec3 ro, float tD) {
+    float cosTheta = dot(-rd, sunDir);
+    float molecularPhase = RAYLEIGH_PHASE_SCALE * (1.0 + cosTheta * cosTheta);
+    float den = 1.0 + SQR_G + 2.0 * G * cosTheta;
+    float aerosolPhase = (1.0 / (4.0 * PI)) * (1.0 - SQR_G) / (den * sqrt(den));
+
+    float dt = tD / float(IN_SCATTERING_STEPS);
+    vec4 L_inscattering = vec4(0.0);
+    vec4 transmittance = vec4(1.0);
+    for (int i = 0; i < IN_SCATTERING_STEPS; i++) {
+      float t = (float(i) + 0.5) * dt;
+      vec3 x_t = ro + rd * t;
+      float dist = length(x_t);
+      vec3 zenithDir = x_t / max(dist, 1e-4);
+      float alt = max(dist - EARTH_RADIUS, 0.0);
+      float normAlt = alt / ATMOSPHERE_THICKNESS;
+      float sampleCosTheta = dot(zenithDir, sunDir);
+
+      float localAerosol = aerosol_density_fn(alt) * aerosolDensity;
+      vec4 aa = AEROSOL_ABSORPTION_CROSS * localAerosol;
+      vec4 as_ = AEROSOL_SCATTERING_CROSS * localAerosol;
+      vec4 ma = molecular_absorption_coeff(alt) * ozoneDensity;
+      vec4 ms_ = molecular_scattering_coeff(alt) * airDensity;
+      vec4 extinction = aa + as_ + ma + ms_;
+
+      vec4 T_to_sun = lookup_transmittance(sampleCosTheta, normAlt);
+      vec4 msMulti = lookup_multiscattering(sampleCosTheta, normAlt, dist);
+      vec4 S = SUN_SPECTRAL_IRRADIANCE *
+               (ms_ * (molecularPhase * T_to_sun + msMulti) +
+                as_ * (aerosolPhase * T_to_sun + msMulti));
+
+      vec4 stepT = exp(-dt * extinction);
+      vec4 cutExt = max(extinction, vec4(1e-7));
+      vec4 S_int = (S - S * stepT) / cutExt;
+      L_inscattering += transmittance * S_int;
+      transmittance *= stepT;
+    }
+    return L_inscattering;
+  }
+
+  void main() {
+    // 等距柱状 UV → y-up 方向（与 three equirectUv 采样约定一致，v=1 天顶）
+    float phi = (vUv.x - 0.5) * 2.0 * PI;
+    float sy = sin((vUv.y - 0.5) * PI);
+    float sr = sqrt(max(1.0 - sy * sy, 0.0));
+    vec3 rdYup = vec3(sr * cos(phi), sy, sr * sin(phi));
+    // y-up → z-up 轴映射（保持最终纹理方向语义不变）
+    vec3 rd = vec3(rdYup.x, rdYup.z, rdYup.y);
+
+    vec3 ro = vec3(0.0, 0.0, EARTH_RADIUS + altitudeKm);
+    float atmosDist = ray_sphere_intersection(ro, rd, ATMOSPHERE_RADIUS);
+    float groundDist = ray_sphere_intersection(ro, rd, EARTH_RADIUS);
+    float tD = (groundDist < 0.0) ? atmosDist : groundDist;
+
+    vec4 L4 = get_inscattering(rd, ro, tD);
+
+    // —— 地面（命中地面时叠加 Lambertian 地表辐亮度，避免海拔 0 时地平线以下全黑）——
+    // 直射日照（太阳透射 × 入射角）+ 多散射拟合项近似的环境光，再经视线段透射衰减；
+    // 沿视线的空气透视（雾化）已由上面的散射路径积分给出。透射率 LUT 只覆盖向天顶的
+    // 路径，向下的视线段用路径中点消光系数解析近似（海拔低时路径短，≈1）。
+    if (groundDist >= 0.0) {
+      vec3 xg = ro + rd * groundDist;
+      vec3 n = xg / max(length(xg), 1e-4);
+      float sunCosG = dot(n, sunDir);
+      vec4 eGround = SUN_SPECTRAL_IRRADIANCE * lookup_transmittance(sunCosG, 0.0) * max(sunCosG, 0.0)
+                   + PI * lookup_multiscattering(sunCosG, 0.0, EARTH_RADIUS);
+      vec3 xMid = ro + rd * (groundDist * 0.5);
+      float altMid = max(length(xMid) - EARTH_RADIUS, 0.0);
+      float laMid = aerosol_density_fn(altMid) * aerosolDensity;
+      vec4 extMid = AEROSOL_ABSORPTION_CROSS * laMid + AEROSOL_SCATTERING_CROSS * laMid
+                  + molecular_absorption_coeff(altMid) * ozoneDensity
+                  + molecular_scattering_coeff(altMid) * airDensity;
+      L4 += (GROUND_ALBEDO / PI) * eGround * exp(-extMid * groundDist);
+    }
+
+    vec3 sky = XYZ_TO_RGB * spectral_to_xyz(L4);
+    sky = max(sky, vec3(0.0));
+
+    // —— 太阳圆盘（软边缘光晕：整盘平台高斯衰减，无硬边界，天然无锯齿）——
+    if (sunDisc > 0.5) {
+      float sunAngle = acos(clamp(dot(rd, sunDir), -1.0, 1.0));
+      float halfAngular = angularDiameter * 0.5;
+      float dirElevation = asin(clamp(rd.z, -1.0, 1.0));
+      float earthIntersectionAngle = PI * 0.5 - asin(EARTH_RADIUS / (EARTH_RADIUS + altitudeKm));
+      if (dirElevation > earthIntersectionAngle) {
+        float t = sunAngle / max(halfAngular, 1e-5);
+        // 平台高斯：t≤0.5 全亮（视觉尺寸 ≈ 标称尺寸），之后平滑衰减、~1.5R 处 <0.3% 截断。
+        float tc = max(t - 0.5, 0.0);
+        float edge = exp(-6.0 * tc * tc);
+        if (edge > 0.003) {
+          float limbDarkening = 1.0 - 0.6 * (1.0 - sqrt(1.0 - min(t, 1.0) * min(t, 1.0)));
+          float solidAngle = 2.0 * PI * (1.0 - cos(halfAngular));
+          float normAlt = clamp(altitudeKm / ATMOSPHERE_THICKNESS, 0.0, 1.0);
+          vec4 sunTrans = lookup_transmittance(sunDir.z, normAlt);
+          vec4 sunSpectrum = SUN_SPECTRAL_IRRADIANCE * sunTrans / solidAngle;
+          vec3 sunColor = XYZ_TO_RGB * spectral_to_xyz(sunSpectrum);
+          sky += max(sunColor, vec3(0.0)) * (sunIntensity * limbDarkening * edge);
+        }
+      }
+    }
+
+    gl_FragColor = vec4(sky * SKY_EXPOSURE, 1.0);
+  }
+`;
+
+const LUT_W = 256;
+const LUT_H = 64;
+const SKY_W = 512;
+const SKY_H = 256;
+
+let nishitaRes = null;
+
+function ensureNishita() {
+  if (nishitaRes) return nishitaRes;
+  const cam = new THREE.Camera();
+  cam.projectionMatrix.identity();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3),
+  );
+  geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array([0, 0, 2, 0, 0, 2]), 2));
+
+  const transmittanceMaterial = new THREE.ShaderMaterial({
+    vertexShader: NISHITA_VERT,
+    fragmentShader: TRANSMITTANCE_FRAG,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      airDensity: { value: 1 },
+      aerosolDensity: { value: 1 },
+      ozoneDensity: { value: 1 },
+    },
+  });
+  const transmittanceScene = new THREE.Scene();
+  transmittanceScene.add(new THREE.Mesh(geometry, transmittanceMaterial));
+  const transmittanceRT = new THREE.WebGLRenderTarget(LUT_W, LUT_H, {
+    type: THREE.HalfFloatType,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+    colorSpace: THREE.NoColorSpace,
+  });
+
+  const skyMaterial = new THREE.ShaderMaterial({
+    vertexShader: NISHITA_VERT,
+    fragmentShader: SKY_FRAG,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      sunDir: { value: new THREE.Vector3(0, 0, 1) },
+      angularDiameter: { value: (0.545 * Math.PI) / 180 },
+      sunIntensity: { value: 1 },
+      sunDisc: { value: 1 },
+      airDensity: { value: 1 },
+      aerosolDensity: { value: 1 },
+      ozoneDensity: { value: 1 },
+      altitudeKm: { value: 0.1 },
+      msOn: { value: 1 },
+      transmittanceLUT: { value: transmittanceRT.texture },
+    },
+  });
+  const skyScene = new THREE.Scene();
+  skyScene.add(new THREE.Mesh(geometry, skyMaterial));
+  const skyRT = new THREE.WebGLRenderTarget(SKY_W, SKY_H, {
+    type: THREE.HalfFloatType,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    colorSpace: THREE.NoColorSpace,
+  });
+
+  nishitaRes = {
+    cam,
+    transmittanceMaterial,
+    transmittanceScene,
+    transmittanceRT,
+    skyMaterial,
+    skyScene,
+    skyRT,
+  };
+  return nishitaRes;
+}
 
 /** 按 Nishita 参数渲染等距柱状天空纹理（线性 HDR；参数结构与编辑器一致） */
 export function makeNishitaSkyEquirect(renderer, params) {
-  if (!nishitaScene) {
-    nishitaScene = new THREE.Scene();
-    nishitaCam = new THREE.Camera();
-    nishitaCam.projectionMatrix.identity();
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3),
-    );
-    geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array([0, 0, 2, 0, 0, 2]), 2));
-    const material = new THREE.ShaderMaterial({
-      vertexShader: NISHITA_VERT,
-      fragmentShader: NISHITA_FRAG,
-      depthTest: false,
-      depthWrite: false,
-      uniforms: {
-        sunPosition: { value: new THREE.Vector3(1, 0.4, 0) },
-        rayleigh: { value: 1 },
-        mie: { value: 1 },
-        ozone: { value: 1 },
-        altitude: { value: 0 },
-        mieDirectionalG: { value: 0.8 },
-        sunDisc: { value: 1 },
-        sunSize: { value: 1 },
-        sunStrength: { value: 1 },
-        ms: { value: 1 },
-        up: { value: new THREE.Vector3(0, 1, 0) },
-      },
-    });
-    nishitaScene.add(new THREE.Mesh(geometry, material));
-    nishitaScene.userData.material = material;
-    nishitaRT = new THREE.WebGLRenderTarget(1024, 512, {
-      type: THREE.HalfFloatType,
-      depthBuffer: false,
-      stencilBuffer: false,
-      generateMipmaps: false,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      colorSpace: THREE.NoColorSpace,
-    });
-  }
-  const material = nishitaScene.userData.material;
-  const u = material.uniforms;
+  const res = ensureNishita();
   const el = (params.sunElevation * Math.PI) / 180;
   const az = (params.sunRotation * Math.PI) / 180;
-  u.sunPosition.value.set(
+  // z-up 太阳方向（z 为天顶），与 shader 内部 rd 的轴映射一致（sunDir 构造即 shader 约定，不再二次映射）
+  const sunDir = new THREE.Vector3(
     Math.cos(el) * Math.cos(az),
-    Math.sin(el),
     Math.cos(el) * Math.sin(az),
+    Math.sin(el),
   );
-  u.rayleigh.value = Math.max(0, params.air);
-  u.mie.value = Math.max(0, params.dust);
-  u.ozone.value = Math.max(0, params.ozone);
-  u.altitude.value = Math.max(0, params.altitude);
-  u.sunDisc.value = params.sunDisc ? 1 : 0;
-  u.sunSize.value = Math.max(0.01, params.sunSize);
-  u.sunStrength.value = Math.max(0, params.sunStrength);
-  u.ms.value = params.ms ? 1 : 0;
-  renderer.setRenderTarget(nishitaRT);
-  renderer.render(nishitaScene, nishitaCam);
+  const air = Math.max(0, params.air);
+  const aerosol = Math.max(0, params.dust);
+  const ozone = Math.max(0, params.ozone);
+  const altitudeKm = Math.max(params.altitude, 1) / 1000; // 米 → km
+
+  // Pass 1：透射率 LUT
+  const tu = res.transmittanceMaterial.uniforms;
+  tu.airDensity.value = air;
+  tu.aerosolDensity.value = aerosol;
+  tu.ozoneDensity.value = ozone;
+  renderer.setRenderTarget(res.transmittanceRT);
+  renderer.render(res.transmittanceScene, res.cam);
+
+  // Pass 2：天空全景
+  const su = res.skyMaterial.uniforms;
+  su.sunDir.value.copy(sunDir);
+  su.angularDiameter.value = (Math.max(0.01, params.sunSize) * Math.PI) / 180;
+  su.sunIntensity.value = Math.max(0, params.sunStrength);
+  su.sunDisc.value = params.sunDisc ? 1 : 0;
+  su.airDensity.value = air;
+  su.aerosolDensity.value = aerosol;
+  su.ozoneDensity.value = ozone;
+  su.altitudeKm.value = altitudeKm;
+  su.msOn.value = params.ms ? 1 : 0;
+  renderer.setRenderTarget(res.skyRT);
+  renderer.render(res.skyScene, res.cam);
+
   renderer.setRenderTarget(null);
-  const tex = nishitaRT.texture;
+  const tex = res.skyRT.texture;
   tex.mapping = THREE.EquirectangularReflectionMapping;
   // 线性 HDR 内容：色调映射/输出编码由 three 背景管线按渲染器设置统一处理
   tex.colorSpace = THREE.LinearSRGBColorSpace;
