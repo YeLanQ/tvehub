@@ -26,6 +26,11 @@ pub struct SceneCmd {
 pub enum CmdKind {
     /// 新增节点（node.parent_id 已指向目标父节点）
     Add { node: NodeData },
+    /// 新增嵌套子树（prefab 实例化；父节点以命令参数为准，undo = 摘除根子树）
+    AddTree {
+        root: NodeData,
+        parent_id: Option<String>,
+    },
     /// 批量删除（首次执行捕获子树；redo 重新摘除）
     RemoveNodes {
         ids: Vec<String>,
@@ -54,6 +59,10 @@ pub enum CmdKind {
         before: NodeData,
         after: NodeData,
     },
+    /// 批量整节点属性补丁（多选批量编辑一次撤销）
+    PatchNodes {
+        items: Vec<(String, NodeData, NodeData)>,
+    },
 }
 
 impl SceneCmd {
@@ -63,6 +72,9 @@ impl SceneCmd {
             CmdKind::Add { node } => graph
                 .add_node(node.clone())
                 .map(|c| vec![c])
+                .unwrap_or_default(),
+            CmdKind::AddTree { root, parent_id } => graph
+                .add_tree(root.clone(), parent_id.as_deref())
                 .unwrap_or_default(),
             CmdKind::RemoveNodes { ids, captured, done } => {
                 let mut changes = Vec::new();
@@ -135,6 +147,15 @@ impl SceneCmd {
                 .patch_node(id, after.clone())
                 .map(|c| vec![c])
                 .unwrap_or_default(),
+            CmdKind::PatchNodes { items } => {
+                let mut changes = Vec::new();
+                for (id, _, after) in items.iter() {
+                    if let Some(c) = graph.patch_node(id, after.clone()) {
+                        changes.push(c);
+                    }
+                }
+                changes
+            }
         }
     }
 
@@ -143,6 +164,10 @@ impl SceneCmd {
         match &mut self.kind {
             CmdKind::Add { node } => graph
                 .remove_subtree(&node.id)
+                .map(|(_, c)| vec![c])
+                .unwrap_or_default(),
+            CmdKind::AddTree { root, .. } => graph
+                .remove_subtree(&root.id)
                 .map(|(_, c)| vec![c])
                 .unwrap_or_default(),
             CmdKind::RemoveNodes { captured, .. } => {
@@ -175,6 +200,15 @@ impl SceneCmd {
                 .patch_node(id, before.clone())
                 .map(|c| vec![c])
                 .unwrap_or_default(),
+            CmdKind::PatchNodes { items } => {
+                let mut changes = Vec::new();
+                for (id, before, _) in items.iter() {
+                    if let Some(c) = graph.patch_node(id, before.clone()) {
+                        changes.push(c);
+                    }
+                }
+                changes
+            }
         }
     }
 }
@@ -307,6 +341,7 @@ mod tests {
         let mut h = History::default();
         h.push(mesh_cmd("n", None));
         h.undo_stack.last_mut().unwrap().execute(&mut g);
+        assert!(g.contains("n"));
 
         let before = g.get("n").unwrap().transform.clone();
         let after = TransformData {
@@ -330,5 +365,77 @@ mod tests {
 
         h.undo(&mut g).unwrap();
         assert_eq!(g.get("n").unwrap().transform.position.x, before.position.x);
+    }
+
+    /// AddTree（prefab 实例化）：undo 摘除整棵子树，redo 按嵌套文档重建
+    #[test]
+    fn add_tree_undo_redo_roundtrip() {
+        let mut g = Graph::default();
+        let mut h = History::default();
+        h.push(mesh_cmd("root", None));
+        h.undo_stack.last_mut().unwrap().execute(&mut g);
+
+        let tree: NodeData = serde_json::from_value(json!({
+            "type": "node", "id": "t", "name": "T", "parentId": "root",
+            "children": [
+                { "type": "meshNode", "id": "t1", "name": "T1", "parentId": "t",
+                  "source": "primitive", "geometry": "box" }
+            ]
+        }))
+        .unwrap();
+        h.push(SceneCmd {
+            label: "Add Tree".into(),
+            kind: CmdKind::AddTree {
+                root: tree,
+                parent_id: Some("root".into()),
+            },
+        });
+        h.undo_stack.last_mut().unwrap().execute(&mut g);
+        assert!(g.contains("t") && g.contains("t1"));
+        assert_eq!(g.get("t").unwrap().parent_id.as_deref(), Some("root"));
+
+        h.undo(&mut g).unwrap();
+        assert!(!g.contains("t") && !g.contains("t1"));
+
+        h.redo(&mut g).unwrap();
+        assert!(g.contains("t") && g.contains("t1"));
+        assert_eq!(g.get("t1").unwrap().parent_id.as_deref(), Some("t"));
+    }
+
+    /// PatchNodes（多选批量编辑）：一次撤销/重做回填全部节点
+    #[test]
+    fn patch_nodes_undo_redo_batch() {
+        let mut g = Graph::default();
+        let mut h = History::default();
+        for id in ["a", "b"] {
+            h.push(mesh_cmd(id, None));
+            h.undo_stack.last_mut().unwrap().execute(&mut g);
+        }
+
+        let snapshot = |g: &Graph, id: &str| g.get(id).unwrap().clone();
+        let items: Vec<(String, NodeData, NodeData)> = ["a", "b"]
+            .iter()
+            .map(|id| {
+                let before = snapshot(&g, id);
+                let mut after = before.clone();
+                after.name = format!("{id}-renamed");
+                (id.to_string(), before, after)
+            })
+            .collect();
+        h.push(SceneCmd {
+            label: "Batch Patch".into(),
+            kind: CmdKind::PatchNodes { items },
+        });
+        h.undo_stack.last_mut().unwrap().execute(&mut g);
+        assert_eq!(g.get("a").unwrap().name, "a-renamed");
+        assert_eq!(g.get("b").unwrap().name, "b-renamed");
+
+        h.undo(&mut g).unwrap();
+        assert_eq!(g.get("a").unwrap().name, "a");
+        assert_eq!(g.get("b").unwrap().name, "b");
+
+        h.redo(&mut g).unwrap();
+        assert_eq!(g.get("a").unwrap().name, "a-renamed");
+        assert_eq!(g.get("b").unwrap().name, "b-renamed");
     }
 }

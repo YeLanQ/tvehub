@@ -64,6 +64,12 @@ defineProps<{ kind: string }>();
       <circle cx="12" cy="7.4" r="1.3" />
     </template>
 
+    <!-- 预制体（.prefab）：立方体 + 子树分支（区别于纯模型立方体） -->
+    <template v-else-if="kind === 'prefab'">
+      <path d="M9 3.5l5 2.8v5.4l-5 2.8-5-2.8V6.3l5-2.8z" />
+      <path d="M14 10.5v5.4M14 15.9l-4.5 2.6M17.5 18.5h3M19 18.5v3" />
+    </template>
+
     <!-- 模型：线框立方体 -->
     <template v-else-if="kind === 'glb' || kind === 'gltf' || kind === 'fbx' || kind === 'obj'">
       <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />

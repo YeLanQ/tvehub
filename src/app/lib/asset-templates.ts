@@ -11,6 +11,8 @@ const TEMPLATE_RELS: Record<string, string> = {
   scene: "internal/templates/EmptyScene.scene",
   // TS 脚本组件（Component 子类存根），新建脚本用
   script: "internal/templates/Script.ts",
+  // 预制体：单节点空白 prefab（嵌套 children 与 .scene root 同形状），新建预制体用
+  prefab: "internal/templates/EmptyPrefab.prefab",
 };
 
 /** 取某类资产原型的内置模板路径；未注册返回 null */

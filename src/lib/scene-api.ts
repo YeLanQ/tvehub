@@ -10,6 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { JsonRecord } from "../framework/prototype/types";
 import type {
   MoveTarget,
+  PatchItem,
   SceneChangedEvent,
   SceneHistoryState,
   SceneTransport,
@@ -27,6 +28,7 @@ export interface SceneLoadResult {
 
 const transport: SceneTransport = {
   addNode: (node, label) => invoke<void>("scene_add_node", { node, label }),
+  addTree: (root, parentId, label) => invoke<void>("scene_add_tree", { root, parentId, label }),
   removeNodes: (ids, label) => invoke<void>("scene_remove_nodes", { ids, label }),
   reparentNodes: (moves: MoveTarget[], label) =>
     invoke<void>("scene_reparent_nodes", { moves, label }),
@@ -35,6 +37,7 @@ const transport: SceneTransport = {
     invoke<void>("scene_set_transform", { id, before, after }),
   patchNode: (id: string, before: JsonRecord, after: JsonRecord, label) =>
     invoke<void>("scene_patch_node", { id, before, after, label }),
+  patchNodes: (items: PatchItem[], label) => invoke<void>("scene_patch_nodes", { items, label }),
   undo: () => invoke<SceneHistoryState>("scene_undo"),
   redo: () => invoke<SceneHistoryState>("scene_redo"),
 };

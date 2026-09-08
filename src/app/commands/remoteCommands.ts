@@ -329,7 +329,7 @@ registerCommand({
   label: "新建资源",
   group: "资源",
   expose: true,
-  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon；skybox 可带 skyKind: procedural/cube）",
+  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon；skybox 可带 skyKind: procedural/cube）",
   run: async (_ctx, args: any) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();
@@ -399,6 +399,12 @@ registerCommand({
         if (!rel) throw new Error(`创建天空盒失败: ${dir || "项目根"}`);
         return { created: rel, type, skyKind: kind };
       }
+      case "prefab": {
+        const name = uniqueName(taken, dir, stem ?? "NewPrefab", ".prefab");
+        const rel = await store.createPrefabAsset(root, dir, stripAssetExt(name, ".prefab"));
+        if (!rel) throw new Error("创建预制体失败: " + (dir || "项目根"));
+        return { created: rel, type };
+      }
       case "folder": {
         const base = dir ? `${dir}/` : "";
         const name = stem ?? "NewFolder";
@@ -407,7 +413,7 @@ registerCommand({
         return { created: rel, type };
       }
       default:
-        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/shader/texcube/skybox/folder）`);
+        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/shader/texcube/skybox/prefab/folder）`);
     }
   },
 });

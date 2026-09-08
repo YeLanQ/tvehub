@@ -12,6 +12,7 @@ import {
 } from "../scene/SceneClient";
 import type { Node } from "../prototype/Node";
 import { isAudioSourceComponent } from "../prototype/Node";
+import { instantiatePrefabTree, serializePrefabTree } from "../prototype/prefab";
 import {
   AudioNode,
   CameraNode,
@@ -626,6 +627,47 @@ export class EditorEngine {
     this.graph.commitPatch(nodeId, before, after, label);
   }
 
+  /** 批量整节点属性补丁（多选批量编辑；一次撤销） */
+  patchNodes(items: { id: string; before: JsonRecord; after: JsonRecord }[], label?: string): void {
+    this.graph.commitPatches(items, label);
+  }
+
+  /**
+   * 实例化嵌套节点树（prefab 实例化；一次撤销）：
+   * 文档 → 全新节点树（id/组件 id 重生成）→ 挂到目标父节点并选中实例根。
+   * prefabRel 写在实例根节点上（来源引用，供「更新预制体」与检查器展示）。
+   */
+  instantiateTree(
+    doc: JsonRecord,
+    prefabRel: string,
+    parentId?: string,
+    label?: string,
+  ): Node | null {
+    const parent = this.resolveParent(parentId);
+    if (!parent && this.graph.root) {
+      logger.warn("[scene] 实例化子树缺少目标父节点");
+      return null;
+    }
+    const { root, nodes } = instantiatePrefabTree(doc, this.factory);
+    root.prefab = prefabRel;
+    root.name = root.name || "Prefab";
+    this.graph.addTree(
+      root,
+      nodes,
+      parent?.id ?? null,
+      label ?? `实例化 ${prefabRel.split("/").pop() ?? "Prefab"}`,
+    );
+    this.select(root.id);
+    return root;
+  }
+
+  /** 节点子树 → 嵌套 prefab 文档（存储为预制体/更新预制体用） */
+  serializeSubtree(nodeId: string): JsonRecord | null {
+    const node = this.graph.get(nodeId);
+    if (!node) return null;
+    return serializePrefabTree(node, (id) => this.graph.childrenOf(id));
+  }
+
   /**
    * 材质资产参数保存后：刷新引用该材质的所有网格外观并广播 material:changed。
    * rel 为空时刷新全部网格材质（装载/迁移后兜底用）。
@@ -736,7 +778,17 @@ export class EditorEngine {
     this.synchronizer.onGraphChange(c, this.graph);
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     // 节点子树移除 → 其动画绑定（mixer/骨骼辅助线）一并解除
-    if (c.kind === "remove") this.animation.unbind(c.nodeId);
+    if (c.kind === "remove") {
+      this.animation.unbind(c.nodeId);
+      // 选中节点在被移除子树内（撤销/回滚/删除）→ 先清选中，
+      // 避免 gizmo 持有已摘除对象反复报 "must be a part of the scene graph"
+      if (
+        this.selectedId &&
+        (c.nodeId === this.selectedId || this.graph.isDescendant(c.nodeId, this.selectedId))
+      ) {
+        this.select(null);
+      }
+    }
     // 音源节点：入图/属性变更 → 按最新数据同步音源；移除 → 解绑销毁
     if (c.kind === "remove") {
       this.audio.unbind(c.nodeId);

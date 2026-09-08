@@ -24,6 +24,7 @@ export const ASSET_TYPE_FILTERS: { id: string; label: string; kinds?: string[] }
   { id: "tex", label: "纹理", kinds: ["png", "jpg", "jpeg", "webp", "bmp", "hdr"] },
   { id: "texcube", label: "TextureCube", kinds: ["texcube"] },
   { id: "model", label: "模型", kinds: ["glb", "gltf", "fbx", "obj"] },
+  { id: "prefab", label: "预制体", kinds: ["prefab"] },
 ];
 
 /** 资产 kind 是否命中某类型筛选（"all" 或未注册的筛选 id 一律通过） */

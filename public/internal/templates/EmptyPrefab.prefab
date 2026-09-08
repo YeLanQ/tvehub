@@ -1,0 +1,16 @@
+{
+  "type": "node",
+  "id": "{{PREFAB_ROOT_ID}}",
+  "name": "{{PREFAB_NAME}}",
+  "parentId": null,
+  "childIds": [],
+  "active": true,
+  "visible": true,
+  "transform": {
+    "type": "transform",
+    "position": { "x": 0, "y": 0, "z": 0 },
+    "rotation": { "x": 0, "y": 0, "z": 0 },
+    "scale": { "x": 1, "y": 1, "z": 1 }
+  },
+  "properties": {}
+}

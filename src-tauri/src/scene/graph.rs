@@ -133,6 +133,67 @@ impl Graph {
         })
     }
 
+    /// 加入嵌套文档子树（prefab 实例化；层级以嵌套 children 为准重建，
+    /// 根挂到 parent_id 下）。逐节点产生 add 变更（文档序，先父后子）；
+    /// 任一节点 id 冲突时回滚全部已插入节点并返回 None。
+    pub fn add_tree(&mut self, root: NodeData, parent_id: Option<&str>) -> Option<Vec<GraphChange>> {
+        if root.id.is_empty() || self.nodes.contains_key(&root.id) {
+            return None;
+        }
+        if let Some(pid) = parent_id {
+            if !self.nodes.contains_key(pid) {
+                return None;
+            }
+        } else if self.root_id.is_some() {
+            // 无父挂载仅允许空场景（否则会产生不可达的孤儿节点）
+            return None;
+        }
+        let mut inserted: Vec<String> = Vec::new();
+        let mut changes: Vec<GraphChange> = Vec::new();
+        if !self.add_tree_recursive(root, parent_id, &mut inserted, &mut changes) {
+            // 回滚：插入节点互相之间是父子（一并删除），唯一外部引用是根的父
+            for id in &inserted {
+                self.nodes.remove(id);
+            }
+            let root_id = inserted.first().cloned();
+            if let (Some(pid), Some(root_id)) = (parent_id, root_id.as_deref()) {
+                if let Some(parent) = self.nodes.get_mut(pid) {
+                    parent.child_ids.retain(|c| c != root_id);
+                }
+            } else if let Some(root_id) = root_id {
+                if self.root_id.as_deref() == Some(root_id.as_str()) {
+                    self.root_id = None;
+                }
+            }
+            return None;
+        }
+        Some(changes)
+    }
+
+    fn add_tree_recursive(
+        &mut self,
+        mut node: NodeData,
+        parent_id: Option<&str>,
+        inserted: &mut Vec<String>,
+        changes: &mut Vec<GraphChange>,
+    ) -> bool {
+        node.parent_id = parent_id.map(str::to_string);
+        let children = std::mem::take(&mut node.children);
+        node.child_ids = children.iter().map(|c| c.id.clone()).collect();
+        let id = node.id.clone();
+        match self.add_node(node) {
+            Some(change) => changes.push(change),
+            None => return false,
+        }
+        inserted.push(id.clone());
+        for child in children {
+            if !self.add_tree_recursive(child, Some(&id), inserted, changes) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// 收集子树（DFS，文档序）
     fn collect_subtree(&self, root_id: &str) -> Vec<NodeData> {
         let mut out = Vec::new();
@@ -373,6 +434,47 @@ mod tests {
         // 挂回根级（祖先方向）→ 允许
         assert!(g.reparent("a", None, -1).is_some());
         assert_eq!(g.root_id.as_deref(), Some("a"));
+    }
+
+    /// 嵌套子树加入（prefab 实例化路径）：层级重建、id 冲突整体回滚、
+    /// 父节点 childIds 不留悬挂引用
+    #[test]
+    fn add_tree_flattens_rollback_and_replays() {
+        let tree = |id: &str, children: Vec<NodeData>| -> NodeData {
+            let child_ids: Vec<String> = children.iter().map(|c| c.id.clone()).collect();
+            serde_json::from_value(json!({
+                "type": "node", "id": id, "name": id, "parentId": null,
+                "childIds": child_ids, "children": children,
+            }))
+            .unwrap()
+        };
+        let mut g = Graph::default();
+        g.add_node(mesh("scene-root", None)).unwrap();
+        g.add_node(mesh("p", Some("scene-root"))).unwrap();
+
+        // 正常加入：嵌套层级重建为平铺 childIds/parentId
+        let changes = g
+            .add_tree(tree("t", vec![tree("t1", vec![]), mesh("t2", None)]), Some("p"))
+            .unwrap();
+        assert_eq!(changes.len(), 3, "根 + 两个子节点 = 3 条 add 变更");
+        assert_eq!(g.get("t").unwrap().child_ids, vec!["t1".to_string(), "t2".to_string()]);
+        assert_eq!(g.get("t1").unwrap().parent_id.as_deref(), Some("t"));
+        assert_eq!(g.get("p").unwrap().child_ids, vec!["t".to_string()]);
+
+        // id 冲突：整体回滚，父 childIds 无悬挂引用
+        let dup = tree("t", vec![mesh("fresh", None)]);
+        assert!(g.add_tree(dup, Some("p")).is_none());
+        assert!(!g.contains("fresh"));
+        assert_eq!(g.get("p").unwrap().child_ids, vec!["t".to_string()]);
+
+        // 部分冲突（第二个子节点 id 已存在）→ 已插入的首子节点一并回滚
+        let partial = tree("u", vec![mesh("u1", None), mesh("t1", None)]);
+        assert!(g.add_tree(partial, Some("p")).is_none());
+        assert!(!g.contains("u") && !g.contains("u1"));
+        assert_eq!(g.get("p").unwrap().child_ids, vec!["t".to_string()]);
+
+        // 有场景根时禁止无父挂载（避免孤儿节点）
+        assert!(g.add_tree(tree("v", vec![]), None).is_none());
     }
 
     #[test]

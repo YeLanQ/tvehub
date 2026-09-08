@@ -67,6 +67,7 @@ export class MeshNode extends Node {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      prefab: this.prefab,
       components: this.components,
       source: this.source,
       geometry: this.geometry,

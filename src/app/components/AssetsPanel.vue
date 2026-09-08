@@ -15,6 +15,7 @@ import { logStore } from "../stores/log";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
 import { confirm } from "../lib/confirm";
+import { instantiatePrefabAsset } from "../lib/prefabs";
 import { setAssetSelection } from "../lib/active-panel";
 import {
   listDirectoryChildren,
@@ -313,6 +314,7 @@ const menuApi: AssetMenuApi = {
   onOpenDir: (dir) => navigate(dir),
   onAddModelToScene: (item) => addModelToScene(item),
   onAddAudioToScene: (item) => addAudioToScene(item),
+  onInstantiatePrefab: (item) => void instantiatePrefab(item),
   onOpenScript: (item) => openScriptAsset(item),
   onCopyInternal: (item) => void copyInternalToProject(item),
   onCopy: (item) => void doCopy(item),
@@ -325,6 +327,7 @@ const menuApi: AssetMenuApi = {
   onNewShader: (dir, kind) => void doNewShader(dir, kind),
   onNewSkybox: (dir, kind) => void doNewSkybox(dir, kind),
   onNewTextureCube: (dir) => void doNewTextureCube(dir),
+  onNewPrefab: (dir) => void doNewPrefab(dir),
   onImport: (dir) => void doImport(dir),
   onImportFolder: (dir) => void doImportFolder(dir),
   onCopyPath: (p) => void copyPath(p),
@@ -379,6 +382,29 @@ async function doNewScript(dir: string) {
   });
   if (!name?.trim()) return;
   await getScriptsStore().createScript(name.trim());
+}
+
+/** 新建空白预制体（assets/prefabs 语义上的目录均可；模板创建） */
+async function doNewPrefab(dir: string): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir) || isSrcDir(dir)) {
+    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建预制体" : "内置目录只读，不允许新建预制体");
+    return;
+  }
+  const name = await prompt({
+    title: "新建预制体",
+    label: dir || "项目根",
+    initial: "NewPrefab",
+    confirmText: "创建",
+  });
+  if (!name?.trim()) return;
+  await assetsStore.createPrefabAsset(root, dir, name.trim());
+}
+
+/** 实例化预制体资产到当前场景（挂到选中节点/根下；一次撤销） */
+async function instantiatePrefab(item: { path: string }): Promise<void> {
+  await instantiatePrefabAsset(item.path);
 }
 
 /** 新建材质资产（到 dir；材质与着色器分离，默认挂内置 PBR 着色器；按名去重，无需弹窗） */

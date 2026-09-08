@@ -24,6 +24,7 @@ export interface AssetMenuApi {
   onOpenDir: (dir: string) => void;
   onAddModelToScene: (item: ChildEntry) => void;
   onAddAudioToScene: (item: ChildEntry) => void;
+  onInstantiatePrefab: (item: ChildEntry) => void;
   onOpenScript: (item: ChildEntry) => void;
   onCopyInternal: (item: ChildEntry) => void;
   onCopy: (item: ChildEntry) => void;
@@ -36,6 +37,7 @@ export interface AssetMenuApi {
   onNewShader: (dir: string, kind: string) => void;
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTextureCube: (dir: string) => void;
+  onNewPrefab: (dir: string) => void;
   onImport: (dir: string) => void;
   onImportFolder: (dir: string) => void;
   onCopyPath: (path: string) => void;
@@ -47,46 +49,29 @@ function parentOf(path: string): string | null {
   return i > 0 ? path.slice(0, i) : i === 0 ? "" : null;
 }
 
-/** 目录允许时的「新建场景」菜单项（src / 内置目录不允许 → null） */
-function sceneCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
-  if (!api.importAllowed(dir)) return null;
-  return { label: "新建场景", onClick: () => api.onNewScene(dir) };
-}
-
-/** 目录允许时的「新建材质」菜单项（材质不带类型，挂着色器在检查器完成；null 表示不提供） */
-function materialCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
-  if (!api.importAllowed(dir)) return null;
-  return { label: "新建材质", onClick: () => api.onNewMaterial(dir) };
-}
-
-/** 目录允许时的「新建着色器」子菜单（二级列出着色器种类：PBR/Unlit/卡通；null 表示不提供） */
-function shaderCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
-  if (!api.importAllowed(dir)) return null;
-  return {
-    label: "新建着色器",
-    children: api.shaderTypes().map((def) => ({
-      label: def.label,
-      onClick: () => api.onNewShader(dir, def.key),
-    })),
-  };
-}
-
-/** 目录允许时的「新建天空盒」子菜单（程序化/立方体两种天空材质；null 表示不提供） */
-function skyboxCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
-  if (!api.importAllowed(dir)) return null;
-  return {
-    label: "新建天空盒",
-    children: [
-      { label: "程序化天空", onClick: () => api.onNewSkybox(dir, "procedural") },
-      { label: "立方体天空盒", onClick: () => api.onNewSkybox(dir, "cube") },
-    ],
-  };
-}
-
-/** 目录允许时的「新建 TextureCube」菜单项（立方体纹理资产；null 表示不提供） */
-function textureCubeCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
-  if (!api.importAllowed(dir)) return null;
-  return { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) };
+/** 目录允许时的全部「新建」菜单项（场景/材质/着色器/天空盒/TextureCube/预制体） */
+function newAssetItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
+  if (!api.importAllowed(dir)) return [];
+  return [
+    { label: "新建场景", onClick: () => api.onNewScene(dir) },
+    { label: "新建材质", onClick: () => api.onNewMaterial(dir) },
+    {
+      label: "新建着色器",
+      children: api.shaderTypes().map((def) => ({
+        label: def.label,
+        onClick: () => api.onNewShader(dir, def.key),
+      })),
+    },
+    {
+      label: "新建天空盒",
+      children: [
+        { label: "程序化天空", onClick: () => api.onNewSkybox(dir, "procedural") },
+        { label: "立方体天空盒", onClick: () => api.onNewSkybox(dir, "cube") },
+      ],
+    },
+    { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) },
+    { label: "新建预制体", onClick: () => api.onNewPrefab(dir) },
+  ];
 }
 
 /** 目录允许时的导入菜单项（dir 为导入目标目录；不允许 → 空数组） */
@@ -113,6 +98,10 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   if (item.kind !== "dir" && isAudioAssetRel(item.path)) {
     items.push({ label: "添加到场景", onClick: () => api.onAddAudioToScene(item) });
   }
+  // 预制体资产：实例化到当前场景（挂到选中节点/根下，一次撤销）
+  if (item.kind === "prefab") {
+    items.push({ label: "实例化到场景", onClick: () => api.onInstantiatePrefab(item) });
+  }
   // 脚本资产：打开脚本工作台编辑
   if (item.kind === "ts") {
     items.push({ label: "打开脚本", onClick: () => api.onOpenScript(item) });
@@ -121,17 +110,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建场景/材质/着色器/子目录（assets/materials 等）
-      const sc = sceneCreateItem(item.path, api);
-      if (sc) items.push(sc);
-      const mc = materialCreateItem(item.path, api);
-      if (mc) items.push(mc);
-      const shc = shaderCreateItem(item.path, api);
-      if (shc) items.push(shc);
-      const sc2 = skyboxCreateItem(item.path, api);
-      if (sc2) items.push(sc2);
-      const tc = textureCubeCreateItem(item.path, api);
-      if (tc) items.push(tc);
+      // assets 固定根目录内仍可新建资产/子目录（assets/materials 等）
+      items.push(...newAssetItems(item.path, api));
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path, api));
     } else if (!isInternal && item.kind === "dir" && item.path === "src") {
@@ -153,16 +133,7 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
       if (api.isSrcDir(dir)) {
         items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
       } else {
-        const sc = sceneCreateItem(dir, api);
-        if (sc) items.push(sc);
-        const mc = materialCreateItem(dir, api);
-        if (mc) items.push(mc);
-        const shc = shaderCreateItem(dir, api);
-        if (shc) items.push(shc);
-        const sc2 = skyboxCreateItem(dir, api);
-        if (sc2) items.push(sc2);
-        const tc = textureCubeCreateItem(dir, api);
-        if (tc) items.push(tc);
+        items.push(...newAssetItems(dir, api));
       }
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
       if (!api.isSrcDir(dir)) {
@@ -182,16 +153,7 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
     if (api.isSrcDir(dir)) {
       items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
     } else {
-      const sc = sceneCreateItem(dir, api);
-      if (sc) items.push(sc);
-      const mc = materialCreateItem(dir, api);
-      if (mc) items.push(mc);
-      const shc = shaderCreateItem(dir, api);
-      if (shc) items.push(shc);
-      const sc2 = skyboxCreateItem(dir, api);
-      if (sc2) items.push(sc2);
-      const tc = textureCubeCreateItem(dir, api);
-      if (tc) items.push(tc);
+      items.push(...newAssetItems(dir, api));
     }
     items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
     if (!api.isSrcDir(dir)) {

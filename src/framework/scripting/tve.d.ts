@@ -184,6 +184,15 @@ export class Component<P extends ComponentProps = ComponentProps> {
   onUpdate?(delta: number): void;
 
   /**
+   * 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用）。
+   * 需要：本节点挂碰撞体组件 + 项目设置启用物理。传感器（isSensor）同样触发。
+   */
+  onCollisionEnter?(other: Entity): void;
+
+  /** 物理碰撞结束（与 other 的接触断开；参数为对方实体） */
+  onCollisionExit?(other: Entity): void;
+
+  /**
    * 生命周期：页面卸载/预览停机时调用一次（先于 onDestroy），用于释放
    * 定时器/事件订阅等外部资源。
    */

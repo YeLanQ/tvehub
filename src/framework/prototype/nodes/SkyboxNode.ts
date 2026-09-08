@@ -113,6 +113,7 @@ export class SkyboxNode extends Node {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      prefab: this.prefab,
       components: this.components,
       skyKind: this.skyKind,
       material: this.material,

@@ -168,6 +168,8 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
 
   /** @type {Array<{inst: object, script: string, dead: boolean, order: number}>} */
   const instances = [];
+  /** 节点 id → 挂载的脚本实例记录（碰撞回调按节点寻址分发） */
+  const instancesByNode = new Map();
   const failedScripts = new Set();
 
   async function instantiate(items) {
@@ -200,7 +202,14 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         continue;
       }
       registerComponent(entity.id, inst);
-      instances.push({ inst, script: item.script, dead: false, order: item.order ?? 0 });
+      const record = { inst, script: item.script, dead: false, order: item.order ?? 0 };
+      instances.push(record);
+      let list = instancesByNode.get(entity.id);
+      if (!list) {
+        list = [];
+        instancesByNode.set(entity.id, list);
+      }
+      list.push(record);
     }
   }
 
@@ -233,9 +242,44 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     }
   }
 
+  /**
+   * 物理碰撞回调分发（对齐 Unity：onCollisionEnter/Exit 在 Update 前调用）。
+   * 事件为节点 id 对（physics.mjs 后端收集）；双方实体各自收到一次回调，
+   * 参数为对方实体。同一帧内按 self|other|started 去重（复合形状多碰撞体）。
+   */
+  function dispatchCollisions() {
+    const events = physics?.drainCollisions?.() ?? [];
+    if (!events.length) return;
+    const seen = new Set();
+    for (const ev of events) {
+      if (!ev || typeof ev.a !== "string" || typeof ev.b !== "string") continue;
+      const forward = `${ev.a}|${ev.b}|${ev.started ? 1 : 0}`;
+      const backward = `${ev.b}|${ev.a}|${ev.started ? 1 : 0}`;
+      if (!seen.has(forward)) {
+        seen.add(forward);
+        dispatchCollision(ev.a, ev.b, ev.started);
+      }
+      if (ev.a !== ev.b && !seen.has(backward)) {
+        seen.add(backward);
+        dispatchCollision(ev.b, ev.a, ev.started);
+      }
+    }
+  }
+
+  function dispatchCollision(selfId, otherId, started) {
+    const list = instancesByNode.get(selfId);
+    if (!list || !list.length) return;
+    const other = resolveNodeEntity(otherId);
+    for (const record of list) {
+      if (record.dead) continue;
+      callLifecycle(record, started ? "onCollisionEnter" : "onCollisionExit", other);
+    }
+  }
+
   return {
-    /** 每帧驱动：时间推进 + onUpdate（错误实例自动停用） */
+    /** 每帧驱动：碰撞回调 → 时间推进 + onUpdate（错误实例自动停用） */
     update(dt) {
+      dispatchCollisions();
       tickTime(dt);
       for (const record of instances) {
         if (record.dead) continue;

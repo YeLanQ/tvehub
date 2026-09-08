@@ -21,6 +21,8 @@ import {
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
 import { dispatchCommand } from "../commands";
+import { prompt } from "../lib/prompt";
+import { saveNodeAsPrefab, updatePrefabFromNode } from "../lib/prefabs";
 import { getScriptsStore } from "../stores/scripts";
 import "../../styles/components/hierarchy-panel.scss";
 
@@ -199,6 +201,20 @@ function deleteNodes(targetIds: string[]): void {
   void dispatchCommand("node.delete", { ids: targetIds });
 }
 
+/** 存储节点子树为预制体资产（弹名输入；assets/prefabs/ 下去重） */
+async function doSaveAsPrefab(nodeId: string): Promise<void> {
+  const node = engine.graph.get(nodeId);
+  if (!node) return;
+  const name = await prompt({
+    title: "存储为预制体",
+    label: "预制体名（创建在 assets/prefabs/）",
+    initial: node.name,
+    confirmText: "存储",
+  });
+  if (!name?.trim()) return;
+  await saveNodeAsPrefab(nodeId, name.trim());
+}
+
 function createItems(parentId: string): CtxMenuItem[] {
   const items: CtxMenuItem[] = [];
   items.push({ label: "添加节点", children: createAddItems(parentId) });
@@ -211,6 +227,19 @@ function createItems(parentId: string): CtxMenuItem[] {
     },
   });
   const isRoot = engine.graph.root?.id === parentId;
+  // 预制体：把子树存为 .prefab 资产；实例（带来源引用）可回写更新资产
+  items.push({
+    label: "存储为预制体…",
+    disabled: isRoot,
+    onClick: () => void doSaveAsPrefab(parentId),
+  });
+  const sourceRel = engine.graph.get(parentId)?.prefab ?? "";
+  if (sourceRel) {
+    items.push({
+      label: "更新预制体（" + (sourceRel.split("/").pop() ?? sourceRel) + "）",
+      onClick: () => void updatePrefabFromNode(parentId),
+    });
+  }
   items.push({
     label: "删除",
     danger: true,

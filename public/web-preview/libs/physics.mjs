@@ -8,7 +8,10 @@
 // - physicsEnabled === true 时自动开始模拟；
 //   未启用时返回安全空转 API（脚本调用不报错）；
 // - 脚本经 engine.physics（tve.mjs 转发 host.physics，按节点 id 寻址）驱动
-//   冲量/力/速度/重力缩放。
+//   冲量/力/速度/重力缩放；
+// - 碰撞事件：各后端收集「接触开始/结束」节点对（rapier EventQueue /
+//   jolt ContactListenerJS / ammo 流形差分），脚本宿主经 drainCollisions()
+//   排空并分发为组件的 onCollisionEnter/onCollisionExit。
 // ---------------------------------------------------------------------------
 
 import * as THREE from "./three.module.min.js";
@@ -182,6 +185,10 @@ async function loadRapier() {
     createWorld(gravity) {
       const world = new R.World({ x: gravity.x, y: gravity.y, z: gravity.z });
       const bodies = new Set();
+      // 碰撞事件收集（rapier EventQueue；句柄 → 节点 id 在 createBody 登记）
+      const eventQueue = new R.EventQueue(true);
+      const colliderNodes = new Map();
+      const pendingCollisions = [];
       const shapeOf = (col) => {
         switch (col.shape) {
           case "sphere":
@@ -225,8 +232,12 @@ async function loadRapier() {
               .setTranslation(col.offset.x, col.offset.y, col.offset.z)
               .setFriction(col.friction)
               .setRestitution(col.restitution)
-              .setSensor(col.isSensor);
-            world.createCollider(cd, body);
+              .setSensor(col.isSensor)
+              // rapier 须显式订阅碰撞事件，否则 EventQueue 不产生该碰撞体的事件
+              .setActiveEvents(R.ActiveEvents.COLLISION_EVENTS);
+            const collider = world.createCollider(cd, body);
+            // 碰撞事件：collider 句柄 → 节点 id（脚本 onCollisionEnter/Exit 寻址）
+            colliderNodes.set(collider.handle, desc.nodeId);
           }
           bodies.add(body);
           return {
@@ -298,7 +309,22 @@ async function loadRapier() {
         },
         step(dt) {
           world.timestep = Math.max(0.0001, dt);
-          world.step();
+          world.step(eventQueue);
+          // 碰撞开始/结束事件 → 节点 id 对（同一批次内按 a|b|started 去重，
+          // 复合形状多对碰撞体同帧只报一次）
+          const seen = new Set();
+          eventQueue.drainCollisionEvents((h1, h2, started) => {
+            const a = colliderNodes.get(h1);
+            const b = colliderNodes.get(h2);
+            if (a === undefined || b === undefined) return;
+            const key = `${a}|${b}|${started ? 1 : 0}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            pendingCollisions.push({ a, b, started: started === true });
+          });
+        },
+        takeCollisionEvents() {
+          return pendingCollisions.splice(0);
         },
         dispose() {
           world.free();
@@ -338,6 +364,23 @@ async function loadJolt() {
       const gravityScratch = new Jolt.Vec3(gravity.x, gravity.y, gravity.z);
       system.SetGravity(gravityScratch);
       const bodies = new Map();
+      // 碰撞事件（ContactListenerJS）：BodyID 索引 → 节点 id 在 createBody 登记
+      const nodeByBodyIndex = new Map();
+      const pendingCollisions = [];
+      const pushCollision = (id1, id2, started) => {
+        const a = nodeByBodyIndex.get(id1.GetIndex());
+        const b = nodeByBodyIndex.get(id2.GetIndex());
+        if (a === undefined || b === undefined) return;
+        pendingCollisions.push({ a, b, started });
+      };
+      try {
+        const listener = new Jolt.ContactListenerJS();
+        listener.OnContactAdded = (id1, id2) => pushCollision(id1, id2, true);
+        listener.OnContactRemoved = (id1, id2) => pushCollision(id1, id2, false);
+        system.SetContactListener(listener);
+      } catch (e) {
+        postLog("warn", `[物理] jolt 碰撞事件不可用: ${e?.message ?? e}`);
+      }
       const buildShape = (col, out) => {
         let s;
         switch (col.shape) {
@@ -412,6 +455,7 @@ async function loadJolt() {
           const body = bi.CreateBody(creation);
           if (!body) return null;
           bi.AddBody(body.GetID(), Jolt.EActivation_Activate);
+          nodeByBodyIndex.set(body.GetID().GetIndex(), desc.nodeId);
           body.SetFriction(desc.colliders[0]?.friction ?? 0.6);
           body.SetRestitution(desc.colliders[0]?.restitution ?? 0.1);
           const mp = body.GetMotionProperties();
@@ -518,6 +562,9 @@ async function loadJolt() {
           }
           interface3d.Step(dt, 1);
         },
+        takeCollisionEvents() {
+          return pendingCollisions.splice(0);
+        },
         dispose() {
           try {
             Jolt.destroy(gravityScratch);
@@ -583,6 +630,15 @@ async function loadAmmo() {
       const CF_KINEMATIC_OBJECT = 2;
       const CF_NO_CONTACT_RESPONSE = 4;
       const DISABLE_DEACTIVATION = 4;
+      // 碰撞事件（流形差分）：刚体指针 → 节点 id 在 createBody 登记；
+      // 每步把「当前接触对」与「上一步接触对」diff 出 enter/exit
+      const pointerToNode = new Map();
+      let prevPairs = new Set();
+      const pendingCollisions = [];
+      const nodeOfPointer = (p) => {
+        const n = pointerToNode.get(p);
+        return n === undefined ? undefined : n;
+      };
       return {
         setGravity(g) {
           world.setGravity(new Ammo.btVector3(g.x, g.y, g.z));
@@ -626,6 +682,7 @@ async function loadAmmo() {
             body.setCcdSweptSphereRadius(0.02);
           }
           world.addRigidBody(body);
+          pointerToNode.set(Ammo.getPointer(body), desc.nodeId);
           const handle = {
             nodeId: desc.nodeId,
             setMode(mode) {
@@ -723,6 +780,34 @@ async function loadAmmo() {
         },
         step(dt) {
           world.stepSimulation(Math.max(0.0001, dt), 1, Math.max(0.0001, dt));
+          // 流形差分：接触对出现 = enter，消失 = exit
+          const num = dispatcher.getNumManifolds();
+          const cur = new Set();
+          for (let i = 0; i < num; i++) {
+            const m = dispatcher.getManifoldByIndexInternal(i);
+            if (m.getNumContacts() <= 0) continue;
+            const p0 = Ammo.getPointer(m.getBody0());
+            const p1 = Ammo.getPointer(m.getBody1());
+            if (p0 === p1) continue;
+            const key = p0 < p1 ? `${p0}|${p1}` : `${p1}|${p0}`;
+            cur.add(key);
+            if (!prevPairs.has(key)) {
+              const a = nodeOfPointer(p0);
+              const b = nodeOfPointer(p1);
+              if (a !== undefined && b !== undefined) pendingCollisions.push({ a, b, started: true });
+            }
+          }
+          for (const key of prevPairs) {
+            if (cur.has(key)) continue;
+            const [p0, p1] = key.split("|").map(Number);
+            const a = nodeOfPointer(p0);
+            const b = nodeOfPointer(p1);
+            if (a !== undefined && b !== undefined) pendingCollisions.push({ a, b, started: false });
+          }
+          prevPairs = cur;
+        },
+        takeCollisionEvents() {
+          return pendingCollisions.splice(0);
         },
         dispose() {
           for (const b of [...bodies]) world.removeRigidBody(b.raw);
@@ -775,6 +860,10 @@ export async function createPhysics({ nodes, settings } = {}) {
     },
     setGravityScale() {},
     wakeUp() {},
+    /** 碰撞事件排空（脚本宿主每帧调用；元素 {a, b, started} 为节点 id 对） */
+    drainCollisions() {
+      return [];
+    },
   };
 
   // 绑定收集（文档序：先父后子）
@@ -883,6 +972,7 @@ export async function createPhysics({ nodes, settings } = {}) {
   };
 
   api.setGravity = (x, y, z) => world.setGravity({ x, y, z });
+  api.drainCollisions = () => world.takeCollisionEvents();
 
   const bodyOf = (nodeId) => bindings.find((b) => b.nodeId === nodeId)?.body ?? null;
   api.applyImpulse = (nodeId, x, y, z) => bodyOf(nodeId)?.applyImpulse({ x, y, z });

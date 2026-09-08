@@ -71,6 +71,7 @@ function uniqueRel(assets: AssetEntry[], dir: string, base: string, ext: string)
 const INTERNAL_COPY_DIRS: Record<string, string> = {
   mat: "assets/materials",
   shader: "assets/shaders",
+  prefab: "assets/prefabs",
   ts: "src",
   png: "assets/textures",
   jpg: "assets/textures",
@@ -225,6 +226,46 @@ export const assetService = {
       return rel;
     } catch (e) {
       logStore.log("error", `新建场景失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
+   * 新建空白预制体（.prefab）：单节点嵌套文档（与 .scene root 同形状）。
+   * 实例化时节点/组件 id 全部重生成，模板里的 id 仅作占位。
+   */
+  async createPrefabAsset(
+    root: string,
+    destDir: string,
+    stem: string,
+    assets: AssetEntry[],
+  ): Promise<string | null> {
+    const clean = validateAssetName(stem);
+    if (!clean) {
+      logStore.log("warn", "无效的预制体名（不能含 / \\ : ..）");
+      return null;
+    }
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建预制体");
+      return null;
+    }
+    const base = clean.toLowerCase().endsWith(".prefab")
+      ? clean.slice(0, -".prefab".length)
+      : clean;
+    const rel = uniqueRel(assets, destDir, base, ".prefab");
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - ".prefab".length);
+    try {
+      const rootId = `prefab_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+      const content = await loadAssetTemplate("prefab", {
+        PREFAB_NAME: name,
+        PREFAB_ROOT_ID: rootId,
+      });
+      if (content == null) throw new Error("预制体模板读取失败");
+      await api.writeText(root, rel, content);
+      logStore.log("success", `已新建预制体: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建预制体失败: ${e}`);
       return null;
     }
   },

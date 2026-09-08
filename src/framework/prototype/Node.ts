@@ -176,6 +176,8 @@ export interface NodeInit {
   parentId?: string | null;
   /** GameObject 标签（Unity Tag 语义：脚本按标签查找实体；空串 = 无标签） */
   tag?: string;
+  /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
+  prefab?: string;
   transform?: Transform;
   properties?: JsonRecord;
   components?: NodeComponentRef[];
@@ -200,6 +202,8 @@ export class Node extends Prototype {
   visible: boolean;
   /** GameObject 标签（Unity Tag 语义；播放器 SDK 经 entity.tag / findByTag 查询） */
   tag: string;
+  /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
+  prefab: string;
   /** 组合的变换基元原型 */
   transform: Transform;
   /** 编辑器扩展的任意属性槽 */
@@ -216,6 +220,7 @@ export class Node extends Prototype {
     this.active = true;
     this.visible = true;
     this.tag = init.tag ?? "";
+    this.prefab = init.prefab ?? "";
     this.transform = init.transform ? init.transform.clone() : new Transform();
     this.properties = { ...(init.properties ?? {}) };
     this.components = init.components ? cloneNodeComponents(init.components) : [];
@@ -228,6 +233,7 @@ export class Node extends Prototype {
       name: this.name,
       parentId: null,
       tag: this.tag,
+      prefab: this.prefab,
       transform: this.transform.clone(),
       properties: cloneRecord(this.properties),
       components: this.components,
@@ -278,6 +284,8 @@ export class Node extends Prototype {
     };
     // 标签非空才写入（旧场景文件保持字节兼容）
     if (this.tag) record.tag = this.tag;
+    // 预制体引用非空才写入（仅预制体实例携带）
+    if (this.prefab) record.prefab = this.prefab;
     // 组件列表非空才写入（旧场景文件保持字节兼容）
     if (this.components.length) {
       record.components = this.components.map(
@@ -296,6 +304,7 @@ export class Node extends Prototype {
     this.active = (json.active as boolean) ?? this.active;
     this.visible = (json.visible as boolean) ?? this.visible;
     this.tag = typeof json.tag === "string" ? json.tag : "";
+    this.prefab = typeof json.prefab === "string" ? json.prefab : "";
     if (json.transform) {
       this.transform = Transform.fromJSON(json.transform as JsonRecord);
     }

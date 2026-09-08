@@ -13,8 +13,12 @@ import { Node } from "../src/framework/prototype/Node";
 import {
   isAudioSourceComponent,
   isLightComponent,
+  isScriptComponent,
   parseNodeComponents,
 } from "../src/framework/prototype/Node";
+import { serializePrefabTree, instantiatePrefabTree } from "../src/framework/prototype/prefab";
+import { createDefaultRegistry } from "../src/framework/prototype/PrototypeRegistry";
+import { MeshNode } from "../src/framework/prototype/nodes/MeshNode";
 import {
   DEFAULT_LIGHT_COMPONENT_SETTINGS,
   parseLightComponentSettings,
@@ -189,6 +193,80 @@ function check(name: string, cond: boolean, detail = ""): void {
       c.components.length === 1 &&
       isLightComponent(c.components[0]) &&
       c.components[0].id !== "l1",
+  );
+}
+
+// ---------- 6. Prefab 序列化/实例化（嵌套子树 + id 重映射） ----------
+{
+  const registry = createDefaultRegistry();
+  const root = new Node({ name: "root", tag: "spawner" });
+  const box = new MeshNode({ name: "box" });
+  box.source = "primitive";
+  box.geometry = "box";
+  box.components.push(
+    {
+      id: "pl1",
+      type: "light",
+      enabled: true,
+      light: parseLightComponentSettings({ kind: "point", intensity: 4 }),
+    },
+    { id: "ps1", type: "script", script: "src/x.ts", enabled: true, executionOrder: 3, props: {} },
+  );
+  const leaf = new Node({ name: "leaf" });
+  root.childIds.push(box.id, leaf.id);
+  box.parentId = root.id;
+  leaf.parentId = root.id;
+  const childrenOf = (id: string): Node[] =>
+    [box, leaf].filter((n) => n.parentId === id);
+
+  const doc = serializePrefabTree(root, childrenOf) as Record<string, unknown>;
+  const comps = ((doc.children as Record<string, unknown>[])[0].components ??
+    []) as Record<string, unknown>[];
+  check(
+    "序列化：嵌套 children + 剥掉组件 id 与 prefab 引用",
+    Array.isArray(doc.children) &&
+      (doc.children as unknown[]).length === 2 &&
+      !("id" in comps[0]) &&
+      !("prefab" in doc),
+  );
+
+  const { root: instRoot, nodes: instNodes } = instantiatePrefabTree(doc, {
+    fromJSON: (json) => registry.createFromJSON(json),
+  });
+  check(
+    "实例化：全部节点 id 重生成（含根）",
+    instNodes.length === 3 &&
+      instRoot.id !== root.id &&
+      instNodes.every((n) => n.id !== root.id && n.id !== box.id && n.id !== leaf.id),
+  );
+  const instBox = instRoot.childIds
+    .map((id) => instNodes.find((n) => n.id === id))
+    .find((n) => n instanceof MeshNode);
+  check(
+    "实例化：层级/类型重建，组件 id 重生成且字段保真",
+    !!instBox &&
+      instBox.parentId === instRoot.id &&
+      instBox.components.length === 2 &&
+      isLightComponent(instBox.components[0]) &&
+      instBox.components[0].id !== "pl1" &&
+      instBox.components[0].light.intensity === 4 &&
+      isScriptComponent(instBox.components[1]) &&
+      (instBox.components[1] as { executionOrder: number }).executionOrder === 3,
+  );
+
+  // 序列化 → 实例化 → 再序列化：形状稳定（id 除外）
+  const doc2 = serializePrefabTree(instRoot, (id) =>
+    instNodes.filter((n) => n.parentId === id),
+  );
+  const strip = (d: Record<string, unknown>): unknown => ({
+    type: d.type,
+    name: d.name,
+    tag: d.tag ?? "",
+    children: Array.isArray(d.children) ? (d.children as Record<string, unknown>[]).map(strip) : [],
+  });
+  check(
+    "再序列化结构一致（忽略 id）",
+    JSON.stringify(strip(doc)) === JSON.stringify(strip(doc2 as Record<string, unknown>)),
   );
 }
 

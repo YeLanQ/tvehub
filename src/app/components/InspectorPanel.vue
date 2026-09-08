@@ -61,6 +61,7 @@ import RigidBodyFields from "./inspector/RigidBodyFields.vue";
 import ColliderFields from "./inspector/ColliderFields.vue";
 import LightComponentFields from "./inspector/LightComponentFields.vue";
 import PhysicsSimSection from "./inspector/PhysicsSimSection.vue";
+import MultiSection from "./inspector/MultiSection.vue";
 import "../../styles/components/inspector-panel.scss";
 
 const store = getEditorStore();
@@ -935,6 +936,85 @@ function compCardType(c: NodeComponentRef): string {
   return componentMetaOf(c.type).label.split(" ")[0] ?? c.type;
 }
 
+// —— 多选批量编辑（选中 ≥2 个节点时检查器切换为批量卡） ——
+
+const multiIds = computed<string[]>(() => {
+  void revision.value;
+  return store.state.selectionIds;
+});
+
+/**
+ * 多选批量添加组件菜单：注册表驱动；单实例组件已挂载的节点自动跳过
+ * （一次菜单操作 = 一条批量补丁历史）。
+ */
+function onMultiAddComponentMenu(e: MouseEvent): void {
+  const targets = multiIds.value
+    .map((id) => engine.graph.get(id))
+    .filter((n): n is Node => !!n);
+  if (!targets.length) return;
+
+  const addBuiltin = (
+    type: "rigidBody" | "collider" | "light" | "audioSource",
+    lightKind?: "point" | "directional" | "ambient" | "spot",
+  ): void => {
+    const items = targets
+      .filter((n) => canAddComponent(n, type))
+      .map((n) => {
+        const before = n.toJSON() as JsonRecord;
+        n.components = [...n.components, createComponentRef(type, { lightKind })];
+        const after = n.toJSON() as JsonRecord;
+        return { id: n.id, before, after };
+      });
+    if (items.length) {
+      engine.patchNodes(items, "批量添加" + componentMetaOf(type).label.split(" ")[0] + "组件");
+    }
+  };
+  const addScript = (scriptRel: string): void => {
+    const items = targets.map((n) => {
+      const before = n.toJSON() as JsonRecord;
+      n.components = [...n.components, createScriptComponentRef(scriptRel)];
+      const after = n.toJSON() as JsonRecord;
+      return { id: n.id, before, after };
+    });
+    if (items.length) engine.patchNodes(items, "批量添加脚本组件");
+  };
+
+  const scriptItems: CtxMenuItem[] = scriptList.value.map((rel) => ({
+    label: baseName(rel),
+    onClick: () => addScript(rel),
+  }));
+  if (!scriptItems.length) {
+    scriptItems.push({ label: "（src/ 内暂无脚本）", disabled: true });
+  }
+  scriptItems.push(menuSeparator(), { label: "新建脚本…", onClick: () => void onCreateScript() });
+
+  const items: CtxMenuItem[] = [
+    {
+      label: "物理",
+      children: (["rigidBody", "collider"] as const).map((type) => ({
+        label: componentMetaOf(type).label,
+        onClick: () => addBuiltin(type),
+      })),
+    },
+    {
+      label: "光照",
+      children: LIGHT_KIND_OPTIONS.map((k) => ({
+        label: k.label,
+        onClick: () => addBuiltin("light", k.value),
+      })),
+    },
+    {
+      label: "音频",
+      children: [
+        { label: componentMetaOf("audioSource").label, onClick: () => addBuiltin("audioSource") },
+      ],
+    },
+    menuSeparator(),
+    { label: "脚本", children: scriptItems },
+  ];
+  openContextMenu(e, items);
+}
+
 /** 节点是否挂了物理组件（决定模拟控制卡显隐） */
 const hasPhysicsComps = computed<boolean>(() => {
   void revision.value;
@@ -956,6 +1036,13 @@ function onNodeSetTag(tag: string): void {
     <div v-if="assetMode && assetRel" class="inspector-body mono">
       <ComponentCard title="Asset" :open="true" :type="assetRel.split('.').pop()">
         <AssetInspector :rel="assetRel" />
+      </ComponentCard>
+    </div>
+
+    <!-- 多选：批量编辑卡（变换/标签/启停/批量加组件，一次撤销） -->
+    <div v-else-if="multiIds.length > 1" class="inspector-body mono">
+      <ComponentCard title="Multiple Selection" :open="true" :type="multiIds.length + ' 节点'">
+        <MultiSection :ids="multiIds" :rev="revision" @addComponentMenu="onMultiAddComponentMenu" />
       </ComponentCard>
     </div>
 

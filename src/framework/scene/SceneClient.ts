@@ -14,6 +14,7 @@ import { EventBus } from "../../platform_abstraction/eventBus";
 import { logger } from "../../platform_abstraction/logger";
 import type { NodeFactory } from "../factory/NodeFactory";
 import type { Node } from "../prototype/Node";
+import { serializePrefabTree } from "../prototype/prefab";
 import type { JsonRecord } from "../prototype/types";
 
 export type SceneChangeKind =
@@ -66,14 +67,24 @@ export interface SceneChangedEvent {
   dirty: boolean;
 }
 
+/** 批量属性补丁条目（多选批量编辑；before/after 为完整节点 JSON 快照） */
+export interface PatchItem {
+  id: string;
+  before: JsonRecord;
+  after: JsonRecord;
+}
+
 /** 写通道（应用层注入；未注入时纯本地镜像，无持久化/撤销） */
 export interface SceneTransport {
   addNode(node: JsonRecord, label?: string): Promise<void>;
+  /** 新增嵌套子树（prefab 实例化；层级以嵌套 children 为准，根挂 parentId 下） */
+  addTree(root: JsonRecord, parentId: string | null, label?: string): Promise<void>;
   removeNodes(ids: string[], label?: string): Promise<void>;
   reparentNodes(moves: MoveTarget[], label?: string): Promise<void>;
   rename(id: string, name: string, label?: string): Promise<void>;
   setTransform(id: string, before: TransformSnapshot, after: TransformSnapshot): Promise<void>;
   patchNode(id: string, before: JsonRecord, after: JsonRecord, label?: string): Promise<void>;
+  patchNodes(items: PatchItem[], label?: string): Promise<void>;
   undo(): Promise<SceneHistoryState>;
   redo(): Promise<SceneHistoryState>;
 }
@@ -300,6 +311,47 @@ export class SceneClient implements GraphLike {
       });
   }
 
+  /**
+   * 新增嵌套子树（prefab 实例化；一次撤销）。
+   * root/nodes 为 instantiatePrefabTree 产出的全新节点树（子节点尚未进镜像，
+   * 经 nodes 参数遍历链接，而非镜像查找）；doc 为该树的嵌套序列化文档（提交体）。
+   * 镜像按文档序乐观挂入（先父后子），提交失败整树回滚。
+   */
+  addTree(root: Node, nodes: Node[], parentId: string | null, label?: string): void {
+    if (parentId !== null && !this.nodes.has(parentId)) return;
+    if (!nodes.length) return;
+    const byId = new Map(nodes.map((n) => [n.id, n] as const));
+    const childrenInTree = (id: string): Node[] => {
+      const out: Node[] = [];
+      for (const cid of byId.get(id)?.childIds ?? []) {
+        const c = byId.get(cid);
+        if (c) out.push(c);
+      }
+      return out;
+    };
+    const added: Node[] = [];
+    const walk = (n: Node): void => {
+      if (!added.length) n.parentId = parentId;
+      this.linkAdded(n);
+      added.push(n);
+      for (const c of childrenInTree(n.id)) {
+        if (!added.includes(c)) walk(c);
+      }
+    };
+    walk(root);
+    added.forEach((n) => this.emit({ kind: "add", nodeId: n.id }));
+    const doc = serializePrefabTree(root, childrenInTree);
+    this.transport
+      ?.addTree(doc, parentId, label)
+      .catch((e) => {
+        logger.error(`[scene] 子树提交失败，已回滚 ${root.name}: ${String(e)}`);
+        for (let i = added.length - 1; i >= 0; i--) {
+          const n = added[i];
+          if (this.removeFromMap(n.id)) this.emit({ kind: "remove", nodeId: n.id });
+        }
+      });
+  }
+
   /** 批量删除（一次撤销；根节点自动跳过） */
   removeNodes(ids: string[], label?: string): void {
     const rootId = this.root?.id ?? null;
@@ -415,6 +467,30 @@ export class SceneClient implements GraphLike {
         if (n) {
           n.applyJSON(before);
           this.emit({ kind: "properties", nodeId: id });
+        }
+      });
+  }
+
+  /** 批量整节点属性补丁（多选批量编辑；一次撤销） */
+  commitPatches(items: PatchItem[], label?: string): void {
+    if (!items.length) return;
+    for (const item of items) {
+      const node = this.nodes.get(item.id);
+      if (node) {
+        node.applyJSON(item.after);
+        this.emit({ kind: "properties", nodeId: item.id });
+      }
+    }
+    this.transport
+      ?.patchNodes(items, label)
+      .catch((e) => {
+        logger.error(`[scene] 批量属性提交失败，已回滚: ${String(e)}`);
+        for (const item of items) {
+          const n = this.nodes.get(item.id);
+          if (n) {
+            n.applyJSON(item.before);
+            this.emit({ kind: "properties", nodeId: item.id });
+          }
         }
       });
   }

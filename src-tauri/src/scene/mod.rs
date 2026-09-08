@@ -271,6 +271,40 @@ pub async fn scene_add_node(
     Ok(())
 }
 
+/// 新增嵌套子树（prefab 实例化；层级以嵌套 children 为准，根挂 parentId 下，
+/// 空场景可为 None 成为根；一次撤销）
+#[tauri::command]
+pub async fn scene_add_tree(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SceneSession>,
+    root: NodeData,
+    parent_id: Option<String>,
+    label: Option<String>,
+) -> Result<(), String> {
+    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    // 无父挂载仅允许空场景；有场景根时必须给出目标父节点
+    if parent_id.is_none() && core.graph.root_id.is_some() {
+        return Err("新增子树缺少目标父节点".into());
+    }
+    if let Some(pid) = &parent_id {
+        if !core.graph.contains(pid) {
+            return Err(format!("父节点不存在: {pid}"));
+        }
+    }
+    let mut cmd = SceneCmd {
+        label: label.unwrap_or_else(|| format!("Add {}", root.name)),
+        kind: CmdKind::AddTree { root, parent_id },
+    };
+    let changes = cmd.execute(&mut core.graph);
+    if changes.is_empty() {
+        return Err("子树加入失败（id 冲突或父节点缺失）".into());
+    }
+    core.history.push(cmd);
+    core.dirty = true;
+    emit_changes(&app, &mut core, changes);
+    Ok(())
+}
+
 /// 批量删除节点（一次撤销；根节点自动跳过）
 #[tauri::command]
 pub async fn scene_remove_nodes(
@@ -410,6 +444,44 @@ pub async fn scene_patch_node(
     core.dirty = true;
     emit_changes(&app, &mut core, changes);
     Ok(())
+}
+
+/// 批量整节点属性补丁（多选批量编辑；一次撤销）
+#[tauri::command]
+pub async fn scene_patch_nodes(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SceneSession>,
+    items: Vec<PatchItemDto>,
+    label: Option<String>,
+) -> Result<(), String> {
+    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut pairs: Vec<(String, NodeData, NodeData)> = Vec::new();
+    for item in items {
+        if !core.graph.contains(&item.id) {
+            continue; // 多选兜底：已删除的节点跳过
+        }
+        pairs.push((item.id, item.before, item.after));
+    }
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let mut cmd = SceneCmd {
+        label: label.unwrap_or_else(|| "Set Properties".into()),
+        kind: CmdKind::PatchNodes { items: pairs },
+    };
+    let changes = cmd.execute(&mut core.graph);
+    core.history.push(cmd);
+    core.dirty = true;
+    emit_changes(&app, &mut core, changes);
+    Ok(())
+}
+
+/// 批量补丁条目（id + before/after 完整节点快照）
+#[derive(Deserialize)]
+pub struct PatchItemDto {
+    pub id: String,
+    pub before: NodeData,
+    pub after: NodeData,
 }
 
 /// 撤销（广播变更事件）
@@ -563,5 +635,50 @@ mod tests {
         let (mats, models) = collect_refs(&doc);
         assert!(mats.iter().all(|r| r.ends_with(".mat")), "材质引用为 .mat 路径");
         let _ = models;
+    }
+
+    /// 前端「实例化预制体」提交的真实文档形状（SceneClient.addTree 产出）：
+    /// serde 解析 → AddTree 命令执行 → undo/redo 往返（含组件/tag/嵌套 children）
+    #[test]
+    fn scene_add_tree_accepts_frontend_prefab_doc() {
+        let doc_text = r#"{"type":"node","id":"node_mtt5n81u6sj3g","name":"PrefabRoot","parentId":"node_mtt5n81t1xyzi","childIds":["meshNode_mtt5n81u9zzt8"],"active":true,"visible":true,"transform":{"type":"transform","position":{"x":0,"y":0,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},"properties":{},"tag":"enemy","children":[{"type":"meshNode","id":"meshNode_mtt5n81u9zzt8","name":"Box","parentId":"node_mtt5n81u6sj3g","childIds":["node_mtt5n81ucb56n"],"active":true,"visible":true,"transform":{"type":"transform","position":{"x":0,"y":0,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},"properties":{},"components":[{"type":"light","enabled":true,"light":{"kind":"point","lightColor":16744448,"intensity":6,"distance":6,"decay":2,"angle":45,"penumbra":0.2,"castShadow":false}}],"source":"primitive","geometry":"box","size":{"x":1,"y":1,"z":1},"material":"internal/materials/Default.mat","model":"","anim":{"autoplay":true,"clip":"","speed":1,"loop":"loop"},"animGraph":null,"children":[{"type":"node","id":"node_mtt5n81ucb56n","name":"Inner","parentId":"meshNode_mtt5n81u9zzt8","childIds":[],"active":true,"visible":true,"transform":{"type":"transform","position":{"x":0,"y":0,"z":0},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},"properties":{}}]}]}"#;
+        let root: NodeData = serde_json::from_str(doc_text).expect("预制体文档 NodeData 解析");
+        assert_eq!(root.children.len(), 1, "嵌套 children 解析");
+
+        let mut core = SessionCore::default();
+        // 场景根（父节点存在）
+        let scene_root: NodeData =
+            serde_json::from_value(serde_json::json!({ "type": "node", "id": "scene-root", "name": "Root" }))
+                .unwrap();
+        core.graph.add_node(scene_root).unwrap();
+
+        let mut cmd = SceneCmd {
+            label: "实例化 Foo.prefab".into(),
+            kind: CmdKind::AddTree {
+                root,
+                parent_id: Some("scene-root".into()),
+            },
+        };
+        let changes = cmd.execute(&mut core.graph);
+        assert_eq!(changes.len(), 3, "根 + 2 子节点 = 3 条 add 变更");
+        assert!(core.graph.contains("node_mtt5n81u6sj3g"));
+        assert_eq!(
+            core.graph.get("node_mtt5n81u6sj3g").unwrap().parent_id.as_deref(),
+            Some("scene-root"),
+            "根挂到目标父节点（以命令参数为准，而非文档内 parentId）"
+        );
+        let mesh = core.graph.get("meshNode_mtt5n81u9zzt8").unwrap();
+        assert_eq!(mesh.child_ids, vec!["node_mtt5n81ucb56n".to_string()]);
+        assert_eq!(
+            mesh.extra.get("material").and_then(|v| v.as_str()),
+            Some("internal/materials/Default.mat")
+        );
+        assert!(mesh.extra.contains_key("components"), "组件随 extra 透传");
+
+        core.history.push(cmd);
+        core.history.undo(&mut core.graph).unwrap();
+        assert!(!core.graph.contains("node_mtt5n81u6sj3g"), "undo 摘除整棵实例");
+        core.history.redo(&mut core.graph).unwrap();
+        assert!(core.graph.contains("meshNode_mtt5n81u9zzt8"), "redo 重建整棵实例");
     }
 }

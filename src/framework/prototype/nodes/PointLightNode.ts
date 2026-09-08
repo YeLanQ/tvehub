@@ -24,6 +24,7 @@ export class PointLightNode extends LightNode {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      prefab: this.prefab,
       components: this.components,
       intensity: this.intensity,
       lightColor: this.lightColor,

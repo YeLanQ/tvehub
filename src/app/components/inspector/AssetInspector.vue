@@ -35,6 +35,8 @@ import { assetService } from "../../services/assetService";
 import { saveMaterialParams } from "../../lib/materials";
 import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
 import { fmtSize } from "../../lib/format";
+import { api } from "../../../lib/api";
+import { instantiatePrefabAsset } from "../../lib/prefabs";
 import {
   loadTexCubeDoc,
   saveTexCubeDoc,
@@ -134,6 +136,8 @@ const shaderOptions = computed(() => {
 
 // —— 着色器资产（.shader）：种类决定渲染程序与材质参数分组 ——
 const shaderDoc = ref<ShaderDoc | null>(null);
+/** 预制体概览（节点数；读取失败为 null） */
+const prefabInfo = ref<{ nodes: number } | null>(null);
 const shaderReady = ref(false);
 
 // —— 天空材质（shader 引用内置天空着色器资产）——
@@ -239,6 +243,7 @@ async function reload(): Promise<void> {
   imgSize.value = null;
   shaderDoc.value = null;
   shaderReady.value = false;
+  prefabInfo.value = null;
 
   if (kind.value === "mat") {
     matReady.value = false;
@@ -272,6 +277,19 @@ async function reload(): Promise<void> {
   }
   shaderDoc.value = null;
   shaderReady.value = false;
+  if (kind.value === "prefab") {
+    try {
+      if (!root.value) return;
+      const text = await api.readText(root.value, rel);
+      const doc = JSON.parse(text) as { children?: unknown[] };
+      const count = (n: { children?: unknown[] }): number =>
+        1 + (Array.isArray(n.children) ? n.children.reduce((s2: number, c) => s2 + count(c as { children?: unknown[] }), 0) : 0);
+      prefabInfo.value = { nodes: count(doc) };
+    } catch {
+      prefabInfo.value = null;
+    }
+    return;
+  }
   if (kind.value === "texcube") {
     const doc = await loadTexCubeDoc(root.value, rel);
     if (token !== loadToken) return;
@@ -842,6 +860,20 @@ function onImgLoad(e: Event): void {
     <template v-else-if="kind === 'ts'">
       <div class="hint">双击资产或右键「打开脚本」进入脚本工作台编辑。</div>
     </template>
+    <!-- 预制体：概览 + 实例化到场景（嵌套子树一次入图，一次撤销） -->
+    <template v-else-if="kind === 'prefab'">
+      <div class="field">
+        <label>节点数</label>
+        <span>{{ prefabInfo ? prefabInfo.nodes : "读取中…" }}</span>
+      </div>
+      <button
+        class="prefab-instantiate"
+        :disabled="!prefabInfo || !root"
+        title="实例化到当前场景（挂到选中节点/根下）"
+        @click="instantiatePrefabAsset(props.rel)"
+      >实例化到场景</button>
+      <div class="hint">右键资产也可「实例化到场景」；层级面板选中实例可「更新预制体」回写资产。</div>
+    </template>
   </div>
 </template>
 
@@ -866,6 +898,25 @@ function onImgLoad(e: Event): void {
   border-radius: 4px;
   user-select: text;
   cursor: text;
+}
+.prefab-instantiate {
+  width: 100%;
+  height: 26px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text, #ddd);
+  background: transparent;
+  border: 1px solid var(--border, #444);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.prefab-instantiate:hover:not(:disabled) {
+  color: var(--accent, #4a9eff);
+  border-color: var(--accent, #4a9eff);
+}
+.prefab-instantiate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .sky-checkbox {
   display: inline-flex;
