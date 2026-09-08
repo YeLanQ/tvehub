@@ -1049,7 +1049,8 @@ pub fn collect_anim_refs(v: &Value, out: &mut Vec<String>) {
                 for c in comps {
                     let Some(cobj) = c.as_object() else { continue };
                     if cobj.get("type").and_then(Value::as_str) == Some("animationClip") {
-                        if let Some(rel) = cobj.get("clip").and_then(|a| a.as_str()) {
+                        // 绑定形状：clip: { clip: "assets/...anim", ... }（外层是绑定对象，资产路径在内层 clip 字段）
+                        if let Some(rel) = cobj.get("clip").and_then(|a| a.get("clip")).and_then(Value::as_str) {
                             if is_anim_rel(rel) && !out.iter().any(|r| r == rel) {
                                 out.push(rel.to_string());
                             }
@@ -1290,5 +1291,25 @@ mod tests {
         assert!(doc["root"]["children"][2].get("material").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 关键帧动画剪辑引用收集：组件真实形状（animationClip.clip 为绑定对象，
+    /// 资产路径在绑定对象内层 clip 字段）必须能被收集（曾因取错字段层级漏收集，
+    /// 导致预览/发布产物缺失 .anim 文件、动画不播放）。
+    #[test]
+    fn collect_anim_refs_reads_binding_object() {
+        let doc = json!({
+            "type": "scene",
+            "root": {
+                "type": "node", "id": "r", "components": [
+                    { "id": "ac1", "type": "animationClip", "enabled": true,
+                      "clip": { "clip": "assets/animations/Bob.anim", "autoplay": true, "loop": true, "speed": 1 } },
+                    { "id": "s1", "type": "script", "script": "src/a.ts", "enabled": true, "props": {} }
+                ]
+            }
+        });
+        let mut refs = Vec::new();
+        collect_anim_refs(&doc, &mut refs);
+        assert_eq!(refs, vec!["assets/animations/Bob.anim".to_string()]);
     }
 }
