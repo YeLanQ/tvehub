@@ -23,6 +23,13 @@ import {
   DEFAULT_LIGHT_COMPONENT_SETTINGS,
   parseLightComponentSettings,
 } from "../src/framework/lighting/types";
+import {
+  evaluateClip,
+  evaluateCurve,
+  parseAnimationClip,
+  removeKeyAt,
+  upsertKey,
+} from "../src/framework/animation/clip";
 import { DEFAULT_AUDIO_SETTINGS } from "../src/framework/audio/types";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";
 import { AudioSystem } from "../src/framework/audio/AudioSystem";
@@ -289,6 +296,71 @@ function check(name: string, cond: boolean, detail = ""): void {
     "提交文档（forAsset:false）保留 prefab 引用与组件 id",
     docInst.prefab === "assets/prefabs/Self.prefab" && instComps[0].id === "s9",
   );
+}
+
+// ---------- 7. 关键帧动画剪辑求值（插值 / 回绕 / 关键帧操作） ----------
+{
+  const clip = parseAnimationClip({
+    name: "Spin",
+    duration: 2,
+    loops: true,
+    curves: [
+      {
+        prop: "rotation.y",
+        keys: [
+          { t: 0, v: 0, i: "linear" },
+          { t: 1, v: 90, i: "linear" },
+          { t: 2, v: 0, i: "linear" },
+        ],
+      },
+      {
+        prop: "position.y",
+        keys: [
+          { t: 0, v: 1, i: "smooth" },
+          { t: 1, v: 3, i: "smooth" },
+        ],
+      },
+      { prop: "visible.x", keys: [{ t: 0, v: 0 }] }, // 非法通道剔除
+    ],
+  });
+  check(
+    "解析：非法通道剔除、合法通道保留",
+    clip.curves.length === 2 && clip.duration === 2 && clip.loops === true,
+  );
+  const rot = clip.curves.find((c) => c.prop === "rotation.y");
+  check(
+    "线性插值：区间内取中点、区间外钳端点",
+    evaluateCurve(rot as never, 0.5) === 45 &&
+      evaluateCurve(rot as never, -1) === 0 &&
+      evaluateCurve(rot as never, 9) === 0,
+  );
+  const pos = clip.curves.find((c) => c.prop === "position.y");
+  const mid = evaluateCurve(pos as never, 0.5) as number;
+  check(
+    "平滑插值：中点过两值中点、单调段内不出界",
+    Math.abs(mid - 2) < 1e-6 && (evaluateCurve(pos as never, 0.25) as number) > 1,
+  );
+
+  // 回绕：loop 取模 / once 钳制
+  const once = parseAnimationClip({
+    duration: 2,
+    loops: false,
+    curves: [{ prop: "scale.x", keys: [{ t: 0, v: 1, i: "linear" }, { t: 2, v: 5, i: "linear" }] }],
+  });
+  const vLooped = evaluateClip(clip, 2.5).get("rotation.y");
+  const vOnce = evaluateClip(once, 9).get("scale.x");
+  check(
+    "回绕：循环取模、单次钳末值",
+    vOnce === 5 && vLooped === evaluateClip(clip, 0.5).get("rotation.y"),
+  );
+
+  // 关键帧操作：upsert 同帧覆盖、删除
+  const curve = clip.curves[0];
+  upsertKey(curve, 0.5, 33);
+  check("upsert 新帧插入", curve.keys.some((k) => Math.abs(k.t - 0.5) <= 1e-4 && k.v === 33));
+  upsertKey(curve, 0.5, 44);
+  check("upsert 同帧覆盖不重复", curve.keys.filter((k) => Math.abs(k.t - 0.5) <= 1e-4).length === 1 && curve.keys.find((k) => Math.abs(k.t - 0.5) <= 1e-4)?.v === 44);
+  check("removeKeyAt 删除", removeKeyAt(curve, 0.5) && !curve.keys.some((k) => Math.abs(k.t - 0.5) <= 1e-4));
 }
 
 if (failed) {

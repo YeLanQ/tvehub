@@ -11,6 +11,8 @@ const TEMPLATE_RELS: Record<string, string> = {
   scene: "internal/templates/EmptyScene.scene",
   // TS 脚本组件（Component 子类存根），新建脚本用
   script: "internal/templates/Script.ts",
+  // 关键帧动画剪辑（变换通道曲线），新建动画用
+  anim: "internal/templates/NewAnimation.anim",
   // 预制体：单节点空白 prefab（嵌套 children 与 .scene root 同形状），新建预制体用
   prefab: "internal/templates/EmptyPrefab.prefab",
 };

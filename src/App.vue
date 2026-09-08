@@ -14,6 +14,7 @@ import HierarchyPanel from "./app/components/HierarchyPanel.vue";
 import InspectorPanel from "./app/components/InspectorPanel.vue";
 import ConsolePanel from "./app/components/ConsolePanel.vue";
 import AssetsPanel from "./app/components/AssetsPanel.vue";
+import AnimationEditorPanel from "./app/components/AnimationEditorPanel.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
@@ -54,6 +55,7 @@ const PANEL_COMP: Record<DockPanelId, any> = {
   inspector: InspectorPanel,
   console: ConsolePanel,
   assets: AssetsPanel,
+  animation: AnimationEditorPanel,
 };
 function panelComponent(p: DockPanelId) {
   return PANEL_COMP[p];

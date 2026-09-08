@@ -169,7 +169,7 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// 递归重写 JSON 里 meshNode 的 material/model 与 skyboxNode 的 cubeMap 资产引用
+/// 递归重写 JSON 里 meshNode 的 material/model、skyboxNode 的 cubeMap、组件 animationClip 的 clip 资产引用
 fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
     match v {
         serde_json::Value::Array(items) => {
@@ -179,7 +179,7 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
         }
         serde_json::Value::Object(map) => {
             for (k, val) in map.iter_mut() {
-                if (k == "material" || k == "model" || k == "cubeMap") && val.is_string() {
+                if (k == "material" || k == "model" || k == "cubeMap" || k == "clip") && val.is_string() {
                     if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
                         *val = serde_json::Value::String(new.clone());
                     }

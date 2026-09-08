@@ -11,11 +11,13 @@ import type { MaterialParams, MaterialParamKey, MaterialEnableKey } from "../../
 import { clampMaterialParam, isMaterialEnableKey, materialFileStem } from "../../framework/material";
 import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../framework/camera";
 import {
+  isAnimationClipComponent,
   isAudioSourceComponent,
   isColliderComponent,
   isLightComponent,
   isRigidBodyComponent,
   isScriptComponent,
+  type AnimationClipComponentRef,
   type AudioSourceComponentRef,
   type ColliderComponentRef,
   type LightComponentRef,
@@ -60,6 +62,7 @@ import ScriptFields from "./inspector/ScriptFields.vue";
 import RigidBodyFields from "./inspector/RigidBodyFields.vue";
 import ColliderFields from "./inspector/ColliderFields.vue";
 import LightComponentFields from "./inspector/LightComponentFields.vue";
+import AnimationClipFields from "./inspector/AnimationClipFields.vue";
 import PhysicsSimSection from "./inspector/PhysicsSimSection.vue";
 import MultiSection from "./inspector/MultiSection.vue";
 import "../../styles/components/inspector-panel.scss";
@@ -620,6 +623,10 @@ function onAddComponentMenu(e: MouseEvent): void {
     { label: "物理", children: physicsChildren },
     { label: "光照", children: lightingChildren },
     { label: "音频", children: audioChildren },
+    {
+      label: "动画",
+      children: [{ label: componentMetaOf("animationClip").label, onClick: () => onAddBuiltinComponent("animationClip") }],
+    },
     menuSeparator(),
     { label: "脚本", children: scriptItems },
   ];
@@ -627,7 +634,7 @@ function onAddComponentMenu(e: MouseEvent): void {
 }
 
 /** 添加内置组件（注册表工厂建默认引用；可撤销） */
-function onAddBuiltinComponent(type: "rigidBody" | "collider" | "light" | "audioSource", lightKind?: "point" | "directional" | "ambient" | "spot"): void {
+function onAddBuiltinComponent(type: "rigidBody" | "collider" | "light" | "audioSource" | "animationClip", lightKind?: "point" | "directional" | "ambient" | "spot"): void {
   const n = node.value;
   if (!n || !canAddComponent(n, type)) return;
   const comp = createComponentRef(type, { lightKind });
@@ -895,6 +902,31 @@ function onAudioComponentUpdate(compId: string, label: string, value: unknown): 
   }, label);
 }
 
+/** 动画剪辑组件编辑（绑定 .anim 资产 + 播放设置） */
+function onAnimClipComponentUpdate(compId: string, label: string, value: unknown): void {
+  commit((target) => {
+    const comp = target.components.find(
+      (c): c is AnimationClipComponentRef => c.id === compId && isAnimationClipComponent(c),
+    );
+    if (!comp) return;
+    const b = comp.clip;
+    switch (label) {
+      case "Set Anim Clip":
+        b.clip = typeof value === "string" ? value : "";
+        break;
+      case "Set Anim Autoplay":
+        b.autoplay = value === true;
+        break;
+      case "Set Anim Loop":
+        b.loop = value === true;
+        break;
+      case "Set Anim Speed":
+        b.speed = Math.max(0.05, typeof value === "number" ? value : 1);
+        break;
+    }
+  }, label);
+}
+
 // ---------------------------------------------------------------------------
 // 组件卡展示派生（标题/分类标签；rev 为失效信号）
 // ---------------------------------------------------------------------------
@@ -925,6 +957,8 @@ function compCardTitle(c: NodeComponentRef): string {
       return "Collider";
     case "audioSource":
       return "Audio Source";
+    case "animationClip":
+      return "Animation Clip";
   }
 }
 
@@ -951,7 +985,7 @@ function onMultiAddComponentMenu(e: MouseEvent): void {
   if (!targets.length) return;
 
   const addBuiltin = (
-    type: "rigidBody" | "collider" | "light" | "audioSource",
+    type: "rigidBody" | "collider" | "light" | "audioSource" | "animationClip",
     lightKind?: "point" | "directional" | "ambient" | "spot",
   ): void => {
     const items = targets
@@ -1185,6 +1219,11 @@ function onNodeSetTag(tag: string): void {
               v-else-if="isLightComponent(c)"
               :comp="c"
               @update="(label, value) => onLightComponentUpdate(c.id, label, value)"
+            />
+            <AnimationClipFields
+              v-else-if="isAnimationClipComponent(c)"
+              :comp="c"
+              @update="(label, value) => onAnimClipComponentUpdate(c.id, label, value)"
             />
             <AudioSection
               v-else-if="isAudioSourceComponent(c)"

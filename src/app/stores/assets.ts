@@ -30,6 +30,7 @@ export interface AssetsStore {
   importPaths: (root: string, destDir: string, sourcePaths: string[]) => Promise<boolean>;
   createSceneAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   createPrefabAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
+  createAnimAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
   createMaterialAsset: (
     root: string,
     destDir: string,
@@ -199,6 +200,11 @@ export function getAssetsStore(): AssetsStore {
     },
     async createPrefabAsset(root, destDir, stem) {
       const r = await assetService.createPrefabAsset(root, destDir, stem, state.assets);
+      if (r) await reload(root);
+      return r;
+    },
+    async createAnimAsset(root, destDir, stem) {
+      const r = await assetService.createAnimAsset(root, destDir, stem, state.assets);
       if (r) await reload(root);
       return r;
     },

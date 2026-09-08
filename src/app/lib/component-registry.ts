@@ -29,12 +29,13 @@ import {
 } from "../../framework/physics";
 
 /** 组件分类（添加组件菜单的分组顺序即此顺序） */
-export type ComponentCategory = "physics" | "lighting" | "audio" | "script";
+export type ComponentCategory = "physics" | "lighting" | "audio" | "animation" | "script";
 
 export const COMPONENT_CATEGORY_LABELS: Record<ComponentCategory, string> = {
   physics: "物理",
   lighting: "光照",
   audio: "音频",
+  animation: "动画",
   script: "脚本",
 };
 
@@ -53,6 +54,7 @@ export const COMPONENT_METAS: ComponentMeta[] = [
   { type: "collider", label: "碰撞体 Collider", category: "physics", allowMultiple: true },
   { type: "light", label: "灯光 Light", category: "lighting", allowMultiple: false },
   { type: "audioSource", label: "音源 Audio Source", category: "audio", allowMultiple: true },
+  { type: "animationClip", label: "动画剪辑 Animation Clip", category: "animation", allowMultiple: true },
   { type: "script", label: "脚本 Script", category: "script", allowMultiple: true },
 ];
 
@@ -73,7 +75,7 @@ export function canAddComponent(node: { components: NodeComponentRef[] }, type: 
 /** 创建默认组件引用（light 可指定灯光类型；其余用各自默认设置） */
 export function createComponentRef(
   type: NodeComponentRef["type"],
-  opts: { lightKind?: LightComponentKind } = {},
+  opts: { lightKind?: LightComponentKind; clip?: string } = {},
 ): NodeComponentRef {
   switch (type) {
     case "rigidBody":
@@ -106,6 +108,13 @@ export function createComponentRef(
       };
     case "audioSource":
       return { id: nextId("comp"), type: "audioSource", enabled: true, audio: { ...DEFAULT_AUDIO_SETTINGS } };
+    case "animationClip":
+      return {
+        id: nextId("comp"),
+        type: "animationClip",
+        enabled: true,
+        clip: { clip: opts.clip ?? "", autoplay: true, loop: true, speed: 1 },
+      };
     case "script":
       // 脚本组件必须指定脚本路径，走 addScriptComponent 专用入口；这里仅占位
       throw new Error("脚本组件请用 createScriptComponentRef(script) 创建");
@@ -135,6 +144,9 @@ export function resetComponentSettings(comp: NodeComponentRef): void {
       break;
     case "audioSource":
       comp.audio = { ...DEFAULT_AUDIO_SETTINGS };
+      break;
+    case "animationClip":
+      comp.clip = { clip: "", autoplay: true, loop: true, speed: 1 };
       break;
     case "script":
       comp.props = {};

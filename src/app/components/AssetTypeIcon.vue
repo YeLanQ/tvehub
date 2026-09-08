@@ -64,6 +64,12 @@ defineProps<{ kind: string }>();
       <circle cx="12" cy="7.4" r="1.3" />
     </template>
 
+    <!-- 动画剪辑（.anim）：关键帧菱形 + 曲线 -->
+    <template v-else-if="kind === 'anim'">
+      <path d="M7 5.5l3 2.6-3 2.6-3-2.6 3-2.6z" />
+      <path d="M3.5 17c3.5 0 3.5-4 7-4s3.5 4 7 4" />
+      <path d="M17 6.5l3 2.6-3 2.6" />
+    </template>
     <!-- 预制体（.prefab）：立方体 + 子树分支（区别于纯模型立方体） -->
     <template v-else-if="kind === 'prefab'">
       <path d="M9 3.5l5 2.8v5.4l-5 2.8-5-2.8V6.3l5-2.8z" />

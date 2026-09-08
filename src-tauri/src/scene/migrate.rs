@@ -906,7 +906,7 @@ pub fn collect_material_refs(v: &Value, out: &mut Vec<String>) {
             let ty = o.get("type").and_then(Value::as_str);
             if ty == Some("meshNode") || ty == Some("skyboxNode") {
                 if let Some(Value::String(rel)) = o.get("material") {
-                    if !rel.is_empty() && !out.contains(rel) {
+                    if !rel.is_empty() && !out.iter().any(|r| r == rel) {
                         out.push(rel.clone());
                     }
                 }
@@ -1026,6 +1026,42 @@ pub fn collect_audio_refs(v: &Value, out: &mut Vec<String>) {
             }
             if let Some(root) = o.get("root") {
                 collect_audio_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 遍历场景 JSON 收集关键帧动画剪辑引用（.anim 文本资产；去重）：
+/// 任意节点 components 中 type=animationClip 的 clip 字段（组件模式）。
+pub fn collect_anim_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_anim_rel(rel: &str) -> bool {
+        rel.to_ascii_lowercase().ends_with(".anim")
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_anim_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            if let Some(Value::Array(comps)) = o.get("components") {
+                for c in comps {
+                    let Some(cobj) = c.as_object() else { continue };
+                    if cobj.get("type").and_then(Value::as_str) == Some("animationClip") {
+                        if let Some(rel) = cobj.get("clip").and_then(|a| a.as_str()) {
+                            if is_anim_rel(rel) && !out.iter().any(|r| r == rel) {
+                                out.push(rel.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_anim_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_anim_refs(root, out);
             }
         }
         _ => {}

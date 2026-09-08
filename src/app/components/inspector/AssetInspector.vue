@@ -37,6 +37,7 @@ import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
 import { fmtSize } from "../../lib/format";
 import { api } from "../../../lib/api";
 import { instantiatePrefabAsset } from "../../lib/prefabs";
+import { openInAnimEditor } from "../../lib/anim-editor";
 import {
   loadTexCubeDoc,
   saveTexCubeDoc,
@@ -137,6 +138,8 @@ const shaderOptions = computed(() => {
 // —— 着色器资产（.shader）：种类决定渲染程序与材质参数分组 ——
 const shaderDoc = ref<ShaderDoc | null>(null);
 /** 预制体概览（节点数；读取失败为 null） */
+/** 动画剪辑概览（时长/循环/通道数；读取失败为 null） */
+const animInfo = ref<{ duration: number; loops: boolean; curves: number } | null>(null);
 const prefabInfo = ref<{ nodes: number } | null>(null);
 const shaderReady = ref(false);
 
@@ -244,6 +247,7 @@ async function reload(): Promise<void> {
   shaderDoc.value = null;
   shaderReady.value = false;
   prefabInfo.value = null;
+  animInfo.value = null;
 
   if (kind.value === "mat") {
     matReady.value = false;
@@ -287,6 +291,21 @@ async function reload(): Promise<void> {
       prefabInfo.value = { nodes: count(doc) };
     } catch {
       prefabInfo.value = null;
+    }
+    return;
+  }
+  if (kind.value === "anim") {
+    try {
+      if (!root.value) return;
+      const text = await api.readText(root.value, rel);
+      const d = JSON.parse(text) as { duration?: number; loops?: boolean; curves?: unknown[] };
+      animInfo.value = {
+        duration: typeof d.duration === "number" ? d.duration : 0,
+        loops: d.loops !== false,
+        curves: Array.isArray(d.curves) ? d.curves.length : 0,
+      };
+    } catch {
+      animInfo.value = null;
     }
     return;
   }
@@ -873,6 +892,27 @@ function onImgLoad(e: Event): void {
         @click="instantiatePrefabAsset(props.rel)"
       >实例化到场景</button>
       <div class="hint">右键资产也可「实例化到场景」；层级面板选中实例可「更新预制体」回写资产。</div>
+    </template>
+    <!-- 动画剪辑：概览 + 在动画编辑器中打开 -->
+    <template v-else-if="kind === 'anim'">
+      <template v-if="animInfo">
+        <div class="field">
+          <label>时长</label>
+          <span>{{ animInfo.duration.toFixed(2) }}s {{ animInfo.loops ? "（循环）" : "（单次）" }}</span>
+        </div>
+        <div class="field">
+          <label>通道数</label>
+          <span>{{ animInfo.curves }}</span>
+        </div>
+      </template>
+      <div v-else class="hint">读取中…</div>
+      <button
+        class="prefab-instantiate"
+        :disabled="!animInfo || !root"
+        title="打开底部动画编辑窗口编辑该剪辑"
+        @click="openInAnimEditor(props.rel)"
+      >在动画编辑器中打开</button>
+      <div class="hint">给节点添加「动画剪辑」组件并绑定本剪辑，预览/发布即自动播放。</div>
     </template>
   </div>
 </template>

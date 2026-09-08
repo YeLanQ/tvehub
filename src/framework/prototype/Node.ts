@@ -85,13 +85,36 @@ export interface AudioSourceComponentRef {
   audio: AudioSourceSettings;
 }
 
+/** 关键帧动画剪辑绑定（指向 .anim 资产 + 播放设置） */
+export interface AnimClipBinding {
+  /** .anim 资产相对路径（空 = 未绑定） */
+  clip: string;
+  autoplay: boolean;
+  loop: boolean;
+  /** 播放速度倍率 */
+  speed: number;
+}
+
+/**
+ * 关键帧动画剪辑组件引用：给任意节点附加一段自制关键帧动画
+ * （.anim 资产，变换通道关键帧；与模型自带剪辑的 anim/animGraph 并存）。
+ * 编辑器由动画编辑窗口制作剪辑；播放器每帧采样并应用到节点对象变换。
+ */
+export interface AnimationClipComponentRef {
+  id: string;
+  type: "animationClip";
+  enabled: boolean;
+  clip: AnimClipBinding;
+}
+
 /** 节点组件引用（可辨识联合，按 type 收敛） */
 export type NodeComponentRef =
   | ScriptComponentRef
   | RigidBodyComponentRef
   | ColliderComponentRef
   | LightComponentRef
-  | AudioSourceComponentRef;
+  | AudioSourceComponentRef
+  | AnimationClipComponentRef;
 
 export function isScriptComponent(c: NodeComponentRef): c is ScriptComponentRef {
   return c.type === "script";
@@ -107,6 +130,20 @@ export function isLightComponent(c: NodeComponentRef): c is LightComponentRef {
 }
 export function isAudioSourceComponent(c: NodeComponentRef): c is AudioSourceComponentRef {
   return c.type === "audioSource";
+}
+export function isAnimationClipComponent(c: NodeComponentRef): c is AnimationClipComponentRef {
+  return c.type === "animationClip";
+}
+
+/** 动画剪辑绑定收敛（缺失/非法字段回退默认） */
+export function parseAnimClipBinding(v: unknown): AnimClipBinding {
+  const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  return {
+    clip: typeof o.clip === "string" ? o.clip : "",
+    autoplay: o.autoplay !== false,
+    loop: o.loop !== false,
+    speed: typeof o.speed === "number" && Number.isFinite(o.speed) ? Math.max(0, o.speed) : 1,
+  };
 }
 
 /** 组件引用 JSON 收敛（非法项剔除；各类型字段缺失回退默认） */
@@ -128,6 +165,13 @@ export function parseNodeComponents(value: unknown): NodeComponentRef[] {
       out.push({ id, type: "light", enabled, light: parseLightComponentSettings(rec.light) });
     } else if (type === "audioSource") {
       out.push({ id, type: "audioSource", enabled, audio: parseAudioSettings(rec.audio) });
+    } else if (type === "animationClip") {
+      out.push({
+        id,
+        type: "animationClip",
+        enabled,
+        clip: parseAnimClipBinding(rec.clip),
+      });
     } else {
       if (typeof rec.script !== "string" || !rec.script) continue;
       out.push({
@@ -154,6 +198,7 @@ function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
     if (c.type === "collider") return { ...c, id, collider: cloneColliderSettings(c.collider) };
     if (c.type === "light") return { ...c, id, light: cloneLightComponentSettings(c.light) };
     if (c.type === "audioSource") return { ...c, id, audio: cloneAudioSettings(c.audio) };
+    if (c.type === "animationClip") return { ...c, id, clip: { ...c.clip } };
     return { ...c, id, props: cloneRecord(c.props) };
   });
 }
@@ -164,6 +209,7 @@ function cloneComponentForWrite(c: NodeComponentRef): NodeComponentRef {
   if (c.type === "collider") return { ...c, collider: cloneColliderSettings(c.collider) };
   if (c.type === "light") return { ...c, light: cloneLightComponentSettings(c.light) };
   if (c.type === "audioSource") return { ...c, audio: cloneAudioSettings(c.audio) };
+  if (c.type === "animationClip") return { ...c, clip: { ...c.clip } };
   const out: NodeComponentRef = { ...c, props: cloneRecord(c.props) };
   // 执行顺序 0 = 缺省不写（旧场景文件保持字节兼容）
   if (!c.executionOrder) delete (out as unknown as Record<string, unknown>).executionOrder;

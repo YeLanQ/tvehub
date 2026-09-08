@@ -13,6 +13,7 @@ export const WEB_PREVIEW_RUNTIME_FILES = [
   "libs/sky.mjs",
   "libs/material.mjs",
   "libs/mesh.mjs",
+  "libs/animclip.mjs",
   "libs/nodes.mjs",
   "libs/textures.mjs",
   "libs/camera.mjs",

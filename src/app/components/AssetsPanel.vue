@@ -328,6 +328,7 @@ const menuApi: AssetMenuApi = {
   onNewSkybox: (dir, kind) => void doNewSkybox(dir, kind),
   onNewTextureCube: (dir) => void doNewTextureCube(dir),
   onNewPrefab: (dir) => void doNewPrefab(dir),
+  onNewAnim: (dir) => void doNewAnim(dir),
   onImport: (dir) => void doImport(dir),
   onImportFolder: (dir) => void doImportFolder(dir),
   onCopyPath: (p) => void copyPath(p),
@@ -402,6 +403,23 @@ async function doNewPrefab(dir: string): Promise<void> {
   await assetsStore.createPrefabAsset(root, dir, name.trim());
 }
 
+/** 新建关键帧动画剪辑（.anim；模板创建） */
+async function doNewAnim(dir: string): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir) || isSrcDir(dir)) {
+    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建动画" : "内置目录只读，不允许新建动画");
+    return;
+  }
+  const name = await prompt({
+    title: "新建动画",
+    label: dir || "项目根",
+    initial: "NewAnimation",
+    confirmText: "创建",
+  });
+  if (!name?.trim()) return;
+  await assetsStore.createAnimAsset(root, dir, name.trim());
+}
 /** 实例化预制体资产到当前场景（挂到选中节点/根下；一次撤销） */
 async function instantiatePrefab(item: { path: string }): Promise<void> {
   await instantiatePrefabAsset(item.path);

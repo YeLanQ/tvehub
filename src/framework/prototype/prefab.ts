@@ -22,7 +22,6 @@ export interface SerializePrefabOptions {
    */
   forAsset?: boolean;
 }
-
 /** 节点子树 → 嵌套 prefab 文档（childrenOf 提供子节点解析，如 graph.childrenOf） */
 export function serializePrefabTree(
   root: Node,

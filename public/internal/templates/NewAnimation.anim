@@ -1,0 +1,7 @@
+{
+  "type": "animclip",
+  "name": "{{ANIM_NAME}}",
+  "duration": 3,
+  "loops": true,
+  "curves": []
+}

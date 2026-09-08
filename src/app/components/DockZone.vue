@@ -14,6 +14,7 @@ import HierarchyPanel from "./HierarchyPanel.vue";
 import InspectorPanel from "./InspectorPanel.vue";
 import ConsolePanel from "./ConsolePanel.vue";
 import AssetsPanel from "./AssetsPanel.vue";
+import AnimationEditorPanel from "./AnimationEditorPanel.vue";
 import "../../styles/components/dock-zone.scss";
 
 const props = defineProps<{ zone: DockZoneId }>();
@@ -89,6 +90,7 @@ onUnmounted(() => {
       <InspectorPanel v-if="activePanel === 'inspector'" />
       <ConsolePanel v-if="activePanel === 'console'" />
       <AssetsPanel v-if="activePanel === 'assets'" />
+      <AnimationEditorPanel v-if="activePanel === 'animation'" />
     </div>
     </template>
     <!-- 空停靠区：细条拖放落点（拖回面板停靠） -->

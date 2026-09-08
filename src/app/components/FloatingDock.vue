@@ -10,6 +10,7 @@ import HierarchyPanel from "./HierarchyPanel.vue";
 import InspectorPanel from "./InspectorPanel.vue";
 import ConsolePanel from "./ConsolePanel.vue";
 import AssetsPanel from "./AssetsPanel.vue";
+import AnimationEditorPanel from "./AnimationEditorPanel.vue";
 import "../../styles/components/floating-dock.scss";
 
 const props = defineProps<{ win: FloatingDock }>();
@@ -49,6 +50,7 @@ function style() {
       <InspectorPanel v-if="win.panel === 'inspector'" />
       <ConsolePanel v-if="win.panel === 'console'" />
       <AssetsPanel v-if="win.panel === 'assets'" />
+      <AnimationEditorPanel v-if="win.panel === 'animation'" />
     </div>
   </div>
 </template>

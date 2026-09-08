@@ -38,6 +38,7 @@ export interface AssetMenuApi {
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTextureCube: (dir: string) => void;
   onNewPrefab: (dir: string) => void;
+  onNewAnim: (dir: string) => void;
   onImport: (dir: string) => void;
   onImportFolder: (dir: string) => void;
   onCopyPath: (path: string) => void;
@@ -71,6 +72,7 @@ function newAssetItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
     },
     { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) },
     { label: "新建预制体", onClick: () => api.onNewPrefab(dir) },
+    { label: "新建动画", onClick: () => api.onNewAnim(dir) },
   ];
 }
 

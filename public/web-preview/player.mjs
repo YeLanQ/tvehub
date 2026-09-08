@@ -20,6 +20,7 @@ import { createAnimations } from "./libs/animation.mjs";
 import { createAudios } from "./libs/audio.mjs";
 import { createPhysics } from "./libs/physics.mjs";
 import { buildSceneTree } from "./libs/nodes.mjs";
+import { createClipAnimations } from "./libs/animclip.mjs";
 import { createScripts } from "./libs/scripts.mjs";
 import { applyMeshTextures } from "./libs/textures.mjs";
 import { createRenderCamera } from "./libs/camera.mjs";
@@ -104,7 +105,7 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes, audios, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
+  const { cameras, meshes, audios, clips, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
@@ -316,6 +317,12 @@ async function main() {
     return null;
   });
 
+  // 关键帧动画剪辑（节点 animationClip 组件；autoplay 绑定自动应用）
+  const clipAnims = await createClipAnimations(clips).catch((e) => {
+    postLog("error", `关键帧动画运行时启动失败: ${e?.message ?? e}`);
+    return { update() {} };
+  });
+
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
   let scripts = { update() {}, dispose() {} };
   try {
@@ -341,6 +348,7 @@ async function main() {
     scripts.update(dt);
     animations.update(dt);
     physicsApi?.update(dt);
+    clipAnims.update(dt);
     audiosApi.update();
     applyClearFlags();
     renderer.render(scene, cam);

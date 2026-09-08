@@ -72,6 +72,7 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   mat: "assets/materials",
   shader: "assets/shaders",
   prefab: "assets/prefabs",
+  anim: "assets/animations",
   ts: "src",
   png: "assets/textures",
   jpg: "assets/textures",
@@ -230,6 +231,39 @@ export const assetService = {
     }
   },
 
+  /**
+   * 新建关键帧动画剪辑（.anim）：变换通道曲线（AnimationClipData 形状），
+   * 动画编辑窗口制作/修改内容。
+   */
+  async createAnimAsset(
+    root: string,
+    destDir: string,
+    stem: string,
+    assets: AssetEntry[],
+  ): Promise<string | null> {
+    const clean = validateAssetName(stem);
+    if (!clean) {
+      logStore.log("warn", "无效的动画名（不能含 / \\ : ..）");
+      return null;
+    }
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建动画");
+      return null;
+    }
+    const base = clean.toLowerCase().endsWith(".anim") ? clean.slice(0, -".anim".length) : clean;
+    const rel = uniqueRel(assets, destDir, base, ".anim");
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - ".anim".length);
+    try {
+      const content = await loadAssetTemplate("anim", { ANIM_NAME: name });
+      if (content == null) throw new Error("动画模板读取失败");
+      await api.writeText(root, rel, content);
+      logStore.log("success", `已新建动画: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建动画失败: ${e}`);
+      return null;
+    }
+  },
   /**
    * 新建空白预制体（.prefab）：单节点嵌套文档（与 .scene root 同形状）。
    * 实例化时节点/组件 id 全部重生成，模板里的 id 仅作占位。

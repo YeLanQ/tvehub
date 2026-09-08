@@ -241,6 +241,20 @@ pub(crate) fn collect_scene_assets(
             Err(_) => missing.push(rel.clone()),
         }
     }
+    // 关键帧动画剪辑引用：.anim 文本随导出（缺失跳过，player 侧该组件空转）
+    let mut anim_refs = Vec::new();
+    crate::scene::migrate::collect_anim_refs(&scene_json, &mut anim_refs);
+    for rel in &anim_refs {
+        if files.contains_key(rel) {
+            continue;
+        }
+        match crate::scene::material::read_material_text(root_path, rel) {
+            Ok(text) => {
+                files.insert(rel.clone(), text);
+            }
+            Err(_) => missing.push(rel.clone()),
+        }
+    }
     missing
 }
 

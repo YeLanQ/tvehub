@@ -1,6 +1,6 @@
 import { reactive, watch } from "vue";
 
-export type DockPanelId = "hierarchy" | "inspector" | "console" | "assets";
+export type DockPanelId = "hierarchy" | "inspector" | "console" | "assets" | "animation";
 export type DockZoneId = "left" | "right" | "bottom";
 
 export interface FloatingDock {
@@ -21,7 +21,7 @@ export interface DockLayout {
   sizes: { left: number; right: number; bottom: number };
 }
 
-export const ALL_PANELS: DockPanelId[] = ["hierarchy", "inspector", "console", "assets"];
+export const ALL_PANELS: DockPanelId[] = ["hierarchy", "inspector", "console", "assets", "animation"];
 export const ALL_ZONES: DockZoneId[] = ["left", "right", "bottom"];
 
 export const DOCK_PANEL_LABEL: Record<DockPanelId, string> = {
@@ -29,16 +29,17 @@ export const DOCK_PANEL_LABEL: Record<DockPanelId, string> = {
   inspector: "属性",
   console: "控制台",
   assets: "资产",
+  animation: "动画",
 };
 
-const LAYOUT_KEY = "three-visual-editor:dock-layout:v2";
+const LAYOUT_KEY = "three-visual-editor:dock-layout:v3";
 
 function defaults(): DockLayout {
   return {
-    zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["console", "assets"] },
+    zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["console", "animation", "assets"] },
     active: { left: "hierarchy", right: "inspector", bottom: "console" },
     floating: [],
-    sizes: { left: 270, right: 300, bottom: 180 },
+    sizes: { left: 270, right: 300, bottom: 240 },
   };
 }
 

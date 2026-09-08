@@ -24,6 +24,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
   const cameras = [];
   const meshes = [];
   const audios = [];
+  const clips = [];
   const nodes = [];
 
   function buildOwn(type, json) {
@@ -62,7 +63,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
     obj.rotation.set(num(r.x, 0) * D2R, num(r.y, 0) * D2R, num(r.z, 0) * D2R);
     obj.scale.set(num(s.x, 1), num(s.y, 1), num(s.z, 1));
 
-    // 组件模式：灯光/音源组件（启用中的才生效）
+    // 组件模式：灯光/音源/动画剪辑组件（启用中的才生效）
     const comps = Array.isArray(json.components) ? json.components : [];
     for (const c of comps) {
       if (!c || typeof c !== "object" || c.enabled === false) continue;
@@ -70,6 +71,15 @@ export function buildSceneTree(rootJson, scene, ctx) {
         buildComponentLight(c.light || {}, obj);
       } else if (c.type === "audioSource") {
         audios.push({ json: { id: c.id, audio: c.audio }, obj, nodeId: json.id });
+      } else if (c.type === "animationClip") {
+        const binding = c.clip && typeof c.clip === "object" ? c.clip : {};
+        clips.push({
+          clip: typeof binding.clip === "string" ? binding.clip : "",
+          obj,
+          autoplay: binding.autoplay !== false,
+          loop: binding.loop !== false,
+          speed: num(binding.speed, 1),
+        });
       }
     }
 
@@ -168,5 +178,5 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   buildNode(rootJson, null);
-  return { cameras, meshes, audios, nodes };
+  return { cameras, meshes, audios, clips, nodes };
 }
