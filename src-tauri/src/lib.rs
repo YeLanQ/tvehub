@@ -242,30 +242,45 @@ async fn ensure_project_meta(root: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 复制资产后把 .shader 的 Shader 指令跟随新路径（失败静默，不影响主操作）
+fn follow_shader_directive(root: &str, rel: &str) {
+    let _ = scene::migrate::rewrite_shader_directive(std::path::Path::new(root), rel);
+}
+
 /// 复制资产，返回新资产相对路径
 #[tauri::command]
 async fn copy_asset(root: String, rel: String) -> Result<String, String> {
-    project::copy_asset(&PathBuf::from(&root), &rel)
+    let new_rel = project::copy_asset(&PathBuf::from(&root), &rel)?;
+    follow_shader_directive(&root, &new_rel);
+    Ok(new_rel)
 }
 
 /// 导入外部文件/目录到项目内指定目录，返回成功导入的相对路径列表
 #[tauri::command]
 async fn import_assets(root: String, dest_dir: String, source_paths: Vec<String>) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let root_for_follow = root.clone();
+    let imported = tauri::async_runtime::spawn_blocking(move || {
         project::import_assets(&PathBuf::from(&root), &dest_dir, &source_paths)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    for rel in &imported {
+        follow_shader_directive(&root_for_follow, rel);
+    }
+    Ok(imported)
 }
 
 /// 移动资产到项目内另一目录，返回新资产相对路径
 #[tauri::command]
 async fn move_asset(root: String, rel: String, dest_dir: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let root_for_follow = root.clone();
+    let new_rel = tauri::async_runtime::spawn_blocking(move || {
         project::move_asset(&PathBuf::from(&root), &rel, &dest_dir)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    follow_shader_directive(&root_for_follow, &new_rel);
+    Ok(new_rel)
 }
 
 /// 删除资产（目录递归删除）
@@ -277,7 +292,9 @@ async fn delete_asset(root: String, rel: String) -> Result<(), String> {
 /// 重命名资产，返回新资产相对路径
 #[tauri::command]
 async fn rename_asset(root: String, rel: String, new_name: String) -> Result<String, String> {
-    project::rename_asset(&PathBuf::from(&root), &rel, &new_name)
+    let new_rel = project::rename_asset(&PathBuf::from(&root), &rel, &new_name)?;
+    follow_shader_directive(&root, &new_rel);
+    Ok(new_rel)
 }
 
 /// 新建目录，返回创建目录相对路径
@@ -612,6 +629,8 @@ pub fn run() {
             scene::material::material_write,
             scene::material::material_duplicate,
             scene::material::skymat_write,
+            scene::material::shader_read,
+            scene::material::shader_write,
             scene::texcube::texcube_write,
             devtools::devtools_start,
             devtools::devtools_stop,

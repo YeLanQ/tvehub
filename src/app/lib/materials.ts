@@ -5,9 +5,14 @@
 // ---------------------------------------------------------------------------
 
 import { api } from "../../lib/api";
-import type { MaterialDoc, MaterialParams } from "../../framework/material";
+import {
+  DEFAULT_SHADER_REL,
+  type MaterialDoc,
+  type MaterialParams,
+} from "../../framework/material";
 
-/** 按引用读取并解析材质文档（后端 material_read；失败/缺失返回 null） */
+/** 按引用读取并解析材质文档（后端 material_read；shader 引用已解析为渲染分支；
+ * 失败/缺失返回 null） */
 export async function loadMaterialDoc(root: string | null, rel: string): Promise<MaterialDoc | null> {
   if (!root) return null;
   try {
@@ -16,6 +21,7 @@ export async function loadMaterialDoc(root: string | null, rel: string): Promise
     return {
       name: doc.name,
       type: doc.materialType,
+      shader: doc.shader,
       params: doc.params as unknown as MaterialParams,
     };
   } catch {
@@ -32,15 +38,16 @@ export async function loadMaterialParams(
   return doc ? doc.params : null;
 }
 
-/** 写入材质资产（后端序列化 + 落盘 + 补 .meta）；失败抛错由调用方处理 */
+/** 写入材质资产（后端序列化 + 落盘 + 补 .meta）；shader 为着色器资产相对路径，
+ * 失败抛错由调用方处理 */
 export async function saveMaterialParams(
   root: string,
   rel: string,
   name: string,
   params: MaterialParams,
-  type = "physical",
+  shader: string = DEFAULT_SHADER_REL,
 ): Promise<void> {
-  await api.materialWrite(root, rel, name, type, params as unknown as Record<string, unknown>);
+  await api.materialWrite(root, rel, name, shader, params as unknown as Record<string, unknown>);
 }
 
 /** 列出项目 assets 下的材质资产相对路径（UI 展示/统计用） */

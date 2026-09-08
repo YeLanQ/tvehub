@@ -30,8 +30,15 @@ export interface AssetsStore {
   createMaterialAsset: (
     root: string,
     destDir: string,
-    typeKey: string,
-    /** 显式指定材质名（devtools/外部调用按名创建）；缺省用类型显示名（资产面板「新建材质」） */
+    /** 显式指定材质名（devtools/外部调用按名创建）；缺省用 "Material"（资产面板「新建材质」） */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
+  createShaderAsset: (
+    root: string,
+    destDir: string,
+    /** 着色器种类（physical/unlit/toon） */
+    kind: string,
+    /** 显式指定名称；缺省按种类用 "PBR"/"Unlit"/"Toon"（资产面板「新建着色器」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
   createScriptAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
@@ -182,14 +189,13 @@ export function getAssetsStore(): AssetsStore {
       if (r) await reload(root);
       return r;
     },
-    async createMaterialAsset(root, destDir, typeKey, preferStem = null) {
-      const r = await assetService.createMaterialAsset(
-        root,
-        destDir,
-        typeKey,
-        state.assets,
-        preferStem,
-      );
+    async createMaterialAsset(root, destDir, preferStem = null) {
+      const r = await assetService.createMaterialAsset(root, destDir, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createShaderAsset(root, destDir, kind, preferStem = null) {
+      const r = await assetService.createShaderAsset(root, destDir, kind, state.assets, preferStem);
       if (r) await reload(root);
       return r;
     },

@@ -114,10 +114,16 @@ export function displacedGeometry(geom, offset) {
   return out;
 }
 
-/** 解析单个 .mat JSON → 规整化参数对象（缺省回退 MAT_DEFAULTS） */
+/** 合法渲染分支 key（与编辑器工厂注册表一致）；.shader kind 归一到此集合 */
+const SHADER_KINDS = new Set(["physical", "unlit", "toon"]);
+
+/** 解析单个 .mat JSON → 规整化参数对象（缺省回退 MAT_DEFAULTS）。
+ * type 为渲染分支 key：shader 字段引用的 .shader 资产由 loadMaterialParams
+ * 二次拉取解析；此处先取旧 materialType 字段作回退。 */
 function parseMaterialDoc(j) {
   return {
     type: typeof j.materialType === "string" && j.materialType ? j.materialType : "physical",
+    shader: typeof j.shader === "string" && j.shader.endsWith(".shader") ? j.shader : "",
     color: matColor(j.color, MAT_DEFAULTS.color),
     metalness: u01(j.metalness, MAT_DEFAULTS.metalness),
     roughness: u01(j.roughness, MAT_DEFAULTS.roughness),
@@ -156,8 +162,50 @@ function parseMaterialDoc(j) {
   };
 }
 
+/** ShaderLab 源文本 → 渲染分支 key（与后端 parse_shader_doc 同规则）：
+ * surface 光照模型 Toon → toon / Standard → physical（其余 surface 模型归 physical）；
+ * 无 surface pragma 但有顶点片元 pragma（#pragma fragment/vertex）→ unlit。 */
+function shaderKindFromSource(text) {
+  let kind = "";
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    const t = line.trim();
+    const m = t.match(/^#pragma\s+surface\s+\S+\s+(\S+)/);
+    if (m) {
+      kind = m[1].toLowerCase() === "toon" ? "toon" : "physical";
+      break;
+    }
+    if (!kind && /^#pragma\s+(fragment|vertex)/.test(t)) kind = "unlit";
+  }
+  return kind || "physical";
+}
+
+/** 按引用拉取 .shader 资产 → 渲染分支 key（缺失/损坏/未知 kind 返回 null）。
+ * .shader 为 Unity ShaderLab 风格源码文本；旧版 JSON 格式（$type=shader）兼容读取。 */
+async function fetchShaderKind(rel) {
+  try {
+    const r = await fetch(rel);
+    if (!r.ok) return null;
+    const text = await r.text();
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith("{")) {
+      try {
+        const j = JSON.parse(trimmed);
+        return j && j.$type === "shader" && SHADER_KINDS.has(j.kind) ? j.kind : null;
+      } catch {
+        return null;
+      }
+    }
+    const kind = shaderKindFromSource(text);
+    return SHADER_KINDS.has(kind) ? kind : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 收集场景树里 meshNode 的 .mat 引用，逐个 fetch 解析为参数表（ref → params）。
- * 缺失/解析失败的引用不进表（后续按 MAT_DEFAULTS 回退）。 */
+ * 材质经 shader 字段引用 .shader 资产时二次拉取，把渲染分支 key 写入 type
+ * （旧 .mat 无 shader 字段则沿用 materialType）。缺失/解析失败的引用不进表
+ * （后续按 MAT_DEFAULTS 回退）。 */
 export async function loadMaterialParams(rootJson) {
   const materialParams = new Map();
   const refs = new Set();
@@ -171,7 +219,12 @@ export async function loadMaterialParams(rootJson) {
       const r = await fetch(rel);
       if (r.ok) {
         const j = await r.json();
-        materialParams.set(rel, parseMaterialDoc(j));
+        const doc = parseMaterialDoc(j);
+        if (doc.shader) {
+          const kind = await fetchShaderKind(doc.shader);
+          if (kind) doc.type = kind;
+        }
+        materialParams.set(rel, doc);
       }
     } catch {
       /* 缺失材质：回退默认 */

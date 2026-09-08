@@ -30,6 +30,7 @@ import {
   loadMaterialDoc,
   saveMaterialParams,
 } from "../lib/materials";
+import { loadShaderKind } from "../lib/shaders";
 import type { JsonRecord, JsonValue } from "../../framework/prototype/types";
 import type { TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../framework/animation";
@@ -113,12 +114,13 @@ let materialDirty: {
   root: string;
   rel: string;
   name: string;
-  type: string;
+  /** 挂载的着色器资产引用（写入 .mat 的 shader 字段） */
+  shader: string;
   params: MaterialParams;
 } | null = null;
 
 function persistMaterialNow(d: NonNullable<typeof materialDirty>): void {
-  saveMaterialParams(d.root, d.rel, d.name, d.params, d.type).catch((e) =>
+  saveMaterialParams(d.root, d.rel, d.name, d.params, d.shader).catch((e) =>
     logStore.log("error", `保存材质 ${d.rel} 失败: ${e}`, "engine"),
   );
 }
@@ -131,19 +133,28 @@ function flushMaterialPersist(): void {
   if (d) persistMaterialNow(d);
 }
 
-function scheduleMaterialPersist(rel: string, params: MaterialParams, type?: string): void {
+function scheduleMaterialPersist(
+  rel: string,
+  params: MaterialParams,
+  kind?: string,
+  shader?: string,
+): void {
   const root = projectStore.currentPath;
   if (!root) return;
   // 连续编辑中切到另一份材质时，先把上一份落盘，避免被覆盖丢失
   if (materialDirty && materialDirty.rel !== rel) flushMaterialPersist();
-  // 类型缺省时取引擎缓存的当前类型（参数编辑不改类型；类型切换显式传入）
+  // 着色器引用缺省时取引擎缓存的当前值（参数编辑不改挂载；切换着色器显式传入）
   materialDirty = {
     root,
     rel,
     name: materialFileStem(rel),
-    type: type ?? engine.materials.typeFor(rel),
+    shader: shader ?? engine.materials.shaderFor(rel),
     params: { ...params },
   };
+  if (kind) {
+    // 渲染分支即时写缓存（引用该材质的网格按新分支重建 three 材质）
+    engine.materials.cachePut(rel, params, kind, materialDirty.shader);
+  }
   if (materialDirtyTimer) clearTimeout(materialDirtyTimer);
   materialDirtyTimer = setTimeout(() => {
     materialDirtyTimer = null;
@@ -338,17 +349,18 @@ async function onMaterialEdit(
 }
 
 /** 切换当前材质资产的类型（physical/unlit…）：改写 .mat 并按新类型重建视口材质 */
-async function onMaterialChangeType(type: string): Promise<void> {
+/** 切换当前材质挂载的着色器：改写 .mat 的 shader 引用并按新渲染分支重建视口材质 */
+async function onMaterialChangeShader(shaderRel: string): Promise<void> {
   const n = node.value;
-  if (!n || !(n instanceof MeshNode) || !type) return;
+  if (!n || !(n instanceof MeshNode) || !shaderRel) return;
   const root = projectStore.currentPath;
   if (!root) {
-    logStore.log("error", "未打开项目，无法切换材质类型", "engine");
+    logStore.log("error", "未打开项目，无法切换着色器", "engine");
     return;
   }
   let rel = n.material;
   if (isInternalAsset(rel)) {
-    // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再切换类型
+    // 内置材质只读（UI 已禁用，这里兜底）：先复制为项目材质再切换着色器
     const dup = await duplicateMaterialToProject(root, rel, n.name);
     if (!dup) {
       logStore.log("error", "复制内置材质到项目失败", "engine");
@@ -359,11 +371,12 @@ async function onMaterialChangeType(type: string): Promise<void> {
     }, "复制材质到项目");
     rel = dup;
   }
-  if (materialDirty) flushMaterialPersist(); // 类型变更前先落盘旧的参数修改
+  if (materialDirty) flushMaterialPersist(); // 切换前先落盘旧的参数修改
+  // 解析新着色器的渲染分支（.shader 读取失败回退 PBR），缓存 + 落盘都在
+  // scheduleMaterialPersist 内完成（引用该材质的网格按新分支重建 three 材质）
+  const kind = await loadShaderKind(root, shaderRel);
   const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
-  // 写入新类型并广播：引用该材质的网格按新类型重建 three 材质（类型不符 → 工厂重建）
-  engine.materials.cachePut(rel, params, type);
-  scheduleMaterialPersist(rel, params, type);
+  scheduleMaterialPersist(rel, params, kind, shaderRel);
 }
 
 /** 复制当前材质为项目资产并绑定到本节点（内置材质转可编辑 / 生成独立副本） */
@@ -378,10 +391,10 @@ async function onMaterialCopyToProject(): Promise<void> {
     logStore.log("error", "复制材质资产失败", "engine");
     return;
   }
-  // 复制完成后先把新副本文档（类型 + 参数）入缓存，再切换引用：面板/视口不经过默认灰
+  // 复制完成后先把新副本文档（类型 + 参数 + 着色器引用）入缓存，再切换引用：面板/视口不经过默认灰
   if (root) {
     const dupDoc = await loadMaterialDoc(root, dup);
-    if (dupDoc) engine.materials.cachePut(dup, dupDoc.params, dupDoc.type);
+    if (dupDoc) engine.materials.cachePut(dup, dupDoc.params, dupDoc.type, dupDoc.shader);
   }
   mutateNode(n, (m) => { (m as MeshNode).material = dup; }, "复制材质到项目");
   if (root) engine.refreshMaterialNodes(dup);
@@ -822,7 +835,7 @@ function onColliderUpdate(compId: string, label: string, value: unknown): void {
           :rev="revision"
           @setMaterial="onSetMaterial"
           @editParam="onMaterialEdit"
-          @changeType="onMaterialChangeType"
+          @changeShader="onMaterialChangeShader"
           @copyToProject="onMaterialCopyToProject"
         />
       </ComponentCard>

@@ -28,3 +28,15 @@ export {
   materialTypeRegistry,
 } from "./factory";
 export type { MaterialTypeDef, MaterialTextureLoader, OutlineConfig } from "./factory";
+export {
+  DEFAULT_SHADER_REL,
+  DEFAULT_SHADER_RELS,
+  INTERNAL_SHADER_ROOT,
+  SHADER_EXT,
+  SHADER_KINDS,
+  SHADER_KIND_STEMS,
+  normalizeShaderKind,
+  shaderFileStem,
+  shaderKindLabel,
+} from "./shader";
+export type { ShaderDoc, ShaderKind } from "./shader";

@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 pub const MATERIAL_EXT: &str = ".mat";
+/// 着色器资产文件扩展名
+pub(crate) const SHADER_EXT: &str = ".shader";
 pub const DEFAULT_MATERIAL_REL: &str = "internal/materials/Default.mat";
 const LEGACY_KEYS: [&str; 5] = ["color", "metalness", "roughness", "emissive", "wireframe"];
 
@@ -198,53 +200,414 @@ pub fn material_params_from(o: &Map<String, Value>) -> MaterialParams {
     }
 }
 
-/// 材质文档 → .mat 文件内容（字段顺序与前端 serializeMaterialFile 一致）
-pub fn serialize_material_file(name: &str, material_type: &str, p: &MaterialParams) -> String {
-    let v = json!({
-        "$type": "material",
-        "$ver": 1,
-        "name": name,
-        "materialType": if material_type.trim().is_empty() { "physical" } else { material_type },
-        "color": color_to_hex_string(p.color),
-        "metalness": p.metalness,
-        "roughness": p.roughness,
-        "specularIntensity": p.specular_intensity,
-        "specularColor": color_to_hex_string(p.specular_color),
-        "ior": p.ior,
-        "emissive": color_to_hex_string(p.emissive),
-        "emissiveIntensity": p.emissive_intensity,
-        "emissionEnabled": p.emission_enabled,
-        "clearcoat": p.clearcoat,
-        "clearcoatRoughness": p.clearcoat_roughness,
-        "clearcoatEnabled": p.clearcoat_enabled,
-        "sheen": p.sheen,
-        "sheenColor": color_to_hex_string(p.sheen_color),
-        "sheenRoughness": p.sheen_roughness,
-        "sheenEnabled": p.sheen_enabled,
-        "transmission": p.transmission,
-        "thickness": p.thickness,
-        "attenuationColor": color_to_hex_string(p.attenuation_color),
-        "attenuationDistance": p.attenuation_distance,
-        "transmissionEnabled": p.transmission_enabled,
-        "anisotropy": p.anisotropy,
-        "anisotropyRotation": p.anisotropy_rotation,
-        "iridescence": p.iridescence,
-        "iridescenceIOR": p.iridescence_ior,
-        "opacity": p.opacity,
-        "alphaClipThreshold": p.alpha_clip_threshold,
-        "wireframe": p.wireframe,
-        "toonSteps": p.toon_steps,
-        "toonShadowStrength": p.toon_shadow_strength,
-        "outlineEnabled": p.outline_enabled,
-        "outlineColor": color_to_hex_string(p.outline_color),
-        "outlineWidth": p.outline_width,
-        "map": p.map,
-        "metalnessMap": p.metalness_map,
-        "roughnessMap": p.roughness_map,
-        "normalMap": p.normal_map,
-        "emissiveMap": p.emissive_map,
-    });
-    serde_json::to_string_pretty(&v).unwrap_or_default()
+/// 内置默认着色器引用（.mat shader 字段缺省写入值；与 public/internal/shaders 一致）
+pub(crate) const DEFAULT_SHADER_REL: &str = "internal/shaders/PBR.shader";
+
+/// 着色器种类归一（未知/空值回退 physical；与前端 normalizeShaderKind 一致）
+pub(crate) fn normalize_shader_kind(kind: &str) -> &'static str {
+    match kind.trim() {
+        "unlit" => "unlit",
+        "toon" => "toon",
+        _ => "physical",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// .shader = Unity ShaderLab 风格着色器源码（渲染程序资产，材质经 shader 字段引用）。
+// TVE 引擎不编译这份源码，而是按 pragma 识别渲染分支（与内置 three 材质管线映射）：
+//   `#pragma surface surf Standard` → physical（PBR）
+//   `#pragma surface surf Toon`     → toon（卡通）
+//   无 surface pragma、仅顶点片元（#pragma fragment）→ unlit
+// Properties 只声明暴露项（与材质检查器的参数分组对应）；参数值存于材质资产。
+// ---------------------------------------------------------------------------
+
+const SHADER_HEADER: &str = "\
+// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
+// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
+";
+
+const PBR_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
+// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
+Shader "{NAME}"
+{
+    Properties
+    {
+        _Color ("Base Color", Color) = (0.604, 0.643, 0.698, 1)
+        _MainTex ("Base Color Texture", 2D) = "white" {}
+        _Metallic ("Metallic", Range(0, 1)) = 0.1
+        _Roughness ("Roughness", Range(0, 1)) = 0.75
+        _EmissionColor ("Emission Color", Color) = (0, 0, 0, 1)
+        _EmissionIntensity ("Emission Strength", Range(0, 10)) = 1
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" }
+        LOD 200
+
+        CGPROGRAM
+        // 原理化 BSDF（对齐 Blender Principled BSDF），完整物理光照
+        #pragma surface surf Standard fullforwardshadows
+        #pragma target 3.0
+
+        sampler2D _MainTex;
+        fixed4 _Color;
+        half _Metallic;
+        half _Roughness;
+        fixed4 _EmissionColor;
+        half _EmissionIntensity;
+
+        struct Input
+        {
+            float2 uv_MainTex;
+        };
+
+        void surf (Input IN, inout SurfaceOutputStandard o)
+        {
+            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
+            o.Albedo = c.rgb;
+            o.Metallic = _Metallic;
+            o.Smoothness = 1 - _Roughness;
+            o.Emission = _EmissionColor.rgb * _EmissionIntensity;
+            o.Alpha = c.a;
+        }
+        ENDCG
+    }
+    FallBack "VertexLit"
+}
+"##;
+
+const UNLIT_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
+// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
+Shader "{NAME}"
+{
+    Properties
+    {
+        _Color ("Base Color", Color) = (1, 1, 1, 1)
+        _MainTex ("Base Color Texture", 2D) = "white" {}
+        _Opacity ("Opacity", Range(0, 1)) = 1
+        _AlphaClip ("Alpha Clip Threshold", Range(0, 1)) = 0.5
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" }
+        LOD 100
+
+        CGPROGRAM
+        // 无光照直出（不受光照影响，适合 UI 面、标志、风格化场景）
+        #pragma vertex vert
+        #pragma fragment frag
+        #pragma target 2.0
+
+        sampler2D _MainTex;
+        fixed4 _Color;
+        fixed _Opacity;
+        fixed _AlphaClip;
+
+        struct appdata
+        {
+            float4 vertex : POSITION;
+            float2 uv : TEXCOORD0;
+        };
+
+        struct v2f
+        {
+            float4 pos : SV_POSITION;
+            float2 uv : TEXCOORD0;
+        };
+
+        v2f vert (appdata v)
+        {
+            v2f o;
+            o.pos = UnityObjectToClipPos(v.vertex);
+            o.uv = v.uv;
+            return o;
+        }
+
+        fixed4 frag (v2f i) : SV_Target
+        {
+            fixed4 c = tex2D (_MainTex, i.uv) * _Color;
+            if (_AlphaClip > 0.001) clip(c.a - _AlphaClip);
+            c.a *= _Opacity;
+            return c;
+        }
+        ENDCG
+    }
+    FallBack "Unlit/Texture"
+}
+"##;
+
+const TOON_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
+// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
+Shader "{NAME}"
+{
+    Properties
+    {
+        _Color ("Base Color", Color) = (1, 1, 1, 1)
+        _MainTex ("Base Color Texture", 2D) = "white" {}
+        _ToonSteps ("Toon Steps", Range(2, 6)) = 3
+        _ToonShadowStrength ("Shadow Strength", Range(0, 1)) = 0.6
+        _EmissionColor ("Emission Color", Color) = (0, 0, 0, 1)
+        _EmissionIntensity ("Emission Strength", Range(0, 10)) = 1
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" }
+        LOD 200
+
+        CGPROGRAM
+        // 卡通分档光照（cel shading）；轮廓描边由引擎以独立背面外扩 pass 实现
+        #pragma surface surf Toon fullforwardshadows
+        #pragma target 3.0
+
+        sampler2D _MainTex;
+        fixed4 _Color;
+        half _ToonSteps;
+        half _ToonShadowStrength;
+        fixed4 _EmissionColor;
+        half _EmissionIntensity;
+
+        struct Input
+        {
+            float2 uv_MainTex;
+        };
+
+        void surf (Input IN, inout SurfaceOutput o)
+        {
+            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
+            o.Albedo = c.rgb;
+            o.Emission = _EmissionColor.rgb * _EmissionIntensity;
+            o.Alpha = c.a;
+        }
+
+        // 分档漫反射：N·L 量化为 _ToonSteps 档，最暗档亮度 = 1 − _ToonShadowStrength
+        half4 LightingToon (SurfaceOutput s, half3 lightDir, half atten)
+        {
+            half nd = dot (s.Normal, lightDir) * 0.5 + 0.5;
+            half steps = max (2, _ToonSteps);
+            half level = floor (nd * steps) / steps;
+            half darkest = 1 - _ToonShadowStrength;
+            half shade = darkest + level * (1 - darkest);
+            half4 c;
+            c.rgb = s.Albedo * _LightColor0.rgb * shade * atten;
+            c.a = s.Alpha;
+            return c;
+        }
+        ENDCG
+    }
+    FallBack "VertexLit"
+}
+"##;
+
+/// 着色器文档 → .shader 源码（Unity ShaderLab 风格；kind 决定模板）。
+/// rel 为着色器资产相对路径：Shader 指令名 = 路径去扩展名，保证与资产位置一致。
+pub fn serialize_shader_file(rel: &str, kind: &str) -> String {
+    let template = match normalize_shader_kind(kind) {
+        "unlit" => UNLIT_SHADER_TEMPLATE,
+        "toon" => TOON_SHADER_TEMPLATE,
+        _ => PBR_SHADER_TEMPLATE,
+    };
+    template.replace("{NAME}", &shader_directive_name(rel))
+}
+
+/// .shader 指令名 = 资产相对路径去扩展名（如 "internal/shaders/PBR.shader" →
+/// "internal/shaders/PBR"），保证 Shader "…" 与资产路径始终一致
+pub(crate) fn shader_directive_name(rel: &str) -> String {
+    let rel = rel.trim().replace('\\', "/");
+    let stem = rel.strip_suffix(SHADER_EXT).unwrap_or(&rel);
+    stem.to_string()
+}
+
+/// 把资产（.shader 文件，或目录下全部 .shader）的 Shader 指令改写为与当前
+/// 路径一致——复制/导入/移动/重命名后调用，指令随位置跟随。
+/// 非着色器文档跳过；改写失败不报错（跟随改写是尽力而为的元数据修正）。
+pub(crate) fn rewrite_shader_directive(root: &Path, rel: &str) {
+    let Ok(root_abs) = root.canonicalize() else {
+        return;
+    };
+    let Ok(target) = crate::project::resolve_in_root(&root_abs, rel) else {
+        return;
+    };
+    if target.is_dir() {
+        let Ok(rd) = std::fs::read_dir(&target) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let child = entry.path();
+            let name = child.file_name().map(|s| s.to_string_lossy().to_string());
+            let Some(name) = name else { continue };
+            let child_rel = format!("{}/{}", rel.trim_end_matches('/'), name);
+            if child.is_dir() {
+                rewrite_shader_directive(root, &child_rel);
+            } else if name.to_ascii_lowercase().ends_with(SHADER_EXT) {
+                rewrite_shader_directive(root, &child_rel);
+            }
+        }
+        return;
+    }
+    if !rel.to_ascii_lowercase().ends_with(SHADER_EXT) {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(&target) else {
+        return;
+    };
+    // 仅改写可解析的着色器（外部任意 ShaderLab 也支持；无 Shader 指令行则不动）
+    if parse_shader_doc(&text).is_none() {
+        return;
+    }
+    let directive = format!("Shader \"{}\"", shader_directive_name(rel));
+    let mut out: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if !replaced && (t.starts_with("Shader ") || t.starts_with("shader ")) {
+            out.push(directive.clone());
+            replaced = true;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    if !replaced {
+        return;
+    }
+    let mut new_text = out.join("\n");
+    new_text.push('\n');
+    if new_text != text.replace("\r\n", "\n") {
+        let _ = std::fs::write(&target, new_text);
+    }
+}
+
+/// 解析 .shader 源文本 → (name, kind)；非着色器文档返回 None。
+/// - name：首个 `Shader "Group/Name"` 指令（去掉组前缀）；
+/// - kind：surface 光照模型（Toon→toon / Standard→physical / 其余 surface 归 physical），
+///   无 surface pragma 但有 `#pragma fragment/vertex`（顶点片元无光照）→ unlit；
+/// 另兼容旧版 JSON 格式（$type=shader，早期内部实现遗留）。
+pub(crate) fn parse_shader_doc(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') {
+        let v: Value = serde_json::from_str(text).ok()?;
+        let o = v.as_object()?;
+        if o.get("$type").and_then(Value::as_str) != Some("shader") {
+            return None;
+        }
+        let name = o
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Shader")
+            .to_string();
+        let kind = o
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(normalize_shader_kind)
+            .unwrap_or("physical");
+        return Some((name, kind.to_string()));
+    }
+    let mut name: Option<String> = None;
+    let mut kind: Option<String> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if name.is_none() {
+            if let Some(rest) = t.strip_prefix("Shader ").or_else(|| t.strip_prefix("shader ")) {
+                let rest = rest.trim_start();
+                if let Some(quoted) = rest.strip_prefix('"') {
+                    if let Some(end) = quoted.find('"') {
+                        let full = &quoted[..end];
+                        let bare = full.rsplit('/').next().unwrap_or(full);
+                        name = Some(bare.trim().to_string());
+                    }
+                }
+            }
+        }
+        if kind.is_none() {
+            if let Some(rest) = t.strip_prefix("#pragma") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix("surface") {
+                    // #pragma surface <surfFunc> <lightingModel> [options]
+                    let mut it = rest.split_whitespace();
+                    let _func = it.next();
+                    kind = Some(
+                        match it.next().unwrap_or("").to_ascii_lowercase().as_str() {
+                            "toon" => "toon",
+                            _ => "physical",
+                        }
+                        .to_string(),
+                    );
+                } else if rest.starts_with("fragment") || rest.starts_with("vertex") {
+                    kind = Some("unlit".to_string());
+                }
+            }
+        }
+        if name.is_some() && kind.is_some() {
+            break;
+        }
+    }
+    Some((name?, kind.unwrap_or_else(|| "physical".to_string())))
+}
+
+/// 材质文档 → .mat 文件内容（字段顺序与前端 serializeMaterialFile 一致）：
+/// shader 非空写 shader 字段（材质 ↔ 着色器分离后的正形），否则回退写
+/// materialType（旧格式兼容：迁移产物/旧项目重复制保留原引用方式）。
+pub fn serialize_material_file(name: &str, shader: &str, fallback_type: &str, p: &MaterialParams) -> String {
+    let mut v = serde_json::Map::new();
+    v.insert("$type".into(), Value::String("material".into()));
+    v.insert("$ver".into(), Value::from(1));
+    v.insert("name".into(), Value::String(name.to_string()));
+    if shader.trim().is_empty() {
+        v.insert(
+            "materialType".into(),
+            Value::String(if fallback_type.trim().is_empty() {
+                "physical".to_string()
+            } else {
+                fallback_type.to_string()
+            }),
+        );
+    } else {
+        v.insert("shader".into(), Value::String(shader.to_string()));
+    }
+    v.insert("color".into(), Value::String(color_to_hex_string(p.color)));
+    v.insert("metalness".into(), Value::from(p.metalness));
+    v.insert("roughness".into(), Value::from(p.roughness));
+    v.insert("specularIntensity".into(), Value::from(p.specular_intensity));
+    v.insert("specularColor".into(), Value::String(color_to_hex_string(p.specular_color)));
+    v.insert("ior".into(), Value::from(p.ior));
+    v.insert("emissive".into(), Value::String(color_to_hex_string(p.emissive)));
+    v.insert("emissiveIntensity".into(), Value::from(p.emissive_intensity));
+    v.insert("emissionEnabled".into(), Value::Bool(p.emission_enabled));
+    v.insert("clearcoat".into(), Value::from(p.clearcoat));
+    v.insert("clearcoatRoughness".into(), Value::from(p.clearcoat_roughness));
+    v.insert("clearcoatEnabled".into(), Value::Bool(p.clearcoat_enabled));
+    v.insert("sheen".into(), Value::from(p.sheen));
+    v.insert("sheenColor".into(), Value::String(color_to_hex_string(p.sheen_color)));
+    v.insert("sheenRoughness".into(), Value::from(p.sheen_roughness));
+    v.insert("sheenEnabled".into(), Value::Bool(p.sheen_enabled));
+    v.insert("transmission".into(), Value::from(p.transmission));
+    v.insert("thickness".into(), Value::from(p.thickness));
+    v.insert("attenuationColor".into(), Value::String(color_to_hex_string(p.attenuation_color)));
+    v.insert("attenuationDistance".into(), Value::from(p.attenuation_distance));
+    v.insert("transmissionEnabled".into(), Value::Bool(p.transmission_enabled));
+    v.insert("anisotropy".into(), Value::from(p.anisotropy));
+    v.insert("anisotropyRotation".into(), Value::from(p.anisotropy_rotation));
+    v.insert("iridescence".into(), Value::from(p.iridescence));
+    v.insert("iridescenceIOR".into(), Value::from(p.iridescence_ior));
+    v.insert("opacity".into(), Value::from(p.opacity));
+    v.insert("alphaClipThreshold".into(), Value::from(p.alpha_clip_threshold));
+    v.insert("wireframe".into(), Value::Bool(p.wireframe));
+    v.insert("toonSteps".into(), Value::from(p.toon_steps));
+    v.insert("toonShadowStrength".into(), Value::from(p.toon_shadow_strength));
+    v.insert("outlineEnabled".into(), Value::Bool(p.outline_enabled));
+    v.insert("outlineColor".into(), Value::String(color_to_hex_string(p.outline_color)));
+    v.insert("outlineWidth".into(), Value::from(p.outline_width));
+    v.insert("map".into(), Value::String(p.map.clone()));
+    v.insert("metalnessMap".into(), Value::String(p.metalness_map.clone()));
+    v.insert("roughnessMap".into(), Value::String(p.roughness_map.clone()));
+    v.insert("normalMap".into(), Value::String(p.normal_map.clone()));
+    v.insert("emissiveMap".into(), Value::String(p.emissive_map.clone()));
+    serde_json::to_string_pretty(&Value::Object(v)).unwrap_or_default()
 }
 
 /// 天空盒材质序列化（.mat 中 shader=SkyBox/SkyProcedural 的特殊材质）：
@@ -530,7 +893,7 @@ fn walk_legacy(v: &mut Value, root: &Path, taken: &mut Vec<String>, sigs: &mut H
                                 write_material_asset(
                                     root,
                                     &rel,
-                                    &serialize_material_file(&stem, "physical", &legacy),
+                                    &serialize_material_file(&stem, DEFAULT_SHADER_REL, "physical", &legacy),
                                 )?;
                                 taken.push(rel.clone());
                                 sigs.insert(sig, rel.clone());

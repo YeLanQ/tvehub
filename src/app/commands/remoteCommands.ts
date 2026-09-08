@@ -329,7 +329,7 @@ registerCommand({
   label: "新建资源",
   group: "资源",
   expose: true,
-  description: "新建资源文件或目录（type: scene/script/material/texcube/skybox/folder；dir 目标目录；name 名称；skybox 可带 skyKind: procedural/cube）",
+  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon；skybox 可带 skyKind: procedural/cube）",
   run: async (_ctx, args: any) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();
@@ -354,17 +354,27 @@ registerCommand({
         return { created: rel, type };
       }
       case "material": {
-        const materialType = String(args?.materialType ?? "");
-        // 基名由调用方 name 指定；缺省用类型显示名（store 内部处理）
+        // 材质与着色器分离：材质不再带类型（默认挂内置 PBR 着色器）
         const name = stem ?? "";
         const rel = await store.createMaterialAsset(
           root,
           dir,
-          materialType,
           stripAssetExt(name, ".mat") || null,
         );
         if (!rel) throw new Error(`创建材质失败: ${dir || "项目根"}`);
-        return { created: rel, type, materialType };
+        return { created: rel, type };
+      }
+      case "shader": {
+        const kind = String(args?.shaderKind ?? "physical").toLowerCase();
+        const name = stem ?? "";
+        const rel = await store.createShaderAsset(
+          root,
+          dir,
+          kind,
+          stripAssetExt(name, ".shader") || null,
+        );
+        if (!rel) throw new Error(`创建着色器失败: ${dir || "项目根"}`);
+        return { created: rel, type, shaderKind: kind };
       }
       case "texcube": {
         const name = stem ?? "";
@@ -397,7 +407,7 @@ registerCommand({
         return { created: rel, type };
       }
       default:
-        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/texcube/skybox/folder）`);
+        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/shader/texcube/skybox/folder）`);
     }
   },
 });

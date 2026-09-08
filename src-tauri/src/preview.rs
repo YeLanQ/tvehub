@@ -129,6 +129,17 @@ pub(crate) fn collect_scene_assets(
         files.insert(rel.clone(), text.clone());
         // 材质引用的贴图二进制（缺失跳过，player 回退无贴图）
         if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
+            // 材质引用的着色器资产（.shader 文本随导出；缺失跳过，player 回退 PBR）
+            if let Some(shader_rel) = doc.get("shader").and_then(|v| v.as_str()) {
+                if shader_rel.ends_with(".shader") && !files.contains_key(shader_rel) {
+                    match crate::scene::material::read_material_text(root_path, shader_rel) {
+                        Ok(shader_text) => {
+                            files.insert(shader_rel.to_string(), shader_text);
+                        }
+                        Err(_) => missing.push(shader_rel.to_string()),
+                    }
+                }
+            }
             for field in TEXTURE_FIELDS {
                 if let Some(tex) = doc.get(field).and_then(|v| v.as_str()) {
                     if !tex.is_empty() && !binaries.contains_key(tex) {

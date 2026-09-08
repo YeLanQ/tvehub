@@ -77,20 +77,32 @@ export const api = {
   /** 更新 asset:// 协议的当前项目根（打开项目时必须先调用；null = 关闭项目） */
   setCurrentProjectRoot: (root: string | null) =>
     invoke<void>("set_current_project_root", { root }),
-  /** 读取并解析 .mat 材质资产（internal/项目路由与解析均在后端；缺失返回 null） */
+  /** 读取并解析 .mat 材质资产（internal/项目路由与解析均在后端；shader 引用解析为
+   *  materialType 渲染分支；缺失返回 null） */
   materialRead: (root: string, rel: string) =>
-    invoke<{ name: string; materialType: string; params: Record<string, unknown> } | null>(
-      "material_read",
-      { root, rel },
-    ),
-  /** 序列化并写入材质资产（后端持有 .mat 格式；自动补 .meta） */
+    invoke<{
+      name: string;
+      materialType: string;
+      /** 引用的着色器资产相对路径（空串 = 旧格式无引用） */
+      shader: string;
+      params: Record<string, unknown>;
+    } | null>("material_read", { root, rel }),
+  /** 序列化并写入材质资产（后端持有 .mat 格式；shader 为着色器资产相对路径，自动补 .meta） */
   materialWrite: (
     root: string,
     rel: string,
     name: string,
-    materialType: string,
+    shader: string,
     params: Record<string, unknown>,
-  ) => invoke<void>("material_write", { root, rel, name, materialType, params }),
+  ) => invoke<void>("material_write", { root, rel, name, shader, params }),
+  /** 读取并解析 .shader 着色器资产（Unity ShaderLab 风格源码，name/kind 从源码解析；
+   *  source 为源码全文；缺失/非着色器文档返回 null） */
+  shaderRead: (root: string, rel: string) =>
+    invoke<{ name: string; kind: string; source: string } | null>("shader_read", { root, rel }),
+  /** 序列化并写着色器资产（后端持有 .shader 格式；Shader 指令名取 rel 去扩展名，
+   *  与资产路径一致；自动补 .meta） */
+  shaderWrite: (root: string, rel: string, kind: string) =>
+    invoke<void>("shader_write", { root, rel, kind }),
   /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */
   materialDuplicate: (root: string, srcRel: string, preferName: string) =>
     invoke<string>("material_duplicate", { root, srcRel, preferName }),

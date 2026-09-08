@@ -3,9 +3,11 @@
  * 资产检查器：资产面板选中资产后的预览 + 暴露属性（属性面板资产模式）。
  * - 纹理（png/jpg/webp/bmp/gif/svg）：原图预览 + 尺寸/大小；
  * - hdr / TextureCube：全景背景预览 + 引用信息；
- * - 材质（.mat）：材质球实时预览 + 类型工厂暴露的全部参数（项目资产可编辑，
+ * - 材质（.mat）：材质球实时预览 + 挂载着色器暴露的全部参数（项目资产可编辑，
  *   300ms 防抖写盘；写入引擎缓存使引用网格即时刷新）；天空材质（shader=
  *   SkyBox/SkyProcedural）暴露类型与三段配色，整卡 JSON 写回；
+ * - 着色器（.shader）：渲染程序源码展示（PBR/Unlit/卡通，类型创建时固定），
+ *   决定引用它的材质走哪个渲染分支；
  * - 模型（glb/gltf/fbx/obj）：模型实例预览 + 动画/内嵌材质/骨骼信息；
  * - 场景/脚本/其它：基础信息与操作提示。
  * 内置资产只读，提供「复制到项目」。
@@ -13,11 +15,15 @@
 import { computed, reactive, ref, watch } from "vue";
 import {
   DEFAULT_MATERIAL_TYPE,
+  DEFAULT_SHADER_REL,
   materialFileStem,
   materialTypeRegistry,
+  shaderFileStem,
+  shaderKindLabel,
   type MaterialEnableKey,
   type MaterialParamGroup,
   type MaterialParamKey,
+  type ShaderDoc,
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { assetUrl } from "../../../lib/asset-url";
@@ -27,6 +33,7 @@ import { getEditorStore } from "../../stores/editor";
 import { logStore } from "../../stores/log";
 import { assetService } from "../../services/assetService";
 import { saveMaterialParams } from "../../lib/materials";
+import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
 import { fmtSize } from "../../lib/format";
 import {
   loadTexCubeDoc,
@@ -92,14 +99,42 @@ const cubeOptions = computed(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 材质（普通）：引擎缓存装载 → 全参数编辑 → 防抖写盘（cachePut 即时刷新视口）
+// 材质（普通）：引擎缓存装载 → 全参数编辑 → 防抖写盘（cachePut 即时刷新视口）；
+// 着色器下拉改写 .mat 的 shader 引用（参数分组随引用的着色器种类切换）
 // ---------------------------------------------------------------------------
 const matReady = ref(false);
 const local = reactive<Record<string, unknown>>({});
+/** 渲染分支 key（引用的着色器种类；由后端按 .mat 的 shader 引用解析） */
 const matType = ref<string>(DEFAULT_MATERIAL_TYPE);
+/** 引用的着色器资产相对路径（空串 = 旧格式，按 materialType 渲染） */
+const matShader = ref<string>("");
 const groups = computed<MaterialParamGroup[]>(
   () => materialTypeRegistry.getOrDefault(matType.value).paramGroups,
 );
+
+/** 引用的着色器是否不在可选项中（空串 = 旧格式未挂载；有值但缺失 = 文件被删） */
+const matShaderMissing = computed(
+  () =>
+    !!matShader.value &&
+    !shaderOptions.value.internal.some((o) => o.rel === matShader.value) &&
+    !shaderOptions.value.project.some((o) => o.rel === matShader.value),
+);
+
+/** 着色器资产选项（内置 internal/shaders/… + 项目 assets/… 的全部 .shader） */
+const shaderOptions = computed(() => {
+  const internal: { rel: string; name: string }[] = [];
+  const project: { rel: string; name: string }[] = [];
+  for (const a of assetsStore.assets) {
+    if (a.kind !== "shader") continue;
+    if (isInternalAsset(a.path)) internal.push({ rel: a.path, name: shaderFileStem(a.path) });
+    else project.push({ rel: a.path, name: shaderFileStem(a.path) });
+  }
+  return { internal, project };
+});
+
+// —— 着色器资产（.shader）：种类决定渲染程序与材质参数分组 ——
+const shaderDoc = ref<ShaderDoc | null>(null);
+const shaderReady = ref(false);
 
 // —— 天空材质（shader=SkyBox/SkyProcedural）——
 const isSkyMat = ref(false);
@@ -197,6 +232,8 @@ async function reload(): Promise<void> {
   texcubeDoc.value = null;
   modelInfo.value = null;
   imgSize.value = null;
+  shaderDoc.value = null;
+  shaderReady.value = false;
 
   if (kind.value === "mat") {
     matReady.value = false;
@@ -209,17 +246,27 @@ async function reload(): Promise<void> {
       skyDoc.value = doc;
       return;
     }
-    // 普通材质：预取进引擎缓存（paramsFor/typeFor 读取；编辑写缓存即时刷新网格）
+    // 普通材质：预取进引擎缓存（paramsFor/typeFor/shaderFor 读取；编辑写缓存即时刷新网格）
     await editorStore.engine.materials.preload([rel]);
     if (token !== loadToken) return;
     Object.assign(local, editorStore.engine.materials.paramsFor(rel));
     matType.value = editorStore.engine.materials.typeFor(rel);
+    matShader.value = editorStore.engine.materials.shaderFor(rel);
     matReady.value = true;
     return;
   }
   matReady.value = false;
   isSkyMat.value = false;
   skyDoc.value = null;
+  if (kind.value === "shader") {
+    const doc = await loadShaderDoc(root.value, rel);
+    if (token !== loadToken) return;
+    shaderDoc.value = doc;
+    shaderReady.value = true;
+    return;
+  }
+  shaderDoc.value = null;
+  shaderReady.value = false;
   if (kind.value === "texcube") {
     const doc = await loadTexCubeDoc(root.value, rel);
     if (token !== loadToken) return;
@@ -247,8 +294,11 @@ function onEditParam(key: MaterialParamKey | MaterialEnableKey, value: number | 
   persistMaterial();
 }
 
-function onMatTypeChange(e: Event): void {
-  matType.value = (e.target as HTMLSelectElement).value;
+/** 改挂材质引用的着色器：解析新着色器的渲染分支 → 切参数分组 → 写盘 */
+async function onMatShaderChange(e: Event): Promise<void> {
+  const v = (e.target as HTMLSelectElement).value || DEFAULT_SHADER_REL;
+  matShader.value = v;
+  matType.value = await loadShaderKind(root.value, v);
   persistMaterial();
 }
 
@@ -257,7 +307,7 @@ function persistMaterial(): void {
   const rel = props.rel;
   if (isInternal.value || !rootPath) return;
   // 即时写引擎缓存（cachePut 触发变更回调，引用该材质的网格同步刷新）
-  editorStore.engine.materials.cachePut(rel, local as never, matType.value);
+  editorStore.engine.materials.cachePut(rel, local as never, matType.value, matShader.value);
   if (matSaveTimer) clearTimeout(matSaveTimer);
   pendingMatSave = (): void => {
     void saveMaterialParams(
@@ -265,7 +315,7 @@ function persistMaterial(): void {
       rel,
       materialFileStem(rel),
       local as never,
-      matType.value,
+      matShader.value,
     ).catch((e) => logStore.log("error", `保存材质 ${rel} 失败: ${e}`));
   };
   matSaveTimer = setTimeout(() => {
@@ -275,6 +325,8 @@ function persistMaterial(): void {
     task?.();
   }, 300);
 }
+
+// —— 着色器资产：类型在创建时固定（不可切换），卡片只展示类型与源码 ——
 
 // —— 天空材质编辑：整卡 JSON 写回（防抖）；写盘后通知引擎重载天空 ——
 function updateSky(mutate: (doc: SkyMatDoc) => void): void {
@@ -347,8 +399,6 @@ async function onCopyToProject(): Promise<void> {
     copying.value = false;
   }
 }
-
-const typeOptions = materialTypeRegistry.list();
 
 function onImgLoad(e: Event): void {
   const img = e.target as HTMLImageElement;
@@ -705,13 +755,30 @@ function onImgLoad(e: Event): void {
       </template>
       <template v-else-if="matReady">
         <div class="field">
-          <label>材质类型</label>
-          <select :value="matType" :disabled="isInternal" @change="onMatTypeChange">
-            <option v-if="!typeOptions.some((d) => d.key === matType)" :value="matType" disabled>
-              {{ matType }}（未注册类型）
+          <label>着色器</label>
+          <select :value="matShader" :disabled="isInternal" @change="onMatShaderChange">
+            <option v-if="!matShader" value="" disabled>（未挂载，默认 PBR）</option>
+            <option v-if="matShaderMissing" :value="matShader" disabled>
+              {{ matShader }}（缺失）
             </option>
-            <option v-for="def in typeOptions" :key="def.key" :value="def.key">{{ def.label }}</option>
+            <optgroup label="内置着色器">
+              <option v-for="o in shaderOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
+                {{ o.name }}
+              </option>
+            </optgroup>
+            <optgroup label="项目着色器">
+              <option v-if="shaderOptions.project.length === 0" value="" disabled>
+                （项目内暂无 .shader，可在资产面板「新建着色器」）
+              </option>
+              <option v-for="o in shaderOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
+                {{ o.name }}
+              </option>
+            </optgroup>
           </select>
+        </div>
+        <div class="field">
+          <label>渲染分支</label>
+          <span class="type-tag">{{ shaderKindLabel(matType) }}</span>
         </div>
         <MaterialParamsEditor
           :local="local"
@@ -721,6 +788,23 @@ function onImgLoad(e: Event): void {
         />
       </template>
       <div v-else class="hint">材质读取中…</div>
+    </template>
+
+    <!-- 着色器资产：渲染程序（类型创建时固定）+ 源码内容（Unity ShaderLab 风格源文件） -->
+    <template v-if="kind === 'shader'">
+      <template v-if="shaderReady && shaderDoc">
+        <div class="field">
+          <label>着色器类型</label>
+          <span class="type-tag">{{ shaderKindLabel(shaderDoc.kind) }}（创建时固定）</span>
+        </div>
+        <pre class="shader-source mono">{{ shaderDoc.source }}</pre>
+        <div class="hint">
+          {{ isInternal
+            ? "内置着色器只读；可「复制到项目」生成项目内副本，或由材质挂载引用。"
+            : "类型在创建时固定，不可切换；材质在「着色器」下拉中挂载此程序，按该渲染分支渲染。" }}
+        </div>
+      </template>
+      <div v-else class="hint">着色器读取中…</div>
     </template>
 
     <!-- 模型信息 -->
@@ -757,6 +841,22 @@ function onImgLoad(e: Event): void {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.shader-source {
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text, #ddd);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  user-select: text;
+  cursor: text;
 }
 .sky-checkbox {
   display: inline-flex;

@@ -38,7 +38,7 @@ import { useAssetTransfer } from "./useAssetTransfer";
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
-import { materialTypeRegistry } from "../../framework/material";
+import { materialTypeRegistry, shaderKindLabel } from "../../framework/material";
 import { isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
 import { getEditorStore } from "../stores/editor";
@@ -308,8 +308,8 @@ const menuApi: AssetMenuApi = {
   isProtected: (p) => isProtectedAsset(p),
   isSrcDir,
   importAllowed: importAllowedDir,
-  materialTypes: () =>
-    materialTypeRegistry.list().map((d) => ({ key: d.key, label: d.label })),
+  shaderTypes: () =>
+    materialTypeRegistry.list().map((d) => ({ key: d.key, label: shaderKindLabel(d.key) })),
   onOpenDir: (dir) => navigate(dir),
   onAddModelToScene: (item) => addModelToScene(item),
   onAddAudioToScene: (item) => addAudioToScene(item),
@@ -321,7 +321,8 @@ const menuApi: AssetMenuApi = {
   onNewScene: (dir) => void doNewScene(dir),
   onNewScript: (dir) => void doNewScript(dir),
   onNewFolder: (dir) => void doNewFolder(dir),
-  onNewMaterial: (dir, key) => void doNewMaterial(dir, key),
+  onNewMaterial: (dir) => void doNewMaterial(dir),
+  onNewShader: (dir, kind) => void doNewShader(dir, kind),
   onNewSkybox: (dir, kind) => void doNewSkybox(dir, kind),
   onNewTextureCube: (dir) => void doNewTextureCube(dir),
   onImport: (dir) => void doImport(dir),
@@ -380,8 +381,8 @@ async function doNewScript(dir: string) {
   await getScriptsStore().createScript(name.trim());
 }
 
-/** 新建材质资产（到 dir；类型由工厂注册表提供默认参数；命名按类型名去重，无需弹窗） */
-async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
+/** 新建材质资产（到 dir；材质与着色器分离，默认挂内置 PBR 着色器；按名去重，无需弹窗） */
+async function doNewMaterial(dir: string): Promise<void> {
   const root = projectStore.currentPath;
   if (!root) return;
   if (!importAllowedDir(dir)) {
@@ -390,7 +391,20 @@ async function doNewMaterial(dir: string, typeKey: string): Promise<void> {
       : "内置目录只读，不允许新建材质");
     return;
   }
-  await assetsStore.createMaterialAsset(root, dir, typeKey);
+  await assetsStore.createMaterialAsset(root, dir);
+}
+
+/** 新建着色器资产（.shader；PBR/Unlit/卡通三种渲染程序；按种类基名去重，无需弹窗） */
+async function doNewShader(dir: string, kind: string): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (!importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir)
+      ? "src 目录不允许新建着色器"
+      : "内置目录只读，不允许新建着色器");
+    return;
+  }
+  await assetsStore.createShaderAsset(root, dir, kind);
 }
 
 /** 新建天空盒材质资产（.mat；程序化/立方体两种；按类型基名去重，无需弹窗） */

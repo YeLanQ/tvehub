@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * 材质（Material）卡片 —— 参数按材质类型（工厂注册表 MaterialTypeDef）数据驱动渲染：
- *   PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）
- *   Unlit（MeshBasicMaterial，基础色/贴图/输出子集）。
- * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 类型切换；
- * - 中部：当前材质类型的全部参数（共享 MaterialParamsEditor 渲染，资产检查器复用同一实现）；
- * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换类型。
+ * 材质（Material）卡片 —— 参数按挂载着色器的渲染分支（工厂注册表 MaterialTypeDef）
+ * 数据驱动渲染：PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）、
+ * Unlit（MeshBasicMaterial，基础色/贴图/输出子集）、Toon（MeshToonMaterial，卡通明暗）。
+ * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 着色器切换；
+ * - 中部：当前渲染分支的全部参数（共享 MaterialParamsEditor 渲染，资产检查器复用同一实现）；
+ * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换着色器。
  */
 import { computed, reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
@@ -17,9 +17,14 @@ import {
   type MaterialParamKey,
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
-import { useMaterialAssetOptions } from "../../lib/material-options";
+import { loadShaderKind } from "../../lib/shaders";
+import {
+  useMaterialAssetOptions,
+  useShaderAssetOptions,
+} from "../../lib/material-options";
 import { getAssetsStore } from "../../stores/assets";
 import { getEditorStore } from "../../stores/editor";
+import { getProjectStore } from "../../stores/project";
 import MaterialParamsEditor from "./MaterialParamsEditor.vue";
 
 const props = defineProps<{ node: MeshNode; rev?: number }>();
@@ -27,29 +32,31 @@ const props = defineProps<{ node: MeshNode; rev?: number }>();
 const emit = defineEmits<{
   setMaterial: [rel: string];
   editParam: [field: MaterialParamKey | MaterialEnableKey, value: number | boolean | string];
-  changeType: [type: string];
+  changeShader: [rel: string];
   copyToProject: [];
 }>();
 
 const editorStore = getEditorStore();
 const assetsStore = getAssetsStore();
+const projectStore = getProjectStore();
 
-/** 材质资产选项（内置 + 项目；与 Skybox 等共用同一实现） */
+/** 材质/着色器资产选项（内置 + 项目；与 Skybox 等共用同一实现） */
 const options = useMaterialAssetOptions(() => assetsStore.assets);
-
-/** 已注册材质类型（类型下拉选项；渲染分组也按当前类型 def 取） */
-const typeOptions = materialTypeRegistry.list();
+const shaderOptions = useShaderAssetOptions(() => assetsStore.assets);
 
 /** 本地镜像：展示源。切换材质/参数被编辑后由 syncFromEngine 刷新 */
 const local = reactive({ ...editorStore.engine.materials.paramsFor(props.node.material) });
-/** 当前材质类型（随资产切换/类型变更同步） */
+/** 当前渲染分支（= 挂载着色器的种类；随资产切换/着色器变更同步） */
 const matType = ref(DEFAULT_MATERIAL_TYPE);
+/** 当前挂载的着色器资产引用（下拉展示值） */
+const matShader = ref("");
 
 function syncFromEngine(): void {
   const rel = props.node?.material ?? "";
   const p = editorStore.engine.materials.paramsFor(rel);
   Object.assign(local, p);
   matType.value = editorStore.engine.materials.typeFor(rel);
+  matShader.value = editorStore.engine.materials.shaderFor(rel);
 }
 
 watch(
@@ -72,9 +79,17 @@ const isInternal = computed(() => {
   return isInternalAsset(props.node.material);
 });
 
-/** 当前类型的参数分组（材质类型决定属性面板渲染哪些参数） */
+/** 当前渲染分支的参数分组（挂载的着色器种类决定属性面板渲染哪些参数） */
 const groups = computed<MaterialParamGroup[]>(
   () => materialTypeRegistry.getOrDefault(matType.value).paramGroups,
+);
+
+/** 挂载的着色器是否不在可选项中（空串 = 旧格式未挂载；有值但缺失 = 文件被删） */
+const matShaderMissing = computed(
+  () =>
+    !!matShader.value &&
+    !shaderOptions.value.internal.some((o) => o.rel === matShader.value) &&
+    !shaderOptions.value.project.some((o) => o.rel === matShader.value),
 );
 
 function onSelect(e: Event): void {
@@ -82,13 +97,14 @@ function onSelect(e: Event): void {
   if (v && v !== props.node.material) emit("setMaterial", v);
 }
 
-function onTypeSelect(e: Event): void {
+/** 切换材质挂载的着色器：本地解析渲染分支即时切分组（父层写引擎缓存是异步链路；
+ * 下次 rev 刷新以引擎缓存为准校正），再交父层改写 .mat 并重建视口材质 */
+async function onShaderSelect(e: Event): Promise<void> {
   const v = (e.target as HTMLSelectElement).value;
-  if (v && v !== matType.value) {
-    // 本地即时切换参数分组（父层写引擎缓存是异步链路；下次 rev 刷新以引擎缓存为准校正）
-    matType.value = v;
-    emit("changeType", v);
-  }
+  if (!v || v === matShader.value) return;
+  matShader.value = v;
+  matType.value = await loadShaderKind(projectStore.currentPath, v);
+  emit("changeShader", v);
 }
 </script>
 
@@ -108,19 +124,22 @@ function onTypeSelect(e: Event): void {
     </div>
 
     <div class="field">
-      <label>材质类型</label>
+      <label>着色器</label>
       <select
-        :value="matType"
+        :value="matShader"
         :disabled="isInternal"
-        :title="isInternal ? '内置材质类型固定；请先复制到项目材质' : '切换后改写材质资产并重建视口材质'"
-        @change="onTypeSelect"
+        :title="isInternal ? '内置材质只读；请先复制到项目材质' : '切换材质挂载的着色器（渲染分支与参数分组随之切换）'"
+        @change="onShaderSelect"
       >
-        <option
-          v-if="!typeOptions.some((d) => d.key === matType)"
-          :value="matType"
-          disabled
-        >{{ matType }}（未注册类型）</option>
-        <option v-for="def in typeOptions" :key="def.key" :value="def.key">{{ def.label }}</option>
+        <option v-if="!matShader" value="" disabled>（未挂载，默认 PBR）</option>
+        <option v-if="matShaderMissing" :value="matShader" disabled>{{ matShader }}（缺失）</option>
+        <optgroup label="内置着色器">
+          <option v-for="o in shaderOptions.internal" :key="o.rel" :value="o.rel">{{ o.name }}</option>
+        </optgroup>
+        <optgroup label="项目着色器">
+          <option v-if="shaderOptions.project.length === 0" value="" disabled>（项目内暂无 .shader，可在资产面板「新建着色器」）</option>
+          <option v-for="o in shaderOptions.project" :key="o.rel" :value="o.rel">{{ o.name }}</option>
+        </optgroup>
       </select>
     </div>
 

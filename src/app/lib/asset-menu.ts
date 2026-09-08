@@ -8,8 +8,8 @@ import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
 
-/** 材质类型注册表项（菜单「新建材质」子项需要 key + label） */
-export interface MenuMaterialType {
+/** 着色器种类注册表项（菜单「新建着色器」子项需要 key + label） */
+export interface MenuShaderType {
   key: string;
   label: string;
 }
@@ -20,7 +20,7 @@ export interface AssetMenuApi {
   isProtected: (path: string) => boolean;
   isSrcDir: (dir: string) => boolean;
   importAllowed: (dir: string) => boolean;
-  materialTypes: () => MenuMaterialType[];
+  shaderTypes: () => MenuShaderType[];
   onOpenDir: (dir: string) => void;
   onAddModelToScene: (item: ChildEntry) => void;
   onAddAudioToScene: (item: ChildEntry) => void;
@@ -32,7 +32,8 @@ export interface AssetMenuApi {
   onNewScene: (dir: string) => void;
   onNewScript: (dir: string) => void;
   onNewFolder: (dir: string) => void;
-  onNewMaterial: (dir: string, typeKey: string) => void;
+  onNewMaterial: (dir: string) => void;
+  onNewShader: (dir: string, kind: string) => void;
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTextureCube: (dir: string) => void;
   onImport: (dir: string) => void;
@@ -52,14 +53,20 @@ function sceneCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
   return { label: "新建场景", onClick: () => api.onNewScene(dir) };
 }
 
-/** 目录允许时的「新建材质」子菜单（二级列出已注册材质类型；null 表示不提供） */
+/** 目录允许时的「新建材质」菜单项（材质不带类型，挂着色器在检查器完成；null 表示不提供） */
 function materialCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
   if (!api.importAllowed(dir)) return null;
+  return { label: "新建材质", onClick: () => api.onNewMaterial(dir) };
+}
+
+/** 目录允许时的「新建着色器」子菜单（二级列出着色器种类：PBR/Unlit/卡通；null 表示不提供） */
+function shaderCreateItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
+  if (!api.importAllowed(dir)) return null;
   return {
-    label: "新建材质",
-    children: api.materialTypes().map((def) => ({
+    label: "新建着色器",
+    children: api.shaderTypes().map((def) => ({
       label: def.label,
-      onClick: () => api.onNewMaterial(dir, def.key),
+      onClick: () => api.onNewShader(dir, def.key),
     })),
   };
 }
@@ -114,11 +121,13 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   if (isProtected) {
     // 内置资源 internal/… 与项目固定根目录 assets、src：只读，不可复制/重命名/删除
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
-      // assets 固定根目录内仍可新建场景/材质/子目录（assets/materials 等）
+      // assets 固定根目录内仍可新建场景/材质/着色器/子目录（assets/materials 等）
       const sc = sceneCreateItem(item.path, api);
       if (sc) items.push(sc);
       const mc = materialCreateItem(item.path, api);
       if (mc) items.push(mc);
+      const shc = shaderCreateItem(item.path, api);
+      if (shc) items.push(shc);
       const sc2 = skyboxCreateItem(item.path, api);
       if (sc2) items.push(sc2);
       const tc = textureCubeCreateItem(item.path, api);
@@ -148,6 +157,8 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
         if (sc) items.push(sc);
         const mc = materialCreateItem(dir, api);
         if (mc) items.push(mc);
+        const shc = shaderCreateItem(dir, api);
+        if (shc) items.push(shc);
         const sc2 = skyboxCreateItem(dir, api);
         if (sc2) items.push(sc2);
         const tc = textureCubeCreateItem(dir, api);
@@ -175,6 +186,8 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
       if (sc) items.push(sc);
       const mc = materialCreateItem(dir, api);
       if (mc) items.push(mc);
+      const shc = shaderCreateItem(dir, api);
+      if (shc) items.push(shc);
       const sc2 = skyboxCreateItem(dir, api);
       if (sc2) items.push(sc2);
       const tc = textureCubeCreateItem(dir, api);

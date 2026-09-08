@@ -14,7 +14,10 @@ import { DEFAULT_MATERIAL_TYPE } from "./factory";
 /** 解析后的材质文档（后端 material_read 返回形态） */
 export interface MaterialDoc {
   name: string;
+  /** 渲染分支 key（= 着色器种类；.mat 的 shader 引用已由后端解析） */
   type: string;
+  /** 引用的着色器资产相对路径（空串 = 旧格式无引用，按 type 渲染） */
+  shader: string;
   params: MaterialParams;
 }
 
@@ -65,13 +68,19 @@ export class MaterialManager {
     return this.cache.get(rel)?.type ?? DEFAULT_MATERIAL_TYPE;
   }
 
+  /** 取引用的着色器资产路径（未解析/旧格式返回空串） */
+  shaderFor(rel: string): string {
+    return this.cache.get(rel)?.shader ?? "";
+  }
+
   /** 直接写入缓存（编辑保存后由应用层调用，触发变更回调）。
-   * type 缺省时沿用已缓存类型（参数编辑不改类型）；未缓存回退默认类型。 */
-  cachePut(rel: string, params: MaterialParams, type?: string): void {
+   * type/shader 缺省时沿用已缓存值（参数编辑不改类型/着色器）；未缓存回退默认。 */
+  cachePut(rel: string, params: MaterialParams, type?: string, shader?: string): void {
     const prev = this.cache.get(rel);
     this.cache.set(rel, {
       name: prev?.name ?? rel.split("/").pop()?.replace(/\.[^.]+$/, "") ?? rel,
       type: type ?? prev?.type ?? DEFAULT_MATERIAL_TYPE,
+      shader: shader ?? prev?.shader ?? "",
       params: cloneMaterialParams(params),
     });
     this.notify(rel);

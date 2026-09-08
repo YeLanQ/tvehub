@@ -4,7 +4,9 @@
 //   UI 参数分组、默认参数都收敛在类型定义内；
 // - 需要新材质类型时：写一个 MaterialTypeDef 并在 createDefaultMaterialTypeRegistry
 //   里 register 一行即可（同步更新网页预览 libs/material.mjs / libs/mesh.mjs 的同名分支）；
-// - .mat 资产的 materialType 字段（缺省 physical）→ 注册表查找类型定义。
+// - 材质与着色器分离：.mat 经 shader 字段引用 .shader 资产，后端解析出种类 key
+//   （physical/unlit/toon，缺省 physical）→ 注册表查找类型定义；旧 .mat 的
+//   materialType 字段作为回退仍可读。
 // ---------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -30,9 +32,9 @@ export interface MaterialTextureLoader {
 
 /** 单个材质类型的完整定义（工厂产物 = three 材质实例 + 参数应用规则） */
 export interface MaterialTypeDef {
-  /** 类型 key（写入 .mat 的 materialType 字段） */
+  /** 类型 key（= 着色器种类；.shader 的 kind 字段取值） */
   key: string;
-  /** UI 显示名（新建材质菜单 / 属性面板类型下拉） */
+  /** UI 显示名（属性面板类型标签） */
   label: string;
   /** 工厂：创建该类型的 three 材质实例 */
   create(): THREE.Material;

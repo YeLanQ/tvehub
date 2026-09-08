@@ -4,7 +4,14 @@
 
 import { api, type AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
-import { MATERIAL_EXT, materialTypeRegistry } from "../../framework/material";
+import {
+  DEFAULT_SHADER_REL,
+  MATERIAL_EXT,
+  SHADER_EXT,
+  SHADER_KIND_STEMS,
+  materialTypeRegistry,
+  normalizeShaderKind,
+} from "../../framework/material";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
 import { sanitizeAssetStem } from "../lib/materials";
@@ -63,6 +70,7 @@ function uniqueRel(assets: AssetEntry[], dir: string, base: string, ext: string)
 /** 内置资源按类型复制到项目的默认目录 */
 const INTERNAL_COPY_DIRS: Record<string, string> = {
   mat: "assets/materials",
+  shader: "assets/shaders",
   ts: "src",
   png: "assets/textures",
   jpg: "assets/textures",
@@ -221,29 +229,62 @@ export const assetService = {
     }
   },
 
+  /**
+   * 新建材质资产（.mat）：材质与着色器分离后材质不再带类型，默认挂内置 PBR
+   * 着色器（改挂着色器在检查器完成）；命名按 "Material" 基名去重，无需弹窗。
+   */
   async createMaterialAsset(
     root: string,
     destDir: string,
-    typeKey: string,
     assets: AssetEntry[],
     preferStem: string | null = null,
   ): Promise<string | null> {
-    const def = materialTypeRegistry.getOrDefault(typeKey);
     if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
       logStore.log("warn", "内置目录与 src 目录不允许新建材质");
       return null;
     }
-    // 显示名 = 显式名或类型名（"PBR"…），目录内去重
-    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : def.label;
+    // 显示名 = 显式名或 "Material"，目录内去重
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "Material";
     const rel = uniqueRel(assets, destDir, baseName, MATERIAL_EXT);
     const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - MATERIAL_EXT.length);
     try {
-      // 材质默认参数以工厂注册表为单一来源；.mat 序列化/落盘由后端完成
-      await api.materialWrite(root, rel, name, def.key, def.defaultParams() as unknown as Record<string, unknown>);
+      // 默认参数以工厂注册表为单一来源；.mat 序列化/落盘由后端完成
+      const params = materialTypeRegistry.getOrDefault("physical").defaultParams();
+      await api.materialWrite(root, rel, name, DEFAULT_SHADER_REL, params as unknown as Record<string, unknown>);
       logStore.log("success", `已新建材质: ${rel}`);
       return rel;
     } catch (e) {
       logStore.log("error", `新建材质失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
+   * 新建着色器资产（.shader）：kind 为渲染程序种类（PBR/Unlit/卡通），创建即可
+   * 被材质挂着色器下拉引用；Shader 指令名 = 路径去扩展名（与资产位置一致）；
+   * 序列化/落盘由后端 shader_write 完成（自动补 .meta）。
+   */
+  async createShaderAsset(
+    root: string,
+    destDir: string,
+    kind: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建着色器");
+      return null;
+    }
+    const shaderKind = normalizeShaderKind(kind);
+    const baseName =
+      preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : SHADER_KIND_STEMS[shaderKind];
+    const rel = uniqueRel(assets, destDir, baseName, SHADER_EXT);
+    try {
+      await api.shaderWrite(root, rel, shaderKind);
+      logStore.log("success", `已新建着色器: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建着色器失败: ${e}`);
       return null;
     }
   },

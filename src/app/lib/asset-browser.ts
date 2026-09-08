@@ -18,6 +18,7 @@ export const ASSET_TYPE_FILTERS: { id: string; label: string; kinds?: string[] }
   { id: "all", label: "全部" },
   { id: "scene", label: "场景", kinds: ["scene"] },
   { id: "material", label: "材质", kinds: ["mat", "mat2d"] },
+  { id: "shader", label: "着色器", kinds: ["shader", "shader2d"] },
   { id: "ts", label: "脚本", kinds: ["ts"] },
   { id: "json", label: "JSON", kinds: ["json"] },
   { id: "tex", label: "纹理", kinds: ["png", "jpg", "jpeg", "webp", "bmp", "hdr"] },
