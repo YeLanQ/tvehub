@@ -13,25 +13,25 @@
     "windows": [
       {
         "label": "home",
-        "title": "Three Visual Editor",
+        "title": "TVE Manager",
         "width": 1300,
         "height": 860,
         "minWidth": 1300,
         "minHeight": 860,
         "visible": false,
         "url": "home.html",
-        "backgroundColor": "#1a1a2e"
+        "backgroundColor": "#000"
       },
       {
         "label": "main",
-        "title": "Three Visual Editor",
+        "title": "TVE Editor",
         "width": 1300,
         "height": 860,
         "minWidth": 1300,
         "minHeight": 860,
         "visible": false,
         "url": "index.html",
-        "backgroundColor": "#1a1a2e"
+        "backgroundColor": "#000"
       }
     ],
     "security": {
