@@ -7,6 +7,7 @@ import type { ChildEntry } from "./asset-browser";
 import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
+import type { ScriptPrototype } from "./script-prototypes";
 
 /** 着色器种类注册表项（菜单「新建着色器」子项需要 key + label） */
 export interface MenuShaderType {
@@ -31,7 +32,12 @@ export interface AssetMenuApi {
   onRename: (item: ChildEntry) => void;
   onDelete: (item: ChildEntry) => void;
   onNewScene: (dir: string) => void;
+  /** 新建脚本（内置基础模板） */
   onNewScript: (dir: string) => void;
+  /** 代码工坊原型清单（面板在右键时刷新缓存后提供） */
+  codeProtos: () => ScriptPrototype[];
+  /** 按代码工坊原型新建脚本（点击子菜单项） */
+  onNewScriptFromProto: (dir: string, proto: ScriptPrototype) => void;
   onNewFolder: (dir: string) => void;
   onNewMaterial: (dir: string) => void;
   onNewShader: (dir: string, kind: string) => void;
@@ -85,6 +91,17 @@ function importMenuItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
   ];
 }
 
+/** 「代码工坊」子菜单：列出 repos/code 下的脚本原型（一个原型一个独立文件） */
+function workshopMenuItem(dir: string, api: AssetMenuApi): CtxMenuItem {
+  return {
+    label: "代码工坊",
+    children: api.codeProtos().map((p) => ({
+      label: p.name,
+      onClick: () => api.onNewScriptFromProto(dir, p),
+    })),
+  };
+}
+
 /** 资产条目右键菜单（网格/列表中的文件、目录、内置资源） */
 export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem[] {
   const items: CtxMenuItem[] = [];
@@ -117,8 +134,9 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path, api));
     } else if (!isInternal && item.kind === "dir" && item.path === "src") {
-      // src 固定脚本目录：新建脚本/子目录（脚本经「新建脚本」模板创建）
+      // src 固定脚本目录：代码工坊原型/新建子目录（脚本经工坊原型创建）
       items.push({ label: "新建脚本", onClick: () => api.onNewScript(item.path) });
+      items.push(workshopMenuItem(item.path, api));
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
     } else if (isInternal && item.kind !== "dir") {
       // 内置文件可「复制到项目」生成项目内可编辑副本
@@ -134,6 +152,7 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
     if (dir != null) {
       if (api.isSrcDir(dir)) {
         items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
+        items.push(workshopMenuItem(dir, api));
       } else {
         items.push(...newAssetItems(dir, api));
       }
@@ -154,6 +173,7 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
   if (!api.isInternal(dir)) {
     if (api.isSrcDir(dir)) {
       items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
+      items.push(workshopMenuItem(dir, api));
     } else {
       items.push(...newAssetItems(dir, api));
     }

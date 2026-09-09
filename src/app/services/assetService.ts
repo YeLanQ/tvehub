@@ -456,11 +456,17 @@ export const assetService = {
           .map((s) => s[0].toUpperCase() + s.slice(1))
           .join("") || "MyScript";
       // 工坊自定义原型 → 用原型代码注入类名；内置/缺省 → 内置模板
-      const content =
+      let content =
         proto && proto.code.trim()
           ? injectClassName(proto.code, className)
           : await loadAssetTemplate("script", { CLASS_NAME: className });
       if (content == null) throw new Error("脚本模板读取失败");
+      // 原型里写死的默认导出类名跟随脚本名改写（保证类名 = 文件名，如
+      // CameraFollow 原型改名 MyFollow 创建后类名同步为 MyFollow）
+      content = content.replace(
+        /export\s+default\s+class\s+[A-Za-z_$][\w$]*/,
+        `export default class ${className}`,
+      );
       await api.writeText(root, rel, content);
       logStore.log("success", `已新建脚本: ${rel}${proto ? "（工坊原型）" : ""}`);
       return rel;
