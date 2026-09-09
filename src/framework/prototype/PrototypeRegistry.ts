@@ -9,7 +9,7 @@ import {
   SkyboxNode,
   SpotLightNode,
 } from "./derived/Primitives";
-import { Node } from "./Node";
+import { Node, type RegisteredNodeTypes } from "./Node";
 import type { JsonRecord } from "./types";
 
 /** 类型键 → 构造空模板原型的工厂函数 */
@@ -20,7 +20,7 @@ export type PrototypeCtor = () => Node;
  * 集中登记“基元 + 派生原型”的类型键与模板工厂，
  * 供工厂层按类型克隆派生出具体实例（Prototype 模式的核心登记表）。
  */
-export class PrototypeRegistry {
+export class PrototypeRegistry implements RegisteredNodeTypes {
   private ctors = new Map<string, PrototypeCtor>();
 
   register(type: string, factory: PrototypeCtor): void {

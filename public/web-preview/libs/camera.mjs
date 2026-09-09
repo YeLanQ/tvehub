@@ -43,8 +43,7 @@ export function createRenderCamera(canvasCameras) {
     if (!isOrtho) cam.fov = num(j.fov, 50);
     cam.near = Math.max(0.01, num(j.near, 0.1));
     cam.far = Math.max(num(j.far, 20), cam.near + 0.001);
-    pick.obj.getWorldPosition(cam.position);
-    pick.obj.getWorldQuaternion(cam.quaternion);
+    syncPose();
   } else {
     cam.position.set(7, 5, 8);
     cam.lookAt(0, 0.6, 0);
@@ -53,5 +52,12 @@ export function createRenderCamera(canvasCameras) {
     flags: parseClearFlags(pick?.json?.clearFlags),
     color: num(pick?.json?.clearColor, 0) & 0xffffff,
   };
-  return { cam, applyProjection, clear };
+  /** 每帧同步：把相机节点（Group）的世界位姿回填渲染相机，
+   *  脚本/动画/物理驱动的相机运动才能反映到渲染画面 */
+  function syncPose() {
+    if (!pick) return;
+    pick.obj.getWorldPosition(cam.position);
+    pick.obj.getWorldQuaternion(cam.quaternion);
+  }
+  return { cam, applyProjection, syncPose, clear };
 }

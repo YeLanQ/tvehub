@@ -150,7 +150,7 @@ async function main() {
   await applyMeshTextures(meshes, materialParams);
 
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
-  const { cam, applyProjection, clear } = createRenderCamera(cameras);
+  const { cam, applyProjection, syncPose, clear } = createRenderCamera(cameras);
   const clearColor = new THREE.Color(clear.color);
 
   // 正交相机的天空背景面：three.js 的纹理背景只支持透视相机（立方体路径按贴在
@@ -350,6 +350,8 @@ async function main() {
     physicsApi?.update(dt);
     clipAnims.update(dt);
     audiosApi.update();
+    // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
+    syncPose();
     applyClearFlags();
     renderer.render(scene, cam);
   }

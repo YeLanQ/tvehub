@@ -1,32 +1,26 @@
 // ---------------------------------------------------------------------------
 // 组件注册表（编辑器侧元数据）：「添加组件」菜单、组件卡片标题/约束的单一事实源。
 //
-// 与 framework/prototype/Node.ts 的组件引用类型对应：每种可挂载组件一条元数据
-// （展示名/分类/多实例约束），并提供建默认引用与重置设置的工厂。
-// 新增内置组件时：先在 Node.ts 定义引用类型与解析，再在此登记元数据。
+// 与 framework/prototype/components/ 的组件描述符对应：每种可挂载组件一条
+// UI 元数据（展示名/分类/多实例约束）；创建默认引用与重置设置委托给框架层
+// 描述符（ComponentDescriptor.createDefault / resetSettings），本文件不再
+// 持有各组件类型的默认值拷贝。
+// 新增内置组件时：在 framework/prototype/components/ 实现描述符并登记，
+// 再在此追加一条 ComponentMeta。
 // ---------------------------------------------------------------------------
 
 import { nextId } from "../../platform_abstraction/id";
 import {
+  descriptorOf,
+  type ComponentType,
   type LightComponentRef,
   type NodeComponentRef,
   type ScriptComponentRef,
   isLightComponent,
   isRigidBodyComponent,
-} from "../../framework/prototype/Node";
-import { DEFAULT_AUDIO_SETTINGS } from "../../framework/audio/types";
-import {
-  DEFAULT_LIGHT_COMPONENT_SETTINGS,
-  cloneLightComponentSettings,
-  parseLightComponentSettings,
-  type LightComponentKind,
-} from "../../framework/lighting/types";
-import {
-  DEFAULT_COLLIDER_SETTINGS,
-  DEFAULT_RIGID_BODY_SETTINGS,
-  type ColliderSettings,
-  type RigidBodySettings,
-} from "../../framework/physics";
+} from "../../framework/prototype/components";
+import type { LightComponentKind } from "../../framework/lighting/types";
+import type { ColliderSettings, RigidBodySettings } from "../../framework/physics";
 
 /** 组件分类（添加组件菜单的分组顺序即此顺序） */
 export type ComponentCategory = "physics" | "lighting" | "audio" | "animation" | "script";
@@ -72,53 +66,19 @@ export function canAddComponent(node: { components: NodeComponentRef[] }, type: 
   return !node.components.some((c) => c.type === type);
 }
 
-/** 创建默认组件引用（light 可指定灯光类型；其余用各自默认设置） */
+/** 创建默认组件引用（委托框架层描述符；light 可指定灯光类型） */
 export function createComponentRef(
   type: NodeComponentRef["type"],
   opts: { lightKind?: LightComponentKind; clip?: string } = {},
 ): NodeComponentRef {
-  switch (type) {
-    case "rigidBody":
-      return {
-        id: nextId("comp"),
-        type: "rigidBody",
-        enabled: true,
-        rigidBody: { ...DEFAULT_RIGID_BODY_SETTINGS },
-      };
-    case "collider":
-      return {
-        id: nextId("comp"),
-        type: "collider",
-        enabled: true,
-        collider: {
-          ...DEFAULT_COLLIDER_SETTINGS,
-          size: { ...DEFAULT_COLLIDER_SETTINGS.size },
-          offset: { ...DEFAULT_COLLIDER_SETTINGS.offset },
-        },
-      };
-    case "light":
-      return {
-        id: nextId("comp"),
-        type: "light",
-        enabled: true,
-        light: parseLightComponentSettings({
-          ...DEFAULT_LIGHT_COMPONENT_SETTINGS,
-          ...(opts.lightKind ? { kind: opts.lightKind } : null),
-        }),
-      };
-    case "audioSource":
-      return { id: nextId("comp"), type: "audioSource", enabled: true, audio: { ...DEFAULT_AUDIO_SETTINGS } };
-    case "animationClip":
-      return {
-        id: nextId("comp"),
-        type: "animationClip",
-        enabled: true,
-        clip: { clip: opts.clip ?? "", autoplay: true, loop: true, speed: 1 },
-      };
-    case "script":
-      // 脚本组件必须指定脚本路径，走 addScriptComponent 专用入口；这里仅占位
-      throw new Error("脚本组件请用 createScriptComponentRef(script) 创建");
+  if (type === "script") {
+    // 脚本组件必须指定脚本路径，走 addScriptComponent 专用入口；这里仅占位
+    throw new Error("脚本组件请用 createScriptComponentRef(script) 创建");
   }
+  const descriptor = descriptorOf(type as ComponentType);
+  // 联合类型已约束 type 必然已登记（运行期元数据与描述符不同步时显式报错）
+  if (!descriptor) throw new Error(`未登记的组件类型: ${type}`);
+  return descriptor.createDefault(opts) as NodeComponentRef;
 }
 
 /** 创建脚本组件引用（挂载指定脚本；属性留空由播放器按声明默认值补齐） */
@@ -126,32 +86,9 @@ export function createScriptComponentRef(script: string): ScriptComponentRef {
   return { id: nextId("comp"), type: "script", script, enabled: true, executionOrder: 0, props: {} };
 }
 
-/** 组件设置重置为该类型默认值（保留 id/启用状态/脚本路径与执行顺序；原地改写） */
+/** 组件设置重置为该类型默认值（委托框架层描述符原地改写；保留 id/启用状态/脚本路径与执行顺序） */
 export function resetComponentSettings(comp: NodeComponentRef): void {
-  switch (comp.type) {
-    case "rigidBody":
-      comp.rigidBody = { ...DEFAULT_RIGID_BODY_SETTINGS };
-      break;
-    case "collider":
-      comp.collider = {
-        ...DEFAULT_COLLIDER_SETTINGS,
-        size: { ...DEFAULT_COLLIDER_SETTINGS.size },
-        offset: { ...DEFAULT_COLLIDER_SETTINGS.offset },
-      };
-      break;
-    case "light":
-      comp.light = cloneLightComponentSettings(DEFAULT_LIGHT_COMPONENT_SETTINGS);
-      break;
-    case "audioSource":
-      comp.audio = { ...DEFAULT_AUDIO_SETTINGS };
-      break;
-    case "animationClip":
-      comp.clip = { clip: "", autoplay: true, loop: true, speed: 1 };
-      break;
-    case "script":
-      comp.props = {};
-      break;
-  }
+  descriptorOf(comp.type)?.resetSettings(comp);
 }
 
 /** 灯光组件的灯光类型可选项（添加菜单/卡片类型下拉共用） */

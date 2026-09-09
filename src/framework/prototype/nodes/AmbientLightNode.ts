@@ -1,8 +1,11 @@
 import { cloneRecord } from "../types";
-import { LightNode, type LightNodeInit } from "./LightNode";
+import { LightNode, type LightNodeInit, type ILightNode } from "./LightNode";
+
+/** 环境光能力接口：无方向、无距离衰减，仅颜色 + 强度（无额外参数）。 */
+export interface IAmbientLightNode extends ILightNode {}
 
 /** 环境光节点：无方向、无距离衰减，仅颜色 + 强度。 */
-export class AmbientLightNode extends LightNode {
+export class AmbientLightNode extends LightNode implements IAmbientLightNode {
   static override readonly kType: string = "ambientLightNode";
   override readonly typeKey: string = AmbientLightNode.kType;
   readonly lightKind = "ambient" as const;

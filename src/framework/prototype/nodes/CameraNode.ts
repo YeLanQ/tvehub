@@ -1,4 +1,5 @@
 import { Node, type NodeInit } from "../Node";
+import type { INode } from "../interfaces";
 import { cloneRecord } from "../types";
 import {
   clampCameraParam,
@@ -23,7 +24,25 @@ export interface CameraNodeInit extends NodeInit {
   isEditorCamera?: boolean;
 }
 
-export class CameraNode extends Node {
+/** 相机节点能力接口：投影类型与取景/裁剪/清屏参数 */
+export interface ICameraNode extends INode {
+  /** 相机类型：透视（fov 取景）/ 正交（orthoSize 取景） */
+  cameraType: CameraKind;
+  fov: number;
+  /** 近裁剪面（最小值 0.01） */
+  near: number;
+  /** 远裁剪面（默认 20，最小值 1） */
+  far: number;
+  /** 正交半高（取景高度的一半，世界单位；仅正交相机生效） */
+  orthoSize: number;
+  /** 清除标志：skybox（默认）/ solidColor / depthOnly / colorOnly */
+  clearFlags: CameraClearFlags;
+  /** 纯色清屏色（clearFlags=solidColor 时的背景；0xRRGGBB） */
+  clearColor: number;
+  isEditorCamera: boolean;
+}
+
+export class CameraNode extends Node implements ICameraNode {
   static override readonly kType: string = "cameraNode";
   override readonly typeKey = CameraNode.kType;
   /** 相机类型：透视（默认，fov 取景）/ 正交（orthoSize 取景）；类型定义见 framework/camera */
@@ -95,11 +114,5 @@ export class CameraNode extends Node {
     this.clearFlags = parseCameraClearFlags(source.clearFlags);
     this.clearColor = ((source.clearColor as number) ?? this.clearColor) & 0xffffff;
     this.isEditorCamera = (source.isEditorCamera as boolean) ?? this.isEditorCamera;
-  }
-
-  static fromJSON(json: Record<string, unknown>): CameraNode {
-    const node = new CameraNode();
-    node.applyJSON(json);
-    return node;
   }
 }

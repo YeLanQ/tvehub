@@ -302,6 +302,9 @@ class Entity {
   lookAt(target) {
     if (!target || typeof target !== "object") return;
     this.__obj.lookAt(numOr(target.x, 0), numOr(target.y, 0), numOr(target.z, 0));
+    // three 对非 Camera 对象的 lookAt 是 +Z 朝向目标；引擎契约前向 = -Z
+    //（tve.d.ts：与灯光/相机朝向约定一致），非相机对象绕 Y 转 180° 校正。
+    if (!this.__obj.isCamera) this.__obj.rotateY(Math.PI);
   }
 
   /** 名称路径（a/b/c）精确行走；单名称或路径失配时子树深度优先查找 */

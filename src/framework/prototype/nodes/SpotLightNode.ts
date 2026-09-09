@@ -1,8 +1,21 @@
 import { cloneRecord } from "../types";
-import { LightNode, type LightNodeInit } from "./LightNode";
+import { LightNode, type LightNodeInit, type ILightNode } from "./LightNode";
+
+/** 聚光灯能力接口：距离/衰减/角度/半影/阴影 */
+export interface ISpotLightNode extends ILightNode {
+  /** 光束有效距离（0 = 无限远） */
+  distance: number;
+  /** 物理衰减指数 */
+  decay: number;
+  /** 光束半角（度，界面友好单位；映射到 three 的 angle 弧度） */
+  angle: number;
+  /** 边缘柔和度 0~1 */
+  penumbra: number;
+  castShadow: boolean;
+}
 
 /** 聚光灯光源：沿节点本地 -Z 发射的圆锥光束，可配角度/半影/距离/衰减/阴影。 */
-export class SpotLightNode extends LightNode {
+export class SpotLightNode extends LightNode implements ISpotLightNode {
   static override readonly kType: string = "spotLightNode";
   override readonly typeKey: string = SpotLightNode.kType;
   readonly lightKind = "spot" as const;

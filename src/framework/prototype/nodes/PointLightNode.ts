@@ -1,8 +1,16 @@
 import { cloneRecord } from "../types";
-import { LightNode, type LightNodeInit } from "./LightNode";
+import { LightNode, type LightNodeInit, type ILightNode } from "./LightNode";
+
+/** 点光源能力接口：有效距离 + 物理衰减指数 */
+export interface IPointLightNode extends ILightNode {
+  /** 光照有效距离（0 = 无限远，不衰减到零） */
+  distance: number;
+  /** 物理衰减指数 */
+  decay: number;
+}
 
 /** 点光源节点：全方位点光源，可配置有效距离与衰减指数。 */
-export class PointLightNode extends LightNode {
+export class PointLightNode extends LightNode implements IPointLightNode {
   static override readonly kType: string = "pointLightNode";
   override readonly typeKey: string = PointLightNode.kType;
   readonly lightKind = "point" as const;

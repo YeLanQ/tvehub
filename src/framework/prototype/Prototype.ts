@@ -1,10 +1,11 @@
 import type { JsonValue } from "./types";
+import type { IPrototype } from "./interfaces";
 
 /**
  * 所有原型的根基类。
  * 原型保存节点信息，可被 clone 派生出新的模板实例。
  */
-export abstract class Prototype {
+export abstract class Prototype implements IPrototype {
   /** 原型唯一类型标识，工厂据此注册与派生 */
   abstract readonly typeKey: string;
 

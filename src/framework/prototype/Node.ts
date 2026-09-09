@@ -1,220 +1,42 @@
 import { nextId } from "../../platform_abstraction/id";
 import { Prototype } from "./Prototype";
 import { Transform } from "./Transform";
+import type { INode } from "./interfaces";
 import { cloneRecord, type JsonRecord, type JsonValue } from "./types";
 import {
-  cloneColliderSettings,
-  cloneRigidBodySettings,
-  parseColliderSettings,
-  parseRigidBodySettings,
-} from "../physics/types";
-import {
-  cloneAudioSettings,
-  parseAudioSettings,
-  type AudioSourceSettings,
-} from "../audio/types";
-import {
-  cloneLightComponentSettings,
-  parseLightComponentSettings,
-  type LightComponentSettings,
-} from "../lighting/types";
+  cloneComponentForWrite,
+  cloneNodeComponents,
+  parseNodeComponents,
+  type NodeComponentRef,
+} from "./components";
 
-/**
- * 节点上的脚本组件引用（组件模式）。
- * 编辑器只持有数据（检查器增删改、随节点序列化）；实例化与生命周期由
- * 播放器脚本宿主（web-preview/libs/scripts.mjs）在预览/发布产物中执行。
- */
-export interface ScriptComponentRef {
-  /** 组件实例 id（同节点内唯一） */
-  id: string;
-  /** 组件类型 */
-  type: "script";
-  /** 脚本源路径（项目内相对路径，如 "src/spin.ts"） */
-  script: string;
-  /** 是否启用（禁用的组件不参与运行） */
-  enabled: boolean;
-  /** 执行顺序（小者先跑；同序按挂载顺序。0 = 缺省，序列化时省略保持旧文件字节兼容） */
-  executionOrder: number;
-  /** 属性值（检查器按脚本 static props 声明渲染编辑） */
-  props: JsonRecord;
-}
-
-/**
- * 刚体组件引用：声明节点的运动学形态（static/kinematic/dynamic）。
- * 数据随节点序列化；模拟由物理系统在预览/播放时驱动（编辑态只同步数据）。
- */
-export interface RigidBodyComponentRef {
-  id: string;
-  type: "rigidBody";
-  enabled: boolean;
-  rigidBody: import("../physics/types").RigidBodySettings;
-}
-
-/**
- * 碰撞体组件引用：声明节点的碰撞形状与表面材质。
- * 同节点可挂多个碰撞体（复合形状）；无刚体只有碰撞体 = 隐式静态碰撞体。
- */
-export interface ColliderComponentRef {
-  id: string;
-  type: "collider";
-  enabled: boolean;
-  collider: import("../physics/types").ColliderSettings;
-}
-
-/**
- * 灯光组件引用：给任意节点附加一盏灯（组件模式；与灯光节点类层级并存）。
- * 编辑器由 SceneSynchronizer 在节点对象下同步真实 three 灯光 + 图标；
- * 播放器由 nodes.mjs 按组件数据重建灯光（与灯光节点同一光照语义）。
- */
-export interface LightComponentRef {
-  id: string;
-  type: "light";
-  enabled: boolean;
-  light: LightComponentSettings;
-}
-
-/**
- * 音源组件引用：给任意节点附加一个声音发射器（复用 AudioNode 的音源设置）。
- * 编辑器由 AudioSystem 以组件 id 绑定（播放/暂停等运行时控制按组件 id 寻址）；
- * 播放器由 nodes.mjs 收集、audio.mjs 绑定（节点 id 命中首个音源，兼容 SDK 寻址）。
- */
-export interface AudioSourceComponentRef {
-  id: string;
-  type: "audioSource";
-  enabled: boolean;
-  audio: AudioSourceSettings;
-}
-
-/** 关键帧动画剪辑绑定（指向 .anim 资产 + 播放设置） */
-export interface AnimClipBinding {
-  /** .anim 资产相对路径（空 = 未绑定） */
-  clip: string;
-  autoplay: boolean;
-  loop: boolean;
-  /** 播放速度倍率 */
-  speed: number;
-}
-
-/**
- * 关键帧动画剪辑组件引用：给任意节点附加一段自制关键帧动画
- * （.anim 资产，变换通道关键帧；与模型自带剪辑的 anim/animGraph 并存）。
- * 编辑器由动画编辑窗口制作剪辑；播放器每帧采样并应用到节点对象变换。
- */
-export interface AnimationClipComponentRef {
-  id: string;
-  type: "animationClip";
-  enabled: boolean;
-  clip: AnimClipBinding;
-}
-
-/** 节点组件引用（可辨识联合，按 type 收敛） */
-export type NodeComponentRef =
-  | ScriptComponentRef
-  | RigidBodyComponentRef
-  | ColliderComponentRef
-  | LightComponentRef
-  | AudioSourceComponentRef
-  | AnimationClipComponentRef;
-
-export function isScriptComponent(c: NodeComponentRef): c is ScriptComponentRef {
-  return c.type === "script";
-}
-export function isRigidBodyComponent(c: NodeComponentRef): c is RigidBodyComponentRef {
-  return c.type === "rigidBody";
-}
-export function isColliderComponent(c: NodeComponentRef): c is ColliderComponentRef {
-  return c.type === "collider";
-}
-export function isLightComponent(c: NodeComponentRef): c is LightComponentRef {
-  return c.type === "light";
-}
-export function isAudioSourceComponent(c: NodeComponentRef): c is AudioSourceComponentRef {
-  return c.type === "audioSource";
-}
-export function isAnimationClipComponent(c: NodeComponentRef): c is AnimationClipComponentRef {
-  return c.type === "animationClip";
-}
-
-/** 动画剪辑绑定收敛（缺失/非法字段回退默认） */
-export function parseAnimClipBinding(v: unknown): AnimClipBinding {
-  const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
-  return {
-    clip: typeof o.clip === "string" ? o.clip : "",
-    autoplay: o.autoplay !== false,
-    loop: o.loop !== false,
-    speed: typeof o.speed === "number" && Number.isFinite(o.speed) ? Math.max(0, o.speed) : 1,
-  };
-}
-
-/** 组件引用 JSON 收敛（非法项剔除；各类型字段缺失回退默认） */
-export function parseNodeComponents(value: unknown): NodeComponentRef[] {
-  if (!Array.isArray(value)) return [];
-  const out: NodeComponentRef[] = [];
-  for (const c of value) {
-    if (!c || typeof c !== "object") continue;
-    const rec = c as JsonRecord;
-    const id = typeof rec.id === "string" && rec.id ? rec.id : nextId("comp");
-    const enabled = rec.enabled !== false;
-    // 未知 type（旧数据只有 script 无 type 字段）按 script 收敛
-    const type = typeof rec.type === "string" ? rec.type : "script";
-    if (type === "rigidBody") {
-      out.push({ id, type: "rigidBody", enabled, rigidBody: parseRigidBodySettings(rec.rigidBody) });
-    } else if (type === "collider") {
-      out.push({ id, type: "collider", enabled, collider: parseColliderSettings(rec.collider) });
-    } else if (type === "light") {
-      out.push({ id, type: "light", enabled, light: parseLightComponentSettings(rec.light) });
-    } else if (type === "audioSource") {
-      out.push({ id, type: "audioSource", enabled, audio: parseAudioSettings(rec.audio) });
-    } else if (type === "animationClip") {
-      out.push({
-        id,
-        type: "animationClip",
-        enabled,
-        clip: parseAnimClipBinding(rec.clip),
-      });
-    } else {
-      if (typeof rec.script !== "string" || !rec.script) continue;
-      out.push({
-        id,
-        type: "script",
-        script: rec.script,
-        enabled,
-        executionOrder:
-          typeof rec.executionOrder === "number" && Number.isFinite(rec.executionOrder)
-            ? rec.executionOrder
-            : 0,
-        props: rec.props && typeof rec.props === "object" ? cloneRecord(rec.props as JsonRecord) : {},
-      });
-    }
-  }
-  return out;
-}
-
-/** 组件引用深拷贝（id 重新生成，避免克隆节点后实例 id 重复） */
-function cloneNodeComponents(list: NodeComponentRef[]): NodeComponentRef[] {
-  return list.map((c) => {
-    const id = nextId("comp");
-    if (c.type === "rigidBody") return { ...c, id, rigidBody: cloneRigidBodySettings(c.rigidBody) };
-    if (c.type === "collider") return { ...c, id, collider: cloneColliderSettings(c.collider) };
-    if (c.type === "light") return { ...c, id, light: cloneLightComponentSettings(c.light) };
-    if (c.type === "audioSource") return { ...c, id, audio: cloneAudioSettings(c.audio) };
-    if (c.type === "animationClip") return { ...c, id, clip: { ...c.clip } };
-    return { ...c, id, props: cloneRecord(c.props) };
-  });
-}
-
-/** 组件引用深拷贝（保留 id；序列化用） */
-function cloneComponentForWrite(c: NodeComponentRef): NodeComponentRef {
-  if (c.type === "rigidBody") return { ...c, rigidBody: cloneRigidBodySettings(c.rigidBody) };
-  if (c.type === "collider") return { ...c, collider: cloneColliderSettings(c.collider) };
-  if (c.type === "light") return { ...c, light: cloneLightComponentSettings(c.light) };
-  if (c.type === "audioSource") return { ...c, audio: cloneAudioSettings(c.audio) };
-  if (c.type === "animationClip") return { ...c, clip: { ...c.clip } };
-  const out: NodeComponentRef = { ...c, props: cloneRecord(c.props) };
-  // 执行顺序 0 = 缺省不写（旧场景文件保持字节兼容）
-  if (!c.executionOrder) delete (out as unknown as Record<string, unknown>).executionOrder;
-  return out;
-}
+// 组件契约与解析/克隆/写出（曾内联于本文件）已收敛到 components/ ——
+// 每种组件一个描述符模块实现 ComponentDescriptor 接口，公共链路查表派发。
+// 这里整体再导出，保持既有导入点（检查器、物理/音频系统、冒烟测试等）不变。
+export type {
+  AnimClipBinding,
+  AnimationClipComponentRef,
+  AudioSourceComponentRef,
+  ColliderComponentRef,
+  ComponentCreateOptions,
+  ComponentDescriptor,
+  ComponentType,
+  INodeComponent,
+  LightComponentRef,
+  NodeComponentRef,
+  RigidBodyComponentRef,
+  ScriptComponentRef,
+} from "./components";
+export {
+  isAnimationClipComponent,
+  isAudioSourceComponent,
+  isColliderComponent,
+  isLightComponent,
+  isRigidBodyComponent,
+  isScriptComponent,
+  parseAnimClipBinding,
+  parseNodeComponents,
+} from "./components";
 
 export interface NodeInit {
   id?: string;
@@ -235,7 +57,7 @@ export interface NodeInit {
  * 每个节点内聚一个 Transform 基元实例，用于组合式扩展。
  * 后续所有原型均从本类派生（见 derived/）。
  */
-export class Node extends Prototype {
+export class Node extends Prototype implements INode {
   static readonly kType: string = "node";
   readonly typeKey: string = Node.kType;
 
@@ -254,7 +76,7 @@ export class Node extends Prototype {
   transform: Transform;
   /** 编辑器扩展的任意属性槽 */
   properties: JsonRecord;
-  /** 脚本组件引用列表（组件模式；编辑态纯数据，运行期由播放器执行） */
+  /** 组件引用列表（组件模式；编辑态纯数据，运行期由播放器执行） */
   components: NodeComponentRef[];
 
   constructor(init: NodeInit = {}) {
@@ -332,7 +154,7 @@ export class Node extends Prototype {
     if (this.tag) record.tag = this.tag;
     // 预制体引用非空才写入（仅预制体实例携带）
     if (this.prefab) record.prefab = this.prefab;
-    // 组件列表非空才写入（旧场景文件保持字节兼容）
+    // 组件列表非空才写入（旧场景文件保持字节兼容；写出约定见各组件描述符）
     if (this.components.length) {
       record.components = this.components.map(
         (c) => cloneComponentForWrite(c) as unknown as JsonRecord,
@@ -372,4 +194,3 @@ export class Node extends Prototype {
 export interface RegisteredNodeTypes {
   register(type: string, factory: () => Node): void;
 }
-

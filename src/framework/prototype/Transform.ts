@@ -1,5 +1,6 @@
 import { nextId } from "../../platform_abstraction/id";
 import { Prototype } from "./Prototype";
+import type { ITransform } from "./interfaces";
 import { cloneVec3, vec3, type Euler, type JsonRecord, type Vec3, type JsonValue } from "./types";
 
 export interface TransformInit {
@@ -13,7 +14,7 @@ export interface TransformInit {
  * 保存一个节点的空间变换信息（位置 / 旋转 / 缩放）。
  * 所有派生原型若需要额外变换语义，均继承本类扩展。
  */
-export class Transform extends Prototype {
+export class Transform extends Prototype implements ITransform {
   static readonly kType: string = "transform";
   readonly typeKey: string = Transform.kType;
 

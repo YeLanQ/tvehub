@@ -1,8 +1,13 @@
 import { cloneRecord } from "../types";
-import { LightNode, type LightNodeInit } from "./LightNode";
+import { LightNode, type LightNodeInit, type ILightNode } from "./LightNode";
+
+/** 平行光能力接口：阴影开关 */
+export interface IDirectionalLightNode extends ILightNode {
+  castShadow: boolean;
+}
 
 /** 平行光节点：平行光线沿节点本地 -Z 方向，可开启阴影。 */
-export class DirectionalLightNode extends LightNode {
+export class DirectionalLightNode extends LightNode implements IDirectionalLightNode {
   static override readonly kType: string = "directionalLightNode";
   override readonly typeKey: string = DirectionalLightNode.kType;
   readonly lightKind = "directional" as const;

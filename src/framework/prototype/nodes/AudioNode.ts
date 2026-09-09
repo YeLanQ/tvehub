@@ -1,4 +1,5 @@
 import { Node, type NodeInit } from "../Node";
+import type { INode } from "../interfaces";
 import { cloneRecord } from "../types";
 import {
   DEFAULT_AUDIO_SETTINGS,
@@ -12,6 +13,11 @@ export interface AudioNodeInit extends NodeInit {
   audio?: AudioSourceSettings;
 }
 
+/** 音源节点能力接口：音源播放设置（音频资产引用 + 播放参数） */
+export interface IAudioNode extends INode {
+  audio: AudioSourceSettings;
+}
+
 /**
  * 音源节点：场景中的声音发射器（不渲染几何，仅持有音源数据）。
  * - 2D（spatial=2d）：全局播放（背景乐/UI 音效），不随距离衰减；
@@ -19,7 +25,7 @@ export interface AudioNodeInit extends NodeInit {
  * - 播放意图（autoplay/loop/volume/speed…）为节点数据随场景序列化，
  *   运行时由 AudioSystem 驱动（Web Audio）。
  */
-export class AudioNode extends Node {
+export class AudioNode extends Node implements IAudioNode {
   static override readonly kType: string = "audioNode";
   override readonly typeKey: string = AudioNode.kType;
 
@@ -49,11 +55,5 @@ export class AudioNode extends Node {
 
   protected override readOwnData(source: Record<string, unknown>): void {
     this.audio = parseAudioSettings(source.audio);
-  }
-
-  static fromJSON(json: Record<string, unknown>): AudioNode {
-    const node = new AudioNode();
-    node.applyJSON(json);
-    return node;
   }
 }

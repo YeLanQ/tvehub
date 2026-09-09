@@ -14,6 +14,7 @@ import {
   isAudioSourceComponent,
   isLightComponent,
   isScriptComponent,
+  parseAnimClipBinding,
   parseNodeComponents,
 } from "../src/framework/prototype/Node";
 import { serializePrefabTree, instantiatePrefabTree } from "../src/framework/prototype/prefab";
@@ -41,7 +42,8 @@ import {
 } from "../src/framework/animation/clip";
 // @ts-ignore 播放器镜像（mjs 无类型声明）：校验与 framework clip.ts 同语义
 import { __test } from "../public/web-preview/libs/animclip.mjs";
-import { DEFAULT_AUDIO_SETTINGS } from "../src/framework/audio/types";
+import { DEFAULT_AUDIO_SETTINGS, parseAudioSettings } from "../src/framework/audio/types";
+import { parseColliderSettings, parseRigidBodySettings } from "../src/framework/physics/types";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";
 import { AudioSystem } from "../src/framework/audio/AudioSystem";
 
@@ -532,6 +534,48 @@ function check(name: string, cond: boolean, detail = ""): void {
     }
     check("播放器镜像与框架求值逐点一致（含权重/钳制）", mMax < 1e-12, `maxΔ=${mMax}`);
   }
+}
+
+// ---------- 8. 组件序列化金样本（键顺序 + 删键约定，字节兼容守卫） ----------
+{
+  const node = new Node({ name: "golden" });
+  node.components.push(
+    { id: "c-script", type: "script", script: "src/g.ts", enabled: true, executionOrder: 2, props: { n: 1 } },
+    { id: "c-script0", type: "script", script: "src/g0.ts", enabled: true, executionOrder: 0, props: {} },
+    { id: "c-rb", type: "rigidBody", enabled: false, rigidBody: parseRigidBodySettings({}) },
+    { id: "c-col", type: "collider", enabled: true, collider: parseColliderSettings({}) },
+    { id: "c-light", type: "light", enabled: true, light: parseLightComponentSettings({}) },
+    { id: "c-audio", type: "audioSource", enabled: true, audio: parseAudioSettings({}) },
+    { id: "c-clip", type: "animationClip", enabled: true, clip: parseAnimClipBinding({}) },
+  );
+  const comps = (node.toJSON() as Record<string, unknown>).components as Record<
+    string,
+    unknown
+  >[];
+  // 键顺序即序列化字节顺序（Rust 侧 JsonMap 透传写入，前端键序落盘）
+  const keys = (c: Record<string, unknown>) => JSON.stringify(Object.keys(c));
+  check(
+    "script 键序（executionOrder≠0 保留）",
+    keys(comps[0]) === '["id","type","script","enabled","executionOrder","props"]',
+    keys(comps[0]),
+  );
+  check(
+    "script 键序（executionOrder=0 删键）",
+    keys(comps[1]) === '["id","type","script","enabled","props"]',
+    keys(comps[1]),
+  );
+  check("rigidBody 键序", keys(comps[2]) === '["id","type","enabled","rigidBody"]', keys(comps[2]));
+  check("collider 键序", keys(comps[3]) === '["id","type","enabled","collider"]', keys(comps[3]));
+  check("light 键序", keys(comps[4]) === '["id","type","enabled","light"]', keys(comps[4]));
+  check("audioSource 键序", keys(comps[5]) === '["id","type","enabled","audio"]', keys(comps[5]));
+  check("animationClip 键序", keys(comps[6]) === '["id","type","enabled","clip"]', keys(comps[6]));
+  check("enabled=false 保留写出", (comps[2] as { enabled: boolean }).enabled === false);
+  // 未登记类型剔除；旧数据无 type 字段按 script 收敛（语义不变）
+  const mixed = parseNodeComponents([
+    { id: "x1", type: "bogus" },
+    { id: "x2", type: "script", script: "src/ok.ts" },
+  ]);
+  check("解析剔除未登记类型", mixed.length === 1 && mixed[0].type === "script");
 }
 
 if (failed) {

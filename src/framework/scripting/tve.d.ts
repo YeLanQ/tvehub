@@ -127,6 +127,44 @@ export function nodeType(options?: {
 export type ComponentProps = Record<string, unknown>;
 
 /**
+ * 组件生命周期回调契约（Component 基类的钩子接口；全部可选，按需实现）。
+ * 调度方为播放器脚本宿主（web-preview/libs/scripts.mjs）：
+ * 全部实例化后先统一 onEnable 再统一 onStart（对齐 Unity 批次顺序）；
+ * 每帧先分派物理碰撞回调再调 onUpdate；停机时逐实例 onDisable → onDestroy。
+ */
+export interface ComponentLifecycle {
+  /**
+   * 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，
+   * 对齐 Unity 批次顺序）；此时可安全引用其他实体与组件。
+   */
+  onEnable?(): void;
+
+  /** 生命周期：全部脚本实例创建后、首个 onUpdate 前调用一次（初始化玩法逻辑） */
+  onStart?(): void;
+
+  /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
+  onUpdate?(delta: number): void;
+
+  /**
+   * 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用）。
+   * 需要：本节点挂碰撞体组件 + 项目设置启用物理。传感器（isSensor）同样触发。
+   */
+  onCollisionEnter?(other: Entity): void;
+
+  /** 物理碰撞结束（与 other 的接触断开；参数为对方实体） */
+  onCollisionExit?(other: Entity): void;
+
+  /**
+   * 生命周期：页面卸载/预览停机时调用一次（先于 onDestroy），用于释放
+   * 定时器/事件订阅等外部资源。
+   */
+  onDisable?(): void;
+
+  /** 生命周期：实例销毁时调用（页面卸载/预览停机时先于本回调触发 onDisable） */
+  onDestroy?(): void;
+}
+
+/**
  * 脚本组件基类（装饰器声明式写法，推荐）：
  *
  * ```ts
@@ -151,7 +189,7 @@ export type ComponentProps = Record<string, unknown>;
  * 运行时 `this` 上还提供一个只读属性值视图 `this.props`（装饰器字段的
  * 当前值 + 检查器配置的覆盖值），便于以字典方式遍历。
  */
-export class Component<P extends ComponentProps = ComponentProps> {
+export class Component<P extends ComponentProps = ComponentProps> implements ComponentLifecycle {
   /**
    * @deprecated 推荐使用字段 + @property 装饰器声明属性。此静态声明仍受支持：
    * 声明后检查器按此渲染编辑控件，未在节点上配置的属性取 default，
@@ -171,34 +209,25 @@ export class Component<P extends ComponentProps = ComponentProps> {
    */
   readonly props: Readonly<P>;
 
+  /** 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，对齐 Unity 批次顺序） */
+  onEnable?(): void;
+
   /** 生命周期：全部脚本实例创建后、首个 onUpdate 前调用一次（初始化玩法逻辑） */
   onStart?(): void;
-
-  /**
-   * 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，
-   * 对齐 Unity 批次顺序）；此时可安全引用其他实体与组件。
-   */
-  onEnable?(): void;
 
   /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
   onUpdate?(delta: number): void;
 
-  /**
-   * 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用）。
-   * 需要：本节点挂碰撞体组件 + 项目设置启用物理。传感器（isSensor）同样触发。
-   */
+  /** 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用） */
   onCollisionEnter?(other: Entity): void;
 
   /** 物理碰撞结束（与 other 的接触断开；参数为对方实体） */
   onCollisionExit?(other: Entity): void;
 
-  /**
-   * 生命周期：页面卸载/预览停机时调用一次（先于 onDestroy），用于释放
-   * 定时器/事件订阅等外部资源。
-   */
+  /** 生命周期：页面卸载/预览停机时调用一次（先于 onDestroy），用于释放外部资源 */
   onDisable?(): void;
 
-  /** 生命周期：实例销毁时调用（页面卸载/预览停机时先于本回调触发 onDisable） */
+  /** 生命周期：实例销毁时调用（先于本回调触发 onDisable） */
   onDestroy?(): void;
 }
 

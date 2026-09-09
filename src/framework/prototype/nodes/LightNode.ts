@@ -1,10 +1,19 @@
 import { Node, type NodeInit } from "../Node";
+import type { INode } from "../interfaces";
 
 export type LightKind = "point" | "directional" | "ambient" | "spot";
 
 export interface LightNodeInit extends NodeInit {
   intensity?: number;
   lightColor?: number;
+}
+
+/** 灯光节点能力接口：全部灯光共有的强度/颜色 + 类型标识 */
+export interface ILightNode extends INode {
+  /** 灯光类型标识（由具体子类固定） */
+  readonly lightKind: LightKind;
+  intensity: number;
+  lightColor: number;
 }
 
 /**
@@ -15,7 +24,7 @@ export interface LightNodeInit extends NodeInit {
  * 强度 intensity 与颜色 lightColor，并暴露类型标识 lightKind。
  * 具体类型各自的参数（距离、衰减、角度、阴影…）由子类扩展。
  */
-export abstract class LightNode extends Node {
+export abstract class LightNode extends Node implements ILightNode {
   static override readonly kType: string = "lightNode";
   override readonly typeKey: string = LightNode.kType;
 

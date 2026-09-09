@@ -1,4 +1,5 @@
 import { Node, type NodeInit } from "../Node";
+import type { INode } from "../interfaces";
 import { cloneRecord, vec3, type Vec3 } from "../types";
 import { DEFAULT_MATERIAL_REL } from "../../material/types";
 import type { MeshSourceKind } from "../../mesh/types";
@@ -28,6 +29,31 @@ export interface MeshNodeInit extends NodeInit {
   animGraph?: AnimGraph | null;
 }
 
+/** 网格节点能力接口：网格来源（基元/模型）+ 材质资产引用 */
+export interface IMeshNode extends INode {
+  /** 网格来源：基元（默认）/ 模型资产 */
+  source: MeshSourceKind;
+  /** 基元几何类型（source=primitive 时有效） */
+  geometry: GeometryKind;
+  /** 基元尺寸（source=primitive 时有效） */
+  size: Vec3;
+  /** 材质资产引用路径（internal/… 内置或 assets/… 项目资产） */
+  material: string;
+  /** 模型资产引用（空串 = 未绑定模型） */
+  model: string;
+}
+
+/**
+ * 可动画能力接口：模型自带剪辑的播放意图（单剪辑 + 动画图）。
+ * 与自制关键帧的 animationClip 组件并存；运行时由 AnimationSystem 驱动。
+ */
+export interface IAnimatable {
+  /** 单剪辑播放设置（动画图存在时被其覆盖） */
+  anim: AnimClipSettings;
+  /** 动画图（null = 单剪辑模式） */
+  animGraph: AnimGraph | null;
+}
+
 /**
  * 网格节点：两种网格来源 + 材质**资产引用** + 动画数据。
  * - source=primitive：基元几何（geometry/size）+ 材质资产引用（material），
@@ -36,7 +62,7 @@ export interface MeshNodeInit extends NodeInit {
  *   内嵌；动画剪辑由模型携带，节点上的 anim（单剪辑）与 animGraph（动画图）
  *   描述播放意图，运行时由 AnimationSystem 驱动（含骨骼动画）。
  */
-export class MeshNode extends Node {
+export class MeshNode extends Node implements IMeshNode, IAnimatable {
   static override readonly kType: string = "meshNode";
   override readonly typeKey: string = MeshNode.kType;
   source: MeshSourceKind = "primitive";
@@ -100,11 +126,5 @@ export class MeshNode extends Node {
     this.model = typeof source.model === "string" ? source.model : "";
     this.anim = parseClipSettings(source.anim);
     this.animGraph = parseAnimGraph(source.animGraph);
-  }
-
-  static fromJSON(json: Record<string, unknown>): MeshNode {
-    const node = new MeshNode();
-    node.applyJSON(json);
-    return node;
   }
 }

@@ -1,4 +1,5 @@
 import { Node, type NodeInit } from "../Node";
+import type { INode } from "../interfaces";
 import { cloneRecord } from "../types";
 
 /** 天空盒类型：程序化天空 / 立方体天空盒 */
@@ -62,6 +63,27 @@ export const DEFAULT_SUN = {
   elevation: 25,
 } as const;
 
+/** 天空盒节点能力接口：类型/材质/贴图 + 三段配色与太阳参数 */
+export interface ISkyboxNode extends INode {
+  skyKind: SkyboxKind;
+  /** 该天空盒使用的材质资产引用（按类型固定：程序化→ProceduralSky.mat；立方体→SkyBox.mat） */
+  material: string;
+  /** 立方体天空盒贴图（TextureCube 资产引用；仅 cube 生效，缺失/加载失败回退三段色带） */
+  cubeMap: string;
+  /** 顶部颜色（程序化=天空顶部；立方体=顶面） */
+  topColor: number;
+  /** 地平线颜色（程序化=地平线；立方体=四个侧面） */
+  horizonColor: number;
+  /** 下方颜色（程序化=地面以下；立方体=底面） */
+  groundColor: number;
+  sunDisk: SkySunDisk;
+  sunColor: number;
+  sunSize: number;
+  sunGlow: number;
+  sunAzimuth: number;
+  sunElevation: number;
+}
+
 /**
  * 天空盒节点：场景环境级节点（不属于实体网格）。
  * 场景中第一个"启用且可见"的天空盒节点决定渲染场景背景：
@@ -69,7 +91,7 @@ export const DEFAULT_SUN = {
  * - cube（立方体天空盒）：六面贴图背景（顶/侧/底）。
  * 类型在创建时由菜单固定（内置材质 ProceduralSky.mat / SkyBox.mat），不可切换。
  */
-export class SkyboxNode extends Node {
+export class SkyboxNode extends Node implements ISkyboxNode {
   static override readonly kType: string = "skyboxNode";
   override readonly typeKey: string = SkyboxNode.kType;
 
@@ -163,11 +185,5 @@ export class SkyboxNode extends Node {
     this.sunGlow = (source.sunGlow as number) ?? this.sunGlow;
     this.sunAzimuth = (source.sunAzimuth as number) ?? this.sunAzimuth;
     this.sunElevation = (source.sunElevation as number) ?? this.sunElevation;
-  }
-
-  static fromJSON(json: Record<string, unknown>): SkyboxNode {
-    const node = new SkyboxNode();
-    node.applyJSON(json);
-    return node;
   }
 }
