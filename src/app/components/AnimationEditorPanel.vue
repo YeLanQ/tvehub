@@ -557,20 +557,8 @@ function deleteSelected(): void {
   }
 }
 
-function cycleInterp(): void {
-  const d = doc.value;
-  const sel = selected.value;
-  if (!d || !sel) return;
-  const k = d.curves
-    .find((c) => c.prop === sel.prop)
-    ?.keys.find((kk) => Math.abs(kk.t - sel.t) <= 1e-4);
-  if (!k) return;
-  const order: AnimKeyInterp[] = ["linear", "step", "smooth"];
-  k.i = order[(order.indexOf(k.i) + 1) % order.length];
-  touch();
-}
-
-const interpLabel = computed<string>(() => {
+/** 选中关键帧的插值方式（未选中为空串，下拉禁用） */
+const selectedInterp = computed<AnimKeyInterp | "">(() => {
   void rev.value;
   const d = doc.value;
   const sel = selected.value;
@@ -578,8 +566,23 @@ const interpLabel = computed<string>(() => {
   const k = d.curves
     .find((c) => c.prop === sel.prop)
     ?.keys.find((kk) => Math.abs(kk.t - sel.t) <= 1e-4);
-  return k ? { linear: "线性", step: "阶跃", smooth: "平滑" }[k.i] : "";
+  return k ? k.i : "";
 });
+
+function onInterpChange(e: Event): void {
+  const d = doc.value;
+  const sel = selected.value;
+  if (!d || !sel) return;
+  const k = d.curves
+    .find((c) => c.prop === sel.prop)
+    ?.keys.find((kk) => Math.abs(kk.t - sel.t) <= 1e-4);
+  if (!k) return;
+  const v = (e.target as HTMLSelectElement).value as AnimKeyInterp;
+  if (v === "linear" || v === "step" || v === "smooth") {
+    k.i = v;
+    touch();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 视图模式（右侧二选一，下拉切换）：dope = 帧动画轨道；curve = 单通道曲线编辑
@@ -593,7 +596,7 @@ function onViewModeChange(e: Event): void {
 
 const viewHint = computed(() =>
   viewMode.value === "dope"
-    ? "拖拽关键帧改时间（Alt 关闭吸附）；点击选中后可切插值/删除；点击左侧通道名选中曲线"
+    ? "拖拽关键帧改时间（Alt 关闭吸附）；点击选中后可在左下改插值/删除；点击左侧通道名选中曲线"
     : "空白处点击 = 插入关键帧（Alt 关闭吸附）；拖拽关键帧改时间/数值；点击左侧通道名切换曲线",
 );
 
@@ -604,6 +607,13 @@ const laneEl = ref<HTMLElement | null>(null);
 const laneWidth = ref(600);
 /** 右侧视图区高度（曲线模式 viewBox 用；dope 模式不消费） */
 const laneHeight = ref(0);
+/** 时间轴缩放倍率（1× = 铺满视图区宽度；仅 dope 视图消费） */
+const zoom = ref(1);
+const timelineWidth = computed(() => Math.max(1, laneWidth.value) * zoom.value);
+
+function onZoomInput(e: Event): void {
+  zoom.value = parseFloat((e.target as HTMLInputElement).value) || 1;
+}
 let laneRo: ResizeObserver | null = null;
 let laneLeftCache = 0;
 
@@ -627,24 +637,55 @@ watch(laneEl, (el) => {
 onBeforeUnmount(() => laneRo?.disconnect());
 
 function tToX(t: number, duration: number): number {
-  return (t / Math.max(0.1, duration)) * laneWidth.value;
+  return (t / Math.max(0.1, duration)) * timelineWidth.value;
 }
 function xToT(x: number, duration: number): number {
-  return Math.max(0, Math.min(duration, (x / Math.max(1, laneWidth.value)) * duration));
+  return Math.max(0, Math.min(duration, (x / Math.max(1, timelineWidth.value)) * duration));
+}
+/** 缩放后指针 x 相对轨道内容原点（需加横向滚动量） */
+function laneScrollX(): number {
+  return laneEl.value?.scrollLeft ?? 0;
 }
 
+// 播放/scrub 时把播放头保持在可视范围内（缩放后内容超出视口才有意义）
+watch(time, () => {
+  const el = laneEl.value;
+  if (!el || viewMode.value !== "dope") return;
+  const x = tToX(time.value, doc.value?.duration ?? 1);
+  if (x < el.scrollLeft) el.scrollLeft = x;
+  else if (x > el.scrollLeft + el.clientWidth - 12) el.scrollLeft = x - el.clientWidth + 12;
+});
+
+/** 刻度步长随缩放自适应：按当前每秒像素数选步长，保证刻度间距 ≥ ~80px
+ *  （1× 时与原 d/8 行为接近；放大后出现更细的刻度 0.5/0.1/…；
+ *  曲线视图不吃缩放，用视口宽计算，避免网格过密） */
+const viewWidth = computed(() =>
+  viewMode.value === "dope" ? timelineWidth.value : Math.max(1, laneWidth.value),
+);
 const rulerStep = computed(() => {
   const d = doc.value?.duration ?? 3;
-  const rawStep = d / 8;
-  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
-  return steps.find((s) => s >= rawStep) ?? 60;
+  const pxPerSec = viewWidth.value / Math.max(0.1, d);
+  const steps = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
+  return steps.find((s) => s * pxPerSec >= 80) ?? 60;
 });
+
+/** 标签小数位跟随步长（0.05→2 位、0.2→1 位、1s→整数） */
+const tickDecimals = computed(() => {
+  const s = rulerStep.value;
+  const dec = -Math.floor(Math.log10(s + 1e-9));
+  return Math.min(2, Math.max(0, dec));
+});
+
+function tickLabel(t: number): string {
+  return t.toFixed(tickDecimals.value);
+}
 
 const rulerTicks = computed<number[]>(() => {
   const d = doc.value?.duration ?? 3;
   const step = rulerStep.value;
   const out: number[] = [];
-  for (let t = 0; t <= d + 1e-6; t += step) out.push(t);
+  // 用整数索引乘步长，避免浮点累加漂移出重复刻度
+  for (let i = 0; i * step <= d + 1e-6; i++) out.push(i * step);
   return out;
 });
 
@@ -669,7 +710,7 @@ function beginScrub(e: PointerEvent): void {
   drag = { kind: "scrub" };
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   const dur = doc.value?.duration ?? 1;
-  time.value = snapT(xToT(e.clientX - rect.left, dur), dur, snapEnabled.value && !e.altKey);
+  time.value = snapT(xToT(e.clientX - rect.left + laneScrollX(), dur), dur, snapEnabled.value && !e.altKey);
   previewAt(time.value);
 }
 
@@ -679,7 +720,7 @@ function beginKeyDrag(e: PointerEvent, prop: AnimProp, index: number): void {
   laneLeftCache = rect.left;
   // 选中在按下时即生效（不依赖 click：拖拽后数组重排，click 会命中错误的帧）
   pickKey(prop, keysOf(prop)[index]?.t ?? 0);
-  drag = { kind: "key", prop, index, startX: e.clientX - laneLeftCache, live: false };
+  drag = { kind: "key", prop, index, startX: e.clientX - laneLeftCache + laneScrollX(), live: false };
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
 }
 
@@ -687,7 +728,7 @@ function onRulerPointerMove(e: PointerEvent): void {
   if (!drag || drag.kind !== "scrub") return;
   const d = doc.value;
   if (!d) return;
-  time.value = snapT(xToT(e.clientX - laneLeftCache, d.duration), d.duration, snapEnabled.value && !e.altKey);
+  time.value = snapT(xToT(e.clientX - laneLeftCache + laneScrollX(), d.duration), d.duration, snapEnabled.value && !e.altKey);
   previewAt(time.value);
 }
 
@@ -697,7 +738,7 @@ function onLanePointerMove(e: PointerEvent): void {
   if (!d) return;
   // drag 为模块级可变量：捕获到局部常量保持 TS 收窄，字段仍可写
   const dragKey = drag;
-  const x = e.clientX - laneLeftCache;
+  const x = e.clientX - laneLeftCache + laneScrollX();
   // 死区：按下未移动超过 3px 视为点击，不动关键帧
   if (!dragKey.live) {
     if (Math.abs(x - dragKey.startX) < 3) return;
@@ -936,6 +977,7 @@ function onCurveUp(): void {
         <!-- 右侧视图区：帧动画轨道 / 曲线编辑（下拉切换，二选一显示） -->
         <div class="anim-lanes" ref="laneEl">
           <template v-if="viewMode === 'dope'">
+            <div class="lane-wrap" :style="{ width: timelineWidth + 'px' }">
             <div
               class="lane ruler"
               @pointerdown="beginScrub($event)"
@@ -948,7 +990,7 @@ function onCurveUp(): void {
                 :key="tk"
                 class="tick mono"
                 :style="{ left: tToX(tk, doc.duration) + 'px' }"
-              >{{ tk.toFixed(1) }}</span>
+              >{{ tickLabel(tk) }}</span>
               <span class="playhead" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
             </div>
             <template v-for="row in trackRows" :key="row.kind + row.key">
@@ -987,6 +1029,7 @@ function onCurveUp(): void {
             </template>
             <div v-if="tracks.length === 0" class="hint lane-empty">
               尚未添加属性：点击左下「＋ 添加属性」（变换 / 灯光 / 材质按节点能力提供）
+            </div>
             </div>
           </template>
           <template v-else>
@@ -1034,16 +1077,27 @@ function onCurveUp(): void {
         </div>
       </div>
 
-      <!-- 关键帧操作条（两种视图共用：选中信息 + 插值/删除） -->
+      <!-- 关键帧操作条（两种视图共用：插值下拉 + 删除） -->
       <div class="anim-bottom">
         <div class="anim-keyops">
-          <span class="sel-info">
-            {{ selected ? `${pathLabel(selected.prop)} @ ${selected.t.toFixed(2)}s` : "未选中关键帧" }}
-            {{ interpLabel ? `（${interpLabel}）` : "" }}
-          </span>
-          <button class="anim-btn" :disabled="!selected" title="切换插值：线性 → 阶跃 → 平滑" @click="cycleInterp">插值</button>
+          <select
+            class="interp-pick"
+            :value="selectedInterp"
+            :disabled="!selected"
+            title="选中关键帧的插值方式"
+            @change="onInterpChange($event)"
+          >
+            <option value="" disabled>（未选中关键帧）</option>
+            <option value="linear">线性</option>
+            <option value="step">阶跃</option>
+            <option value="smooth">平滑</option>
+          </select>
           <button class="anim-btn danger" :disabled="!selected" title="删除选中的关键帧" @click="deleteSelected">删除 K</button>
           <span class="anim-hint">{{ viewHint }}</span>
+          <label class="zoom-ctl" title="缩放时间轴轨道（1× 铺满视图区宽度，放大后可横向滚动）">
+            <input type="range" min="1" max="8" step="0.5" :value="zoom" @input="onZoomInput" />
+            <span class="mono">×{{ zoom.toFixed(1) }}</span>
+          </label>
         </div>
       </div>
     </template>

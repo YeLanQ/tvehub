@@ -263,8 +263,15 @@
 .anim-lanes {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   position: relative;
+}
+
+/* dope 视图内容层：宽度 = 视口宽 × 缩放倍率，缩放后随轨道区横向滚动 */
+.lane-wrap {
+  position: relative;
+  min-width: 100%;
 }
 
 .lane {
@@ -357,14 +364,48 @@
   gap: 8px;
   padding: 3px 8px;
 
-  .sel-info {
+  /* 选中关键帧的插值下拉（未选中时禁用显示占位项） */
+  .interp-pick {
+    height: 22px;
+    font-size: 10px;
     color: var(--text);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
   }
 
   .anim-hint {
     margin-left: auto;
     font-size: 10px;
     color: var(--text-dim);
+  }
+}
+
+/* 时间轴缩放滑条（底栏右端） */
+.zoom-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  cursor: default;
+
+  input[type="range"] {
+    width: 90px;
+    height: 14px;
+    /* 全局 input 有 padding 4px 7px + 边框 + 背景色：会把原生轨道内缩，
+       滑块推到最大也够不到右缘（永远空出一段空白）且高度被挤变形，全部重置 */
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
 }
 
