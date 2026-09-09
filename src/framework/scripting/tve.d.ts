@@ -326,6 +326,81 @@ export {
 };
 
 // ---------------------------------------------------------------------------
+// math —— 向量数学库
+// ---------------------------------------------------------------------------
+
+/**
+ * 向量数学库（引擎自有类型；纯函数，全部返回新对象，不改写入参）。
+ *
+ * ```ts
+ * import { math, Component } from "tve";
+ *
+ * export default class Orbit extends Component {
+ *   onUpdate(delta: number) {
+ *     const dir = math.normalize(math.sub(this.entity.position, math.zero));
+ *     this.entity.position = math.scale(dir, 5);
+ *   }
+ * }
+ * ```
+ */
+export interface MathApi {
+  /** 创建向量 {x,y,z}（缺省 0） */
+  v3(x?: number, y?: number, z?: number): Vec3;
+  /** 常量：零向量（冻结，勿改写） */
+  readonly zero: Vec3;
+  /** 常量：单位向量 (1,1,1)（冻结，勿改写） */
+  readonly one: Vec3;
+  /** 常量：世界上方向 (0,1,0)（冻结，勿改写） */
+  readonly up: Vec3;
+  /** 常量：世界下方向 (0,-1,0)（冻结，勿改写） */
+  readonly down: Vec3;
+  /** 常量：前方向 (0,0,-1)（冻结，勿改写） */
+  readonly forward: Vec3;
+  /** 常量：后方向 (0,0,1)（冻结，勿改写） */
+  readonly back: Vec3;
+  /** 常量：左方向 (-1,0,0)（冻结，勿改写） */
+  readonly left: Vec3;
+  /** 常量：右方向 (1,0,0)（冻结，勿改写） */
+  readonly right: Vec3;
+  /** 克隆（快照副本，写入不影响原向量） */
+  clone(v: Vec3): Vec3;
+  /** 加法 a + b */
+  add(a: Vec3, b: Vec3): Vec3;
+  /** 减法 a - b */
+  sub(a: Vec3, b: Vec3): Vec3;
+  /** 数乘 v * s */
+  scale(v: Vec3, s: number): Vec3;
+  /** 逐分量取反 */
+  negate(v: Vec3): Vec3;
+  /** 逐分量取绝对值 */
+  abs(v: Vec3): Vec3;
+  /** 逐分量取最小 */
+  min(a: Vec3, b: Vec3): Vec3;
+  /** 逐分量取最大 */
+  max(a: Vec3, b: Vec3): Vec3;
+  /** 点积（结果 = |a||b|cosθ） */
+  dot(a: Vec3, b: Vec3): number;
+  /** 叉积（结果同时垂直于 a、b，方向满足右手定则） */
+  cross(a: Vec3, b: Vec3): Vec3;
+  /** 模长平方（避免开方，比较距离时更快） */
+  lengthSq(v: Vec3): number;
+  /** 模长（到原点的直线距离） */
+  length(v: Vec3): number;
+  /** 两点直线距离 */
+  distance(a: Vec3, b: Vec3): number;
+  /** 距离平方 */
+  distanceSq(a: Vec3, b: Vec3): number;
+  /** 归一化（模长归 1；零向量返回零向量，不产生 NaN） */
+  normalize(v: Vec3): Vec3;
+  /** 线性插值 t∈[0,1]（t=0 返回 a 克隆，t=1 返回 b 克隆） */
+  lerp(a: Vec3, b: Vec3, t: number): Vec3;
+  /** 由 a 向 b 移动最多 maxDelta（不超过直线距离；匀速移动用） */
+  moveTowards(a: Vec3, b: Vec3, maxDelta: number): Vec3;
+  /** 近似相等（逐分量误差 ≤ eps，缺省 1e-6） */
+  equals(a: Vec3, b: Vec3, eps?: number): boolean;
+}
+
+// ---------------------------------------------------------------------------
 // engine 入口
 // ---------------------------------------------------------------------------
 
@@ -443,6 +518,9 @@ export interface EngineApi {
 
 /** 引擎全局入口 */
 export const engine: EngineApi;
+
+/** 向量数学库（纯函数，详见 {@link MathApi}） */
+export const math: MathApi;
 
 /** SDK 版本（与编辑器/播放器同版发布） */
 export const VERSION: string;

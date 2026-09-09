@@ -601,6 +601,137 @@ const inputApi = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// math —— 向量数学库（引擎自有类型，纯函数、全部返回新对象不改写入参）。
+// 与编辑器数据模型同一语义：Vec3 普通对象；非法入参按 0 收敛（numOr）。
+// ---------------------------------------------------------------------------
+
+const EPS = 1e-6;
+
+function numv(v) {
+  return { x: numOr(v && v.x, 0), y: numOr(v && v.y, 0), z: numOr(v && v.z, 0) };
+}
+
+const math = {
+  /** 创建向量 {x,y,z}（缺省 0） */
+  v3(x = 0, y = 0, z = 0) {
+    return { x: numOr(x, 0), y: numOr(y, 0), z: numOr(z, 0) };
+  },
+  /** 常量：零向量 / 单位向量 / 各轴正方向（冻结，勿改写） */
+  zero: Object.freeze({ x: 0, y: 0, z: 0 }),
+  one: Object.freeze({ x: 1, y: 1, z: 1 }),
+  up: Object.freeze({ x: 0, y: 1, z: 0 }),
+  down: Object.freeze({ x: 0, y: -1, z: 0 }),
+  forward: Object.freeze({ x: 0, y: 0, z: -1 }),
+  back: Object.freeze({ x: 0, y: 0, z: 1 }),
+  left: Object.freeze({ x: -1, y: 0, z: 0 }),
+  right: Object.freeze({ x: 1, y: 0, z: 0 }),
+  /** 克隆（快照副本，写入不影响原向量） */
+  clone(v) {
+    const c = numv(v);
+    return { x: c.x, y: c.y, z: c.z };
+  },
+  /** 加法 a + b */
+  add(a, b) {
+    const x = numv(a), y = numv(b);
+    return { x: x.x + y.x, y: x.y + y.y, z: x.z + y.z };
+  },
+  /** 减法 a - b（结果方向 = a 指向 b 的反方向） */
+  sub(a, b) {
+    const x = numv(a), y = numv(b);
+    return { x: x.x - y.x, y: x.y - y.y, z: x.z - y.z };
+  },
+  /** 数乘 v * s */
+  scale(v, s) {
+    const c = numv(v);
+    const k = numOr(s, 0);
+    return { x: c.x * k, y: c.y * k, z: c.z * k };
+  },
+  /** 逐分量取反 */
+  negate(v) {
+    const c = numv(v);
+    return { x: -c.x, y: -c.y, z: -c.z };
+  },
+  /** 逐分量取绝对值 */
+  abs(v) {
+    const c = numv(v);
+    return { x: Math.abs(c.x), y: Math.abs(c.y), z: Math.abs(c.z) };
+  },
+  /** 逐分量取最小 / 最大 */
+  min(a, b) {
+    const x = numv(a), y = numv(b);
+    return { x: Math.min(x.x, y.x), y: Math.min(x.y, y.y), z: Math.min(x.z, y.z) };
+  },
+  max(a, b) {
+    const x = numv(a), y = numv(b);
+    return { x: Math.max(x.x, y.x), y: Math.max(x.y, y.y), z: Math.max(x.z, y.z) };
+  },
+  /** 点积（结果 = |a||b|cosθ） */
+  dot(a, b) {
+    const x = numv(a), y = numv(b);
+    return x.x * y.x + x.y * y.y + x.z * y.z;
+  },
+  /** 叉积（结果同时垂直于 a、b，方向满足右手定则） */
+  cross(a, b) {
+    const x = numv(a), y = numv(b);
+    return {
+      x: x.y * y.z - x.z * y.y,
+      y: x.z * y.x - x.x * y.z,
+      z: x.x * y.y - x.y * y.x,
+    };
+  },
+  /** 模长平方（避免开方，比较距离时更快） */
+  lengthSq(v) {
+    const c = numv(v);
+    return c.x * c.x + c.y * c.y + c.z * c.z;
+  },
+  /** 模长（直线距离原点） */
+  length(v) {
+    return Math.sqrt(this.lengthSq(v));
+  },
+  /** 两点直线距离 */
+  distance(a, b) {
+    return this.length(this.sub(a, b));
+  },
+  /** 距离平方 */
+  distanceSq(a, b) {
+    return this.lengthSq(this.sub(a, b));
+  },
+  /** 归一化（模长归 1；零向量返回零向量，不产生 NaN） */
+  normalize(v) {
+    const c = numv(v);
+    const len = Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
+    if (len < EPS) return { x: 0, y: 0, z: 0 };
+    return { x: c.x / len, y: c.y / len, z: c.z / len };
+  },
+  /** 线性插值 t∈[0,1]（t=0 返回 a 克隆，t=1 返回 b 克隆；越界按方向外插） */
+  lerp(a, b, t) {
+    const x = numv(a), y = numv(b);
+    const k = numOr(t, 0);
+    return {
+      x: x.x + (y.x - x.x) * k,
+      y: x.y + (y.y - x.y) * k,
+      z: x.z + (y.z - x.z) * k,
+    };
+  },
+  /** 由 a 向 b 移动最多 maxDelta（不超过直线距离；匀速移动用） */
+  moveTowards(a, b, maxDelta) {
+    const x = numv(a), y = numv(b);
+    const d = numOr(maxDelta, 0);
+    const dx = y.x - x.x, dy = y.y - x.y, dz = y.z - x.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len <= d || len < EPS) return { x: y.x, y: y.y, z: y.z };
+    const k = d / len;
+    return { x: x.x + dx * k, y: x.y + dy * k, z: x.z + dz * k };
+  },
+  /** 近似相等（逐分量误差 ≤ eps，缺省 1e-6） */
+  equals(a, b, eps) {
+    const x = numv(a), y = numv(b);
+    const e = numOr(eps, EPS);
+    return Math.abs(x.x - y.x) <= e && Math.abs(x.y - y.y) <= e && Math.abs(x.z - y.z) <= e;
+  },
+};
+
 const engine = {
   time: timeState,
   input: inputApi,
@@ -626,6 +757,7 @@ export {
   ComponentImpl as Component,
   Entity,
   engine,
+  math,
   Transform,
   MeshNode,
   LightNode,
