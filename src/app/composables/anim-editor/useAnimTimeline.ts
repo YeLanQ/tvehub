@@ -121,10 +121,12 @@ export function useAnimTimeline(ctx: AnimEditorCtx): TimelineApi {
    *  不可用 pointerId：鼠标 pointerId 恒定，一次 pointerup 丢失（如窗外释放）
    *  会让基于 pointerId 的重入闸永久拦截后续所有中键 */
   const panHandled = new WeakSet<PointerEvent>();
-  /** 从指针 clientX 求窗口原点增量（÷ 1× 像素密度：平移结果与缩放倍率无关） */
-  function tlDxFromClientX(x: number): number {
-    return (x - laneLeftCache) / Math.max(1e-6, pxPerT0.value);
-  }
+  /** 当前可视窗每秒像素数（dope 内容层/曲线 viewBox 共用：laneWidth / tSpan）。
+   *  平移换算用它，拖动像素 × tSpan/laneWidth = 秒：内容跟指针走（任何缩放一致） */
+  const pxPerSec = computed(() => {
+    const win = tWindow.value;
+    return Math.max(1, laneWidth.value) / Math.max(0.1, win.t1 - win.t0);
+  });
   /** 内容层冒泡兜底：标尺/关键帧之外的空白按中键也能平移（同指针事件已在别处处理则跳过） */
   function onWrapPointerDown(e: PointerEvent): void {
     if (e.button === 1) beginLanePan(e);
@@ -183,26 +185,27 @@ export function useAnimTimeline(ctx: AnimEditorCtx): TimelineApi {
     // 捕获到滚动容器自身（与曲线捕获到 svg 一致）：拖拽期间浏览器按捕获元素的
     // 光标渲染，容器带 panning → grabbing 小手，指针压在标尺/关键帧上也不例外
     el.setPointerCapture?.(e.pointerId);
-    laneLeftCache = e.clientX; // 平移按「相对按下点」计算（若用容器左缘，按下瞬间会跳一段）
-    const startX = e.clientX;
-    const startT0 = tWindow.value.t0;
-    const startTop = el.scrollTop;
+    // 平移按「相对按下点」计算（若用容器左缘，按下瞬间会跳一段）；
+    // 1× 自动放大后重新取基准（let：闭包内重设，续拖无跳变）
+    let startX = e.clientX;
+    let startT0 = tWindow.value.t0;
     const startY = e.clientY;
+    const startTop = el.scrollTop;
     lanePanning.value = true;
     const move = (ev: PointerEvent): void => {
       if (ev.buttons === 0) return; // 中键已松开（边缘情况：up 未送达）
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
-      if (zoom.value === 1 && dx < 0) {
-        // 1× 全览没有横向平移余量：水平拖出 80px 未动 → 自动放大一级（以视口中心
-        // 为锚），继续拖动即为平移；纵向拖拽不受影响
-        if (-dx > 80) {
-          setTWindow(zoom.value + 1, 0.5, (tWindow.value.t0 + tWindow.value.t1) / 2);
-          laneLeftCache = ev.clientX; // 从当前位置重新计平移起点（startX 保持供纵向）
-        }
-      } else {
-        applyT0(startT0 - tlDxFromClientX(ev.clientX), zoom.value);
+      if (zoom.value === 1 && dx < 0 && -dx > 80) {
+        // 1× 全览没有横向平移余量：水平拖出 80px 未动 → 自动放大一级（以视口
+        // 中心为锚）；放大后取新基准，继续拖动即为平移
+        setTWindow(zoom.value + 1, 0.5, (tWindow.value.t0 + tWindow.value.t1) / 2);
+        startT0 = tWindow.value.t0;
+        startX = ev.clientX;
       }
+      // 横向 = 共享时间窗平移：按当前可视像素密度换算（内容跟指针走，
+      // 任何缩放下一像素位移对应的秒数与曲线视图一致）
+      applyT0(startT0 - (ev.clientX - startX) / pxPerSec.value, zoom.value);
       // 纵向 = 抓画布滚轨道（内容跟指针走）
       el.scrollTop = Math.max(0, startTop - dy);
     };

@@ -260,6 +260,22 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
 
   // —— 指针交互 ——
 
+  /** 平移期间拦截中键默认行为（与 dope 同一套兜底：Chromium/WebView2 的
+   *  中键自动滚动，仅 pointerdown preventDefault 在部分版本压不住） */
+  function panSuppress(e: Event): void {
+    e.preventDefault();
+  }
+  function panSuppressBind(): void {
+    window.addEventListener("mousedown", panSuppress, true);
+    window.addEventListener("auxclick", panSuppress, true);
+    window.addEventListener("dragstart", panSuppress, true);
+  }
+  function panSuppressUnbind(): void {
+    window.removeEventListener("mousedown", panSuppress, true);
+    window.removeEventListener("auxclick", panSuppress, true);
+    window.removeEventListener("dragstart", panSuppress, true);
+  }
+
   function onCurveDown(e: PointerEvent): void {
     const d = ctx.clip.doc.value;
     const svg = curveSvgEl.value;
@@ -272,6 +288,7 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
     if (e.button === 1) {
       // 中键 = 抓画布平移：水平拖共享时间窗、垂直拖数值窗（按下点保持跟随指针）
       e.preventDefault();
+      panSuppressBind();
       const win = ctx.timeline.tWindow.value;
       curveDrag = {
         kind: "pan",
@@ -335,6 +352,23 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
     const localX = e.clientX - r.left;
     const localY = e.clientY - r.top;
     if (dragNow.kind === "pan") {
+      // 中键已松开（边缘情况：up 未送达）——等真正按下再动
+      if (e.buttons === 0) return;
+      // 与 dope 同一条 1× 规则：全览时水平左拖出 80px 无平移余量 → 自动放大
+      // 一级（视口中心为锚），并以放大后的窗口重新取平移基准（续拖无跳变）；
+      // 放大后 tSpan 变短必须一并重取，保证抓画布换算自洽
+      const dx = localX - dragNow.startX;
+      if (ctx.timeline.zoom.value === 1 && dx < 0 && -dx > 80) {
+        ctx.timeline.setTWindow(
+          ctx.timeline.zoom.value + 1,
+          0.5,
+          (ctx.timeline.tWindow.value.t0 + ctx.timeline.tWindow.value.t1) / 2,
+        );
+        const win = ctx.timeline.tWindow.value;
+        dragNow.startT0 = win.t0;
+        dragNow.tSpan = win.t1 - win.t0;
+        dragNow.startX = localX;
+      }
       // 抓画布：按下瞬间画布下的 (t, v) 必须始终跟在指针下
       const plotW = Math.max(1, g.w - g.pad * 2);
       const plotH = Math.max(1, g.h - g.pad * 2);
@@ -374,6 +408,7 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
   }
 
   function onCurveUp(): void {
+    panSuppressUnbind();
     curvePanning.value = false;
     if (curveDrag?.kind === "pan" && curveView.value) {
       // 平移未改动数值窗（或被钳回原处）→ 清掉手动值窗恢复自动适配
