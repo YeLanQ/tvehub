@@ -11,8 +11,9 @@
 // ---------------------------------------------------------------------------
 import * as THREE from "./three.module.min.js";
 import { postLog } from "./log.mjs";
+import { buildComponentLight } from "./nodes.mjs";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -26,8 +27,10 @@ const R2D = 180 / Math.PI;
  * @property {Array<{json: object, obj: THREE.Object3D}>} registry 全节点注册表
  * @property {THREE.Object3D|null} rootObj 场景根
  * @property {HTMLCanvasElement|null} canvas 预览画布（指针输入坐标基准）
- * @property {{play,stop,pause,resume}|null} animations 动画控制（按节点 id 寻址）
- * @property {{play,stop,pause,resume,setVolume}|null} audios 音频控制（按节点 id 寻址）
+ * @property {{play,stop,pause,resume,bindingOf,clipsOf,reapply,applyAnim,applyGraph,removeGraph,setSpeed,setLoop,setAutoplay,setParam}|null} animations 动画控制（按节点 id 寻址）
+ * @property {{play,stop,pause,resume,setVolume,addSource,updateSettings,infoOf}|null} audios 音频控制（按节点 id / 组件 id 寻址）
+ * @property {{bindingOf,play,pause,resume,stop,setTime,setSpeed,setLoop,setAutoplay,changeClip,add}|null} clipAnims 关键帧动画剪辑控制（按组件 id 寻址）
+ * @property {{spawn(entity, tokenOrClass, props?): object|null}|null} scripts 脚本组件动态创建（getComponent 字段 get-or-create / addComponent 用）
  */
 
 /** @type {TveHost|null} */
@@ -38,6 +41,15 @@ const entityByObj = new Map();
 
 /** 节点 id → Component 实例列表（宿主注册；getComponent 用） */
 const componentsByNode = new Map();
+
+/** 脚本类注册表（对齐 Unity 单一程序集语义：脚本加载即全项目可见）。
+ *  按源路径（src/**.ts）与类名双键注册，getComponent/addComponent/组件字段
+ *  解析按 token 命中，脚本之间无需 import 即可互相引用组件类型。 */
+const scriptClassByPath = new Map();
+const scriptClassByName = new Map();
+
+/** 节点 id → (组件类型键 → 门面实例)（内置组件句柄缓存） */
+const builtinByNode = new Map();
 
 /** 空对象（宿主未注入时的安全兜底） */
 const EMPTY_REGISTRY = [];
@@ -74,14 +86,65 @@ export function resolveNodeEntity(nodeId) {
   return entry ? getEntity(entry.obj) : null;
 }
 
-/** 宿主注册组件实例（getComponent 查询用） */
-export function registerComponent(nodeId, instance) {
+/** 宿主注册组件实例（getComponent 查询用；scriptRel 为脚本源路径，
+ *  打在实例的隐藏标记上供按路径/类名查找） */
+export function registerComponent(nodeId, instance, scriptRel) {
+  if (instance && typeof scriptRel === "string" && scriptRel) {
+    Object.defineProperty(instance, "__tveScript", {
+      value: scriptRel,
+      configurable: true,
+      writable: true,
+    });
+  }
   let list = componentsByNode.get(nodeId);
   if (!list) {
     list = [];
     componentsByNode.set(nodeId, list);
   }
   list.push(instance);
+}
+
+/** 脚本类注册（宿主在脚本模块加载后调用；路径与类名双键，类名先到先得） */
+export function registerScriptClass(srcRel, klass) {
+  if (typeof srcRel !== "string" || !srcRel || typeof klass !== "function") return;
+  scriptClassByPath.set(srcRel, klass);
+  if (klass.name && !scriptClassByName.has(klass.name)) {
+    scriptClassByName.set(klass.name, klass);
+  }
+}
+
+/** 脚本路径收敛："./a/b.js" / "a/b" → "src/a/b.ts"（注册表键形态） */
+function normalizeScriptPath(token) {
+  let p = String(token).replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.js$/i, ".ts");
+  if (!p.startsWith("src/")) p = "src/" + p;
+  return p;
+}
+
+/** 按脚本类查找注册表中的类：token = 类（原样）/ 源路径 / 类名；未命中 null */
+export function resolveScriptClass(token) {
+  if (typeof token === "function") return { klass: token, srcRel: "" };
+  if (typeof token !== "string" || !token) return null;
+  if (token.includes("/") || /\.(ts|js)$/i.test(token)) {
+    const p = normalizeScriptPath(token);
+    const klass = scriptClassByPath.get(p);
+    return klass ? { klass, srcRel: p } : null;
+  }
+  const klass = scriptClassByName.get(token);
+  return klass ? { klass, srcRel: "" } : null;
+}
+
+/** 实体上按脚本源路径 / 脚本类名查找已挂载的脚本组件实例（未挂载 null） */
+export function resolveScriptInstance(nodeId, token) {
+  const list = componentsByNode.get(nodeId);
+  if (!list || typeof token !== "string" || !token) return null;
+  if (token.includes("/") || /\.(ts|js)$/i.test(token)) {
+    const p = normalizeScriptPath(token);
+    return list.find((c) => c.__tveScript === p) ?? null;
+  }
+  const byName = list.find((c) => c.constructor && c.constructor.name === token);
+  if (byName) return byName;
+  const klass = scriptClassByName.get(token);
+  return klass ? list.find((c) => c instanceof klass) ?? null : null;
 }
 
 /**
@@ -92,6 +155,9 @@ export function installRuntime(api) {
   host = api;
   entityByObj.clear();
   componentsByNode.clear();
+  builtinByNode.clear();
+  scriptClassByPath.clear();
+  scriptClassByName.clear();
   installInputListeners();
 }
 
@@ -326,51 +392,820 @@ class Entity {
     return getEntity(cur);
   }
 
+  /**
+   * 获取实体上挂载的组件（未挂载返回 null）。
+   * - 内置组件：传门面类（RigidBody/Light/AudioSource/AnimationClip/
+   *   SkeletalAnimation/Collider）或类型键字符串（"rigidBody" 等；"animation"/
+   *   "anim" 为骨骼动画别名）。多实例组件（如多个动画剪辑组件）取首个，句柄稳定；
+   * - 脚本组件：传脚本类（构造器）按类匹配；或传脚本源路径 / 类名字符串
+   *   （"src/hp.ts" / "HPBar"，对齐 Unity 按类型名查找——脚本间无需 import）。
+   */
   getComponent(componentClass) {
-    // 内置组件（按名称字符串）：返回绑定到本实体的组件门面
-    //（属性只读快照 + 常用方法；门面方法按实体实时查询后端）
+    const typeKey = builtinTypeKeyOf(componentClass);
+    if (typeKey) return builtinFacadeOf(this, typeKey);
+    if (typeof componentClass === "function") {
+      const list = componentsByNode.get(this.id);
+      if (!list) return null;
+      return list.find((c) => c instanceof componentClass) ?? null;
+    }
     if (typeof componentClass === "string") {
-      if (componentClass === "rigidBody") {
-        const info = host?.physics?.bodyInfo(this.id);
-        if (!info) return null;
-        const self = this;
-        return {
-          get mode() {
-            return host?.physics?.bodyInfo(self.id)?.mode ?? "dynamic";
-          },
-          get gravityScale() {
-            return host?.physics?.bodyInfo(self.id)?.gravityScale ?? 1;
-          },
-          get colliderCount() {
-            return host?.physics?.bodyInfo(self.id)?.colliderCount ?? 0;
-          },
-          setGravityScale(s) {
-            physicsApi.setGravityScale(self, s);
-          },
-          setLinearVelocity(x, y, z) {
-            physicsApi.setLinearVelocity(self, x, y, z);
-          },
-          getLinearVelocity() {
-            return physicsApi.getLinearVelocity(self);
-          },
-          applyImpulse(x, y, z) {
-            physicsApi.applyImpulse(self, x, y, z);
-          },
-          wakeUp() {
-            physicsApi.wakeUp(self);
-          },
-        };
+      return resolveScriptInstance(this.id, componentClass);
+    }
+    return null;
+  }
+
+  /**
+   * 动态添加组件并返回实例/门面（预览运行态生效，不回写场景文件）：
+   * - 内置组件 Light / AudioSource / AnimationClip：在本节点追加一个新组件
+   *   （多实例）；settings 为组件设置对象（缺省项回默认）；
+   * - 内置组件 SkeletalAnimation：仅模型网格节点可用，settings 可含 clip/
+   *   autoplay/speed/loop/graph（graph 为动画图定义，创建即生效）；
+   * - 脚本组件：传脚本类（构造器）或脚本源路径 / 类名字符串，在本实体上
+   *   实例化并立即进入生命周期（onEnable/onStart）；settings 作为属性配置；
+   * - RigidBody / Collider：物理组件仅启动期构建，运行时创建返回 null。
+   */
+  addComponent(componentClass, settings) {
+    const typeKey = builtinTypeKeyOf(componentClass);
+    if (!typeKey) {
+      if (typeof componentClass === "function" || typeof componentClass === "string") {
+        return host?.scripts?.spawn?.(this, componentClass, settings) ?? null;
       }
+      postLog("warn", "[tve] addComponent 仅支持内置组件或脚本组件类型");
       return null;
     }
-    const list = componentsByNode.get(this.id);
-    if (!list) return null;
-    return list.find((c) => c instanceof componentClass) ?? null;
+    if (typeKey === "rigidBody" || typeKey === "collider") {
+      postLog("warn", "[tve] 运行时不支持动态创建物理组件（请在编辑器中为节点挂载）");
+      return null;
+    }
+    return createRuntimeBuiltin(this, typeKey, settings);
   }
 }
 
 function numOr(v, fb) {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
+}
+
+// ---------------------------------------------------------------------------
+// 内置组件门面：getComponent(组件类/类型键) 的返回对象，也是 @property(组件类)
+// 与裸组件字段声明（public anim: AnimationClip）的运行期绑定对象。
+// 门面 = 组件引用 JSON（场景数据）+ 运行时后端（three 对象/动画/音频/物理）
+// 的实时视图；属性写入即时生效（预览运行态，不回写场景文件）。
+// ---------------------------------------------------------------------------
+
+const LIGHT_KINDS = ["point", "directional", "spot", "ambient"];
+const LOOP_MODES = ["loop", "once", "pingpong"];
+const CONDITION_OPS = [">", "<", ">=", "<=", "==", "!="];
+
+let runtimeCompSeq = 0;
+function nextRuntimeCompId() {
+  runtimeCompSeq += 1;
+  return `comp_rt${runtimeCompSeq.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 节点 id → 节点 JSON（registry 查找；未命中 null） */
+function nodeJsonOf(id) {
+  const entry = registry().find((r) => r.json && r.json.id === id);
+  return entry ? entry.json : null;
+}
+
+/** 节点 JSON 中首个启用的指定类型组件引用（无则 null） */
+function componentJsonOf(nodeJson, typeKey) {
+  const comps = Array.isArray(nodeJson?.components) ? nodeJson.components : [];
+  return comps.find((c) => c && c.type === typeKey && c.enabled !== false) ?? null;
+}
+
+/** 运行时创建的组件引用并入节点 JSON（预览运行态；重载预览即失效） */
+function pushComponentJson(nodeJson, comp) {
+  if (!Array.isArray(nodeJson.components)) nodeJson.components = [];
+  nodeJson.components.push(comp);
+}
+
+/** 门面基类：承装实体句柄 / 组件类型键 / 组件引用 JSON */
+class BuiltinComponent {
+  constructor(entity, typeKey, json) {
+    this.entity = entity;
+    this.type = typeKey;
+    this.__json = json ?? null;
+  }
+
+  /** 组件引用 id（运行时创建的为 comp_rt* 生成 id；场景组件为其序列化 id） */
+  get id() {
+    return String(this.__json?.id ?? "");
+  }
+}
+
+/** 刚体组件门面（只读信息 + 物理控制方法；运行时不可创建，编辑器挂载生效） */
+class RigidBody extends BuiltinComponent {
+  /** 刚体形态：static（隐式静态）/ kinematic（运动学）/ dynamic（动力学） */
+  get mode() {
+    return host?.physics?.bodyInfo(this.entity.id)?.mode ?? "dynamic";
+  }
+  get gravityScale() {
+    return host?.physics?.bodyInfo(this.entity.id)?.gravityScale ?? 1;
+  }
+  get colliderCount() {
+    return host?.physics?.bodyInfo(this.entity.id)?.colliderCount ?? 0;
+  }
+  setGravityScale(s) {
+    physicsApi.setGravityScale(this.entity, s);
+  }
+  setLinearVelocity(x, y, z) {
+    physicsApi.setLinearVelocity(this.entity, x, y, z);
+  }
+  getLinearVelocity() {
+    return physicsApi.getLinearVelocity(this.entity);
+  }
+  applyImpulse(x, y, z) {
+    physicsApi.applyImpulse(this.entity, x, y, z);
+  }
+  wakeUp() {
+    physicsApi.wakeUp(this.entity);
+  }
+}
+
+/** 碰撞体组件门面（只读信息；形状/表面材质编辑在检查器进行，运行时不可变） */
+class Collider extends BuiltinComponent {
+  /** 场景中命中的碰撞形状（box/sphere/capsule/cylinder/convex） */
+  get shape() {
+    return this.__json?.collider?.shape ?? "box";
+  }
+  /** 是否传感器（只产生触发不产生碰撞响应） */
+  get isSensor() {
+    return this.__json?.collider?.isSensor === true;
+  }
+  get friction() {
+    return numOr(this.__json?.collider?.friction, 0.6);
+  }
+  get restitution() {
+    return numOr(this.__json?.collider?.restitution, 0.1);
+  }
+  /** 物理世界中的碰撞体数量 */
+  get count() {
+    return host?.physics?.bodyInfo(this.entity.id)?.colliderCount ?? 0;
+  }
+}
+
+/** 灯光组件门面：设置写入组件 JSON 并同步活动灯光对象（类型切换重建灯光） */
+class Light extends BuiltinComponent {
+  __settings() {
+    return this.__json && typeof this.__json.light === "object" ? this.__json.light : null;
+  }
+  __lightObj() {
+    const group = this.entity.__obj.getObjectByName("__compLight");
+    let light = null;
+    if (group) group.traverse((o) => { if (!light && o.isLight) light = o; });
+    return light;
+  }
+  get enabled() {
+    return this.__json ? this.__json.enabled !== false : true;
+  }
+  set enabled(v) {
+    if (!this.__json) return;
+    this.__json.enabled = v === true;
+    const group = this.entity.__obj.getObjectByName("__compLight");
+    if (group) group.visible = v === true;
+  }
+  /** 灯光类型（point/directional/spot/ambient；切换即重建灯光对象） */
+  get kind() {
+    return this.__settings()?.kind ?? "point";
+  }
+  set kind(v) {
+    const s = this.__settings();
+    if (!s || !LIGHT_KINDS.includes(v) || s.kind === v) return;
+    s.kind = v;
+    const obj = this.entity.__obj;
+    const old = obj.getObjectByName("__compLight");
+    if (old) obj.remove(old);
+    buildComponentLight(s, obj);
+  }
+  /** 光色（0xRRGGBB） */
+  get color() {
+    return (this.__settings()?.lightColor ?? 0xffffff) & 0xffffff;
+  }
+  set color(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.lightColor = Math.max(0, Math.round(n)) & 0xffffff;
+    this.__lightObj()?.color.setHex(s.lightColor);
+  }
+  get intensity() {
+    return numOr(this.__settings()?.intensity, 1);
+  }
+  set intensity(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.intensity = Math.max(0, n);
+    const light = this.__lightObj();
+    if (light) light.intensity = s.intensity;
+  }
+  /** 点光/聚光灯：照射距离（0 = 无限远） */
+  get distance() {
+    return numOr(this.__settings()?.distance, 0);
+  }
+  set distance(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    const light = this.__lightObj();
+    if (!s || !Number.isFinite(n)) return;
+    s.distance = Math.max(0, n);
+    if (light && (light.isPointLight || light.isSpotLight)) light.distance = s.distance;
+  }
+  /** 点光/聚光灯：物理衰减指数 */
+  get decay() {
+    return numOr(this.__settings()?.decay, 2);
+  }
+  set decay(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    const light = this.__lightObj();
+    if (!s || !Number.isFinite(n)) return;
+    s.decay = Math.max(0, n);
+    if (light && (light.isPointLight || light.isSpotLight)) light.decay = s.decay;
+  }
+  /** 聚光灯：光束半角（度） */
+  get angle() {
+    return numOr(this.__settings()?.angle, 45);
+  }
+  set angle(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    const light = this.__lightObj();
+    if (!s || !Number.isFinite(n)) return;
+    s.angle = Math.min(89, Math.max(1, n));
+    if (light && light.isSpotLight) light.angle = s.angle * D2R;
+  }
+  /** 聚光灯：边缘柔和度 0~1 */
+  get penumbra() {
+    return numOr(this.__settings()?.penumbra, 0.2);
+  }
+  set penumbra(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    const light = this.__lightObj();
+    if (!s || !Number.isFinite(n)) return;
+    s.penumbra = Math.min(1, Math.max(0, n));
+    if (light && light.isSpotLight) light.penumbra = s.penumbra;
+  }
+  /** 平行光/聚光灯：投射阴影 */
+  get castShadow() {
+    return this.__settings()?.castShadow === true;
+  }
+  set castShadow(v) {
+    const s = this.__settings();
+    if (!s) return;
+    s.castShadow = v === true;
+    const light = this.__lightObj();
+    if (light && (light.isDirectionalLight || light.isSpotLight)) light.castShadow = s.castShadow;
+  }
+}
+
+/** 音源组件门面：播放控制按组件 id 寻址；设置写入经运行时后端合并生效 */
+class AudioSource extends BuiltinComponent {
+  __key() {
+    return this.__json && typeof this.__json.id === "string" ? this.__json.id : this.entity.id;
+  }
+  __settings() {
+    return this.__json && typeof this.__json.audio === "object" ? this.__json.audio : null;
+  }
+  __update(patch) {
+    host?.audios?.updateSettings(this.__key(), patch);
+  }
+  /** 音频资产引用（写入即重载） */
+  get source() {
+    return this.__settings()?.source ?? "";
+  }
+  set source(v) {
+    if (typeof v === "string") this.__update({ source: v });
+  }
+  get autoplay() {
+    return this.__settings()?.autoplay !== false;
+  }
+  set autoplay(v) {
+    this.__update({ autoplay: v === true });
+  }
+  get loop() {
+    return this.__settings()?.loop !== false;
+  }
+  set loop(v) {
+    this.__update({ loop: v === true });
+  }
+  /** 音量 0..1 */
+  get volume() {
+    return numOr(this.__settings()?.volume, 1);
+  }
+  set volume(v) {
+    const n = Number(v);
+    if (Number.isFinite(n)) this.__update({ volume: Math.min(1, Math.max(0, n)) });
+  }
+  /** 播放倍速 0.1..4 */
+  get speed() {
+    return numOr(this.__settings()?.speed, 1);
+  }
+  set speed(v) {
+    const n = Number(v);
+    if (Number.isFinite(n)) this.__update({ speed: Math.min(4, Math.max(0.1, n)) });
+  }
+  /** 空间化："2d" 全局 / "3d" 位置音源 */
+  get spatial() {
+    return this.__settings()?.spatial === "3d" ? "3d" : "2d";
+  }
+  set spatial(v) {
+    this.__update({ spatial: v === "3d" ? "3d" : "2d" });
+  }
+  get playing() {
+    return host?.audios?.infoOf(this.__key())?.playing ?? false;
+  }
+  get paused() {
+    return host?.audios?.infoOf(this.__key())?.paused ?? false;
+  }
+  get ready() {
+    return host?.audios?.infoOf(this.__key())?.ready ?? false;
+  }
+  play() {
+    host?.audios?.play(this.__key());
+  }
+  stop() {
+    host?.audios?.stop(this.__key());
+  }
+  pause() {
+    host?.audios?.pause(this.__key());
+  }
+  resume() {
+    host?.audios?.resume(this.__key());
+  }
+  setVolume(v) {
+    host?.audios?.setVolume(this.__key(), v);
+  }
+}
+
+/** 关键帧动画剪辑组件门面（.anim 资产绑定 + 播放控制/进度/倍速） */
+class AnimationClip extends BuiltinComponent {
+  __key() {
+    return this.__json && typeof this.__json.id === "string" ? this.__json.id : this.entity.id;
+  }
+  __b() {
+    return host?.clipAnims?.bindingOf(this.__key()) ?? null;
+  }
+  /** .anim 资产相对路径（写入即重载剪辑；空串解绑） */
+  get clip() {
+    return this.__b()?.clipPath ?? "";
+  }
+  set clip(rel) {
+    void host?.clipAnims?.changeClip(this.__b(), rel);
+  }
+  /** 剪辑时长（秒；未加载为 0） */
+  get duration() {
+    return this.__b()?.clip?.duration ?? 0;
+  }
+  /** 播放进度（秒；写入即跳转采样） */
+  get time() {
+    return this.__b()?.time ?? 0;
+  }
+  set time(v) {
+    host?.clipAnims?.setTime(this.__b(), v);
+  }
+  get speed() {
+    return this.__b()?.speed ?? 1;
+  }
+  set speed(v) {
+    host?.clipAnims?.setSpeed(this.__b(), v);
+  }
+  get loop() {
+    return this.__b()?.loop ?? true;
+  }
+  set loop(v) {
+    host?.clipAnims?.setLoop(this.__b(), v === true);
+  }
+  get autoplay() {
+    return this.__b()?.autoplay ?? true;
+  }
+  set autoplay(v) {
+    host?.clipAnims?.setAutoplay(this.__b(), v === true);
+  }
+  get playing() {
+    return this.__b()?.playing ?? false;
+  }
+  get paused() {
+    return this.__b()?.paused ?? false;
+  }
+  /** 从头播放 */
+  play() {
+    host?.clipAnims?.play(this.__b());
+  }
+  pause() {
+    host?.clipAnims?.pause(this.__b());
+  }
+  resume() {
+    host?.clipAnims?.resume(this.__b());
+  }
+  /** 停止并回初始姿势 */
+  stop() {
+    host?.clipAnims?.stop(this.__b());
+  }
+}
+
+/**
+ * 骨骼动画（模型内嵌动画）门面：单剪辑 anim / 动画图 animGraph 的运行期视图。
+ * 仅模型网格节点（source=model）拥有绑定；graph 为活动图对象（states/transitions/
+ * entry/params 可直接改写，下一帧状态机评估即生效）。
+ */
+class SkeletalAnimation extends BuiltinComponent {
+  __b() {
+    return host?.animations?.bindingOf(this.entity.id) ?? null;
+  }
+  /** 模型内嵌剪辑名列表 */
+  get clips() {
+    return host?.animations?.clipsOf(this.entity.id) ?? [];
+  }
+  /** 当前播放的剪辑名（图模式为当前状态绑定的剪辑；未播放 null） */
+  get currentClip() {
+    return this.__b()?.currentClip ?? null;
+  }
+  get playing() {
+    return this.__b()?.playing ?? false;
+  }
+  /** 当前剪辑名（缺省取首个；写入即切换播放） */
+  get clip() {
+    return this.currentClip ?? "";
+  }
+  set clip(name) {
+    this.play(name);
+  }
+  /** 播放速度倍率（当前动作 + 单剪辑设置） */
+  get speed() {
+    return numOr(this.__b()?.nodeJson?.anim?.speed, 1);
+  }
+  set speed(v) {
+    host?.animations?.setSpeed(this.entity.id, v);
+  }
+  /** 循环模式：loop/once/pingpong */
+  get loop() {
+    const v = this.__b()?.nodeJson?.anim?.loop;
+    return LOOP_MODES.includes(v) ? v : "loop";
+  }
+  set loop(v) {
+    host?.animations?.setLoop(this.entity.id, v);
+  }
+  get autoplay() {
+    return this.__b()?.nodeJson?.anim?.autoplay !== false;
+  }
+  set autoplay(v) {
+    host?.animations?.setAutoplay(this.entity.id, v === true);
+  }
+  /** 是否启用动画图模式 */
+  get hasGraph() {
+    return !!this.__b()?.graph;
+  }
+  /** 动画图活对象（entry/states/transitions/params 可直接改写；无图为 null） */
+  get graph() {
+    return this.__b()?.graph ?? null;
+  }
+  /** 播放：clip 缺省取首个剪辑；图模式下参数为目标状态名（缺省回入口） */
+  play(clipOrState) {
+    host?.animations?.play(
+      this.entity.id,
+      typeof clipOrState === "string" && clipOrState ? clipOrState : undefined,
+    );
+  }
+  pause() {
+    host?.animations?.pause(this.entity.id);
+  }
+  resume() {
+    host?.animations?.resume(this.entity.id);
+  }
+  stop() {
+    host?.animations?.stop(this.entity.id);
+  }
+  /** 图参数读取（无图/未声明返回 null） */
+  getParam(name) {
+    const g = this.graph;
+    if (!g || typeof name !== "string" || !(name in g.params)) return null;
+    return g.params[name];
+  }
+  /** 图参数写入（布尔/数值；条件评估每帧读取） */
+  setParam(name, value) {
+    host?.animations?.setParam(this.entity.id, name, value);
+  }
+  /** 创建/替换动画图（def 为动画图定义；非法部分按引擎规则收敛剔除） */
+  ensureGraph(def) {
+    return host?.animations?.applyGraph(this.entity.id, def) === true;
+  }
+  /** 移除动画图（回单剪辑语义） */
+  removeGraph() {
+    host?.animations?.removeGraph(this.entity.id);
+  }
+  /** 新增图状态（{name, clip, speed?, loop?}；重名拒绝） */
+  addState(opts) {
+    const g = this.graph;
+    if (!g || !opts || typeof opts !== "object") return false;
+    const name = typeof opts.name === "string" ? opts.name.trim() : "";
+    if (!name || g.states.some((s) => s.name === name)) return false;
+    g.states.push({
+      name,
+      clip: typeof opts.clip === "string" ? opts.clip : "",
+      speed:
+        typeof opts.speed === "number" && Number.isFinite(opts.speed) && opts.speed >= 0
+          ? opts.speed
+          : 1,
+      loop: LOOP_MODES.includes(opts.loop) ? opts.loop : "loop",
+    });
+    return true;
+  }
+  /** 移除图状态（连带剔除涉及它的过渡；当前状态被移除后播放保持至下次切换） */
+  removeState(name) {
+    const g = this.graph;
+    if (!g || typeof name !== "string") return false;
+    const i = g.states.findIndex((s) => s.name === name);
+    if (i < 0) return false;
+    g.states.splice(i, 1);
+    g.transitions = g.transitions.filter((t) => t.from !== name && t.to !== name);
+    return true;
+  }
+  /** 新增过渡（{from, to, duration?, exitTime?, conditions?}；from/to 须为已有状态） */
+  addTransition(opts) {
+    const g = this.graph;
+    if (!g || !opts || typeof opts !== "object") return false;
+    const from = typeof opts.from === "string" ? opts.from : "";
+    const to = typeof opts.to === "string" ? opts.to : "";
+    if (
+      !from ||
+      !to ||
+      from === to ||
+      !g.states.some((s) => s.name === from) ||
+      !g.states.some((s) => s.name === to)
+    ) {
+      return false;
+    }
+    let id = typeof opts.id === "string" && opts.id && !g.transitions.some((t) => t.id === opts.id)
+      ? opts.id
+      : "";
+    if (!id) {
+      let n = g.transitions.length + 1;
+      while (g.transitions.some((t) => t.id === `t${n}`)) n += 1;
+      id = `t${n}`;
+    }
+    const num = (v, fb) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
+    g.transitions.push({
+      id,
+      from,
+      to,
+      duration: Math.max(0, num(opts.duration, 0.25)),
+      exitTime: Math.max(0, Math.min(1, num(opts.exitTime, 0))),
+      conditions: (Array.isArray(opts.conditions) ? opts.conditions : [])
+        .filter((c) => !!c && typeof c === "object" && typeof c.param === "string" && c.param)
+        .map((c) => ({
+          param: c.param,
+          op: CONDITION_OPS.includes(c.op) ? c.op : "==",
+          value: num(c.value, 0),
+        })),
+    });
+    return true;
+  }
+  /** 移除过渡（按 id） */
+  removeTransition(id) {
+    const g = this.graph;
+    if (!g || typeof id !== "string") return false;
+    const i = g.transitions.findIndex((t) => t.id === id);
+    if (i < 0) return false;
+    g.transitions.splice(i, 1);
+    return true;
+  }
+}
+
+// 组件类型键标记（字符串名 ↔ 门面类双通道寻址；@property 组件字段识别用）
+RigidBody.__tveComponentType = "rigidBody";
+Collider.__tveComponentType = "collider";
+Light.__tveComponentType = "light";
+AudioSource.__tveComponentType = "audioSource";
+AnimationClip.__tveComponentType = "animationClip";
+SkeletalAnimation.__tveComponentType = "skeletalAnimation";
+
+/** 门面类注册表（类型键 → 类；"animation"/"anim" 别名指向骨骼动画） */
+const BUILTIN_FACADES = {
+  rigidBody: RigidBody,
+  collider: Collider,
+  light: Light,
+  audioSource: AudioSource,
+  animationClip: AnimationClip,
+  skeletalAnimation: SkeletalAnimation,
+};
+const BUILTIN_TYPE_KEYS = Object.keys(BUILTIN_FACADES);
+
+/** getComponent/addComponent 参数 → 组件类型键（类或字符串；未知返回 null） */
+function builtinTypeKeyOf(token) {
+  if (typeof token === "string") {
+    if (token === "animation" || token === "anim") return "skeletalAnimation";
+    return BUILTIN_TYPE_KEYS.includes(token) ? token : null;
+  }
+  if (typeof token === "function" && typeof token.__tveComponentType === "string") {
+    return BUILTIN_TYPE_KEYS.includes(token.__tveComponentType) ? token.__tveComponentType : null;
+  }
+  return null;
+}
+
+/** 按类型键解析实体已有组件为门面（不存在返回 null；不写缓存） */
+function createBuiltinFacade(entity, typeKey) {
+  const json = nodeJsonOf(entity.id);
+  switch (typeKey) {
+    case "rigidBody":
+      return host?.physics?.bodyInfo(entity.id)
+        ? new RigidBody(entity, typeKey, componentJsonOf(json, "rigidBody"))
+        : null;
+    case "collider": {
+      const c = componentJsonOf(json, "collider");
+      return c ? new Collider(entity, typeKey, c) : null;
+    }
+    case "light": {
+      const c = componentJsonOf(json, "light");
+      return c ? new Light(entity, typeKey, c) : null;
+    }
+    case "audioSource": {
+      const c = componentJsonOf(json, "audioSource");
+      return c ? new AudioSource(entity, typeKey, c) : null;
+    }
+    case "animationClip": {
+      const c = componentJsonOf(json, "animationClip");
+      return c ? new AnimationClip(entity, typeKey, c) : null;
+    }
+    case "skeletalAnimation":
+      return host?.animations?.bindingOf?.(entity.id)
+        ? new SkeletalAnimation(entity, typeKey, null)
+        : null;
+    default:
+      return null;
+  }
+}
+
+/** 实体的指定类型内置组件门面（句柄缓存；未挂载返回 null） */
+function builtinFacadeOf(entity, typeKey) {
+  let byType = builtinByNode.get(entity.id);
+  const hit = byType?.get(typeKey);
+  if (hit) return hit;
+  const facade = createBuiltinFacade(entity, typeKey);
+  if (!facade) return null;
+  if (!byType) {
+    byType = new Map();
+    builtinByNode.set(entity.id, byType);
+  }
+  byType.set(typeKey, facade);
+  return facade;
+}
+
+/** 灯光组件设置收敛（缺省项回默认；color 为 lightColor 别名） */
+function lightSettingsFrom(s) {
+  const out = {
+    kind: "point",
+    lightColor: 0xffffff,
+    intensity: 1,
+    distance: 0,
+    decay: 2,
+    angle: 45,
+    penumbra: 0.2,
+    castShadow: false,
+  };
+  if (!s || typeof s !== "object") return out;
+  if (LIGHT_KINDS.includes(s.kind)) out.kind = s.kind;
+  const color = typeof s.lightColor === "number" ? s.lightColor : s.color;
+  if (typeof color === "number" && Number.isFinite(color)) {
+    out.lightColor = Math.max(0, Math.round(color)) & 0xffffff;
+  }
+  const num = (v, fb, lo, hi) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return fb;
+    return hi === undefined ? Math.max(lo, v) : Math.min(hi, Math.max(lo, v));
+  };
+  out.intensity = num(s.intensity, out.intensity, 0);
+  out.distance = num(s.distance, out.distance, 0);
+  out.decay = num(s.decay, out.decay, 0);
+  out.angle = num(s.angle, out.angle, 1, 89);
+  out.penumbra = num(s.penumbra, out.penumbra, 0, 1);
+  if (typeof s.castShadow === "boolean") out.castShadow = s.castShadow;
+  return out;
+}
+
+/** 音源组件设置收敛（缺省项回默认；与 audio.mjs parseAudioSettings 同一取值域） */
+function audioSettingsFrom(s) {
+  const out = {
+    source: "",
+    autoplay: true,
+    loop: true,
+    volume: 1,
+    speed: 1,
+    spatial: "2d",
+    refDistance: 1,
+    maxDistance: 30,
+    rolloff: 1,
+  };
+  if (!s || typeof s !== "object") return out;
+  const num = (v, fb, lo, hi) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return fb;
+    return hi === undefined ? Math.max(lo, v) : Math.min(hi, Math.max(lo, v));
+  };
+  if (typeof s.source === "string") out.source = s.source;
+  if (typeof s.autoplay === "boolean") out.autoplay = s.autoplay;
+  if (typeof s.loop === "boolean") out.loop = s.loop;
+  out.volume = num(s.volume, out.volume, 0, 1);
+  out.speed = num(s.speed, out.speed, 0.1, 4);
+  if (s.spatial === "3d") out.spatial = "3d";
+  out.refDistance = num(s.refDistance, out.refDistance, 0.01);
+  out.maxDistance = num(s.maxDistance, out.maxDistance, 0.01);
+  out.rolloff = num(s.rolloff, out.rolloff, 0);
+  return out;
+}
+
+/** 动画剪辑组件设置收敛（clip/autoplay/loop/speed） */
+function clipBindingFrom(s) {
+  return {
+    clip: s && typeof s.clip === "string" ? s.clip : "",
+    autoplay: !(s && s.autoplay === false),
+    loop: !(s && s.loop === false),
+    speed:
+      s && typeof s.speed === "number" && Number.isFinite(s.speed) && s.speed >= 0 ? s.speed : 1,
+  };
+}
+
+/** 在节点上创建运行时内置组件并返回门面（addComponent / 组件字段声明共用；
+ *  light/audioSource/animationClip 每次调用都追加新组件实例） */
+function createRuntimeBuiltin(entity, typeKey, settings) {
+  const s = settings && typeof settings === "object" ? settings : {};
+  const json = nodeJsonOf(entity.id);
+  if (!json) return null;
+  if (typeKey === "light") {
+    const comp = {
+      id: nextRuntimeCompId(),
+      type: "light",
+      enabled: true,
+      light: lightSettingsFrom(s),
+    };
+    pushComponentJson(json, comp);
+    buildComponentLight(comp.light, entity.__obj);
+    return new Light(entity, typeKey, comp);
+  }
+  if (typeKey === "audioSource") {
+    const comp = {
+      id: nextRuntimeCompId(),
+      type: "audioSource",
+      enabled: true,
+      audio: audioSettingsFrom(s),
+    };
+    pushComponentJson(json, comp);
+    host?.audios?.addSource?.({ id: comp.id, audio: comp.audio }, entity.__obj, entity.id);
+    return new AudioSource(entity, typeKey, comp);
+  }
+  if (typeKey === "animationClip") {
+    const comp = {
+      id: nextRuntimeCompId(),
+      type: "animationClip",
+      enabled: true,
+      clip: clipBindingFrom(s),
+    };
+    pushComponentJson(json, comp);
+    host?.clipAnims?.add?.({
+      key: comp.id,
+      obj: entity.__obj,
+      clip: comp.clip.clip,
+      autoplay: comp.clip.autoplay,
+      loop: comp.clip.loop,
+      speed: comp.clip.speed,
+    });
+    return new AnimationClip(entity, typeKey, comp);
+  }
+  if (typeKey === "skeletalAnimation") {
+    if (!host?.animations?.bindingOf?.(entity.id)) {
+      postLog("warn", "[tve] 骨骼动画组件只能用于模型网格节点（source=model）");
+      return null;
+    }
+    if (s.graph && typeof s.graph === "object") host.animations.applyGraph(entity.id, s.graph);
+    const anim = {};
+    if (typeof s.clip === "string") anim.clip = s.clip;
+    if (typeof s.autoplay === "boolean") anim.autoplay = s.autoplay;
+    if (typeof s.speed === "number" && Number.isFinite(s.speed) && s.speed >= 0) {
+      anim.speed = s.speed;
+    }
+    if (LOOP_MODES.includes(s.loop)) anim.loop = s.loop;
+    if (Object.keys(anim).length) host.animations.applyAnim(entity.id, anim);
+    return builtinFacadeOf(entity, typeKey);
+  }
+  return null;
+}
+
+/**
+ * 解析脚本组件字段声明（宿主实例化后调用；get-or-create 语义）：
+ * 实体已有该组件 → 绑定其门面；没有 → 按缺省设置创建（物理组件除外——
+ * rigidBody/collider 仅启动期构建，缺组件时字段保持 null）。
+ * @param {Entity} entity 实体
+ * @param {string} typeKey 组件类型键（"animationClip" 等）
+ */
+export function resolveComponentField(entity, typeKey) {
+  if (!BUILTIN_TYPE_KEYS.includes(typeKey)) return null;
+  if (typeKey === "rigidBody" || typeKey === "collider") {
+    return createBuiltinFacade(entity, typeKey);
+  }
+  const existing = createBuiltinFacade(entity, typeKey);
+  if (existing) return builtinFacadeOf(entity, typeKey);
+  if (typeKey === "skeletalAnimation") return null; // 非模型节点：静默保持 null
+  return createRuntimeBuiltin(entity, typeKey, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -466,12 +1301,38 @@ function recordEntityKey(ctor, key) {
   }
 }
 
+/** 把组件引用键名记入类 __tveComponentKeys（[字段名, 组件类型键] 对；
+ *  host 实例化后解析为内置组件门面：实体已有该组件则绑定，没有则创建） */
+function recordComponentKey(ctor, key, typeKey) {
+  const list = ctor.__tveComponentKeys;
+  if (Array.isArray(list)) {
+    if (!list.some((e) => e[0] === key)) list.push([key, typeKey]);
+  } else {
+    Object.defineProperty(ctor, "__tveComponentKeys", {
+      value: [[key, typeKey]],
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+/** 值是否为组件门面类（返回组件类型键；否则 null） */
+function componentTypeKeyOfOption(v) {
+  if (typeof v === "function" && typeof v.__tveComponentType === "string") {
+    return BUILTIN_TYPE_KEYS.includes(v.__tveComponentType) ? v.__tveComponentType : null;
+  }
+  return null;
+}
+
 /**
  * @property 装饰器（参考 Cocos Creator）。双形态：
  * - @property / @property() / @property({...})：字段装饰器，把字段名记入类
  *   __tvePropKeys，host 据此以字段初值为默认、按节点配置覆盖（this.字段名 读写）；
  *   options.type 传节点类型类（如 MeshNode）时，把该字段登记为场景节点引用
  *   （__tveEntityKeys）：host 会把节点配置里存的节点 id 解析为对应 Entity；
+ *   options.type 传内置组件门面类（如 AnimationClip，或裸 @property(AnimationClip)）
+ *   时，把该字段登记为组件引用（__tveComponentKeys）：host 实例化后 get-or-create
+ *   对应内置组件并绑定门面（不在检查器中出现，运行期 this.字段名 即组件门面）；
  * - 作为工厂被 @property(options) 调用时返回装饰器；被裸 @property 直接调用
  *   （legacy 装饰器把裸引用当作装饰器执行）时按 target/key 就地登记。
  */
@@ -485,14 +1346,19 @@ export function property(targetOrOptions, maybeKey) {
     }
     return undefined;
   }
-  // 工厂形态：@property() / @property({...}) → 返回字段装饰器
-  const nodeRef = !!(
-    targetOrOptions &&
-    typeof targetOrOptions === "object" &&
-    isNodeRefType(targetOrOptions.type)
-  );
+  // 工厂形态：@property() / @property({...}) / @property(组件类) → 返回字段装饰器
+  const optType =
+    targetOrOptions && typeof targetOrOptions === "object" ? targetOrOptions.type : undefined;
+  const nodeRef = isNodeRefType(optType);
+  // 组件引用：@property({ type: AnimationClip }) 或裸 @property(AnimationClip)
+  const compType =
+    componentTypeKeyOfOption(optType) ?? componentTypeKeyOfOption(targetOrOptions);
   return function decorate(target, key) {
     const ctor = typeof target === "function" ? target : target.constructor;
+    if (compType) {
+      recordComponentKey(ctor, key, compType);
+      return;
+    }
     recordPropKey(ctor, key);
     if (nodeRef) recordEntityKey(ctor, key);
   };
@@ -582,6 +1448,18 @@ const physicsApi = {
   },
 };
 
+/** 单实体按 token 找组件：脚本类 / 脚本路径 / 类名 / 内置组件门面类 / 类型键 */
+function findOnEntity(entity, token) {
+  const typeKey = builtinTypeKeyOf(token);
+  if (typeKey) return builtinFacadeOf(entity, typeKey);
+  if (typeof token === "function") {
+    const list = componentsByNode.get(entity.id);
+    return list ? list.find((c) => c instanceof token) ?? null : null;
+  }
+  if (typeof token === "string") return resolveScriptInstance(entity.id, token);
+  return null;
+}
+
 const sceneApi = {
   get root() {
     const rootObj = host && host.rootObj;
@@ -611,6 +1489,28 @@ const sceneApi = {
       .filter((e) => e.obj?.userData?.nodeTag === tag)
       .map((e) => getEntity(e.obj))
       .filter(Boolean);
+  },
+  /** 全场景按类型查组件（Unity FindObjectOfType 语义）：token = 脚本类 /
+   *  脚本源路径 / 脚本类名 / 内置组件门面类 / 类型键；返回第一个命中 */
+  findComponent(token) {
+    for (const e of registry()) {
+      const ent = getEntity(e.obj);
+      if (!ent) continue;
+      const hit = findOnEntity(ent, token);
+      if (hit) return hit;
+    }
+    return null;
+  },
+  /** 全场景按类型查组件（文档序全量；无命中返回空数组） */
+  findComponents(token) {
+    const out = [];
+    for (const e of registry()) {
+      const ent = getEntity(e.obj);
+      if (!ent) continue;
+      const hit = findOnEntity(ent, token);
+      if (hit) out.push(hit);
+    }
+    return out;
   },
 };
 
@@ -808,4 +1708,11 @@ export {
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
+  // 内置组件门面类（getComponent/addComponent 参数；组件字段声明类型）
+  RigidBody,
+  Collider,
+  Light,
+  AudioSource,
+  AnimationClip,
+  SkeletalAnimation,
 };

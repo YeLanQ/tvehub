@@ -244,25 +244,52 @@ async function loadClip(rel) {
   return parseClip(JSON.parse(await res.text()));
 }
 
-/** 单个绑定（组件）：播放进度 + 剪辑数据 + 采样缓存（entry.clip 为解析后的剪辑数据） */
+/** 单个绑定（组件）：播放进度 + 剪辑数据 + 采样缓存。
+ *  播放态模型：playing = 正在推进；paused = 经 pause() 暂停（resume 续播）；
+ *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）。 */
 function createBinding(entry) {
-  const b = {
+  return {
+    key: typeof entry.key === "string" && entry.key ? entry.key : "",
     obj: entry.obj,
     speed: Math.max(0.05, Number(entry.speed) || 1),
     loop: entry.loop !== false,
+    autoplay: entry.autoplay !== false,
     time: 0,
-    started: false,
-    clip: entry.clip,
+    playing: false,
+    paused: false,
+    clipPath: typeof entry.clip === "string" ? entry.clip : "",
+    clip: null,
     values: new Map(),
   };
-  return b;
+}
+
+/** 加载绑定当前 clipPath 指向的剪辑（写入 b.clip；失败告警并保持 null） */
+async function loadInto(b) {
+  if (!b.clipPath) return false;
+  try {
+    b.clip = await loadClip(b.clipPath);
+    return true;
+  } catch (e) {
+    console.error("[anim] 剪辑加载失败 " + b.clipPath + ": " + (e && e.message ? e.message : e));
+    return false;
+  }
+}
+
+/** 立即采样并应用某时刻的值（seek/停止回初始姿势用；共享 update 的采样缓存） */
+function sampleAt(b, values, time) {
+  if (!b.clip) return;
+  sampleClip(b.clip, time, values);
+  applyValues(b.obj, values);
 }
 
 /**
  * 创建关键帧动画剪辑播放器。
- * @param {Array<{clip: string, obj: object, autoplay: boolean, loop: boolean, speed: number}>} entries
- *        nodes.mjs 收集的 animationClip 组件绑定（clip 为 .anim 资产相对路径）
- * @returns {Promise<{update(dt: number): void}>} 渲染循环每帧驱动
+ * @param {Array<{key?: string, nodeId?: string, clip: string, obj: object,
+ *                autoplay: boolean, loop: boolean, speed: number}>} entries
+ *        nodes.mjs 收集的 animationClip 组件绑定（clip 为 .anim 资产相对路径；
+ *        key = 组件 id，缺省回退节点 id，SDK 门面按 key 寻址）
+ * @returns {Promise<{update(dt: number): void} & ClipAnimApi>} 渲染循环每帧驱动
+ *          + 运行时控件 API（SDK AnimationClip 门面 / 动态创建组件用）
  */
 export async function createClipAnimations(entries) {
   const api = {
@@ -271,28 +298,103 @@ export async function createClipAnimations(entries) {
   if (!entries || !entries.length) return api;
 
   const bindings = [];
+  const byKey = new Map();
+  function register(b) {
+    bindings.push(b);
+    if (b.key && !byKey.has(b.key)) byKey.set(b.key, b);
+  }
   await Promise.all(
     entries.map(async (entry) => {
-      if (typeof entry.clip !== "string" || !entry.clip) return;
-      try {
-        const clip = await loadClip(entry.clip);
-        bindings.push(createBinding({ ...entry, clip: clip }));
-      } catch (e) {
-        console.error("[anim] 剪辑加载失败 " + entry.clip + ": " + (e && e.message ? e.message : e));
-      }
+      const b = createBinding(entry);
+      if (!b.key) b.key = typeof entry.nodeId === "string" ? entry.nodeId : "";
+      if (!(await loadInto(b))) return;
+      b.playing = b.autoplay; // 加载完成后按 autoplay 起播（禁用时停在初始姿势）
+      register(b);
     }),
   );
-  if (!bindings.length) return api;
 
   const values = new Map();
   api.update = function (dt) {
     for (const b of bindings) {
-      if (b.autoplay === false && !b.started) continue; // 未开自动播放且从未触发
-      b.started = true;
+      if (!b.playing || !b.clip) continue;
       b.time += Math.max(0, dt) * b.speed;
       sampleClip(b.clip, b.time, values);
       applyValues(b.obj, values);
     }
+  };
+
+  // —— 运行时控件 API（key 寻址；门面直接改写 b.speed/loop/autoplay 字段） ——
+  api.bindingOf = (key) => byKey.get(String(key ?? "")) ?? null;
+  api.play = (b) => {
+    if (!b) return false;
+    b.time = 0;
+    b.paused = false;
+    b.playing = true; // clip 未就绪时置位，加载完成后自动起播
+    return true;
+  };
+  api.pause = (b) => {
+    if (!b || !b.playing) return false;
+    b.playing = false;
+    b.paused = true;
+    return true;
+  };
+  api.resume = (b) => {
+    if (!b || !b.paused) return false;
+    b.playing = true;
+    b.paused = false;
+    return true;
+  };
+  api.stop = (b) => {
+    if (!b) return false;
+    b.playing = false;
+    b.paused = false;
+    b.time = 0;
+    sampleAt(b, values, 0); // 回初始姿势
+    return true;
+  };
+  api.setTime = (b, t) => {
+    if (!b) return false;
+    const v = Number(t);
+    b.time = typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+    sampleAt(b, values, b.time);
+    return true;
+  };
+  api.setSpeed = (b, s) => {
+    if (!b) return false;
+    const v = Number(s);
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) b.speed = Math.max(0.05, v);
+    return true;
+  };
+  api.setLoop = (b, v) => {
+    if (!b) return false;
+    b.loop = v === true;
+    return true;
+  };
+  api.setAutoplay = (b, v) => {
+    if (!b) return false;
+    b.autoplay = v === true;
+    return true;
+  };
+  api.changeClip = async (b, rel) => {
+    if (!b || typeof rel !== "string" || !rel) return false;
+    const wasPlaying = b.playing;
+    b.playing = false;
+    b.paused = false;
+    b.time = 0;
+    b.clip = null;
+    b.clipPath = rel;
+    const ok = await loadInto(b);
+    b.playing = ok && wasPlaying;
+    return ok;
+  };
+  /** 运行时新增组件绑定（SDK addComponent；异步加载后按 autoplay 起播） */
+  api.add = (entry) => {
+    const b = createBinding(entry);
+    register(b);
+    void loadInto(b).then((ok) => {
+      if (ok) b.playing = b.autoplay;
+    });
+    return b;
   };
   return api;
 }

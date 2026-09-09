@@ -251,6 +251,96 @@ export function createAnimations(meshes, models) {
         evalGraph(b);
       }
     },
+    /** 节点绑定句柄（SDK 骨骼动画门面用；模型网格节点才有，未命中 null） */
+    bindingOf(nodeId) {
+      return byId.get(nodeId) ?? null;
+    },
+    /** 模型内嵌剪辑名列表（未命中返回 null） */
+    clipsOf(nodeId) {
+      const b = byId.get(nodeId);
+      return b ? b.clips.map((c) => c.name || "clip") : null;
+    },
+    /** 按节点 anim/animGraph 设置重新应用（脚本改设置后刷新；含图/单剪辑切换） */
+    reapply(nodeId) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      applySettings(b, b.nodeJson ?? {});
+      return true;
+    },
+    /** 合并单剪辑播放设置（clip/autoplay/speed/loop 任意子集；图存在时图优先） */
+    applyAnim(nodeId, settings) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      const cur = parseClipSettings(b.nodeJson?.anim);
+      const s = settings && typeof settings === "object" ? settings : {};
+      if (typeof s.clip === "string") cur.clip = s.clip;
+      if (typeof s.autoplay === "boolean") cur.autoplay = s.autoplay;
+      if (typeof s.speed === "number" && Number.isFinite(s.speed) && s.speed >= 0) {
+        cur.speed = s.speed;
+      }
+      if (LOOP_MODES.includes(s.loop)) cur.loop = s.loop;
+      b.nodeJson.anim = { ...cur };
+      applySettings(b, b.nodeJson);
+      return true;
+    },
+    /** 创建/替换动画图（def 为 AnimGraph 形状，非法部分按 parseAnimGraph 收敛剔除） */
+    applyGraph(nodeId, def) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      b.nodeJson.animGraph = def && typeof def === "object" ? def : null;
+      applySettings(b, b.nodeJson);
+      return true;
+    },
+    /** 移除动画图（回单剪辑语义） */
+    removeGraph(nodeId) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      b.nodeJson.animGraph = null;
+      applySettings(b, b.nodeJson);
+      return true;
+    },
+    /** 当前动作速度（写 nodeJson.anim.speed + 活动动作 timeScale） */
+    setSpeed(nodeId, v) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      const cur = parseClipSettings(b.nodeJson?.anim);
+      const s = typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : cur.speed;
+      b.nodeJson.anim = { ...cur, speed: s };
+      const action = b.currentClip ? b.actions.get(b.currentClip) : null;
+      if (action) action.timeScale = s;
+      return true;
+    },
+    /** 当前动作循环模式（"loop"/"once"/"pingpong"） */
+    setLoop(nodeId, mode) {
+      const b = byId.get(nodeId);
+      if (!b || !LOOP_MODES.includes(mode)) return false;
+      b.nodeJson.anim = { ...parseClipSettings(b.nodeJson?.anim), loop: mode };
+      const action = b.currentClip ? b.actions.get(b.currentClip) : null;
+      if (action) applyClipParams(action, b.nodeJson.anim);
+      return true;
+    },
+    /** 自动播放标记（影响 reapply/applyAnim 的重放路径） */
+    setAutoplay(nodeId, v) {
+      const b = byId.get(nodeId);
+      if (!b) return false;
+      b.nodeJson.anim = { ...parseClipSettings(b.nodeJson?.anim), autoplay: v === true };
+      return true;
+    },
+    /** 图参数写入（活动图 params；布尔/数值收敛，条件评估每帧读取） */
+    setParam(nodeId, name, value) {
+      const b = byId.get(nodeId);
+      if (!b || !b.graph) return false;
+      if (typeof name !== "string" || !name) return false;
+      if (typeof value === "boolean") {
+        b.graph.params[name] = value;
+        return true;
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        b.graph.params[name] = value;
+        return true;
+      }
+      return false;
+    },
     /**
      * 播放（单剪辑模式 clip 缺省/未命中取首个剪辑；动画图模式 clip 作为目标
      * 状态名，缺省回入口状态）。命中返回 true。

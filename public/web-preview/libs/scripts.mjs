@@ -19,7 +19,11 @@ import {
   getEntity,
   installRuntime,
   registerComponent,
+  registerScriptClass,
+  resolveComponentField,
   resolveNodeEntity,
+  resolveScriptClass,
+  resolveScriptInstance,
   tickTime,
 } from "./tve.mjs";
 
@@ -82,6 +86,9 @@ function buildInstance(klass, entity, configured) {
       inst[k] = ent;
     }
   }
+  // 组件引用字段（__tveComponentKeys：[字段名, 组件类型键]）不在 buildInstance
+  // 内绑定：脚本组件字段的 get-or-create 需要实例表闭包，改由 instantiate/
+  // spawn 在注册实例后调用 bindComponentFields 完成。
   Object.defineProperty(inst, "props", {
     value: Object.freeze(merged),
     writable: false,
@@ -109,13 +116,14 @@ function callLifecycle(record, method, ...args) {
  * @param {object} opts
  * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
  * @param {object} opts.cfg 项目配置（entryScript = 入口脚本源路径）
- * @param {{play,stop,pause,resume}|null} opts.animations 动画控制（engine.animation 转发）
- * @param {{play,stop,pause,resume,setVolume}|null} opts.audios 音频控制（engine.audio 转发）
+ * @param {{play,stop,pause,resume,bindingOf,...}|null} opts.animations 动画控制（engine.animation 转发）
+ * @param {{play,stop,pause,resume,setVolume,...}|null} opts.audios 音频控制（engine.audio 转发）
  * @param {object|null} opts.physics 物理控制（engine.physics 转发）
+ * @param {object|null} opts.clipAnims 关键帧动画剪辑控制（组件字段/门面用）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, physics, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, canvas }) {
   const noop = { update() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -125,6 +133,8 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     animations: animations ?? null,
     audios: audios ?? null,
     physics: physics ?? null,
+    clipAnims: clipAnims ?? null,
+    scripts: { spawn },
   });
 
   // 组件引用收集（注册表为文档序：先父后子）；executionOrder 为执行顺序
@@ -201,7 +211,9 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         postLog("error", `[脚本] 实例化失败 ${item.script}: ${errText(e)}`);
         continue;
       }
-      registerComponent(entity.id, inst);
+      // 注册表登记（脚本类全局可见 + 实例挂节点），随后绑定组件引用字段
+      registerScriptClass(item.script, Klass);
+      registerComponent(entity.id, inst, item.script);
       const record = { inst, script: item.script, dead: false, order: item.order ?? 0 };
       instances.push(record);
       let list = instancesByNode.get(entity.id);
@@ -210,7 +222,70 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         instancesByNode.set(entity.id, list);
       }
       list.push(record);
+      bindComponentFields(inst, Klass, entity);
     }
+  }
+
+  /**
+   * 组件引用字段绑定（__tveComponentKeys；实例注册后调用）：
+   * - 内置组件键（"animationClip" 等）→ tve resolveComponentField get-or-create；
+   * - 脚本组件键（"script:类名"）→ 实体已有该脚本组件则绑定，没有则动态创建
+   *   （对齐 Unity RequireComponent 语义；创建的实例立即进入生命周期）。
+   */
+  function bindComponentFields(inst, Klass, entity) {
+    const compKeys = Array.isArray(Klass.__tveComponentKeys) ? Klass.__tveComponentKeys : [];
+    for (const entry of compKeys) {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "string") {
+        continue;
+      }
+      const token = entry[1];
+      inst[entry[0]] = token.startsWith("script:")
+        ? resolveScriptField(entity, token.slice(7))
+        : resolveComponentField(entity, token);
+    }
+  }
+
+  /** 脚本组件字段解析：实体已有该脚本组件 → 绑定；没有 → 动态创建 */
+  function resolveScriptField(entity, name) {
+    return resolveScriptInstance(entity.id, name) ?? spawn(entity, name);
+  }
+
+  /**
+   * 动态实例化脚本组件（entity.addComponent(脚本类/路径/类名) 与脚本字段
+   * get-or-create 的共用入口）。tokenOrClass = 脚本类 / 源路径 / 类名；
+   * props 为属性配置。创建的实例立即走 onEnable → onStart（统一批次已过）
+   * 并进入每帧 onUpdate 队列（执行顺序排末尾）。
+   */
+  function spawn(entity, tokenOrClass, props) {
+    const found = resolveScriptClass(tokenOrClass);
+    if (!found) {
+      const label = typeof tokenOrClass === "function" ? tokenOrClass.name : String(tokenOrClass);
+      postLog("warn", `[脚本] 未找到脚本类: ${label}（该脚本需已挂载在场景任意节点或为入口脚本，才会被加载注册）`);
+      return null;
+    }
+    const { klass, srcRel } = found;
+    if (!entity || typeof entity.id !== "string" || !entity.id) return null;
+    let inst;
+    try {
+      inst = buildInstance(klass, entity, props);
+    } catch (e) {
+      postLog("error", `[脚本] 动态创建失败 ${srcRel || klass.name}: ${errText(e)}`);
+      return null;
+    }
+    // 先注册再绑字段：被引用脚本（含自引用）的字段解析能命中本实例
+    registerComponent(entity.id, inst, srcRel);
+    const record = { inst, script: srcRel || klass.name || "(动态创建)", dead: false, order: 1e9 };
+    instances.push(record);
+    let list = instancesByNode.get(entity.id);
+    if (!list) {
+      list = [];
+      instancesByNode.set(entity.id, list);
+    }
+    list.push(record);
+    bindComponentFields(inst, klass, entity);
+    callLifecycle(record, "onEnable");
+    callLifecycle(record, "onStart");
+    return inst;
   }
 
   await instantiate(bindings);

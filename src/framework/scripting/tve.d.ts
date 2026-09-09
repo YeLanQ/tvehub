@@ -44,6 +44,15 @@ export type NodeClass =
   | typeof CameraNode
   | typeof SkyboxNode;
 
+/** 内置组件门面类（@property 组件引用字段 / getComponent / addComponent 可用） */
+export type ComponentClass =
+  | typeof RigidBody
+  | typeof Collider
+  | typeof Light
+  | typeof AudioSource
+  | typeof AnimationClip
+  | typeof SkeletalAnimation;
+
 /** 单个组件属性的定义（运行时组件声明用；编辑器侧另有同名 AST 结构） */
 export interface PropDef {
   type: PropType | string;
@@ -83,14 +92,32 @@ export type ScriptNodeKind = "node" | "meshNode" | "cameraNode" | "lightNode" | 
  *   }
  * }
  * ```
+ *
+ * **内置组件引用**：type 传内置组件门面类（AnimationClip / SkeletalAnimation /
+ * RigidBody / Collider / Light / AudioSource），或直接以组件类作装饰器实参
+ * （`@property(AnimationClip)`），即声明"引用一个内置组件"。该字段不出现在
+ * 检查器中；运行期宿主在本实体上 get-or-create 对应组件并把门面绑定到字段：
+ *
+ * ```ts
+ * export default class Punch extends Component {
+ *   @property(AnimationClip)
+ *   anim!: AnimationClip;            // 运行期 = 实体上的关键帧动画剪辑组件
+ *
+ *   onStart() {
+ *     this.anim.speed = 2;
+ *     this.anim.play();
+ *   }
+ * }
+ * ```
  */
 export function property(options?: {
   /**
    * 值类型。基本类型：number/string/boolean/color/vec3（缺省按字段初值推断）；
    * 或节点类型类：把该属性声明为场景节点引用（检查器选择场景节点，
-   * 运行期字段为该节点的 Entity）。
+   * 运行期字段为该节点的 Entity）；
+   * 或内置组件门面类：把该属性声明为组件引用（运行期 get-or-create 绑定门面）。
    */
-  type?: PropType | NodeClass;
+  type?: PropType | NodeClass | ComponentClass;
   /** 检查器显示名（缺省用字段名） */
   label?: string;
   /** 悬浮说明（显示在控件标题） */
@@ -188,6 +215,29 @@ export interface ComponentLifecycle {
  * 生命周期：onStart 挂载后调用一次；onUpdate 每帧调用（delta = 秒）。
  * 运行时 `this` 上还提供一个只读属性值视图 `this.props`（装饰器字段的
  * 当前值 + 检查器配置的覆盖值），便于以字典方式遍历。
+ *
+ * **组件字段**：字段声明为内置组件门面类型（`anim!: AnimationClip;` 或
+ * `@property(AnimationClip) anim: AnimationClip | null = null;`）时，运行期宿主
+ * 自动在本实体上 get-or-create 对应组件并把门面绑定到字段——无需手写
+ * getComponent。裸声明须带确定类型标注（`!` 断言或 `| null = null` 初值，
+ * strict 模式下无初值字段需要其中一种写法）。
+ *
+ * 字段类型为**用户脚本类**时（配合 `import type` 只引入类型，不产生运行时
+ * import 依赖），宿主同样 get-or-create：实体已挂载该脚本组件则绑定实例，
+ * 没有则动态创建并立即进入生命周期（对齐 Unity RequireComponent）：
+ *
+ * ```ts
+ * import type CameraFollow from "./CameraFollow";   // type-only：编译期擦除
+ *
+ * export default class Enemy extends Component {
+ *   follow!: CameraFollow;   // 自动绑定/创建本实体上的 CameraFollow 组件
+ *   hp!: HPBar;
+ *
+ *   onStart() {
+ *     this.follow.offset = math.v3(0, 3, 5);
+ *   }
+ * }
+ * ```
  */
 export class Component<P extends ComponentProps = ComponentProps> implements ComponentLifecycle {
   /**
@@ -290,14 +340,59 @@ export class Entity {
   find(nameOrPath: string): Entity | null;
 
   /**
-   * 获取实体上挂载的内置组件门面（只支持 "rigidBody"；未挂载返回 null）。
-   * 门面提供只读属性（mode/gravityScale/colliderCount）与常用物理方法，
-   * 方法与 engine.physics 同名接口等价（已绑定本实体）。
+   * 获取实体上挂载的组件（未挂载返回 null）。
+   * - 内置组件：传门面类（RigidBody/Light/AudioSource/AnimationClip/
+   *   SkeletalAnimation/Collider）或类型键字符串（"rigidBody" 等；"animation"/
+   *   "anim" 为骨骼动画别名）。多实例组件（如多个动画剪辑组件）取首个，句柄稳定；
+   * - 脚本组件：传脚本类（构造器）按类匹配；或传脚本源路径 / 类名字符串
+   *   （"src/hp.ts" / "HPBar"）——对齐 Unity 按类型名查找：所有脚本类在加载后
+   *   全局可见，脚本之间互相引用组件无需 import（严格模式下用
+   *   `import type` 只引入类型即可获得智能提示）。
    */
-  getComponent(component: "rigidBody"): RigidBodyFacade | null;
-
-  /** 获取实体上挂载的脚本组件实例（未挂载返回 null） */
+  getComponent(component: "rigidBody" | typeof RigidBody): RigidBody | null;
+  getComponent(component: "collider" | typeof Collider): Collider | null;
+  getComponent(component: "light" | typeof Light): Light | null;
+  getComponent(component: "audioSource" | typeof AudioSource): AudioSource | null;
+  getComponent(component: "animationClip" | typeof AnimationClip): AnimationClip | null;
+  getComponent(
+    component: "animation" | "anim" | "skeletalAnimation" | typeof SkeletalAnimation,
+  ): SkeletalAnimation | null;
+  /** 按脚本源路径 / 脚本类名获取已挂载的脚本组件（未挂载返回 null） */
+  getComponent(component: string): Component | null;
   getComponent<T extends Component>(componentClass: new (...args: never[]) => T): T | null;
+
+  /**
+   * 动态添加组件并返回实例/门面（预览运行态生效，不回写场景文件）。
+   * - 内置组件 Light / AudioSource / AnimationClip：在本节点追加一个新组件
+   *   （多实例）；settings 为组件设置对象（缺省项回默认）；
+   * - 内置组件 SkeletalAnimation：仅模型网格节点可用；settings 可含 clip/
+   *   autoplay/speed/loop/graph（graph 为动画图定义，传即创建动画图模式）；
+   * - 脚本组件：传脚本类（构造器）或脚本源路径 / 类名字符串，在本实体上
+   *   实例化并立即进入生命周期（onEnable/onStart），props 作为属性配置；
+   * - RigidBody / Collider：物理组件仅启动期按场景数据构建，运行时创建返回 null。
+   */
+  addComponent(component: "light" | typeof Light, settings?: LightAddOptions): Light | null;
+  addComponent(
+    component: "audioSource" | typeof AudioSource,
+    settings?: AudioSourceAddOptions,
+  ): AudioSource | null;
+  addComponent(
+    component: "animationClip" | typeof AnimationClip,
+    settings?: AnimationClipAddOptions,
+  ): AnimationClip | null;
+  addComponent(
+    component: "animation" | "skeletalAnimation" | typeof SkeletalAnimation,
+    settings?: SkeletalAnimationAddOptions,
+  ): SkeletalAnimation | null;
+  /** 动态创建脚本组件（按脚本类 / 源路径 / 类名查找；props = 属性配置） */
+  addComponent(
+    component: string | (new (entity: Entity) => Component),
+    props?: ComponentProps,
+  ): Component | null;
+  addComponent(
+    component: "rigidBody" | "collider" | typeof RigidBody | typeof Collider,
+    settings?: never,
+  ): null;
 }
 
 // ---------------------------------------------------------------------------
@@ -408,11 +503,19 @@ export interface MathApi {
 }
 
 // ---------------------------------------------------------------------------
-// 内置组件门面（getComponent 按名称获取）
+// 内置组件门面（getComponent / addComponent / 组件字段声明的对象）。
+// 门面 = 组件设置 + 运行时后端的实时视图：属性写入即时生效（预览运行态，
+// 不回写场景文件）；@internal 构造器由运行时创建，脚本不要 new。
 // ---------------------------------------------------------------------------
 
 /** 刚体组件门面：mode 为刚体形态；物理方法与 engine.physics 同名接口等价（已绑定本实体） */
-export interface RigidBodyFacade {
+export declare class RigidBody {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 组件引用 id（运行时创建的组件为生成 id） */
+  readonly id: string;
   /** 刚体形态：static（隐式静态）/ kinematic（运动学）/ dynamic（动力学） */
   readonly mode: "static" | "kinematic" | "dynamic";
   /** 当前重力缩放 */
@@ -429,6 +532,305 @@ export interface RigidBodyFacade {
   applyImpulse(x: number, y: number, z: number): void;
   /** 唤醒 */
   wakeUp(): void;
+}
+
+/** 兼容别名（旧版以接口形式提供刚体门面类型） */
+export type RigidBodyFacade = RigidBody;
+
+/** 碰撞体组件门面（只读信息；形状/表面材质在检查器编辑，运行时不可变） */
+export declare class Collider {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 组件引用 id */
+  readonly id: string;
+  /** 场景中命中的碰撞形状（box/sphere/capsule/cylinder/convex） */
+  readonly shape: string;
+  /** 是否传感器（只产生触发不产生碰撞响应） */
+  readonly isSensor: boolean;
+  /** 摩擦系数 */
+  readonly friction: number;
+  /** 弹性系数 */
+  readonly restitution: number;
+  /** 物理世界中的碰撞体数量 */
+  readonly count: number;
+}
+
+/** 灯光组件门面：设置写入即时同步到活动灯光对象（类型切换重建灯光） */
+export declare class Light {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 组件引用 id */
+  readonly id: string;
+  /** 是否启用（禁用 = 灯光对象隐藏） */
+  get enabled(): boolean;
+  set enabled(value: boolean);
+  /** 灯光类型：point/directional/spot/ambient（写入即重建灯光对象） */
+  get kind(): "point" | "directional" | "spot" | "ambient";
+  set kind(value: "point" | "directional" | "spot" | "ambient");
+  /** 光色（0xRRGGBB） */
+  get color(): number;
+  set color(value: number);
+  /** 强度 */
+  get intensity(): number;
+  set intensity(value: number);
+  /** 点光/聚光灯：照射距离（0 = 无限远） */
+  get distance(): number;
+  set distance(value: number);
+  /** 点光/聚光灯：物理衰减指数 */
+  get decay(): number;
+  set decay(value: number);
+  /** 聚光灯：光束半角（度） */
+  get angle(): number;
+  set angle(value: number);
+  /** 聚光灯：边缘柔和度 0~1 */
+  get penumbra(): number;
+  set penumbra(value: number);
+  /** 平行光/聚光灯：投射阴影 */
+  get castShadow(): boolean;
+  set castShadow(value: boolean);
+}
+
+/** 音源组件门面：播放控制按组件 id 寻址；设置写入经运行时合并生效 */
+export declare class AudioSource {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 组件引用 id */
+  readonly id: string;
+  /** 音频资产引用（写入即重载） */
+  get source(): string;
+  set source(value: string);
+  /** 自动播放（上下文就绪/节点入图后起播） */
+  get autoplay(): boolean;
+  set autoplay(value: boolean);
+  /** 循环播放 */
+  get loop(): boolean;
+  set loop(value: boolean);
+  /** 音量 0..1 */
+  get volume(): number;
+  set volume(value: number);
+  /** 播放倍速 0.1..4 */
+  get speed(): number;
+  set speed(value: number);
+  /** 空间化："2d" 全局 / "3d" 位置音源 */
+  get spatial(): "2d" | "3d";
+  set spatial(value: "2d" | "3d");
+  /** 是否正在播放 */
+  readonly playing: boolean;
+  /** 是否处于暂停态 */
+  readonly paused: boolean;
+  /** 缓冲是否就绪 */
+  readonly ready: boolean;
+  /** 播放（暂停态续播；停止/播完态从头播） */
+  play(): void;
+  /** 停止并回到起点 */
+  stop(): void;
+  /** 暂停（保留进度） */
+  pause(): void;
+  /** 从暂停处继续 */
+  resume(): void;
+  /** 运行时音量（0~1） */
+  setVolume(volume: number): void;
+}
+
+/** 关键帧动画剪辑组件门面（.anim 资产绑定 + 播放控制/进度/倍速） */
+export declare class AnimationClip {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 组件引用 id */
+  readonly id: string;
+  /** .anim 资产相对路径（写入即重载剪辑；空串解绑） */
+  get clip(): string;
+  set clip(value: string);
+  /** 剪辑时长（秒；未加载为 0） */
+  readonly duration: number;
+  /** 播放进度（秒；写入即跳转采样） */
+  get time(): number;
+  set time(value: number);
+  /** 播放速度倍率（>0） */
+  get speed(): number;
+  set speed(value: number);
+  /** 循环播放 */
+  get loop(): boolean;
+  set loop(value: boolean);
+  /** 自动播放（加载完成后起播） */
+  get autoplay(): boolean;
+  set autoplay(value: boolean);
+  /** 是否正在推进 */
+  readonly playing: boolean;
+  /** 是否处于暂停态 */
+  readonly paused: boolean;
+  /** 从头播放 */
+  play(): void;
+  /** 暂停（保留进度） */
+  pause(): void;
+  /** 从暂停处继续 */
+  resume(): void;
+  /** 停止并回初始姿势 */
+  stop(): void;
+}
+
+// —— 骨骼动画（模型内嵌动画）定义与图对象 ——
+
+/** 模型动画循环模式 */
+export type AnimLoopMode = "loop" | "once" | "pingpong";
+
+/** 动画图状态定义（name 图内唯一；clip 须为模型内嵌剪辑名） */
+export interface AnimStateDef {
+  name: string;
+  clip: string;
+  /** 播放速度倍率（缺省 1） */
+  speed?: number;
+  /** 循环模式（缺省 loop） */
+  loop?: AnimLoopMode;
+}
+
+/** 参数条件（布尔参数按 0/1 参与数值比较） */
+export interface AnimConditionDef {
+  param: string;
+  op: ">" | "<" | ">=" | "<=" | "==" | "!=";
+  value: number;
+}
+
+/** 动画图过渡定义：from → to，交叉淡化 duration 秒 */
+export interface AnimTransitionDef {
+  /** 过渡 id（缺省自动生成 t1/t2/…；图内唯一） */
+  id?: string;
+  from: string;
+  to: string;
+  /** 过渡时长（秒；缺省 0.25） */
+  duration?: number;
+  /** 归一化退出时间 0..1（>0 = 源状态播放到该进度才允许过渡；缺省 0） */
+  exitTime?: number;
+  /** 过渡条件（全部满足才过渡） */
+  conditions?: AnimConditionDef[];
+}
+
+/** 动画图定义（SkeletalAnimation.ensureGraph / addComponent(SkeletalAnimation) 用；
+ *  运行期 graph getter 返回同构的活对象，states/transitions/entry/params 可直接改写） */
+export interface AnimGraphDef {
+  /** 入口状态名（缺省首个状态） */
+  entry?: string;
+  states: AnimStateDef[];
+  transitions?: AnimTransitionDef[];
+  /** 参数表（数值或布尔；条件评估的输入） */
+  params?: Record<string, number | boolean>;
+}
+
+/**
+ * 骨骼动画（模型内嵌动画）门面：单剪辑 anim / 动画图 animGraph 的运行期视图。
+ * 仅模型网格节点（source=model）拥有绑定；图模式下 play(状态名) 切换状态，
+ * setParam 写入图参数驱动条件过渡。
+ */
+export declare class SkeletalAnimation {
+  /** @internal 由运行时构造，脚本不要直接 new */
+  constructor();
+  /** 宿主实体 */
+  readonly entity: Entity;
+  /** 模型内嵌剪辑名列表 */
+  readonly clips: string[];
+  /** 当前播放的剪辑名（图模式为当前状态绑定的剪辑；未播放 null） */
+  readonly currentClip: string | null;
+  /** 是否正在播放 */
+  readonly playing: boolean;
+  /** 当前剪辑名（缺省取首个；写入即切换播放，图模式下为目标状态名） */
+  get clip(): string;
+  set clip(value: string);
+  /** 播放速度倍率（当前动作 + 单剪辑设置） */
+  get speed(): number;
+  set speed(value: number);
+  /** 循环模式：loop/once/pingpong */
+  get loop(): AnimLoopMode;
+  set loop(value: AnimLoopMode);
+  /** 自动播放（影响设置重放路径） */
+  get autoplay(): boolean;
+  set autoplay(value: boolean);
+  /** 是否处于动画图模式 */
+  readonly hasGraph: boolean;
+  /** 动画图活对象（entry/states/transitions/params 可直接改写，下一帧评估生效；无图 null） */
+  readonly graph: AnimGraphDef | null;
+  /** 播放：clip 缺省取首个剪辑；图模式下参数为目标状态名（缺省回入口状态） */
+  play(clipOrState?: string): void;
+  /** 暂停（保留进度；图状态机暂停评估） */
+  pause(): void;
+  /** 从暂停处继续 */
+  resume(): void;
+  /** 停止并回初始姿势 */
+  stop(): void;
+  /** 图参数读取（无图/未声明返回 null） */
+  getParam(name: string): number | boolean | null;
+  /** 图参数写入（布尔/数值；条件评估每帧读取） */
+  setParam(name: string, value: number | boolean): void;
+  /** 创建/替换动画图（非法状态/过渡按引擎规则收敛剔除；成功返回 true） */
+  ensureGraph(def: AnimGraphDef): boolean;
+  /** 移除动画图（回单剪辑语义） */
+  removeGraph(): void;
+  /** 新增图状态（{name, clip, speed?, loop?}；重名拒绝，返回是否成功） */
+  addState(state: AnimStateDef): boolean;
+  /** 移除图状态（连带剔除涉及它的过渡） */
+  removeState(name: string): boolean;
+  /** 新增过渡（from/to 须为已有状态且不同；成功返回 true） */
+  addTransition(transition: AnimTransitionDef): boolean;
+  /** 移除过渡（按 id） */
+  removeTransition(id: string): boolean;
+}
+
+// —— addComponent 创建参数 ——
+
+/** addComponent(Light) 创建参数（缺省项回默认） */
+export interface LightAddOptions {
+  kind?: "point" | "directional" | "spot" | "ambient";
+  /** 光色（0xRRGGBB；lightColor 别名） */
+  color?: number;
+  lightColor?: number;
+  intensity?: number;
+  distance?: number;
+  decay?: number;
+  /** 聚光灯光束半角（度） */
+  angle?: number;
+  penumbra?: number;
+  castShadow?: boolean;
+}
+
+/** addComponent(AudioSource) 创建参数（缺省项回默认） */
+export interface AudioSourceAddOptions {
+  /** 音频资产引用（项目内相对路径） */
+  source?: string;
+  autoplay?: boolean;
+  loop?: boolean;
+  volume?: number;
+  speed?: number;
+  spatial?: "2d" | "3d";
+  refDistance?: number;
+  maxDistance?: number;
+  rolloff?: number;
+}
+
+/** addComponent(AnimationClip) 创建参数（缺省项回默认） */
+export interface AnimationClipAddOptions {
+  /** .anim 资产相对路径（可后续经门面 clip 写入） */
+  clip?: string;
+  autoplay?: boolean;
+  loop?: boolean;
+  speed?: number;
+}
+
+/** addComponent(SkeletalAnimation) 创建参数（仅模型网格节点；缺省项回默认） */
+export interface SkeletalAnimationAddOptions {
+  /** 播放剪辑名 / 目标状态名 */
+  clip?: string;
+  autoplay?: boolean;
+  speed?: number;
+  loop?: AnimLoopMode;
+  /** 动画图定义（传入即创建动画图模式） */
+  graph?: AnimGraphDef;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +884,14 @@ export interface SceneApi {
   findByTag(tag: string): Entity | null;
   /** 按标签查实体（文档序全量；无命中返回空数组） */
   findAllByTag(tag: string): Entity[];
+  /**
+   * 全场景按类型查组件（Unity FindObjectOfType 语义）：token = 脚本类 /
+   * 脚本源路径 / 脚本类名 / 内置组件门面类 / 类型键；返回文档序第一个命中
+   * （未命中 null）。
+   */
+  findComponent(token: string | ComponentClass | (new (...args: never[]) => Component)): Component | RigidBody | Collider | Light | AudioSource | AnimationClip | SkeletalAnimation | null;
+  /** 全场景按类型查组件（文档序全量；无命中返回空数组） */
+  findComponents(token: string | ComponentClass | (new (...args: never[]) => Component)): Array<Component | RigidBody | Collider | Light | AudioSource | AnimationClip | SkeletalAnimation>;
 }
 
 /** 模型动画运行期控制（按实体寻址；仅模型网格节点有效） */

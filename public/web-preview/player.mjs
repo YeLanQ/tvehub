@@ -332,6 +332,7 @@ async function main() {
       animations,
       audios: audiosApi,
       physics: physicsApi,
+      clipAnims,
       canvas: renderer.domElement,
     });
   } catch (e) {

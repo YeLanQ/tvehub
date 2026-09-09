@@ -35,7 +35,7 @@ function parseAudioSettings(v) {
 }
 
 /** 单个音源节点的绑定（音源对象 + 设置 + 运行态） */
-function createBinding(nodeJson, obj, listener) {
+function createBinding(nodeJson, obj) {
   const settings = parseAudioSettings(nodeJson.audio);
   const b = {
     nodeJson,
@@ -50,23 +50,37 @@ function createBinding(nodeJson, obj, listener) {
     userStopped: false,
     autoPaused: false,
   };
-  if (settings.source) {
-    loadBuffer(settings.source)
-      .then((buf) => {
-        if (!buf) return;
-        createEmitter(b, buf, listener);
-        applyParams(b);
-        if (b.settings.autoplay && !b.userStopped) tryStart(b, true);
-      })
-      .catch(() => {
-        /* 加载失败：该音源静音 */
-      });
-  }
+  attachSource(b);
   return b;
 }
 
+/** 按 settings.source 拉取缓冲并挂发射器（异步；就绪后 autoplay 起播）。
+ *  换源重建时调用方先清空旧发射态。 */
+function attachSource(b) {
+  if (!b.settings.source) return;
+  loadBuffer(b.settings.source)
+    .then((buf) => {
+      if (!buf) return;
+      createEmitter(b, buf);
+      applyParams(b);
+      if (b.settings.autoplay && !b.userStopped) tryStart(b, true);
+    })
+    .catch(() => {
+      /* 加载失败：该音源静音 */
+    });
+}
+
+/** 卸下发射器（换源/重建用）：停止播放并从节点摘除 3D 音源对象 */
+function detachEmitter(b) {
+  if (!b.emitter) return;
+  if (b.emitter.isPlaying) b.emitter.stop();
+  if (b.emitter instanceof THREE.PositionalAudio) b.obj.remove(b.emitter);
+  b.emitter = null;
+  b.ready = false;
+}
+
 /** 音源对象（3D 挂节点对象下随变换；2D 全局不挂树） */
-function createEmitter(b, buffer, listener) {
+function createEmitter(b, buffer) {
   let emitter;
   if (b.settings.spatial === "3d") {
     const pa = new THREE.PositionalAudio(listener);
@@ -177,7 +191,7 @@ export function createAudios(audios, cam) {
   const bindings = [];
   const byId = new Map();
   for (const entry of audios) {
-    const b = createBinding(entry.json, entry.obj, listener);
+    const b = createBinding(entry.json, entry.obj);
     bindings.push(b);
     if (typeof entry.json.id === "string" && entry.json.id) byId.set(entry.json.id, b);
   }
@@ -256,6 +270,45 @@ export function createAudios(audios, cam) {
       if (!b || !b.emitter) return false;
       b.emitter.setVolume(Math.max(0, Math.min(1, Number(volume) || 0)));
       return true;
+    },
+    /** 运行时新增音源绑定（SDK AudioSource 门面 addComponent；json = {id, audio}，
+     *  nodeId 为宿主节点 id 别名，节点寻址命中首个音源） */
+    addSource(json, obj, nodeId) {
+      if (!json || typeof json.id !== "string" || !json.id) return false;
+      const b = createBinding(json, obj);
+      bindings.push(b);
+      byId.set(json.id, b);
+      if (typeof nodeId === "string" && nodeId && !byId.has(nodeId)) byId.set(nodeId, b);
+      return true;
+    },
+    /** 运行时合并音源设置（settings 子集；source/spatial 变更重建发射器） */
+    updateSettings(key, patch) {
+      const b = byId.get(key);
+      if (!b) return false;
+      const merged = parseAudioSettings({
+        ...b.settings,
+        ...(patch && typeof patch === "object" ? patch : {}),
+      });
+      const rebuild =
+        merged.source !== b.settings.source || merged.spatial !== b.settings.spatial;
+      b.settings = merged;
+      if (!rebuild) {
+        applyParams(b);
+        return true;
+      }
+      detachEmitter(b);
+      b.playing = false;
+      b.paused = false;
+      b.offset = 0;
+      b.started = false;
+      b.autoPaused = false;
+      attachSource(b);
+      return true;
+    },
+    /** 音源运行态（SDK 门面 playing/paused/ready；未命中返回 null） */
+    infoOf(key) {
+      const b = byId.get(key);
+      return b ? { playing: !!b.emitter?.isPlaying, paused: b.paused, ready: b.ready } : null;
     },
   };
 }
