@@ -2,18 +2,18 @@
 // 关键帧动画剪辑（framework 层纯数据 + 求值，不依赖 app/api/three）。
 //
 // .anim 资产 = AnimationClipData 的 JSON 文档：
-// - 通道（curve.prop）：节点本地变换的 9 个分量（position.x/y/z、rotation.x/y/z
-//   度制、scale.x/y/z），扩展新通道只需扩 PROP_CHANNELS；
+// - 通道（curve.prop）：任意可动画属性的字符串键（如 "position.x"、
+//   "light.intensity"、"material.color.r"），分组约定 = 首段（变换 position/
+//   rotation/scale 直接映射节点对象变换；其余组由播放器按目标解析应用——
+//   材质 → 对象材质、灯光 → 对象子树内的灯光）。可动画通道目录见
+//   app/lib/anim-props.ts（按节点能力提供）；
 // - 关键帧（key）：t 秒 + v 值 + 到下一关键帧的插值 i（linear/step/smooth）；
 //   smooth = 三次 Hermite（Catmull-Rom 切线，支持非均匀时间）；
 // - 求值在关键帧区间外钳制到端点值；曲线按 t 升序保持（操作函数负责排序）。
 // ---------------------------------------------------------------------------
 
-/** 变换通道名（9 个；rotation 为度） */
-export type TransformProp =
-  | "position.x" | "position.y" | "position.z"
-  | "rotation.x" | "rotation.y" | "rotation.z"
-  | "scale.x" | "scale.y" | "scale.z";
+/** 通道键（字符串；分组约定见文件头） */
+export type AnimProp = string;
 
 /** 关键帧插值：线性 / 阶跃（保持前值）/ 平滑（Catmull-Rom） */
 export type AnimKeyInterp = "linear" | "step" | "smooth";
@@ -27,7 +27,7 @@ export interface AnimKey {
 
 /** 单通道曲线：一条属性的关键帧序列（t 升序） */
 export interface AnimClipCurve {
-  prop: TransformProp;
+  prop: AnimProp;
   keys: AnimKey[];
 }
 
@@ -43,22 +43,6 @@ export interface AnimationClipData {
   loops: boolean;
   curves: AnimClipCurve[];
 }
-
-export const PROP_CHANNELS: {
-  prop: TransformProp;
-  label: string;
-  group: "位置" | "旋转" | "缩放";
-}[] = [
-  { prop: "position.x", label: "位置 X", group: "位置" },
-  { prop: "position.y", label: "位置 Y", group: "位置" },
-  { prop: "position.z", label: "位置 Z", group: "位置" },
-  { prop: "rotation.x", label: "旋转 X", group: "旋转" },
-  { prop: "rotation.y", label: "旋转 Y", group: "旋转" },
-  { prop: "rotation.z", label: "旋转 Z", group: "旋转" },
-  { prop: "scale.x", label: "缩放 X", group: "缩放" },
-  { prop: "scale.y", label: "缩放 Y", group: "缩放" },
-  { prop: "scale.z", label: "缩放 Z", group: "缩放" },
-];
 
 const INTERPS: AnimKeyInterp[] = ["linear", "step", "smooth"];
 
@@ -91,7 +75,7 @@ function parseKeys(v: unknown): AnimKey[] {
   return keys;
 }
 
-/** 任意来源 → 收敛的动画剪辑（通道去重、时长钳制） */
+/** 任意来源 → 收敛的动画剪辑（通道去重、时长钳制；prop 为任意非空字符串） */
 export function parseAnimationClip(v: unknown): AnimationClipData {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   const curves: AnimClipCurve[] = [];
@@ -101,10 +85,9 @@ export function parseAnimationClip(v: unknown): AnimationClipData {
     if (!c || typeof c !== "object") continue;
     const co = c as Record<string, unknown>;
     const prop = co.prop;
-    if (typeof prop !== "string" || seen.has(prop)) continue;
-    if (!PROP_CHANNELS.some((p) => p.prop === prop)) continue;
+    if (typeof prop !== "string" || !prop || seen.has(prop)) continue;
     seen.add(prop);
-    curves.push({ prop: prop as TransformProp, keys: parseKeys(co.keys) });
+    curves.push({ prop, keys: parseKeys(co.keys) });
   }
   return {
     type: "animclip",
@@ -182,8 +165,8 @@ export function evaluateCurve(curve: AnimClipCurve, time: number): number | null
 export function evaluateClip(
   clip: AnimationClipData,
   time: number,
-): Map<TransformProp, number> {
-  const out = new Map<TransformProp, number>();
+): Map<AnimProp, number> {
+  const out = new Map<AnimProp, number>();
   let t = time;
   if (clip.loops && clip.duration > 0) t = ((time % clip.duration) + clip.duration) % clip.duration;
   else t = clamp(time, 0, clip.duration);

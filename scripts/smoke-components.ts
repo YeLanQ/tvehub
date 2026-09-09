@@ -323,9 +323,10 @@ function check(name: string, cond: boolean, detail = ""): void {
       { prop: "visible.x", keys: [{ t: 0, v: 0 }] }, // 非法通道剔除
     ],
   });
+  // 通道已泛化：prop 为任意非空字符串（不再白名单限制），未知键同样保留
   check(
-    "解析：非法通道剔除、合法通道保留",
-    clip.curves.length === 2 && clip.duration === 2 && clip.loops === true,
+    "解析：通道保留（含未知键，向前兼容）",
+    clip.curves.length === 3 && clip.duration === 2 && clip.loops === true,
   );
   const rot = clip.curves.find((c) => c.prop === "rotation.y");
   check(

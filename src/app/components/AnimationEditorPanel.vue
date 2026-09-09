@@ -2,17 +2,22 @@
 // ---------------------------------------------------------------------------
 // 动画编辑窗口（底部停靠面板，Unity Animation 窗口的轻量版）：
 // - 编辑 .anim 剪辑资产（时长/循环/关键帧），改动防抖自动写盘；
-// - 时间轴：标尺 + 播放头拖拽 scrub + 9 个变换通道关键帧轨道（拖拽改时间、
-//   点击选中、插值切换、删除）；K 按钮在当前时间 K 选中节点当前值；
-// - 录制模式：开启后轮询选中节点的变换数据，变化即自动写入关键帧（auto-key）；
+// - 通道不固定：「＋添加属性」按目标节点能力分组添加（变换恒可用；
+//   灯光/材质按节点类型提供），轨道只显示已添加的通道（可移除），
+//   左列按属性路径建层级树（Transform/Position/X 三级，组行可折叠，
+//   折叠后轨道行显示子孙通道关键帧合并概要）；
+// - 时间轴：标尺 + 播放头拖拽 scrub + 每通道关键帧轨道（拖拽改时间、点击
+//   选中、插值切换、删除）；K 按钮在当前时间 K 选中节点当前值；
+// - 录制模式：轮询选中节点，已添加通道的值变化即自动写入关键帧（auto-key）；
 // - 预览：播放/scrub 把采样值直接应用到选中节点的三维对象（不写节点数据，
-//   非破坏性，停止后还原）；曲线视图：单通道曲线 + 关键帧拖拽/空白点击插帧。
+//   非破坏性，停止后还原）；
+// - 右侧视图下拉二选一（不同时显示）：帧动画（标尺 + 每通道关键帧轨道）/
+//   曲线编辑（单通道曲线占满视图区，时间网格 + 播放头 + 关键帧拖拽/插帧）。
 // ---------------------------------------------------------------------------
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as THREE from "three";
 import type { Node } from "../../framework/prototype/Node";
 import {
-  PROP_CHANNELS,
   evaluateClip,
   evaluateCurve,
   parseAnimationClip,
@@ -21,14 +26,16 @@ import {
   type AnimClipCurve,
   type AnimKeyInterp,
   type AnimationClipData,
-  type TransformProp,
+  type AnimProp,
 } from "../../framework/animation/clip";
+import { ANIM_PATHS, animPropGroupsFor, propDefOf } from "../lib/anim-props";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getAssetsStore } from "../stores/assets";
 import { api } from "../../lib/api";
 import { animEditor } from "../lib/anim-editor";
 import NumberField from "./NumberField.vue";
+import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
 
 const editorStore = getEditorStore();
 const projectStore = getProjectStore();
@@ -90,6 +97,7 @@ async function loadClip(rel: string): Promise<void> {
   dirty.value = false;
   time.value = 0;
   selected.value = null;
+  curveProp.value = "";
   if (!rel) {
     rev.value += 1;
     return;
@@ -103,6 +111,7 @@ async function loadClip(rel: string): Promise<void> {
     const text = await api.readText(root, rel);
     if (token !== loadToken) return;
     doc.value = parseAnimationClip(JSON.parse(text));
+    curveProp.value = doc.value.curves[0]?.prop ?? "";
   } catch (e) {
     console.error("加载动画剪辑失败", e);
     doc.value = null;
@@ -141,14 +150,40 @@ const targetObj = computed<THREE.Object3D | null>(() => {
   return n ? (engine.synchronizer.getObjectMap().get(n.id) ?? null) : null;
 });
 
-function applyChannels(obj: THREE.Object3D, values: Map<TransformProp, number>): void {
+/** 按点路径写属性值（"color.r" → target.color.r） */
+function setPath(target: unknown, path: string, v: number): void {
+  const segs = path.split(".");
+  let cur: any = target;
+  for (let i = 0; i < segs.length - 1; i++) {
+    cur = cur ? cur[segs[i]] : undefined;
+    if (cur == null) return;
+  }
+  if (cur != null) cur[segs[segs.length - 1]] = v;
+}
+
+/** 通道分组应用（与播放器 animclip.mjs 的 applyValues 镜像） */
+function applyChannels(obj: THREE.Object3D, values: Map<AnimProp, number>): void {
   for (const [prop, v] of values) {
-    const dot = prop.indexOf(".");
-    const group = prop.slice(0, dot);
-    const axis = prop.slice(dot + 1) as "x" | "y" | "z";
-    if (group === "position") obj.position[axis] = v;
-    else if (group === "rotation") obj.rotation[axis] = v * D2R;
-    else if (group === "scale") obj.scale[axis] = Math.max(0.001, v);
+    const i = prop.indexOf(".");
+    if (i < 0) continue;
+    const group = prop.slice(0, i);
+    const path = prop.slice(i + 1);
+    if (group === "position" || group === "rotation" || group === "scale") {
+      const axis = path as "x" | "y" | "z";
+      if (group === "position") obj.position[axis] = v;
+      else if (group === "rotation") obj.rotation[axis] = v * D2R;
+      else obj.scale[axis] = Math.max(0.001, v);
+    } else if (group === "material") {
+      const anyObj = obj as unknown as { material?: unknown };
+      const m = Array.isArray(anyObj.material) ? anyObj.material[0] : anyObj.material;
+      setPath(m, path, v);
+    } else if (group === "light") {
+      let light: THREE.Light | null = null;
+      obj.traverse((o) => {
+        if (!light && (o as THREE.Light).isLight) light = o as THREE.Light;
+      });
+      setPath(light, path, v);
+    }
   }
 }
 
@@ -191,21 +226,17 @@ const playing = ref(false);
 const recording = ref(false);
 let raf = 0;
 let lastTs = 0;
-let captured = new Map<TransformProp, number>();
+let captured = new Map<AnimProp, number>();
 
-function currentValues(node: Node): Map<TransformProp, number> {
-  const t = node.transform;
-  return new Map<TransformProp, number>([
-    ["position.x", t.position.x],
-    ["position.y", t.position.y],
-    ["position.z", t.position.z],
-    ["rotation.x", t.rotation.x],
-    ["rotation.y", t.rotation.y],
-    ["rotation.z", t.rotation.z],
-    ["scale.x", t.scale.x],
-    ["scale.y", t.scale.y],
-    ["scale.z", t.scale.z],
-  ]);
+function currentValues(node: Node): Map<AnimProp, number> {
+  const out = new Map<AnimProp, number>();
+  const d = doc.value;
+  if (!d) return out;
+  for (const c of d.curves) {
+    const def = propDefOf(c.prop);
+    if (def) out.set(c.prop, def.read(node, engine));
+  }
+  return out;
 }
 
 function frame(ts: number): void {
@@ -232,7 +263,9 @@ function captureFromNode(node: Node | null): void {
   if (!d || !node) return;
   for (const [prop, v] of currentValues(node)) {
     if (captured.has(prop) && Math.abs((captured.get(prop) as number) - v) < 1e-4) continue;
-    upsertKey(curveOf(d, prop), time.value, v);
+    const curve = d.curves.find((c) => c.prop === prop);
+    if (!curve) continue;
+    upsertKey(curve, time.value, v);
     captured.set(prop, v);
     touch();
   }
@@ -280,9 +313,9 @@ onBeforeUnmount(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 剪辑属性与关键帧操作
+// 剪辑属性 / 通道（添加属性菜单 + 轨道操作）
 // ---------------------------------------------------------------------------
-function curveOf(d: AnimationClipData, prop: TransformProp): AnimClipCurve {
+function curveOf(d: AnimationClipData, prop: AnimProp): AnimClipCurve {
   let c = d.curves.find((x) => x.prop === prop);
   if (!c) {
     c = { prop, keys: [] };
@@ -306,12 +339,58 @@ function onLoopsChange(e: Event): void {
   touch();
 }
 
-function keyChannel(prop: TransformProp): void {
+/** 添加属性菜单（按目标节点能力分组；已添加的通道禁用） */
+function onAddPropertyMenu(e: MouseEvent): void {
+  const node = targetNode.value;
+  const d = doc.value;
+  if (!node || !d) return;
+  const groups = animPropGroupsFor(node);
+  const items: CtxMenuItem[] = [];
+  for (const g of groups) {
+    items.push({
+      label: g.group,
+      children: g.items.map((def) => ({
+        label: def.label,
+        disabled: d.curves.some((c) => c.prop === def.prop),
+        onClick: () => addProperty(def.prop),
+      })),
+    });
+  }
+  openContextMenu(e, items);
+}
+
+function addProperty(prop: AnimProp): void {
+  const d = doc.value;
+  if (!d) return;
+  const curve = curveOf(d, prop);
+  if (curve.keys.length === 0) {
+    // 新通道：以选中节点当前值在 0s 与当前时间落两帧（无值可读时仅建空曲线）
+    const node = targetNode.value;
+    const def = propDefOf(prop);
+    const v = node && def ? def.read(node, engine) : 0;
+    upsertKey(curve, 0, v);
+    if (time.value > 1e-4) upsertKey(curve, time.value, v);
+  }
+  curveProp.value = prop;
+  touch();
+}
+
+/** 移除通道（连同其关键帧） */
+function removeChannel(prop: AnimProp): void {
+  const d = doc.value;
+  if (!d) return;
+  d.curves = d.curves.filter((c) => c.prop !== prop);
+  if (curveProp.value === prop) curveProp.value = d.curves[0]?.prop ?? "";
+  if (selected.value?.prop === prop) selected.value = null;
+  touch();
+}
+
+function keyChannel(prop: AnimProp): void {
   const d = doc.value;
   const node = targetNode.value;
-  if (!d || !node) return;
-  const v = currentValues(node).get(prop) as number;
-  upsertKey(curveOf(d, prop), time.value, v);
+  const def = propDefOf(prop);
+  if (!d || !node || !def) return;
+  upsertKey(curveOf(d, prop), time.value, def.read(node, engine));
   touch();
 }
 
@@ -319,25 +398,151 @@ function keyAll(): void {
   const d = doc.value;
   const node = targetNode.value;
   if (!d || !node) return;
-  for (const [prop, v] of currentValues(node)) {
-    upsertKey(curveOf(d, prop), time.value, v);
+  for (const c of d.curves) {
+    const def = propDefOf(c.prop);
+    if (def) upsertKey(curveOf(d, c.prop), time.value, def.read(node, engine));
   }
   touch();
 }
 
-function keysOf(prop: TransformProp): { t: number; v: number; i: AnimKeyInterp }[] {
+function fullPathOf(prop: AnimProp): string {
+  return propDefOf(prop)?.path ?? prop;
+}
+
+/** 层级路径展示（Transform › Position › X） */
+function pathLabel(prop: AnimProp): string {
+  return fullPathOf(prop).split("/").join(" › ");
+}
+
+function keysOf(prop: AnimProp): { t: number; v: number; i: AnimKeyInterp }[] {
   void rev.value;
   return doc.value?.curves.find((c) => c.prop === prop)?.keys ?? [];
 }
 
-function keyCount(prop: TransformProp): number {
+function keyCount(prop: AnimProp): number {
   void rev.value;
   return doc.value?.curves.find((c) => c.prop === prop)?.keys.length ?? 0;
 }
 
-const selected = ref<{ prop: TransformProp; t: number } | null>(null);
+/** 已添加通道列表（rev 失效） */
+const tracks = computed<AnimClipCurve[]>(() => {
+  void rev.value;
+  return doc.value?.curves ?? [];
+});
 
-function pickKey(prop: TransformProp, t: number): void {
+// —— 轨道层级树：按属性路径（Transform/Position/X）建组，组可折叠 ——
+interface TrackRow {
+  kind: "group" | "leaf";
+  name: string;
+  depth: number;
+  /** group = 折叠键（全路径）；leaf = 通道键 */
+  key: string;
+  /** leaf = 通道键；group = 空串 */
+  prop: AnimProp;
+  /** group 且已折叠：子孙通道关键帧时刻合并（概要点） */
+  times: number[];
+}
+const collapsedGroups = ref(new Set<string>());
+
+function isGroupCollapsed(pathKey: string): boolean {
+  return collapsedGroups.value.has(pathKey);
+}
+function toggleGroup(pathKey: string): void {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(pathKey)) next.delete(pathKey);
+  else next.add(pathKey);
+  collapsedGroups.value = next;
+}
+
+/** 目录自然序索引（子级排序：X/Y/Z、R/G/B、Position/Rotation/Scale） */
+const ANIM_PATH_RANK = new Map(ANIM_PATHS.map((p, i) => [p, i] as const));
+
+const trackRows = computed<TrackRow[]>(() => {
+  void rev.value;
+  const d = doc.value;
+  const rows: TrackRow[] = [];
+  if (!d) return rows;
+  interface TNode {
+    name: string;
+    /** 叶子 = 目录序（未知键 MAX）；组的取值未用（nodeRank 动态算子孙最小） */
+    rank: number;
+    children: Map<string, TNode>;
+    leafProp?: AnimProp;
+  }
+  const root: TNode = { name: "", rank: -1, children: new Map() };
+  for (const c of d.curves) {
+    const path = propDefOf(c.prop)?.path ?? c.prop;
+    const rank = ANIM_PATH_RANK.get(path) ?? Number.MAX_SAFE_INTEGER;
+    const segs = path.split("/");
+    let cur = root;
+    for (let i = 0; i < segs.length - 1; i++) {
+      let next = cur.children.get(segs[i]);
+      if (!next) {
+        next = { name: segs[i], rank: Number.MAX_SAFE_INTEGER, children: new Map() };
+        cur.children.set(segs[i], next);
+      }
+      cur = next;
+    }
+    const leafName = segs[segs.length - 1];
+    // 目录路径互不相交，叶子与组不会同名冲突；\u0000 前缀仅作 Map 键
+    cur.children.set(leafName + "\u0000" + c.prop, {
+      name: leafName,
+      rank,
+      children: new Map(),
+      leafProp: c.prop,
+    });
+  }
+  const nodeRank = (tn: TNode): number => {
+    if (tn.leafProp) return tn.rank;
+    let r = Number.MAX_SAFE_INTEGER;
+    for (const ch of tn.children.values()) r = Math.min(r, nodeRank(ch));
+    return r;
+  };
+  const sortedKids = (tn: TNode): TNode[] =>
+    [...tn.children.values()].sort(
+      (a, b) => nodeRank(a) - nodeRank(b) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+    );
+  /** 折叠概要：子孙通道关键帧时刻去重合并 */
+  const mergedTimes = (tn: TNode): number[] => {
+    const times: number[] = [];
+    const collect = (n: TNode): void => {
+      if (n.leafProp) {
+        const ks = d.curves.find((c) => c.prop === n.leafProp)?.keys ?? [];
+        for (const k of ks) if (!times.some((t) => Math.abs(t - k.t) <= 1e-4)) times.push(k.t);
+      } else {
+        for (const ch of n.children.values()) collect(ch);
+      }
+    };
+    collect(tn);
+    times.sort((a, b) => a - b);
+    return times;
+  };
+  const walk = (tn: TNode, depth: number, pathKey: string): void => {
+    if (tn.leafProp) {
+      rows.push({ kind: "leaf", name: tn.name, depth, key: tn.leafProp, prop: tn.leafProp, times: [] });
+      return;
+    }
+    const collapsed = collapsedGroups.value.has(pathKey);
+    rows.push({
+      kind: "group",
+      name: tn.name,
+      depth,
+      key: pathKey,
+      prop: "",
+      times: collapsed ? mergedTimes(tn) : [],
+    });
+    if (collapsed) return;
+    for (const child of sortedKids(tn)) {
+      walk(child, depth + 1, pathKey ? pathKey + "/" + child.name : child.name);
+    }
+  };
+  for (const child of sortedKids(root)) walk(child, 1, child.name);
+  return rows;
+});
+
+const selected = ref<{ prop: AnimProp; t: number } | null>(null);
+
+function pickKey(prop: AnimProp, t: number): void {
   selected.value = { prop, t };
 }
 
@@ -377,15 +582,37 @@ const interpLabel = computed<string>(() => {
 });
 
 // ---------------------------------------------------------------------------
+// 视图模式（右侧二选一，下拉切换）：dope = 帧动画轨道；curve = 单通道曲线编辑
+// ---------------------------------------------------------------------------
+const viewMode = ref<"dope" | "curve">("dope");
+
+function onViewModeChange(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value;
+  if (v === "dope" || v === "curve") viewMode.value = v;
+}
+
+const viewHint = computed(() =>
+  viewMode.value === "dope"
+    ? "拖拽关键帧改时间；点击选中后可切插值/删除；点击左侧通道名选中曲线"
+    : "空白处点击 = 插入关键帧；拖拽关键帧改时间/数值；点击左侧通道名切换曲线",
+);
+
+// ---------------------------------------------------------------------------
 // 时间轴几何与指针交互（标尺 scrub + 轨道关键帧拖拽共用换算）
 // ---------------------------------------------------------------------------
 const laneEl = ref<HTMLElement | null>(null);
 const laneWidth = ref(600);
+/** 右侧视图区高度（曲线模式 viewBox 用；dope 模式不消费） */
+const laneHeight = ref(0);
 let laneRo: ResizeObserver | null = null;
+let laneLeftCache = 0;
 
 onMounted(() => {
   laneRo = new ResizeObserver(() => {
-    if (laneEl.value) laneWidth.value = laneEl.value.clientWidth;
+    if (laneEl.value) {
+      laneWidth.value = laneEl.value.clientWidth;
+      laneHeight.value = laneEl.value.clientHeight;
+    }
   });
   if (laneEl.value) laneRo.observe(laneEl.value);
 });
@@ -410,11 +637,9 @@ const rulerTicks = computed<number[]>(() => {
 
 type Drag =
   | { kind: "scrub" }
-  | { kind: "key"; prop: TransformProp; index: number }
+  | { kind: "key"; prop: AnimProp; index: number; startX: number; live: boolean }
   | null;
 let drag: Drag = null;
-let laneLeftCache = 0;
-
 function beginScrub(e: PointerEvent): void {
   const rect = laneEl.value?.getBoundingClientRect();
   if (!rect) return;
@@ -425,12 +650,13 @@ function beginScrub(e: PointerEvent): void {
   previewAt(time.value);
 }
 
-function beginKeyDrag(e: PointerEvent, prop: TransformProp, index: number): void {
+function beginKeyDrag(e: PointerEvent, prop: AnimProp, index: number): void {
   const rect = laneEl.value?.getBoundingClientRect();
   if (!rect) return;
   laneLeftCache = rect.left;
-  drag = { kind: "key", prop, index };
+  // 选中在按下时即生效（不依赖 click：拖拽后数组重排，click 会命中错误的帧）
   pickKey(prop, keysOf(prop)[index]?.t ?? 0);
+  drag = { kind: "key", prop, index, startX: e.clientX - laneLeftCache, live: false };
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
 }
 
@@ -443,19 +669,25 @@ function onRulerPointerMove(e: PointerEvent): void {
 }
 
 function onLanePointerMove(e: PointerEvent): void {
-  if (!drag || drag.kind === "scrub") return;
+  if (!drag || drag.kind !== "key") return;
   const d = doc.value;
   if (!d) return;
-  // 捕获到局部量：drag 为模块级可变量，函数调用后 TS 收窄失效
-  const dragProp: TransformProp = drag.prop;
-  let dragIndex: number = drag.index;
-  const curve = d.curves.find((c) => c.prop === dragProp);
-  const key = curve?.keys[dragIndex];
+  // drag 为模块级可变量：捕获到局部常量保持 TS 收窄，字段仍可写
+  const dragKey = drag;
+  const x = e.clientX - laneLeftCache;
+  // 死区：按下未移动超过 3px 视为点击，不动关键帧
+  if (!dragKey.live) {
+    if (Math.abs(x - dragKey.startX) < 3) return;
+    dragKey.live = true;
+  }
+  const curve = d.curves.find((c) => c.prop === dragKey.prop);
+  const key = curve?.keys[dragKey.index];
   if (!key || !curve) return;
-  key.t = xToT(e.clientX - laneLeftCache, d.duration);
+  key.t = xToT(x, d.duration);
   curve.keys.sort((a, b) => a.t - b.t);
-  dragIndex = curve.keys.indexOf(key);
-  selected.value = { prop: dragProp, t: key.t };
+  // 排序后必须回写索引，否则下一次移动事件会抓到别的关键帧
+  dragKey.index = curve.keys.indexOf(key);
+  selected.value = { prop: dragKey.prop, t: key.t };
   touch();
 }
 
@@ -466,16 +698,19 @@ function onLanePointerUp(): void {
 // ---------------------------------------------------------------------------
 // 曲线视图（选中通道）：SVG 曲线 + 关键帧拖拽 + 空白点击插帧
 // ---------------------------------------------------------------------------
-const curveProp = ref<TransformProp>("position.y");
 const curveSvgEl = ref<SVGSVGElement | null>(null);
+
+const curveProp = ref<AnimProp>("");
 
 const curveGeom = computed(() => {
   void rev.value;
   const d = doc.value;
   const curve = d?.curves.find((c) => c.prop === curveProp.value) ?? null;
   const keys = curve?.keys ?? [];
-  const w = Math.max(320, laneWidth.value);
-  const h = 150;
+  // viewBox 与元素实测尺寸严格一致（width/height:100%）：保证指针像素坐标
+  // 与 viewBox 坐标 1:1，命中判定不偏移；不能加尺寸下限（会破坏等比）
+  const w = Math.max(1, laneWidth.value);
+  const h = Math.max(1, laneHeight.value);
   const pad = 16;
   let lo = 0;
   let hi = 0;
@@ -493,6 +728,14 @@ const curveGeom = computed(() => {
   }
   const xOf = (t: number) => (d ? (t / Math.max(0.1, d.duration)) * (w - pad * 2) + pad : pad);
   const yOf = (v: number) => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+  // xOf 的逆映射（点击/拖拽换算 t；与绘制同套几何，不能用全宽的 xToT）
+  const tOf = (x: number) =>
+    d
+      ? Math.max(
+          0,
+          Math.min(d.duration, ((x - pad) / Math.max(1, w - pad * 2)) * d.duration),
+        )
+      : 0;
   const polyline: string[] = [];
   if (keys.length && d) {
     const N = 120;
@@ -502,10 +745,10 @@ const curveGeom = computed(() => {
       if (v !== null) polyline.push(`${xOf(t).toFixed(1)},${yOf(v).toFixed(1)}`);
     }
   }
-  return { w, h, pad, lo, hi, xOf, yOf, keys, polyline: polyline.join(" ") };
+  return { w, h, pad, lo, hi, xOf, yOf, tOf, keys, polyline: polyline.join(" ") };
 });
 
-type CurveDrag = { index: number } | null;
+type CurveDrag = { index: number; startX: number; startY: number; live: boolean } | null;
 let curveDrag: CurveDrag = null;
 
 function onCurveDown(e: PointerEvent): void {
@@ -515,18 +758,27 @@ function onCurveDown(e: PointerEvent): void {
   const r = svg.getBoundingClientRect();
   const g = curveGeom.value;
   const localX = e.clientX - r.left;
-  const hit = g.keys.find((k) => Math.abs(g.xOf(k.t) - localX) < 6);
+  const localY = e.clientY - r.top;
+  // 命中 = 到关键帧中心的二维距离（不只 x；否则相邻 t 不同 v 的点选不中）
+  const hit = g.keys.find(
+    (k) => Math.hypot(g.xOf(k.t) - localX, g.yOf(k.v) - localY) < 9,
+  );
   if (hit) {
     pickKey(curveProp.value, hit.t);
-    curveDrag = { index: g.keys.indexOf(hit) };
+    // live=false：先按点击处理，移出死区才转拖拽（防止点选时的抖动改值）
+    curveDrag = { index: g.keys.indexOf(hit), startX: localX, startY: localY, live: false };
   } else {
-    const t = xToT(localX, d.duration);
-    const svgY = e.clientY - r.top;
-    const v = g.lo + ((g.h - g.pad - svgY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
+    const t = g.tOf(localX);
+    const v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
     const curve = curveOf(d, curveProp.value);
     upsertKey(curve, t, v);
     pickKey(curveProp.value, t);
-    curveDrag = { index: curve.keys.findIndex((k) => Math.abs(k.t - t) <= 1e-4) };
+    curveDrag = {
+      index: curve.keys.findIndex((k) => Math.abs(k.t - t) <= 1e-4),
+      startX: localX,
+      startY: localY,
+      live: true,
+    };
     touch();
   }
   svg.setPointerCapture?.(e.pointerId);
@@ -534,17 +786,23 @@ function onCurveDown(e: PointerEvent): void {
 
 function onCurveMove(e: PointerEvent): void {
   const d = doc.value;
-  if (curveDrag === null || !d || !curveSvgEl.value) return;
-  const curve = d.curves.find((c) => c.prop === curveProp.value);
-  const key = curve?.keys[curveDrag.index];
-  if (!curve || !key) return;
+  const dragNow = curveDrag;
+  if (!dragNow || !d || !curveSvgEl.value) return;
   const r = curveSvgEl.value.getBoundingClientRect();
   const g = curveGeom.value;
-  key.t = xToT(e.clientX - r.left, d.duration);
-  const svgY = e.clientY - r.top;
-  key.v = g.lo + ((g.h - g.pad - svgY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
+  const localX = e.clientX - r.left;
+  const localY = e.clientY - r.top;
+  if (!dragNow.live) {
+    if (Math.hypot(localX - dragNow.startX, localY - dragNow.startY) < 3) return;
+    dragNow.live = true;
+  }
+  const curve = d.curves.find((c) => c.prop === curveProp.value);
+  const key = curve?.keys[dragNow.index];
+  if (!curve || !key) return;
+  key.t = g.tOf(localX);
+  key.v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
   curve.keys.sort((a, b) => a.t - b.t);
-  curveDrag.index = curve.keys.indexOf(key);
+  dragNow.index = curve.keys.indexOf(key);
   selected.value = { prop: curveProp.value, t: key.t };
   touch();
 }
@@ -578,16 +836,25 @@ function onCurveUp(): void {
         </label>
 
         <span class="anim-sep"></span>
-        <button class="anim-btn rec" :class="{ on: recording }" :title="recording ? '停止录制' : '录制：开启后修改节点变换自动 K 帧'" @click="toggleRecording">●</button>
+        <button class="anim-btn rec" :class="{ on: recording }" :title="recording ? '停止录制' : '录制：开启后修改节点变换自动 K 帧（已添加通道）'" @click="toggleRecording">●</button>
         <button class="anim-btn" :title="playing ? '暂停预览' : '播放预览（应用到选中节点）'" @click="togglePlaying">{{ playing ? "⏸" : "▶" }}</button>
         <button class="anim-btn" title="停止并还原节点姿势" @click="stopPreview">⏹</button>
         <span class="anim-time mono">{{ time.toFixed(2) }}s / {{ doc.duration.toFixed(2) }}s</span>
         <span class="anim-sep"></span>
-        <button class="anim-btn" title="全通道 K 帧（当前时间、选中节点当前值）" @click="keyAll">K 全部</button>
+        <button class="anim-btn" title="为所有已添加通道 K 帧（当前时间、选中节点当前值）" @click="keyAll">K 全部</button>
         <span class="anim-target" :title="targetNode?.name">
           目标：{{ targetNode ? targetNode.name : "（未选中节点）" }}
         </span>
         <span class="anim-dirty" :class="{ dirty }">{{ saving ? "保存中…" : dirty ? "未保存" : "已保存" }}</span>
+        <select
+          class="anim-view-pick"
+          :value="viewMode"
+          title="视图模式：帧动画关键帧轨道 / 单通道曲线编辑（二选一显示）"
+          @change="onViewModeChange($event)"
+        >
+          <option value="dope">帧动画</option>
+          <option value="curve">曲线编辑</option>
+        </select>
       </template>
     </div>
 
@@ -598,98 +865,157 @@ function onCurveUp(): void {
 
     <template v-else>
       <div class="anim-body">
-        <!-- 左列：通道名 + K 按钮 -->
+        <!-- 左列：添加属性 + 层级轨道树（组可折叠，叶子 = 通道） -->
         <div class="anim-names">
-          <div class="anim-row-head">通道</div>
-          <div
-            v-for="ch in PROP_CHANNELS"
-            :key="ch.prop"
-            class="anim-row-head name-row"
-            :class="{ on: curveProp === ch.prop }"
-            :title="`切换曲线视图到「${ch.label}」（当前 ${keyCount(ch.prop)} 个关键帧）`"
-            @click="curveProp = ch.prop"
-          >
-            <span class="ch-label">{{ ch.label }}</span>
-            <button
-              class="k-btn"
-              :title="`在当前时间 K「${ch.label}」（取选中节点当前值）`"
-              @click.stop="keyChannel(ch.prop)"
-            >K</button>
-          </div>
+          <div class="anim-row-head head-label">通道</div>
+          <template v-for="row in trackRows" :key="row.kind + row.key">
+            <!-- 组行：点击折叠/展开 -->
+            <div
+              v-if="row.kind === 'group'"
+              class="anim-row-head group-row"
+              :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
+              @click="toggleGroup(row.key)"
+            >
+              <span class="h-caret-mini">{{ isGroupCollapsed(row.key) ? "▸" : "▾" }}</span>
+              <span class="ch-label">{{ row.name }}</span>
+            </div>
+            <!-- 叶子行：通道（K / 移除 / 点选曲线视图） -->
+            <div
+              v-else
+              class="anim-row-head name-row"
+              :class="{ on: curveProp === row.prop }"
+              :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
+              :title="fullPathOf(row.prop) + ' · ' + keyCount(row.prop) + ' 关键帧'"
+              @click="curveProp = row.prop"
+            >
+              <span class="ch-label">{{ row.name }}</span>
+              <button
+                class="k-btn"
+                title="在当前时间 K（取选中节点当前值）"
+                @click.stop="keyChannel(row.prop)"
+              >K</button>
+              <button
+                class="k-btn del"
+                title="移除该通道（连同其全部关键帧）"
+                @click.stop="removeChannel(row.prop)"
+              >✕</button>
+            </div>
+          </template>
+          <button class="add-prop-btn" title="为剪辑添加可动画属性（按选中节点能力提供）" @click.stop="onAddPropertyMenu($event)">＋ 添加属性</button>
         </div>
 
-        <!-- 右侧：标尺 + 关键帧轨道 -->
+        <!-- 右侧视图区：帧动画轨道 / 曲线编辑（下拉切换，二选一显示） -->
         <div class="anim-lanes" ref="laneEl">
-          <div
-            class="lane ruler"
-            @pointerdown="beginScrub($event)"
-            @pointermove="onRulerPointerMove($event)"
-            @pointerup="onLanePointerUp()"
-          >
-            <span
-              v-for="tk in rulerTicks"
-              :key="tk"
-              class="tick mono"
-              :style="{ left: tToX(tk, doc.duration) + 'px' }"
-            >{{ tk.toFixed(1) }}</span>
-            <span class="playhead" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
-          </div>
-          <div
-            v-for="ch in PROP_CHANNELS"
-            :key="ch.prop"
-            class="lane key-lane"
-            :class="{ on: curveProp === ch.prop }"
-            @pointermove="onLanePointerMove($event)"
-            @pointerup="onLanePointerUp()"
-          >
-            <button
-              v-for="(k, i) in keysOf(ch.prop)"
-              :key="i"
-              class="key-dot"
-              :class="{ sel: selected?.prop === ch.prop && Math.abs(selected.t - k.t) <= 1e-4 }"
-              :style="{ left: tToX(k.t, doc.duration) + 'px' }"
-              :title="`${k.t.toFixed(2)}s = ${k.v.toFixed(2)}（${k.i === 'linear' ? '线性' : k.i === 'step' ? '阶跃' : '平滑'}）；拖拽改时间`"
-              @pointerdown.stop="beginKeyDrag($event, ch.prop, i)"
-              @click.stop="pickKey(ch.prop, k.t)"
-            ></button>
-            <span class="playhead thin" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
-          </div>
+          <template v-if="viewMode === 'dope'">
+            <div
+              class="lane ruler"
+              @pointerdown="beginScrub($event)"
+              @pointermove="onRulerPointerMove($event)"
+              @pointerup="onLanePointerUp()"
+              @pointercancel="onLanePointerUp()"
+            >
+              <span
+                v-for="tk in rulerTicks"
+                :key="tk"
+                class="tick mono"
+                :style="{ left: tToX(tk, doc.duration) + 'px' }"
+              >{{ tk.toFixed(1) }}</span>
+              <span class="playhead" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
+            </div>
+            <template v-for="row in trackRows" :key="row.kind + row.key">
+              <!-- 组行轨道：展开 = 占位；折叠 = 子孙关键帧合并概要 -->
+              <div v-if="row.kind === 'group'" class="lane group-spacer" :title="isGroupCollapsed(row.key) ? `${row.times.length} 个关键帧（子通道合并）` : undefined">
+                <template v-if="isGroupCollapsed(row.key)">
+                  <span
+                    v-for="t in row.times"
+                    :key="t"
+                    class="key-dot dim"
+                    :style="{ left: tToX(t, doc.duration) + 'px' }"
+                  ></span>
+                  <span class="playhead thin" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
+                </template>
+              </div>
+              <!-- 叶子行：通道关键帧（按下即选中，拖拽改时间） -->
+              <div
+                v-else
+                class="lane key-lane"
+                :class="{ on: curveProp === row.prop }"
+                @pointermove="onLanePointerMove($event)"
+                @pointerup="onLanePointerUp()"
+                @pointercancel="onLanePointerUp()"
+              >
+                <button
+                  v-for="(k, i) in keysOf(row.prop)"
+                  :key="i"
+                  class="key-dot"
+                  :class="{ sel: selected?.prop === row.prop && Math.abs(selected.t - k.t) <= 1e-4 }"
+                  :style="{ left: tToX(k.t, doc.duration) + 'px' }"
+                  :title="`${k.t.toFixed(2)}s = ${k.v.toFixed(2)}（${k.i === 'linear' ? '线性' : k.i === 'step' ? '阶跃' : '平滑'}）；拖拽改时间`"
+                  @pointerdown.stop="beginKeyDrag($event, row.prop, i)"
+                ></button>
+                <span class="playhead thin" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
+              </div>
+            </template>
+            <div v-if="tracks.length === 0" class="hint lane-empty">
+              尚未添加属性：点击左下「＋ 添加属性」（变换 / 灯光 / 材质按节点能力提供）
+            </div>
+          </template>
+          <template v-else>
+            <div v-if="tracks.length === 0" class="hint lane-empty">
+              尚未添加属性：点击左下「＋ 添加属性」（变换 / 灯光 / 材质按节点能力提供）
+            </div>
+            <div v-else-if="!curveProp" class="hint lane-empty">点击左侧通道名显示其曲线</div>
+            <template v-else>
+              <div class="curve-title mono">{{ pathLabel(curveProp) }}</div>
+              <svg
+                ref="curveSvgEl"
+                class="anim-curve"
+                :viewBox="`0 0 ${curveGeom.w} ${curveGeom.h}`"
+                @pointerdown="onCurveDown"
+                @pointermove="onCurveMove"
+                @pointerup="onCurveUp"
+                @pointercancel="onCurveUp"
+              >
+                <line
+                  v-for="tk in rulerTicks"
+                  :key="tk"
+                  class="c-grid"
+                  :x1="curveGeom.xOf(tk)"
+                  :y1="curveGeom.pad"
+                  :x2="curveGeom.xOf(tk)"
+                  :y2="curveGeom.h - curveGeom.pad"
+                />
+                <line class="c-playhead" :x1="curveGeom.xOf(time)" :y1="0" :x2="curveGeom.xOf(time)" :y2="curveGeom.h" />
+                <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.h - curveGeom.pad" :x2="curveGeom.w - curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
+                <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.pad" :x2="curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
+                <polyline class="c-line" :points="curveGeom.polyline" />
+                <rect
+                  v-for="(k, i) in curveGeom.keys"
+                  :key="i"
+                  class="c-key"
+                  :class="{ sel: selected?.prop === curveProp && Math.abs(selected.t - k.t) <= 1e-4 }"
+                  :x="curveGeom.xOf(k.t) - 4"
+                  :y="curveGeom.yOf(k.v) - 4"
+                  width="8"
+                  height="8"
+                />
+              </svg>
+            </template>
+          </template>
         </div>
       </div>
 
-      <!-- 关键帧操作 + 选中通道曲线视图 -->
+      <!-- 关键帧操作条（两种视图共用：选中信息 + 插值/删除） -->
       <div class="anim-bottom">
         <div class="anim-keyops">
           <span class="sel-info">
-            {{ selected ? `${selected.prop} @ ${selected.t.toFixed(2)}s` : "未选中关键帧" }}
+            {{ selected ? `${pathLabel(selected.prop)} @ ${selected.t.toFixed(2)}s` : "未选中关键帧" }}
             {{ interpLabel ? `（${interpLabel}）` : "" }}
           </span>
           <button class="anim-btn" :disabled="!selected" title="切换插值：线性 → 阶跃 → 平滑" @click="cycleInterp">插值</button>
           <button class="anim-btn danger" :disabled="!selected" title="删除选中的关键帧" @click="deleteSelected">删除 K</button>
-          <span class="anim-hint">曲线视图空白处点击 = 插入关键帧；拖拽关键帧改时间/数值；选中通道见左列高亮</span>
+          <span class="anim-hint">{{ viewHint }}</span>
         </div>
-        <svg
-          ref="curveSvgEl"
-          class="anim-curve"
-          :viewBox="`0 0 ${curveGeom.w} ${curveGeom.h}`"
-          @pointerdown="onCurveDown"
-          @pointermove="onCurveMove"
-          @pointerup="onCurveUp"
-        >
-          <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.h - curveGeom.pad" :x2="curveGeom.w - curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
-          <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.pad" :x2="curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
-          <polyline class="c-line" :points="curveGeom.polyline" />
-          <rect
-            v-for="(k, i) in curveGeom.keys"
-            :key="i"
-            class="c-key"
-            :class="{ sel: selected?.prop === curveProp && Math.abs(selected.t - k.t) <= 1e-4 }"
-            :x="curveGeom.xOf(k.t) - 4"
-            :y="curveGeom.yOf(k.v) - 4"
-            width="8"
-            height="8"
-          />
-        </svg>
       </div>
     </template>
   </div>

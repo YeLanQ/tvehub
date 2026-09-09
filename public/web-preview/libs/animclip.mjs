@@ -1,19 +1,18 @@
 // ---------------------------------------------------------------------------
-// 关键帧动画剪辑播放（.anim 资产 → 节点变换）：
-// - 与编辑器 AnimationClipData 同一套数据语义（通道 = 本地变换 9 分量、
+// 关键帧动画剪辑播放（.anim 资产 → 节点属性）：
+// - 与编辑器 AnimationClipData 同一套数据语义（通道键 = 组.路径 字符串、
 //   关键帧插值 linear/step/smooth、时长/循环/速度）；
+// - 通道应用规则（与编辑器 anim-props.ts 目录镜像）：
+//     position.* / rotation.*（度）/ scale.*  → 节点对象变换；
+//     material.*                              → 对象材质（颜色分量为 0~1）；
+//     light.*                                 → 对象子树内首个灯光；
 // - entries 由 nodes.mjs 收集（节点 components 中 type=animationClip 且启用）；
 // - 剪辑 JSON 按 rel fetch（导出产物内含 .anim 文本，assets shim 命中），
 //   加载完成前该绑定静默跳过；
-// - 每帧采样：仅覆盖剪辑中存在的通道，其余变换分量保持不变。
+// - 每帧采样：仅覆盖剪辑中存在的通道，其余属性保持不变。
 // ---------------------------------------------------------------------------
 
 const D2R = Math.PI / 180;
-const PROPS = [
-  "position.x", "position.y", "position.z",
-  "rotation.x", "rotation.y", "rotation.z",
-  "scale.x", "scale.y", "scale.z",
-];
 const INTERPS = ["linear", "step", "smooth"];
 
 function num(v, fb) {
@@ -30,7 +29,7 @@ function parseClip(v) {
   for (const c of Array.isArray(o.curves) ? o.curves : []) {
     if (!c || typeof c !== "object") continue;
     const prop = c.prop;
-    if (typeof prop !== "string" || seen.has(prop) || !PROPS.includes(prop)) continue;
+    if (typeof prop !== "string" || !prop || seen.has(prop)) continue;
     seen.add(prop);
     const keys = (Array.isArray(c.keys) ? c.keys : [])
       .map((k) => ({
@@ -110,14 +109,38 @@ function sampleClip(clip, time, out) {
   return out;
 }
 
+/** 按点路径写属性值（"color.r" → target.color.r） */
+function setPath(target, path, v) {
+  const segs = path.split(".");
+  let cur = target;
+  for (let i = 0; i < segs.length - 1; i++) {
+    cur = cur ? cur[segs[i]] : undefined;
+    if (cur == null) return;
+  }
+  if (cur != null) cur[segs[segs.length - 1]] = v;
+}
+
+/** 按通道分组应用到节点对象（变换/材质/灯光） */
 function applyValues(obj, values) {
   for (const [prop, v] of values) {
-    const dot = prop.indexOf(".");
-    const group = prop.slice(0, dot);
-    const axis = prop.slice(dot + 1);
-    if (group === "position") obj.position[axis] = v;
-    else if (group === "rotation") obj.rotation[axis] = v * D2R;
-    else if (group === "scale") obj.scale[axis] = Math.max(0.001, v);
+    const i = prop.indexOf(".");
+    if (i < 0) continue;
+    const group = prop.slice(0, i);
+    const path = prop.slice(i + 1);
+    if (group === "position" || group === "rotation" || group === "scale") {
+      if (group === "position") obj.position[path] = v;
+      else if (group === "rotation") obj.rotation[path] = v * D2R;
+      else obj.scale[path] = Math.max(0.001, v);
+    } else if (group === "material") {
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+      setPath(m, path, v);
+    } else if (group === "light") {
+      let light = null;
+      obj.traverse((o) => {
+        if (!light && o.isLight) light = o;
+      });
+      setPath(light, path, v);
+    }
   }
 }
 
@@ -160,7 +183,7 @@ export async function createClipAnimations(entries) {
       if (typeof entry.clip !== "string" || !entry.clip) return;
       try {
         const clip = await loadClip(entry.clip);
-        bindings.push(createBinding({ ...entry, clip }));
+        bindings.push(createBinding({ ...entry, clip: clip }));
       } catch (e) {
         console.error("[anim] 剪辑加载失败 " + entry.clip + ": " + (e && e.message ? e.message : e));
       }

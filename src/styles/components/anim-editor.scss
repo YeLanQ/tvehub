@@ -116,6 +116,17 @@
   color: var(--text-dim);
 }
 
+/* 视图模式下拉（帧动画 / 曲线编辑，工具条右端） */
+.anim-view-pick {
+  height: 22px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
 .anim-dirty {
   margin-left: auto;
   font-size: 10px;
@@ -141,7 +152,7 @@
 }
 
 .anim-names {
-  width: 128px;
+  width: 168px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -173,6 +184,8 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    font-size: 10px;
+    letter-spacing: 0.02em;
   }
 
   .k-btn {
@@ -192,6 +205,52 @@
       border-color: var(--accent);
     }
   }
+}
+
+/* 添加属性按钮 + 通道行操作 */
+.add-prop-btn {
+  margin: 4px 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+/* 组行（折叠头）与迷你箭头 */
+.group-row {
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.h-caret-mini {
+  width: 10px;
+  flex-shrink: 0;
+  font-size: 8px;
+  color: var(--text-dim);
+}
+
+.lane.group-spacer {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.anim-row-head .k-btn.del:hover {
+  color: var(--err, #e06c5a);
+  border-color: var(--err, #e06c5a);
+}
+
+.lane-empty {
+  padding: 10px 8px;
 }
 
 .anim-lanes {
@@ -256,9 +315,30 @@
     background: #fff;
     border-color: var(--accent);
   }
+
+  /* 折叠组行的关键帧合并概要（弱化、不可交互） */
+  &.dim {
+    width: 7px;
+    height: 7px;
+    margin: -4px 0 0 -4px;
+    background: var(--text-dim);
+    border-color: transparent;
+    cursor: default;
+    pointer-events: none;
+  }
 }
 
-/* ---------- 底部：关键帧操作 + 曲线视图 ---------- */
+/* ---------- 曲线编辑视图（右侧视图区二选一） + 底部关键帧操作条 ---------- */
+.curve-title {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  z-index: 1;
+  font-size: 10px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
 .anim-bottom {
   flex-shrink: 0;
   border-top: 1px solid var(--border);
@@ -284,10 +364,22 @@
 .anim-curve {
   display: block;
   width: 100%;
-  height: 150px;
+  height: 100%;
   background: var(--bg-panel-2);
   cursor: crosshair;
   touch-action: none;
+
+  .c-grid {
+    stroke: var(--border);
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+
+  .c-playhead {
+    stroke: var(--accent, #4a9eff);
+    stroke-width: 1;
+    opacity: 0.7;
+  }
 
   .c-axis {
     stroke: var(--border);
