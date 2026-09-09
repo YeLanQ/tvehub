@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import type * as MonacoApi from "monaco-editor/esm/vs/editor/editor.api";
-// 引擎 SDK 类型契约（与 public/web-preview/libs/tve.mjs 镜像同步）
+// 引擎 SDK 类型契约（与 public/engine/core/tve.mjs 镜像同步）
 import tveDts from "../../../framework/scripting/tve.d.ts?raw";
 
 export type MonacoNamespace = typeof MonacoApi;

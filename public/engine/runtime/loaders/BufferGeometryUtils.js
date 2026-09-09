@@ -11,7 +11,7 @@ import {
 	TriangleStripDrawMode,
 	TrianglesDrawMode,
 	Vector3,
-} from '../three.module.min.js';
+} from '../../core/three.module.min.js';
 
 /**
  * @module BufferGeometryUtils

@@ -14,8 +14,8 @@
 //   排空并分发为组件的 onCollisionEnter/onCollisionExit。
 // ---------------------------------------------------------------------------
 
-import * as THREE from "./three.module.min.js";
-import { postLog } from "./log.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { postLog } from "../core/log.mjs";
 
 /** 固定模拟步长（秒）与每帧最大子步数（与编辑器一致） */
 const FIXED_DT = 1 / 60;

@@ -470,7 +470,7 @@ watch(projectScenes, (next, prev) => {
                 <p class="bp-note">
                   填写直接包含 three 构建文件的目录：官方 CDN 版本目录（如
                   <code>https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1/</code
-                  >，需与运行时同版本）或自建 CDN 上传产物 <code>libs/</code>
+                  >，需与运行时同版本）或自建 CDN 上传产物 <code>engine/core/</code>
                   内两个文件后的目录。非空时 three.js
                   在线加载、不再内嵌（需允许跨域）；<strong>留空则仍内嵌 three.js</strong>。
                 </p>

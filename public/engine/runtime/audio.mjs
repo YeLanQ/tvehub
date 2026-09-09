@@ -3,7 +3,7 @@
 // 2D 用 THREE.Audio 全局播放；3D 用 THREE.PositionalAudio 挂节点对象下，
 // 随监听器（渲染相机）距离/方位衰减。预览只回放，不含编辑器侧的
 // 运行时手动控制（播放/暂停由 engine.audio 提供给脚本）。
-import * as THREE from "./three.module.min.js";
+import * as THREE from "../core/three.module.min.js";
 
 const DEFAULTS = {
   autoplay: true,

@@ -1,7 +1,7 @@
 // 程序化/三段式天空盒：与编辑器 framework/engine/modules/skyboxTextures.ts 按同
 // 一算法复刻，保证网页预览与编辑器视口表现一致。
-import * as THREE from "./three.module.min.js";
-import { num, matColor } from "./utils.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { num, matColor } from "../core/utils.mjs";
 
 /** 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致） */
 export const SKY_DEFAULTS = { top: 0x2f6fbb, horizon: 0xcfe4f7, ground: 0x8fa2b5 };

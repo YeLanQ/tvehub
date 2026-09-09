@@ -13,7 +13,7 @@ import { api } from "../../lib/api";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import { fetchWebPreviewRuntimeTexts } from "../lib/web-preview-runtime";
-import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
+import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
 import { registerCommand } from "./registry";
 
 /** 当前项目根；未打开项目时抛错（各域命令共用） */
@@ -38,6 +38,7 @@ async function buildPreviewFiles(): Promise<Record<string, string>> {
     /* 脚本保存失败按磁盘内容导出 */
   }
   try {
+    await ensureEntryScript(root);
     const scripts = await loadProjectScripts(root);
     if (scripts.length) {
       const { files: jsFiles, errors } = await compileProjectScripts(scripts);

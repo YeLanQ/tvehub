@@ -22,7 +22,7 @@ import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
  * 引擎的全屏天空背景面（EditorEngine.updateOrthoSkyQuad）承担，按光线方向采样
  * 等距柱状纹理，故不再生成 CubeTexture。
  *
- * 网页预览运行时（public/web-preview/libs/sky.mjs）按同一算法复刻，保证表现一致。
+ * 网页预览运行时（public/engine/runtime/sky.mjs）按同一算法复刻，保证表现一致。
  */
 
 /** 天空颜色三元组（RGB hex number） */

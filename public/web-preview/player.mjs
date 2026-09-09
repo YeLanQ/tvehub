@@ -1,10 +1,11 @@
 // 网页预览运行时（独立于编辑器）：加载由编辑器导出的 scene.json / config.json，
 // 用 three 把场景内容原样回放（网格/灯光/相机），作为“网页预览视图”。
 // 与编辑器预览渲染的差异：无网格/辅助线/gizmo，运行在独立 iframe 页面里。
-// 实现按职责拆分在同目录 libs/ 下（three 运行时 + 各功能模块），此处只做装配。
-import * as THREE from "./libs/three.module.min.js";
-import { fail, postLog, setLogForwarding } from "./libs/log.mjs";
-import { matColor, mixHexColor } from "./libs/utils.mjs";
+// 实现拆分在 ../engine/core（three 运行时 + 基础设施 + 脚本系统）与
+// ../engine/runtime（场景回放系统），此处只做装配。
+import * as THREE from "../engine/core/three.module.min.js";
+import { fail, postLog, setLogForwarding } from "../engine/core/log.mjs";
+import { matColor, mixHexColor } from "../engine/core/utils.mjs";
 import {
   SKY_DEFAULTS,
   findSkyNode,
@@ -13,19 +14,19 @@ import {
   makeNishitaSkyEquirect,
   makeSkyBandTexture,
   makeSkyEquirectTexture,
-} from "./libs/sky.mjs";
-import { loadMaterialParams } from "./libs/material.mjs";
-import { loadModels } from "./libs/model.mjs";
-import { createAnimations } from "./libs/animation.mjs";
-import { createAudios } from "./libs/audio.mjs";
-import { createPhysics } from "./libs/physics.mjs";
-import { buildSceneTree } from "./libs/nodes.mjs";
-import { createClipAnimations } from "./libs/animclip.mjs";
-import { createScripts } from "./libs/scripts.mjs";
-import { applyMeshTextures } from "./libs/textures.mjs";
-import { createRenderCamera } from "./libs/camera.mjs";
-import { createStage } from "./libs/stage.mjs";
-import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "./libs/pak.mjs";
+} from "../engine/runtime/sky.mjs";
+import { loadMaterialParams } from "../engine/runtime/material.mjs";
+import { loadModels } from "../engine/runtime/model.mjs";
+import { createAnimations } from "../engine/runtime/animation.mjs";
+import { createAudios } from "../engine/runtime/audio.mjs";
+import { createPhysics } from "../engine/runtime/physics.mjs";
+import { buildSceneTree } from "../engine/runtime/nodes.mjs";
+import { createClipAnimations } from "../engine/runtime/animclip.mjs";
+import { createScripts } from "../engine/core/scripts.mjs";
+import { applyMeshTextures } from "../engine/runtime/textures.mjs";
+import { createRenderCamera } from "../engine/runtime/camera.mjs";
+import { createStage } from "../engine/runtime/stage.mjs";
+import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
 
 const app = document.getElementById("app");
 

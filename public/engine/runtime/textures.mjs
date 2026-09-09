@@ -1,6 +1,6 @@
 // 网格贴图回填：导出产物内的贴图文件按 .mat 通道相对路径异步加载
 // （fetch + ImageBitmap → Texture，带缓存），就地表到材质通道上。
-import * as THREE from "./three.module.min.js";
+import * as THREE from "../core/three.module.min.js";
 
 // 贴图通道 → 是否 sRGB（颜色贴图 sRGB，数据贴图线性）
 const TEXTURE_CHANNELS = [

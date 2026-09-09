@@ -2,8 +2,8 @@
 // 相机类型：正交（orthoSize 半高取景，无近大远小）/ 透视（fov 取景，缺省）。
 // 清除标志：skybox（缺省，全局天空/底色）/ solidColor（纯色 clearColor）/
 // depthOnly（只清深度，保留上一帧颜色）/ colorOnly（只清颜色，保留上一帧深度）。
-import * as THREE from "./three.module.min.js";
-import { num } from "./utils.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { num } from "../core/utils.mjs";
 
 /** 任意来源 → 清除标志（未知值回退 skybox，与编辑器框架规则一致） */
 function parseClearFlags(v) {

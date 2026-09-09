@@ -1,5 +1,5 @@
 // 脚本组件描述符：编辑器只持有数据（检查器增删改、随节点序列化）；
-// 实例化与生命周期由播放器脚本宿主（web-preview/libs/scripts.mjs）执行。
+// 实例化与生命周期由播放器脚本宿主（engine/core/scripts.mjs）执行。
 // 写出约定：executionOrder = 0 为缺省值，序列化时删除该键（旧场景字节兼容）。
 
 import { nextId } from "../../../platform_abstraction/id";

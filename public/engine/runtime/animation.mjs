@@ -2,7 +2,7 @@
 // （单剪辑 MeshNode.anim 直控 / 动画图 MeshNode.animGraph 状态机：
 // exitTime + 参数条件 → 交叉淡化过渡）。预览只回放，不含编辑器侧的
 // 骨骼辅助线、运行时手动控制（播放/暂停/参数注入）。
-import * as THREE from "./three.module.min.js";
+import * as THREE from "../core/three.module.min.js";
 
 const LOOP_MODES = ["loop", "once", "pingpong"];
 

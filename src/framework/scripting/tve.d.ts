@@ -3,7 +3,7 @@
 //
 // 用户脚本以 `import { Component, property, nodeType, engine } from "tve"`
 // 访问引擎能力。本文件是脚本类型的唯一事实源：编辑器（Monaco 智能提示 /
-// 诊断）直接加载本文件，运行时实现在 public/web-preview/libs/tve.mjs
+// 诊断）直接加载本文件，运行时实现在 public/engine/core/tve.mjs
 // （播放器侧；两者保持镜像同步）。
 //
 // 设计约束：全部为引擎自有类型（Vec3 普通对象、度制欧拉角，与编辑器数据模型
@@ -155,7 +155,7 @@ export type ComponentProps = Record<string, unknown>;
 
 /**
  * 组件生命周期回调契约（Component 基类的钩子接口；全部可选，按需实现）。
- * 调度方为播放器脚本宿主（web-preview/libs/scripts.mjs）：
+ * 调度方为播放器脚本宿主（engine/core/scripts.mjs）：
  * 全部实例化后先统一 onEnable 再统一 onStart（对齐 Unity 批次顺序）；
  * 每帧先分派物理碰撞回调再调 onUpdate；停机时逐实例 onDisable → onDestroy。
  */

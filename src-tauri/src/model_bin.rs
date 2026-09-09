@@ -4,7 +4,7 @@
 //! - `.obj` → kind=0 顶点网格二进制（v/vt/vn/f → 小端数组，player 侧重建 BufferGeometry）；
 //! - `.gltf`（JSON + 外部 .bin/贴图）→ 先内联 buffers/images 为自包含 GLB，再 kind=1 包装
 //!   （LQEN 未处理 .gltf——其外部兄弟文件在 uid 重命名后会断链，此处一并解决）；
-//! - 产物统一重命名为 `<uid>.bin`，player 按扩展名解包（见 libs/model.mjs parseBinModel）。
+//! - 产物统一重命名为 `<uid>.bin`，player 按扩展名解包（见 engine/runtime/model.mjs parseBinModel）。
 //! 转换失败回退原格式（保持 uid 重命名，不影响构建）。
 
 use std::collections::HashMap;

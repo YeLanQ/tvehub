@@ -66,7 +66,7 @@ import {
 	VectorKeyframeTrack,
 	SRGBColorSpace,
 	InstancedBufferAttribute
-} from '../three.module.min.js';
+} from '../../core/three.module.min.js';
 import { toTrianglesDrawMode } from './BufferGeometryUtils.js';
 import { clone } from './SkeletonUtils.js';
 

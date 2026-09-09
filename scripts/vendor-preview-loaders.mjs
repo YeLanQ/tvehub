@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // 把 three 的模型加载器（GLTF/FBX/OBJ）及其依赖 vendor 进网页预览运行时
-// public/web-preview/libs/loaders/（离线可用；与手动 vendor 的
+// public/engine/runtime/loaders/（离线可用；与手动 vendor 的
 // three.module.min.js / three.core.min.js 同一套来源）。
 //
 // 用法：node scripts/vendor-preview-loaders.mjs
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const threeDir = join(root, "node_modules", "three");
-const outDir = join(root, "public", "web-preview", "libs", "loaders");
+const outDir = join(root, "public", "engine", "runtime", "loaders");
 
 const threeVersion = JSON.parse(readFileSync(join(threeDir, "package.json"), "utf8")).version;
 
@@ -39,7 +39,7 @@ for (const { src, rewrites } of FILES) {
   const from = join(threeDir, "examples", "jsm", src);
   let text = readFileSync(from, "utf8");
   // three 裸导入（含多行 import 块结尾的 "} from 'three';"）→ 本地 three 运行时
-  text = text.replace(/from\s+'three';/g, "from '../three.module.min.js';");
+  text = text.replace(/from\s+'three';/g, "from '../../core/three.module.min.js';");
   for (const [fromRel, toRel] of Object.entries(rewrites)) {
     text = text.split(`from '${fromRel}'`).join(`from '${toRel}'`);
   }
@@ -47,7 +47,7 @@ for (const { src, rewrites } of FILES) {
   // "three/…" 只出现在 JSDoc 的 @three_import 文档行里，不是真实 import，放行。
   const unknown = [...text.matchAll(/from\s+'([^']+)';/g)]
     .map((m) => m[1])
-    .filter((s) => s !== "../three.module.min.js" && !s.startsWith("./") && !s.startsWith("three/"));
+    .filter((s) => s !== "../../core/three.module.min.js" && !s.startsWith("./") && !s.startsWith("three/"));
   if (unknown.length) {
     throw new Error(`${src} 存在未处理的 import: ${unknown.join(", ")}（请更新 vendor 脚本的 rewrites）`);
   }
@@ -55,4 +55,4 @@ for (const { src, rewrites } of FILES) {
   rewritten.push(src);
 }
 // fflate 无 import，复制即用（上面已覆盖；此处仅提示来源一致）
-console.log(`已 vendor ${rewritten.length} 个文件到 public/web-preview/libs/loaders/（three@${threeVersion}）`);
+console.log(`已 vendor ${rewritten.length} 个文件到 public/engine/runtime/loaders/（three@${threeVersion}）`);

@@ -6,12 +6,12 @@
 // 设计约束：
 // - 对用户脚本只暴露引擎自有类型（Vec3 普通对象 / 度制欧拉角，与编辑器
 //   数据模型一致），不暴露任何 three.js 接口；three 对象仅在本模块内部使用；
-// - 本模块不主动启动：由 libs/scripts.mjs（脚本宿主）经 installRuntime 注入
+// - 本模块不主动启动：由 scripts.mjs（脚本宿主）经 installRuntime 注入
 //   场景注册表与动画控制后，engine 各接口才可用（未注入时安全空转）。
 // ---------------------------------------------------------------------------
 import * as THREE from "./three.module.min.js";
 import { postLog } from "./log.mjs";
-import { buildComponentLight } from "./nodes.mjs";
+import { buildComponentLight } from "./lights.mjs";
 
 export const VERSION = "1.1.0";
 
@@ -1270,7 +1270,7 @@ class ComponentImpl {
 //   默认并注入节点配置覆盖）；类型契约见 tve.d.ts。
 // - nodeType：类装饰器，登记脚本类为可创建节点类型（编辑器创建入口用）。
 // 元数据挂在类上（__tvePropKeys / __tveNodeType），editor 经 AST 静态解析，
-// 运行期仅 host 需要属性键集合（见 libs/scripts.mjs）。
+// 运行期仅 host 需要属性键集合（见 scripts.mjs）。
 // ---------------------------------------------------------------------------
 
 /** 把字段名登记到类的 __tvePropKeys（host 合并默认值与节点配置用） */

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Ammo.js（Bullet Physics）后端适配器（离线构建经 <script> 注入，免打包）：
-// - 引擎资源从 engineBaseUrl（public/web-preview/libs/physics-engines/ammo/）
+// - 引擎资源从 engineBaseUrl（public/engine/runtime/physics-engines/ammo/）
 //   加载 ammo.wasm.js + ammo.wasm.wasm；编辑器与播放器共用同一份离线文件；
 // - static = 质量0；kinematic = 质量0 + CF_KINEMATIC_OBJECT + DISABLE_DEACTIVATION
 //   （位移经 motion state 写入）；dynamic = 质量/惯性全额；
@@ -120,7 +120,7 @@ const DISABLE_DEACTIVATION = 4;
 let ammoPromise: Promise<AmmoAPI> | null = null;
 
 /**
- * 动态加载 ammo ESM 初始化器（public/web-preview/libs/physics-engines/ammo/ammo-esm.mjs；
+ * 动态加载 ammo ESM 初始化器（public/engine/runtime/physics-engines/ammo/ammo-esm.mjs；
  * wasm 以 base64 内联，无外部 .wasm 文件依赖，编辑器与播放器共用同一份文件）。
  * URL 在运行时拼接（public 资产不经打包器），@vite-ignore 阻止构建期解析。
  */
@@ -473,7 +473,7 @@ class AmmoWorldAdapter implements IPhysicsWorld {
 /** 创建 Ammo 物理世界（首次调用时注入脚本并初始化 WASM） */
 export async function createAmmoWorld(settings: PhysicsWorldSettings): Promise<IPhysicsWorld> {
   const base =
-    settings.engineBaseUrl || "web-preview/libs/physics-engines/ammo";
+    settings.engineBaseUrl || "engine/runtime/physics-engines/ammo";
   const api = await loadAmmo(base);
   return new AmmoWorldAdapter(api, settings.gravity);
 }

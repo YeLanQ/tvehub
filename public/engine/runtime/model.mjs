@@ -4,12 +4,12 @@
 //   模型同目录的导出相对地址；
 // - 实例化用 SkeletonUtils.clone（蒙皮网格必须重建骨骼绑定，普通网格共享几何/材质）；
 // - 解析失败的引用记为 null（节点回退空组，postLog 告警）。
-import * as THREE from "./three.module.min.js";
+import * as THREE from "../core/three.module.min.js";
 import { GLTFLoader } from "./loaders/GLTFLoader.js";
 import { FBXLoader } from "./loaders/FBXLoader.js";
 import { OBJLoader } from "./loaders/OBJLoader.js";
 import { clone as skeletonClone } from "./loaders/SkeletonUtils.js";
-import { postLog } from "./log.mjs";
+import { postLog } from "../core/log.mjs";
 
 /** 收集场景树里 meshNode(source=model) 的模型引用（去重） */
 export function collectModelRefs(rootJson) {

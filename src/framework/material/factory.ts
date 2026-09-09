@@ -3,7 +3,7 @@
 // - 每种材质类型对应一个 MaterialTypeDef：three 材质构造、参数→属性映射、
 //   UI 参数分组、默认参数都收敛在类型定义内；
 // - 需要新材质类型时：写一个 MaterialTypeDef 并在 createDefaultMaterialTypeRegistry
-//   里 register 一行即可（同步更新网页预览 libs/material.mjs / libs/mesh.mjs 的同名分支）；
+//   里 register 一行即可（同步更新网页预览 engine/runtime/material.mjs / engine/runtime/mesh.mjs 的同名分支）；
 // - 材质与着色器分离：.mat 经 shader 字段引用 .shader 资产，后端解析出种类 key
 //   （physical/unlit/toon，缺省 physical）→ 注册表查找类型定义；旧 .mat 的
 //   materialType 字段作为回退仍可读。

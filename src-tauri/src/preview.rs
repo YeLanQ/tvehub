@@ -259,7 +259,7 @@ pub(crate) fn collect_scene_assets(
 }
 
 /// 从当前场景导出网页预览产物：
-/// - files 由前端提供网页运行时（index.html / player.mjs / libs/* 模块与 three 运行时 / config.json，
+/// - files 由前端提供网页运行时（index.html / player.mjs / engine/** 模块与 three 运行时 / config.json，
 ///   属 WebView 打包资源，前端 fetch 一次传入）；
 /// - scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制、模型网格引用的
 ///   模型资产（glb/gltf/fbx/obj 及 .gltf 外部 .bin/贴图）全部由 Rust 直接

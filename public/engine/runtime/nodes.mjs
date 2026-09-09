@@ -6,8 +6,9 @@
 // - 组件模式：任意节点 components 中的 light / audioSource 组件同样生效——
 //   灯光组件重建灯光子对象（与灯光节点同一光照语义），音源组件并入音频绑定
 //   表（组件 id 寻址；节点 id 命中首个音源，兼容 SDK 按实体播放）。
-import * as THREE from "./three.module.min.js";
-import { num, vec, D2R } from "./utils.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { num, vec, D2R } from "../core/utils.mjs";
+import { buildComponentLight } from "../core/lights.mjs";
 import { createMesh } from "./mesh.mjs";
 
 /**
@@ -143,43 +144,4 @@ export function buildSceneTree(rootJson, scene, ctx) {
 
   buildNode(rootJson, null);
   return { cameras, meshes, audios, clips, nodes };
-}
-
-/** 灯光组件设置 → 节点对象下的真实灯光子对象（__compLight 组；导出供 SDK
- *  门面动态创建/切换灯光类型复用，与组件模式同一光照语义） */
-export function buildComponentLight(s, obj) {
-  const kind = typeof s.kind === "string" ? s.kind : "point";
-  const color = num(s.lightColor, 0xffffff) & 0xffffff;
-  const intensity = num(s.intensity, 1);
-  const group = new THREE.Group();
-  group.name = "__compLight";
-  let light;
-  if (kind === "ambient") {
-    light = new THREE.AmbientLight(color, intensity);
-  } else if (kind === "directional") {
-    const dl = new THREE.DirectionalLight(color, intensity);
-    dl.castShadow = s.castShadow === true;
-    light = dl;
-  } else if (kind === "spot") {
-    const sl = new THREE.SpotLight(
-      color,
-      intensity,
-      num(s.distance, 0),
-      num(s.angle, 45) * D2R,
-      num(s.penumbra, 0.2),
-      num(s.decay, 2),
-    );
-    sl.castShadow = s.castShadow === true;
-    light = sl;
-  } else {
-    light = new THREE.PointLight(color, intensity, num(s.distance, 0), num(s.decay, 2));
-  }
-  group.add(light);
-  if (kind === "directional" || kind === "spot") {
-    const target = new THREE.Object3D();
-    target.position.set(0, 0, -1);
-    group.add(target);
-    light.target = target;
-  }
-  obj.add(group);
 }

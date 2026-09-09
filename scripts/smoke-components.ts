@@ -41,7 +41,7 @@ import {
   upsertKey,
 } from "../src/framework/animation/clip";
 // @ts-ignore 播放器镜像（mjs 无类型声明）：校验与 framework clip.ts 同语义
-import { __test } from "../public/web-preview/libs/animclip.mjs";
+import { __test } from "../public/engine/runtime/animclip.mjs";
 import { DEFAULT_AUDIO_SETTINGS, parseAudioSettings } from "../src/framework/audio/types";
 import { parseColliderSettings, parseRigidBodySettings } from "../src/framework/physics/types";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";

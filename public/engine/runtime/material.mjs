@@ -1,8 +1,8 @@
 // 材质资产（.mat）解析：节点只保存 .mat 引用，这里按引用预取文件并解析参数
 // （缺失文件/字段回退默认），并附材质相关辅助（卡通灰阶渐变条、轮廓体外扩几何）。
 // 与编辑器 framework/material（factory/types）的参数与默认值保持同步。
-import * as THREE from "./three.module.min.js";
-import { num, u01, matColor } from "./utils.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { num, u01, matColor } from "../core/utils.mjs";
 
 // 材质参数兜底：与编辑器内置 internal/materials/Default.mat（含 PBR 默认）一致
 export const MAT_DEFAULTS = {

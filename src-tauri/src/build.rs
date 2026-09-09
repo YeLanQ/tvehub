@@ -1,12 +1,12 @@
 //! 构建导出：前端收集运行时文本 → Rust 执行打包 → 产物写入
 //! `<项目>/build/<渠道>/` → 返回自描述结果）：
 //! - `build_export`：把选中的场景及其引用资产（.mat 材质/贴图/模型）与网页运行时
-//!   （player + three libs，由前端 fetch 传入）打包为可部署的静态网页产物；
+//!   （player + engine 引擎模块，由前端 fetch 传入）打包为可部署的静态网页产物；
 //!   多场景时写入 scenes/<场景名>.json，入口由 config.json 的 mainScene 决定
 //!   （player 支持 ?scene=<场景名> 查询参数切换）；
 //! - 产物形态：多文件（场景/资产按相对路径落盘）或单页（场景/资产/运行时代码全部
 //!   内联进 index.html 的 `window.__TVE_BUILD_DATA`，产物无 assets/、scenes/ 目录，
-//!   也没有 player.mjs/libs 文件——只有一个单页 HTML）；
+//!   也没有 player.mjs/engine 文件——只有一个单页 HTML）；
 //! - Gzip 压缩：场景与资产打进单个 gzip 归档（多文件写 assets.gzip；单页 base64 内联），
 //!   运行时用浏览器原生 DecompressionStream 解压并经 fetch 拦截供资产（无需服务器配合）；
 //! - Gzip 资源地址：非空时多文件模式的 gzip 归档由运行时从 <地址>/assets.gzip 拉取
@@ -33,16 +33,20 @@ use serde::Serialize;
 /// 当前支持的构建渠道（wechat 为 UI 占位，未实现）
 const SUPPORTED_CHANNELS: [&str; 1] = ["web"];
 
-/// CDN 模式不内嵌的 three.js 运行时文件（其余 libs/ 模块仍内嵌，经 import map
-/// 把代码里解析到同源 three 的说明符映射到资源地址下的同名文件）
-const THREE_RUNTIME_FILES: [&str; 2] = ["libs/three.core.min.js", "libs/three.module.min.js"];
+/// CDN 模式不内嵌的 three.js 运行时文件（位于 engine/core/；其余引擎模块仍
+/// 内嵌，经 import map 把代码里解析到同源 three 的说明符映射到资源地址下的
+/// 同名文件）
+const THREE_RUNTIME_FILES: [&str; 2] = [
+    "engine/core/three.core.min.js",
+    "engine/core/three.module.min.js",
+];
 
-/// three.js 远程文件 URL：剥离产物内 libs/ 目录前缀后拼到基地址下——基地址就是
+/// three.js 远程文件 URL：剥离产物内 engine/core/ 目录前缀后拼到基地址下——基地址就是
 /// 直接包含 three.module.min.js / three.core.min.js 的目录，官方 CDN 的版本目录
 /// （如 cdnjs / unpkg / jsdelivr 的 three.js/<版本>）与运行时内嵌文件同名同版本，
-/// 可直接使用；自建 CDN 把产物 libs/ 里两个文件传到某目录后填该目录即可
+/// 可直接使用；自建 CDN 把产物 engine/core/ 里两个文件传到某目录后填该目录即可
 fn three_cdn_url(base: &str, rel: &str) -> String {
-    let file = rel.strip_prefix("libs/").unwrap_or(rel);
+    let file = rel.strip_prefix("engine/core/").unwrap_or(rel);
     join_cdn_url(base, file)
 }
 
@@ -57,7 +61,7 @@ fn normalize_base_url(raw: &str) -> String {
 }
 
 /// 基地址拼接相对路径，自动去重前缀：地址已以相对路径的首段（目录或文件名，
-/// 如 /libs、/assets.gzip）结尾时不再重复拼接，避免 libs/libs、…/assets.gzip/assets.gzip
+/// 如 /engine、/assets.gzip）结尾时不再重复拼接，避免 engine/engine、…/assets.gzip/assets.gzip
 fn join_cdn_url(base: &str, rel: &str) -> String {
     let first = rel.split('/').next().unwrap_or("");
     let trimmed = base.strip_suffix(&format!("/{first}")).unwrap_or(base);
@@ -118,10 +122,10 @@ fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
 /// 网页运行时代码文件（多文件按文件落盘；单页全部内联进 HTML，不进归档/内联数据
 /// 的场景/资产部分）；入口页 index.html 与多模板附加页 index-<模板目录>.html 都算运行时代码。
 /// src/ 前缀 = 编辑器编译后的用户脚本模块（src/**.js，前端随 files 传入；
-/// 相对 import 由 rewrite_module_imports 重写，与 libs 模块同一套加载机制）
+/// 相对 import 由 rewrite_module_imports 重写，与 engine 模块同一套加载机制）
 fn is_runtime_code(rel: &str) -> bool {
     rel == "player.mjs"
-        || rel.starts_with("libs/")
+        || rel.starts_with("engine/")
         || rel.starts_with("src/")
         || is_entry_page(rel)
 }
@@ -378,7 +382,7 @@ fn build_archive_bytes(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, String>
 }
 
 /// 单页模式的内联数据脚本：注入 index.html，运行时经 window.__TVE_BUILD_DATA 读取。
-/// 非 gzip 时 code 为运行时代码文本表（player.mjs + libs/*，已重写说明符），
+/// 非 gzip 时 code 为运行时代码文本表（player.mjs + engine/**，已重写说明符），
 /// gzip 时代码并入 entries 归档。序列化后把 '<' 转义为 \u003c，
 /// 防止代码文本里的 `</script>` 提前终止内联脚本标签（\u 转义解码后语义不变）
 fn inline_data_script(
@@ -415,7 +419,7 @@ fn inline_data_script(
 }
 
 /// 单页引导脚本：从内联数据取运行时代码（非 gzip 的 code 字段，或 gzip 归档里的
-/// player.mjs/libs/* 条目），为每个模块生成 Blob URL 并注入 import map
+/// player.mjs/engine/** 条目），为每个模块生成 Blob URL 并注入 import map
 /// （tve:<相对路径> → blob:），最后动态 import 入口 player.mjs。
 /// 必须放在内联数据脚本之后、且页面没有任何模块脚本加载之前执行
 const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
@@ -467,7 +471,7 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
             var dl = view.getUint32(off, true); off += 4;
             if (
               path === entry ||
-              path.lastIndexOf("libs/", 0) === 0 ||
+              path.lastIndexOf("engine/", 0) === 0 ||
               path.lastIndexOf("src/", 0) === 0
             )
               code[path] = dec.decode(new Uint8Array(buf, off, dl));
@@ -482,7 +486,7 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
 </script>"#;
 
 /// 构建导出：打包选中场景 + 引用资产 + 网页运行时到 `<项目>/build/web/`。
-/// files 为前端 fetch 传入的网页运行时文本（index.html/player.mjs/libs/*，
+/// files 为前端 fetch 传入的网页运行时文本（index.html/player.mjs/engine/**，
 /// 属 WebView 打包资源，编辑器离线可用）；场景与资产由 Rust 直读磁盘。
 #[tauri::command]
 pub async fn build_export(
@@ -704,8 +708,8 @@ fn strip_player_script_tags(html: &str) -> String {
 }
 
 /// 运行时脚本里指向 three 的相对 import 重写为 CDN 绝对 URL（import map 拦截不了
-/// 相对说明符，必须改写模块文本）。覆盖 player.mjs 与 libs/ 下全部 .js/.mjs
-/// （loaders 的 ../three、libs 模块的 ./three、player 的 ./libs/three 统一经
+/// 相对说明符，必须改写模块文本）。覆盖 player.mjs 与 engine/ 下全部 .js/.mjs
+/// （loaders 的 ../../three、runtime 模块的 ../core/three、player 的 ../engine/core/three 统一经
 /// 目录相对解析命中映射）；入口页与非脚本文件不动
 fn rewrite_runtime_three_imports(files: &mut HashMap<String, String>, remap: &HashMap<String, String>) {
     let rels: Vec<String> = files
@@ -759,7 +763,7 @@ fn build_export_impl(
     // - gzip_base：gzip 归档远程基址（非空时写入 config 供运行时远程拉取）；
     // - three_base：Three CDN 基址，仅在 CDN 模式开启时生效（three.js 不内嵌）；
     // 留空均回退当前行为（归档本地读取 / three 内嵌）。拼接相对路径时经
-    // join_cdn_url 去重已带的前缀（如地址以 /libs、/assets.gzip 结尾不重复拼）
+    // join_cdn_url 去重已带的前缀（如地址以 /engine、/assets.gzip 结尾不重复拼）
     let gzip_base = normalize_base_url(&gzip_base);
     let three_base = normalize_base_url(&three_base);
     let cdn_active = cdn && !three_base.is_empty();
@@ -777,7 +781,7 @@ fn build_export_impl(
         return Err("网页运行时缺少 index.html".to_string());
     }
     // CDN 模式：three.js 运行时不内嵌，代码里指向 three 的相对 import 在产物
-    // 组装阶段统一重写为 CDN 绝对 URL；其余 libs/ 模块仍内嵌
+    // 组装阶段统一重写为 CDN 绝对 URL；其余 engine/ 模块仍内嵌
     if cdn_active {
         for rel in THREE_RUNTIME_FILES {
             files.remove(rel);
@@ -881,7 +885,7 @@ fn build_export_impl(
         }
     }
 
-    // 发布模式：压缩运行时脚本（player / libs 模块 / 加载器；已压缩的 *.min.* 跳过）
+    // 发布模式：压缩运行时脚本（player / engine 模块 / 加载器；已压缩的 *.min.* 跳过）
     if release {
         for (rel, text) in files.iter_mut() {
             if is_minifiable_script(rel) {
@@ -893,7 +897,7 @@ fn build_export_impl(
     // 产物组装
     let mut code_n = 0usize;
     if single_page {
-        // 单页：运行时代码（player.mjs + libs/*）全部内联进入口页——重写相对 import
+        // 单页：运行时代码（player.mjs + engine/**）全部内联进入口页——重写相对 import
         // 说明符为 tve: 裸说明符；非 gzip 放数据 code 字段，gzip 并入归档；运行时由
         // 引导脚本生成 Blob URL + import map 动态加载 player.mjs。产物仅剩 HTML。
         let mut pages: HashMap<String, String> = HashMap::new();
@@ -1021,7 +1025,7 @@ mod tests {
         assert!(is_runtime_code("index.html"));
         assert!(is_runtime_code("index-single.html"));
         assert!(is_runtime_code("player.mjs"));
-        assert!(is_runtime_code("libs/three.module.min.js"));
+        assert!(is_runtime_code("engine/core/three.module.min.js"));
         assert!(is_runtime_code("src/main.js"), "用户脚本编译产物按运行时代码处理");
         assert!(!is_runtime_code("assets/materials/Default.mat"));
         assert!(!is_runtime_code("scenes/Main.json"));
@@ -1029,7 +1033,7 @@ mod tests {
         assert!(!is_runtime_code("index.json"));
     }
 
-    /// 端到端：搭一个最小临时项目（场景 + 材质 + 依赖 libs 的运行时），跑
+    /// 端到端：搭一个最小临时项目（场景 + 材质 + 依赖 engine 的运行时），跑
     /// 单页/多文件 × gzip 全部形态，校验产物内容：
     /// - 单页：产物只剩入口 HTML，运行时代码全部内联（code 字段或 gzip 归档），
     ///   相对 import 重写为 tve: 裸说明符，模板里的 player.mjs 脚本标签被剥离；
@@ -1066,14 +1070,14 @@ mod tests {
                         "<html><title>t</title><body>{entry}<script type=\"module\" src=\"./player.mjs\"></script></body></html>"
                     ),
                 ),
-                ("player.mjs".to_string(), "// player\nimport { b } from \"./libs/b.mjs\";\nconsole.log(b);\n".to_string()),
-                ("libs/b.mjs".to_string(), "export const b = 2;\n".to_string()),
-                ("libs/tve.mjs".to_string(), "export const engine = {};\n".to_string()),
+                ("player.mjs".to_string(), "// player\nimport { b } from \"./engine/b.mjs\";\nconsole.log(b);\n".to_string()),
+                ("engine/b.mjs".to_string(), "export const b = 2;\n".to_string()),
+                ("engine/core/tve.mjs".to_string(), "export const engine = {};\n".to_string()),
                 // 用户脚本编译产物（src/**.js）：编辑器编译时把 "tve" 裸导入
-                // 重写为相对 libs/tve.mjs 的路径，此处模拟该形态
+                // 重写为相对 engine/core/tve.mjs 的路径，此处模拟该形态
                 (
                     "src/main.js".to_string(),
-                    "import { engine } from \"../libs/tve.mjs\";\nengine.log(\"hi\");\n".to_string(),
+                    "import { engine } from \"../engine/core/tve.mjs\";\nengine.log(\"hi\");\n".to_string(),
                 ),
             ])
         };
@@ -1116,7 +1120,7 @@ mod tests {
                 if gzip {
                     // 代码在 gzip 归档（base64）里，正文不出现代码原文
                     assert!(!html.contains("export const b = 2"), "gzip 单页代码应进归档而非明文");
-                    assert!(!html.contains("tve:libs/b.mjs"), "gzip 单页重写后的代码在归档里");
+                    assert!(!html.contains("tve:engine/runtime/b.mjs"), "gzip 单页重写后的代码在归档里");
                     // 引导脚本从归档提取代码时应包含用户脚本（src/ 前缀）
                     assert!(
                         html.contains("path.lastIndexOf(\"src/\", 0) === 0"),
@@ -1124,19 +1128,19 @@ mod tests {
                     );
                 } else {
                     assert!(html.contains("export const b = 2"), "非 gzip 单页代码应以文本内联");
-                    assert!(html.contains("tve:libs/b.mjs"), "运行时代码相对 import 应重写为 tve: 说明符");
+                    assert!(html.contains("tve:engine/b.mjs"), "运行时代码相对 import 应重写为 tve: 说明符");
                     assert!(
                         html.contains("\"src/main.js\""),
                         "用户脚本应进入内联代码表（引导脚本据此构建 import map）"
                     );
                     assert!(
-                        html.contains("tve:libs/tve.mjs"),
-                        "用户脚本的 tve 导入应重写为 tve:libs/tve.mjs"
+                        html.contains("tve:engine/core/tve.mjs"),
+                        "用户脚本的 tve 导入应重写为 tve:engine/core/tve.mjs"
                     );
                 }
             } else {
                 assert!(out.join("player.mjs").is_file(), "多文件运行时代码按文件落盘");
-                assert!(out.join("libs/b.mjs").is_file());
+                assert!(out.join("engine/b.mjs").is_file());
                 assert!(out.join("src/main.js").is_file(), "用户脚本按文件落盘");
                 assert!(out.join("config.json").is_file());
                 let html = fs::read_to_string(out.join("index.html")).unwrap();
@@ -1165,36 +1169,36 @@ mod tests {
         use super::{rewrite_module_imports, rewrite_specifier_text};
         let remap = HashMap::from([
             ("player.mjs".to_string(), "tve:player.mjs".to_string()),
-            ("libs/utils.mjs".to_string(), "tve:libs/utils.mjs".to_string()),
+            ("engine/utils.mjs".to_string(), "tve:engine/utils.mjs".to_string()),
             (
-                "libs/loaders/GLTFLoader.js".to_string(),
-                "tve:libs/loaders/GLTFLoader.js".to_string(),
+                "engine/loaders/GLTFLoader.js".to_string(),
+                "tve:engine/loaders/GLTFLoader.js".to_string(),
             ),
         ]);
-        // 相对解析：libs/model.mjs 目录下的 ./x 与 ../x
+        // 相对解析：engine/model.mjs 目录下的 ./x 与 ../x
         assert_eq!(
             rewrite_specifier_text(
                 "import { a } from \"./utils.mjs\";\nimport * as G from './loaders/GLTFLoader.js';\nimport(\"./utils.mjs\")\n",
-                "libs/",
+                "engine/",
                 &remap
             ),
-            "import { a } from \"tve:libs/utils.mjs\";\nimport * as G from 'tve:libs/loaders/GLTFLoader.js';\nimport(\"tve:libs/utils.mjs\")\n"
+            "import { a } from \"tve:engine/utils.mjs\";\nimport * as G from 'tve:engine/loaders/GLTFLoader.js';\nimport(\"tve:engine/utils.mjs\")\n"
         );
-        // ../ 上溯：libs/ 下的 ../loaders 解析到根目录（不在映射表，不重写）
+        // ../ 上溯：engine/ 下的 ../loaders 解析到根目录（不在映射表，不重写）
         assert_eq!(
-            rewrite_specifier_text("import '../loaders/GLTFLoader.js';", "libs/", &remap),
+            rewrite_specifier_text("import '../loaders/GLTFLoader.js';", "engine/", &remap),
             "import '../loaders/GLTFLoader.js';"
         );
         // 压缩形态：from"./x" 无空白
         assert_eq!(
-            rewrite_specifier_text("import{a}from\"./utils.mjs\";", "libs/", &remap),
-            "import{a}from\"tve:libs/utils.mjs\";"
+            rewrite_specifier_text("import{a}from\"./utils.mjs\";", "engine/", &remap),
+            "import{a}from\"tve:engine/utils.mjs\";"
         );
         // 未知目标 / 裸说明符 / import.meta / 词内匹配不重写
         assert_eq!(
             rewrite_specifier_text(
                 "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n",
-                "libs/",
+                "engine/",
                 &remap
             ),
             "import \"./missing.mjs\";\nimport * as T from \"three\";\nlet x = import.meta.url;\nperformance.from(\"./utils.mjs\");\n"
@@ -1203,16 +1207,16 @@ mod tests {
         let mut code = HashMap::from([
             (
                 "player.mjs".to_string(),
-                "import { b } from \"./libs/utils.mjs\";\nimport * as T from \"./libs/three.module.min.js\";\n".to_string(),
+                "import { b } from \"./engine/utils.mjs\";\nimport * as T from \"./engine/core/three.module.min.js\";\n".to_string(),
             ),
-            ("libs/utils.mjs".to_string(), "export const b = 1;\n".to_string()),
+            ("engine/utils.mjs".to_string(), "export const b = 1;\n".to_string()),
         ]);
         let extra = HashMap::from([(
-            "libs/three.module.min.js".to_string(),
+            "engine/core/three.module.min.js".to_string(),
             "https://c.com/three.js/0.185.1/three.module.min.js".to_string(),
         )]);
         rewrite_module_imports(&mut code, &extra);
-        assert!(code["player.mjs"].contains("\"tve:libs/utils.mjs\""));
+        assert!(code["player.mjs"].contains("\"tve:engine/utils.mjs\""));
         assert!(
             code["player.mjs"]
                 .contains("\"https://c.com/three.js/0.185.1/three.module.min.js\""),
@@ -1285,13 +1289,13 @@ mod tests {
                 String::new(),
                 HashMap::from([
                     ("index.html".to_string(), "<html></html>".to_string()),
-                    ("player.mjs".to_string(), "// player entry\nimport { A } from \"./libs/helper.mjs\";\nconsole.log(A);\n".to_string()),
+                    ("player.mjs".to_string(), "// player entry\nimport { A } from \"./engine/helper.mjs\";\nconsole.log(A);\n".to_string()),
                     (
-                        "libs/helper.mjs".to_string(),
+                        "engine/helper.mjs".to_string(),
                         "// helper comment\nexport const A = 1;\n".to_string(),
                     ),
                     (
-                        "libs/three.module.min.js".to_string(),
+                        "engine/core/three.module.min.js".to_string(),
                         "/*already minified*/export const T = 1;".to_string(),
                     ),
                 ]),
@@ -1323,13 +1327,13 @@ mod tests {
         assert!(out.join(format!("assets/textures/{fallback}.png")).is_file(), "无 .meta 走路径哈希 uid");
         assert!(mat_text.contains(&fallback), "材质贴图引用重写为哈希 uid");
 
-        // 脚本压缩：player/libs 脚本去注释压缩；*.min.* 跳过
+        // 脚本压缩：player/engine 脚本去注释压缩；*.min.* 跳过
         let player_min = fs::read_to_string(out.join("player.mjs")).unwrap();
         assert!(!player_min.contains("//"), "player.mjs 注释已移除");
-        let helper_min = fs::read_to_string(out.join("libs/helper.mjs")).unwrap();
-        assert!(!helper_min.contains("// helper"), "libs 脚本注释已移除");
-        assert!(!helper_min.contains(" = 1;"), "libs 脚本空白已压缩");
-        let three_min = fs::read_to_string(out.join("libs/three.module.min.js")).unwrap();
+        let helper_min = fs::read_to_string(out.join("engine/helper.mjs")).unwrap();
+        assert!(!helper_min.contains("// helper"), "engine 脚本注释已移除");
+        assert!(!helper_min.contains(" = 1;"), "engine 脚本空白已压缩");
+        let three_min = fs::read_to_string(out.join("engine/core/three.module.min.js")).unwrap();
         assert!(three_min.contains("/*already minified*/"), "*.min.* 不重复压缩");
 
         // 模型二进制化：glb → kind1；gltf → 自包含 glb → kind1（兄弟文件剔除）；obj → kind0
@@ -1385,10 +1389,12 @@ mod tests {
                     "index.html".to_string(),
                     format!("<html><head></head><body>{entry}<script type=\"module\" src=\"./player.mjs\"></script></body></html>"),
                 ),
-                ("player.mjs".to_string(), "import * as T from \"./libs/three.module.min.js\";\nimport { b } from \"./libs/b.mjs\";\nconsole.log(T, b);\n".to_string()),
-                ("libs/b.mjs".to_string(), "import * as T from \"./three.module.min.js\";\nexport const b = T ? 2 : 0;\n".to_string()),
-                ("libs/three.module.min.js".to_string(), "THREEMODULE_FAKE".to_string()),
-                ("libs/three.core.min.js".to_string(), "THREECORE_FAKE".to_string()),
+                ("player.mjs".to_string(), "import * as T from \"./engine/core/three.module.min.js\";\nimport { b } from \"./engine/b.mjs\";\nconsole.log(T, b);\n".to_string()),
+                ("engine/b.mjs".to_string(), "import * as T from \"./core/three.module.min.js\";
+export const b = T ? 2 : 0;
+".to_string()),
+                ("engine/core/three.module.min.js".to_string(), "THREEMODULE_FAKE".to_string()),
+                ("engine/core/three.core.min.js".to_string(), "THREECORE_FAKE".to_string()),
             ])
         };
         let three_cdn = "https://cdn.example.com/tve";
@@ -1418,18 +1424,18 @@ mod tests {
         let result = run(false, false, true, "", three_cdn);
         let out = root.join("build/web");
         assert!(result.cdn);
-        assert!(!out.join("libs/three.module.min.js").exists(), "three.module 不内嵌");
-        assert!(!out.join("libs/three.core.min.js").exists(), "three.core 不内嵌");
-        assert!(out.join("libs/b.mjs").is_file(), "其余 libs 模块仍内嵌");
+        assert!(!out.join("engine/core/three.module.min.js").exists(), "three.module 不内嵌");
+        assert!(!out.join("engine/core/three.core.min.js").exists(), "three.core 不内嵌");
+        assert!(out.join("engine/b.mjs").is_file(), "其余 engine 模块仍内嵌");
         let player = fs::read_to_string(out.join("player.mjs")).unwrap();
         assert!(
             player.contains(&format!("\"{three_cdn}/three.module.min.js\"")),
             "player 的 three import 重写为 CDN URL"
         );
-        let helper = fs::read_to_string(out.join("libs/b.mjs")).unwrap();
+        let helper = fs::read_to_string(out.join("engine/b.mjs")).unwrap();
         assert!(
             helper.contains(&format!("\"{three_cdn}/three.module.min.js\"")),
-            "libs 模块的 three import 重写为 CDN URL"
+            "engine 模块的 three import 重写为 CDN URL"
         );
         let html = fs::read_to_string(out.join("index.html")).unwrap();
         assert!(!html.contains("importmap"), "不再注入 import map");
@@ -1443,11 +1449,11 @@ mod tests {
         let result = run(false, true, false, gzip_cdn, "");
         let out = root.join("build/web");
         assert!(!result.cdn);
-        assert!(out.join("libs/three.module.min.js").is_file(), "CDN 关闭时 three 内嵌");
+        assert!(out.join("engine/core/three.module.min.js").is_file(), "CDN 关闭时 three 内嵌");
         assert!(out.join("assets.gzip").is_file());
         let player = fs::read_to_string(out.join("player.mjs")).unwrap();
         assert!(
-            player.contains("\"./libs/three.module.min.js\""),
+            player.contains("\"./engine/core/three.module.min.js\""),
             "CDN 关闭时说明符保持相对路径"
         );
         let cfg: serde_json::Value =
@@ -1463,7 +1469,7 @@ mod tests {
             assert!(!html.contains("cdnImports"), "不再内联 cdnImports 映射表");
             assert!(!html.contains("THREEMODULE_FAKE"), "three 源码不内联");
             if !gzip {
-                assert!(html.contains("tve:libs/b.mjs"), "其余模块仍内联并重写说明符");
+                assert!(html.contains("tve:engine/b.mjs"), "其余模块仍内联并重写说明符");
                 // 代码内联为 JSON 字符串，URL 前的引号被转义为 \"，只断言 URL 本身
                 assert!(
                     html.contains(&format!("{three_cdn}/three.module.min.js")),
@@ -1472,15 +1478,15 @@ mod tests {
             }
         }
 
-        // 前缀去重与协议补全：地址以 /libs 结尾不产生 libs/libs；
-        // 无协议地址自动补 https://（否则被按页面相对路径解析）；gzip 地址以
-        // /assets.gzip 结尾时 config 原样保留（运行时拼接去重）
+        // 前缀剥离与协议补全：产物 engine/core/ 前缀被剥离，不与基地址结尾目录
+        // 重复拼接；无协议地址自动补 https://（否则被按页面相对路径解析）；
+        // gzip 地址以 /assets.gzip 结尾时 config 原样保留（运行时拼接去重）
         let result = run(false, false, true, "", "cdn.example.com/tve/libs");
         assert!(result.cdn);
         let player = fs::read_to_string(root.join("build/web/player.mjs")).unwrap();
         assert!(
             player.contains("https://cdn.example.com/tve/libs/three.module.min.js"),
-            "无协议地址补 https:// 且不重复 libs"
+            "无协议地址补 https:// 且产物前缀剥离后不重复拼接"
         );
         let _ = run(false, true, false, "https://res.example.com/pkg/assets.gzip", "");
         let cfg: serde_json::Value = serde_json::from_str(
@@ -1489,8 +1495,8 @@ mod tests {
         .unwrap();
         assert_eq!(cfg["gzipBase"], "https://res.example.com/pkg/assets.gzip");
 
-        // 官方 CDN 版本目录（无 libs/ 前缀）：URL 直接指向目录下的构建文件，
-        // 不追加产物内的 libs/ 目录前缀（cdnjs 0.185.1 与内嵌运行时同名同版本）
+        // 官方 CDN 版本目录（无 engine/ 前缀）：URL 直接指向目录下的构建文件，
+        // 不追加产物内的 engine/ 目录前缀（cdnjs 0.185.1 与内嵌运行时同名同版本）
         let three_official = "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.185.1";
         let _ = run(false, false, true, "", three_official);
         let player = fs::read_to_string(root.join("build/web/player.mjs")).unwrap();
@@ -1499,18 +1505,18 @@ mod tests {
             "官方 CDN 版本目录直接拼接文件名"
         );
         assert!(
-            !player.contains(&format!("\"{three_official}/libs/")),
-            "映射 URL 不追加产物内 libs/ 前缀"
+            !player.contains(&format!("\"{three_official}/engine/")),
+            "映射 URL 不追加产物内 engine/ 前缀"
         );
 
         // Three CDN 地址留空：CDN 模式不生效，回退标准构建（three 内嵌）
         let result = run(false, false, true, "", "   ");
         assert!(!result.cdn);
-        assert!(root.join("build/web/libs/three.module.min.js").is_file());
+        assert!(root.join("build/web/engine/core/three.module.min.js").is_file());
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// 远程地址归一化与前缀去重拼接（three 剥离产物内 libs/ 前缀后拼接）
+    /// 远程地址归一化与前缀去重拼接（three 剥离产物内 engine/core/ 前缀后拼接）
     #[test]
     fn cdn_url_join_and_normalize() {
         use super::{join_cdn_url, normalize_base_url, three_cdn_url};
@@ -1519,12 +1525,12 @@ mod tests {
         assert_eq!(normalize_base_url("//x.com/a"), "//x.com/a");
         assert_eq!(normalize_base_url("  "), "");
         assert_eq!(
-            join_cdn_url("https://x.com/tve", "libs/three.module.min.js"),
-            "https://x.com/tve/libs/three.module.min.js"
+            join_cdn_url("https://x.com/tve", "engine/core/three.module.min.js"),
+            "https://x.com/tve/engine/core/three.module.min.js"
         );
         assert_eq!(
-            join_cdn_url("https://x.com/tve/libs", "libs/three.module.min.js"),
-            "https://x.com/tve/libs/three.module.min.js"
+            join_cdn_url("https://x.com/tve/libs", "engine/core/three.module.min.js"),
+            "https://x.com/tve/libs/engine/core/three.module.min.js"
         );
         assert_eq!(
             join_cdn_url("https://x.com/pkg", "assets.gzip"),
@@ -1534,13 +1540,13 @@ mod tests {
             join_cdn_url("https://x.com/pkg/assets.gzip", "assets.gzip"),
             "https://x.com/pkg/assets.gzip"
         );
-        // three：剥离 libs/ 前缀拼到基地址（官方 CDN 版本目录与自建目录统一规则）
+        // three：剥离 engine/core/ 前缀拼到基地址（官方 CDN 版本目录与自建目录统一规则）
         assert_eq!(
-            three_cdn_url("https://c.com/three.js/0.185.1", "libs/three.module.min.js"),
+            three_cdn_url("https://c.com/three.js/0.185.1", "engine/core/three.module.min.js"),
             "https://c.com/three.js/0.185.1/three.module.min.js"
         );
         assert_eq!(
-            three_cdn_url("https://x.com/tve/libs", "libs/three.module.min.js"),
+            three_cdn_url("https://x.com/tve/libs", "engine/core/three.module.min.js"),
             "https://x.com/tve/libs/three.module.min.js"
         );
     }

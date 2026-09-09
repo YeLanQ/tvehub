@@ -3,7 +3,7 @@
 //
 // 编辑器侧组件保持纯数据（可辨识联合的 plain object）：Vue 响应式、撤销快照
 // （node.patch 的 before/after JSON）、prefab 对象展开、序列化字节兼容都依赖
-// 这一点；实例化与生命周期由播放器（web-preview/libs/*.mjs）执行。
+// 这一点；实例化与生命周期由播放器（engine/**/*.mjs）执行。
 // 每种组件的创建/解析/克隆/写出/重置行为收敛到各自模块的描述符（实现
 // ComponentDescriptor 接口，见同目录各 *Component.ts），由 registry.ts 查表派发。
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ export interface INodeComponent {
 /**
  * 节点上的脚本组件引用（组件模式）。
  * 编辑器只持有数据（检查器增删改、随节点序列化）；实例化与生命周期由
- * 播放器脚本宿主（web-preview/libs/scripts.mjs）在预览/发布产物中执行。
+ * 播放器脚本宿主（engine/core/scripts.mjs）在预览/发布产物中执行。
  */
 export interface ScriptComponentRef extends INodeComponent {
   type: "script";

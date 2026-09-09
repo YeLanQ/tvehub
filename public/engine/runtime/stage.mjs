@@ -1,7 +1,7 @@
 // 渲染器与舞台适配：“显示与运行”——预览画布按项目设计分辨率取景/渲染，
 // 再按缩放模式适配 iframe 显示（noscale=原尺寸 / fixedwidth=等比宽度铺满 /
 // fixedheight=等比高度铺满 / fixedauto=固定宽高比铺满(超出裁切) / full=全屏拉伸铺满）。
-import * as THREE from "./three.module.min.js";
+import * as THREE from "../core/three.module.min.js";
 
 /** 解析项目设计分辨率配置（宽高均为正才算有效） */
 function resolveDesignConfig(cfg) {

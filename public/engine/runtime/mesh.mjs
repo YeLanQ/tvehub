@@ -2,8 +2,8 @@
 // （toon → MeshToonMaterial / unlit → MeshBasicMaterial / 其余 → MeshPhysicalMaterial），
 // 以及模型网格（source=model）的实例化挂载。
 // 与编辑器 framework/mesh、framework/material/factory 的规则保持同步。
-import * as THREE from "./three.module.min.js";
-import { num, vec } from "./utils.mjs";
+import * as THREE from "../core/three.module.min.js";
+import { num, vec } from "../core/utils.mjs";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material.mjs";
 import { instantiateModel } from "./model.mjs";
 

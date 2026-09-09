@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 用户脚本编译库（TS → JS，内存编译、产物不落盘）：
 // - compileScript：transpileModule 转译（ES2020 ESM），并把 "tve" 裸导入
-//   说明符按脚本目录重写为相对 libs/tve.mjs 的路径（AST 级精确替换）——
+//   说明符按脚本目录重写为相对 engine/core/tve.mjs 的路径（AST 级精确替换）——
 //   编译产物在文件模式按相对路径解析、在单页模式由构建管线重写为 tve: 裸说明符，
 //   两种产物形态均无需 import map；
 // - parsePropsSchema：TS AST 解析脚本默认导出类的 `static props = {...}` 声明，
@@ -13,6 +13,7 @@
 import type * as ts from "typescript";
 import { api } from "../../lib/api";
 import { logStore } from "../stores/log";
+import { loadAssetTemplate } from "./asset-templates";
 
 /** typescript 编译器（懒加载：首次编译/解析时引入，约 7MB 惰性 chunk；
  *  类型经上方 import type 静态引入，编译期擦除不影响懒加载） */
@@ -79,13 +80,13 @@ export function scriptJsPath(srcRel: string): string {
 }
 
 /**
- * 计算从脚本目录指向运行时模块（libs/tve.mjs）的相对导入说明符。
+ * 计算从脚本目录指向运行时模块（engine/core/tve.mjs）的相对导入说明符。
  * @param scriptRel 脚本源路径（如 "src/main.ts"、"src/ui/button.ts"）
  */
 export function tveImportFor(scriptRel: string): string {
   const dir = scriptRel.includes("/") ? scriptRel.slice(0, scriptRel.lastIndexOf("/")) : "";
   const fromParts = dir ? dir.split("/") : [];
-  const toParts = "libs/tve.mjs".split("/");
+  const toParts = "engine/core/tve.mjs".split("/");
   const file = toParts.pop() as string;
   let common = 0;
   while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {
@@ -772,9 +773,49 @@ export function isScriptSource(rel: string): boolean {
   );
 }
 
+/**
+ * 入口脚本自愈补建：项目配置声明了 entryScript 但磁盘上没有该文件
+ * （早期模板创建的项目、手工删除等）时，按内置脚本模板补建——否则预览/构建
+ * 会因入口模块 404 报「[脚本] 加载失败 src/main.ts」。
+ * @returns 是否补建了文件（无入口声明/已存在/补建失败均为 false）
+ */
+export async function ensureEntryScript(root: string): Promise<boolean> {
+  let entry = "";
+  try {
+    const configText = await api.readText(root, "project.config.json");
+    const parsed = configText ? (JSON.parse(configText) as { entryScript?: unknown }) : null;
+    entry = typeof parsed?.entryScript === "string" ? parsed.entryScript.trim() : "";
+  } catch {
+    return false; // 无配置/解析失败按无入口脚本处理
+  }
+  if (!entry || !isScriptSource(entry)) return false;
+  try {
+    if ((await api.readText(root, entry)) != null) return false; // 已存在
+  } catch {
+    /* 不存在 → 补建 */
+  }
+  // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入），与新建脚本同一规则
+  const base = entry.slice(entry.lastIndexOf("/") + 1).replace(/\.tsx?$/, "");
+  const className =
+    base
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map((seg) => seg[0].toUpperCase() + seg.slice(1))
+      .join("") || "Main";
+  const content = await loadAssetTemplate("script", { CLASS_NAME: className });
+  if (!content) return false;
+  try {
+    await api.writeText(root, entry, content);
+    logStore.log("info", `入口脚本 ${entry} 缺失，已按内置模板补建`, "script");
+    return true;
+  } catch (e) {
+    logStore.log("warn", `入口脚本 ${entry} 补建失败: ${e}`, "script");
+    return false;
+  }
+}
+
 /** 读取项目全部脚本源文件 */
-export async function loadProjectScripts(root: string): Promise<ProjectScript[]> {
-  const entries = await api.scanAssets(root);
+export async function loadProjectScripts(root: string): Promise<ProjectScript[]> {  const entries = await api.scanAssets(root);
   const rels = entries.map((e) => e.path).filter(isScriptSource);
   const out: ProjectScript[] = [];
   for (const rel of rels) {
