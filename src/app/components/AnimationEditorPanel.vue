@@ -593,8 +593,8 @@ function onViewModeChange(e: Event): void {
 
 const viewHint = computed(() =>
   viewMode.value === "dope"
-    ? "拖拽关键帧改时间；点击选中后可切插值/删除；点击左侧通道名选中曲线"
-    : "空白处点击 = 插入关键帧；拖拽关键帧改时间/数值；点击左侧通道名切换曲线",
+    ? "拖拽关键帧改时间（Alt 关闭吸附）；点击选中后可切插值/删除；点击左侧通道名选中曲线"
+    : "空白处点击 = 插入关键帧（Alt 关闭吸附）；拖拽关键帧改时间/数值；点击左侧通道名切换曲线",
 );
 
 // ---------------------------------------------------------------------------
@@ -614,7 +614,15 @@ onMounted(() => {
       laneHeight.value = laneEl.value.clientHeight;
     }
   });
-  if (laneEl.value) laneRo.observe(laneEl.value);
+});
+// laneEl 在剪辑加载后才渲染（v-else 分支），挂载时通常为 null：
+// 必须在 ref 出现时才挂 RO，否则 laneWidth 永远停在初始值（时间轴铺不满）
+watch(laneEl, (el) => {
+  laneRo?.disconnect();
+  if (!el || !laneRo) return;
+  laneWidth.value = el.clientWidth;
+  laneHeight.value = el.clientHeight;
+  laneRo.observe(el);
 });
 onBeforeUnmount(() => laneRo?.disconnect());
 
@@ -625,15 +633,29 @@ function xToT(x: number, duration: number): number {
   return Math.max(0, Math.min(duration, (x / Math.max(1, laneWidth.value)) * duration));
 }
 
-const rulerTicks = computed<number[]>(() => {
+const rulerStep = computed(() => {
   const d = doc.value?.duration ?? 3;
   const rawStep = d / 8;
   const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
-  const step = steps.find((s) => s >= rawStep) ?? 60;
+  return steps.find((s) => s >= rawStep) ?? 60;
+});
+
+const rulerTicks = computed<number[]>(() => {
+  const d = doc.value?.duration ?? 3;
+  const step = rulerStep.value;
   const out: number[] = [];
   for (let t = 0; t <= d + 1e-6; t += step) out.push(t);
   return out;
 });
+
+/** 时间吸附（工具条开关，按住 Alt 临时关闭）：对齐到刻度步长的 1/10 细分网格 */
+const snapEnabled = ref(true);
+
+function snapT(t: number, duration: number, enabled: boolean): number {
+  if (!enabled) return t;
+  const grid = Math.max(0.001, rulerStep.value / 10);
+  return Math.max(0, Math.min(duration, Math.round(t / grid) * grid));
+}
 
 type Drag =
   | { kind: "scrub" }
@@ -646,7 +668,8 @@ function beginScrub(e: PointerEvent): void {
   laneLeftCache = rect.left;
   drag = { kind: "scrub" };
   (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-  time.value = xToT(e.clientX - rect.left, doc.value?.duration ?? 1);
+  const dur = doc.value?.duration ?? 1;
+  time.value = snapT(xToT(e.clientX - rect.left, dur), dur, snapEnabled.value && !e.altKey);
   previewAt(time.value);
 }
 
@@ -664,7 +687,7 @@ function onRulerPointerMove(e: PointerEvent): void {
   if (!drag || drag.kind !== "scrub") return;
   const d = doc.value;
   if (!d) return;
-  time.value = xToT(e.clientX - laneLeftCache, d.duration);
+  time.value = snapT(xToT(e.clientX - laneLeftCache, d.duration), d.duration, snapEnabled.value && !e.altKey);
   previewAt(time.value);
 }
 
@@ -683,7 +706,7 @@ function onLanePointerMove(e: PointerEvent): void {
   const curve = d.curves.find((c) => c.prop === dragKey.prop);
   const key = curve?.keys[dragKey.index];
   if (!key || !curve) return;
-  key.t = xToT(x, d.duration);
+  key.t = snapT(xToT(x, d.duration), d.duration, snapEnabled.value && !e.altKey);
   curve.keys.sort((a, b) => a.t - b.t);
   // 排序后必须回写索引，否则下一次移动事件会抓到别的关键帧
   dragKey.index = curve.keys.indexOf(key);
@@ -768,7 +791,7 @@ function onCurveDown(e: PointerEvent): void {
     // live=false：先按点击处理，移出死区才转拖拽（防止点选时的抖动改值）
     curveDrag = { index: g.keys.indexOf(hit), startX: localX, startY: localY, live: false };
   } else {
-    const t = g.tOf(localX);
+    const t = snapT(g.tOf(localX), d.duration, snapEnabled.value && !e.altKey);
     const v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
     const curve = curveOf(d, curveProp.value);
     upsertKey(curve, t, v);
@@ -799,7 +822,7 @@ function onCurveMove(e: PointerEvent): void {
   const curve = d.curves.find((c) => c.prop === curveProp.value);
   const key = curve?.keys[dragNow.index];
   if (!curve || !key) return;
-  key.t = g.tOf(localX);
+  key.t = snapT(g.tOf(localX), d.duration, snapEnabled.value && !e.altKey);
   key.v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
   curve.keys.sort((a, b) => a.t - b.t);
   dragNow.index = curve.keys.indexOf(key);
@@ -839,6 +862,12 @@ function onCurveUp(): void {
         <button class="anim-btn rec" :class="{ on: recording }" :title="recording ? '停止录制' : '录制：开启后修改节点变换自动 K 帧（已添加通道）'" @click="toggleRecording">●</button>
         <button class="anim-btn" :title="playing ? '暂停预览' : '播放预览（应用到选中节点）'" @click="togglePlaying">{{ playing ? "⏸" : "▶" }}</button>
         <button class="anim-btn" title="停止并还原节点姿势" @click="stopPreview">⏹</button>
+        <button
+          class="anim-btn"
+          :class="{ on: snapEnabled }"
+          title="时间吸附：scrub 与关键帧拖拽对齐到刻度细分网格（按住 Alt 临时关闭）"
+          @click="snapEnabled = !snapEnabled"
+        >吸附</button>
         <span class="anim-time mono">{{ time.toFixed(2) }}s / {{ doc.duration.toFixed(2) }}s</span>
         <span class="anim-sep"></span>
         <button class="anim-btn" title="为所有已添加通道 K 帧（当前时间、选中节点当前值）" @click="keyAll">K 全部</button>

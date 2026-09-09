@@ -84,6 +84,13 @@
     cursor: not-allowed;
   }
 
+  /* 开关型按钮的选中态（吸附开启等）；录制键有自己的 .rec.on 覆盖 */
+  &.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
   &.rec {
     color: var(--err, #e06c5a);
     font-size: 12px;
