@@ -7,6 +7,7 @@
 // 播放头保持可见、轨道区尺寸 ResizeObserver。
 // ---------------------------------------------------------------------------
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { ensureManualTangents, isAutoTangent } from "../../../framework/animation/clip";
 import type { AnimEditorCtx, TimelineApi } from "./ctx";
 
 /** dope 拖拽 / scrub 状态（模块级可变；move 时按事件对象判定） */
@@ -391,6 +392,8 @@ export function useAnimTimeline(ctx: AnimEditorCtx): TimelineApi {
     const curve = d.curves.find((c) => c.prop === dragKey.prop);
     const key = curve?.keys[dragKey.index];
     if (!key || !curve) return;
+    // Unity 式：自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
+    if (isAutoTangent(key)) ensureManualTangents(curve.keys, dragKey.index);
     key.t = snapT(xToT(x, d.duration), d.duration, snapEnabled.value && !e.altKey);
     curve.keys.sort((a, b) => a.t - b.t);
     // 排序后必须回写索引，否则下一次移动事件会抓到别的关键帧

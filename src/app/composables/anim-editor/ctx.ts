@@ -184,6 +184,8 @@ export interface CurveGeom {
 export interface TangentHandle {
   index: number;
   side: "ti" | "to";
+  /** 权重基准段跨（相邻关键帧段，秒）：拖拽时 权重=|Δt|/base（绘制同步携带） */
+  base: number;
   x: number;
   y: number;
   /** 手动态 = 实心可拖；自动态 = 虚影提示 */

@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
 // 关键帧动画剪辑播放（.anim 资产 → 节点属性）：
 // - 与编辑器 AnimationClipData 同一套数据语义（通道键 = 组.路径 字符串、
-//   关键帧插值 linear/step/smooth、smooth 支持手动贝塞尔切线 ti/to/tm、
+//   关键帧插值 linear/step/smooth、smooth 支持手动贝塞尔切线 ti/to/tm 与
+//   手柄权重 wi/wo（权重非缺省时按参数化三次 Bézier 求值，与 framework
+//   clip.ts 逐位一致）、
 //   时长/循环/速度）；
 // - 通道应用规则（与编辑器 anim-props.ts 目录镜像）：
 //     position.* / rotation.*（度）/ scale.*  → 节点对象变换；
@@ -15,7 +17,10 @@
 
 const D2R = Math.PI / 180;
 const INTERPS = ["linear", "step", "smooth"];
-const TANGENT_CLAMP = 10000;
+const TANGENT_CLAMP = 1000000;
+const DEFAULT_TANGENT_WEIGHT = 1 / 3;
+const TANGENT_WEIGHT_MIN = 0.01;
+const TANGENT_WEIGHT_MAX = 1.5;
 
 function num(v, fb) {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
@@ -46,6 +51,11 @@ function parseClip(v) {
         const to = num(k && k.to, NaN);
         if (Number.isFinite(to)) key.to = clamp(to, -TANGENT_CLAMP, TANGENT_CLAMP);
         if (k && k.tm === true) key.tm = true;
+        // 手柄权重（仅影响 smooth 段求值的形变；与 framework clip.ts 同步语义）
+        const wi = num(k && k.wi, NaN);
+        if (Number.isFinite(wi)) key.wi = clamp(wi, TANGENT_WEIGHT_MIN, TANGENT_WEIGHT_MAX);
+        const wo = num(k && k.wo, NaN);
+        if (Number.isFinite(wo)) key.wo = clamp(wo, TANGENT_WEIGHT_MIN, TANGENT_WEIGHT_MAX);
         return key;
       })
       .filter((k) => Number.isFinite(k.t) && Number.isFinite(k.v))
@@ -73,6 +83,76 @@ function tangentAt(keys, i) {
 function keySlope(keys, i, side) {
   const manual = side === "ti" ? keys[i] && keys[i].ti : keys[i] && keys[i].to;
   return manual === undefined ? tangentAt(keys, i) : manual;
+}
+
+/** 关键帧某侧生效手柄权重（钳 [MIN, MAX]；缺省 = 1/3） */
+function keyWeight(keys, i, side) {
+  const w = side === "ti" ? keys[i] && keys[i].wi : keys[i] && keys[i].wo;
+  return w === undefined || !Number.isFinite(w)
+    ? DEFAULT_TANGENT_WEIGHT
+    : clamp(w, TANGENT_WEIGHT_MIN, TANGENT_WEIGHT_MAX);
+}
+
+function cubicBezier(p0, c1, c2, p3, u) {
+  const m = 1 - u;
+  return m * m * m * p0 + 3 * m * m * u * c1 + 3 * m * u * u * c2 + u * u * u * p3;
+}
+
+/** smooth 段求值（权重形变的参数化三次 Bézier；与 framework clip.ts 逐行同构） */
+function sampleSmoothSegment(keys, i, time) {
+  const k1 = keys[i];
+  const k2 = keys[i + 1];
+  if (!k1) return 0;
+  if (!k2) return k1.v;
+  const span = Math.max(1e-6, k2.t - k1.t);
+  const u0 = clamp((time - k1.t) / span, 0, 1);
+  if (u0 <= 0) return k1.v;
+  const s1 = keySlope(keys, i, "to");
+  const s2 = keySlope(keys, i + 1, "ti");
+  const w1 = keyWeight(keys, i, "to");
+  const w2 = keyWeight(keys, i + 1, "ti");
+  if (w1 === DEFAULT_TANGENT_WEIGHT && w2 === DEFAULT_TANGENT_WEIGHT) {
+    const u2 = u0 * u0;
+    const u3 = u2 * u0;
+    const m1 = s1 * span;
+    const m2 = s2 * span;
+    return (
+      (2 * u3 - 3 * u2 + 1) * k1.v +
+      (u3 - 2 * u2 + u0) * m1 +
+      (-2 * u3 + 3 * u2) * k2.v +
+      (u3 - u2) * m2
+    );
+  }
+  const A = 3 * w1 + 3 * w2 - 2;
+  const B = 3 - 6 * w1 - 3 * w2;
+  const C = 3 * w1;
+  const yAt = (u) => cubicBezier(k1.v, k1.v + s1 * w1 * span, k2.v - s2 * w2 * span, k2.v, u);
+  if (A === 0) {
+    if (B === 0) return C === 0 ? k1.v : yAt(clamp(u0 / C, 0, 1));
+    const disc = Math.max(0, C * C + 4 * B * u0);
+    return yAt(clamp((-C + Math.sqrt(disc)) / (2 * B), 0, 1));
+  }
+  const f = (uu) => ((A * uu + B) * uu + C) * uu - u0;
+  let lo = 0;
+  let hi = -1;
+  let prev = f(0);
+  for (let s = 1; s <= 32; s++) {
+    const uu = s / 32;
+    const fv = f(uu);
+    if (prev < 0 && fv >= 0) {
+      lo = (s - 1) / 32;
+      hi = uu;
+      break;
+    }
+    prev = fv;
+  }
+  if (hi < 0) return yAt(1);
+  for (let n = 0; n < 30; n++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) < 0) lo = mid;
+    else hi = mid;
+  }
+  return yAt((lo + hi) / 2);
 }
 
 function indexBefore(keys, t) {
@@ -105,11 +185,7 @@ function evalCurve(curve, t) {
   const span = Math.max(1e-6, k2.t - k1.t);
   const u = (t - k1.t) / span;
   if (k1.i === "smooth") {
-    const m1 = keySlope(keys, i, "to") * span;
-    const m2 = keySlope(keys, i + 1, "ti") * span;
-    const u2 = u * u;
-    const u3 = u2 * u;
-    return (2 * u3 - 3 * u2 + 1) * k1.v + (u3 - 2 * u2 + u) * m1 + (-2 * u3 + 3 * u2) * k2.v + (u3 - u2) * m2;
+    return sampleSmoothSegment(keys, i, t);
   }
   return k1.v + (k2.v - k1.v) * u;
 }
@@ -220,3 +296,7 @@ export async function createClipAnimations(entries) {
   };
   return api;
 }
+
+// smoke 对照钩子（scripts/smoke-components.ts 校验与 framework clip.ts 同语义；
+// 浏览器运行时与导出产物均未使用）
+export const __test = { parseClip, sampleClip };

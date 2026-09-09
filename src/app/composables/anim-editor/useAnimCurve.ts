@@ -1,37 +1,30 @@
 // ---------------------------------------------------------------------------
 // 曲线视图（选中通道）：SVG 曲线绘制几何 + 关键帧拖拽 / 空白点击插帧 /
-// 贝塞尔切线手柄（自动态虚影、拖即固化、tm 对称联动）+ 中键抓画布平移。
+// 贝塞尔切线手柄（自动态虚影、拖即固化、tm 对称联动、权重 wi/wo 拖柄长且
+// 曲线随控制点形变）+ 中键抓画布平移。
 // 数值轴窗口 = 手动缩放（curveView） > 拖拽冻结快照 > 自动适配；时间轴走
 // 共享的 tlT0/zoom 窗口（与 dope 完全同一套方案）。
 // ---------------------------------------------------------------------------
 import { computed, ref, watch } from "vue";
 import {
+  TANGENT_WEIGHT_MAX,
+  TANGENT_WEIGHT_MIN,
   clampSlope,
   ensureManualTangents,
   evaluateCurve,
   isAutoTangent,
   keySlope,
+  keyWeight,
+  sampleSmoothSegment,
+  tangentWeightBase,
   upsertKey,
-  type AnimKey,
   type AnimProp,
 } from "../../../framework/animation/clip";
 import type { AnimEditorCtx, CurveApi, CurveGeom, TangentHandle } from "./ctx";
 
-/** Hermite 段插值（与 framework clip.ts evaluateCurve 同一公式；m = 斜率×段跨） */
-function hermite(k1: AnimKey, m1: number, k2: AnimKey, m2: number, u: number): number {
-  const u2 = u * u;
-  const u3 = u2 * u;
-  return (
-    (2 * u3 - 3 * u2 + 1) * k1.v +
-    (u3 - 2 * u2 + u) * m1 +
-    (-2 * u3 + 3 * u2) * k2.v +
-    (u3 - u2) * m2
-  );
-}
-
 type CurveDrag =
   | { kind: "key"; index: number; startX: number; startY: number; live: boolean }
-  | { kind: "handle"; index: number; side: "ti" | "to"; startX: number; startY: number }
+  | { kind: "handle"; index: number; side: "ti" | "to"; base: number; startX: number; startY: number }
   | {
       kind: "pan";
       startT0: number;
@@ -42,6 +35,32 @@ type CurveDrag =
       startY: number;
     }
   | null;
+
+/** 把手柄端点沿「关键帧 → 理想端点」方向钳到绘图区矩形内：保留角度、只截断
+ *  长度，避免近垂直斜率把柄端渲染到画布外（无效拉长）。不改变斜率/权重，
+ *  仅限制显示。 */
+function clampHandleToPlot(
+  kx: number,
+  ky: number,
+  ex: number,
+  ey: number,
+  bx0: number,
+  by0: number,
+  bx1: number,
+  by1: number,
+): { x: number; y: number } {
+  const dx = ex - kx;
+  const dy = ey - ky;
+  if (dx === 0 && dy === 0) return { x: ex, y: ey };
+  // 射线 p = (kx,ky) + t·(dx,dy)，t∈[0,1]；命中最先碰到的那条矩形边
+  let t = 1;
+  if (dx > 0) t = Math.min(t, (bx1 - kx) / dx);
+  else if (dx < 0) t = Math.min(t, (bx0 - kx) / dx);
+  if (dy > 0) t = Math.min(t, (by1 - ky) / dy);
+  else if (dy < 0) t = Math.min(t, (by0 - ky) / dy);
+  t = Math.max(0, t);
+  return { x: kx + dx * t, y: ky + dy * t };
+}
 
 export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
   const curveSvgEl = ref<SVGSVGElement | null>(null);
@@ -72,16 +91,12 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
     if (keys.length) {
       lo = Math.min(...keys.map((k) => k.v));
       hi = Math.max(...keys.map((k) => k.v));
-      // smooth 段可能鼓出关键帧值之外：8 等分采样纳入曲线极值
+      // smooth 段可能鼓出关键帧值之外：8 等分采样纳入曲线极值（含权重形变）
       for (let i = 0; i + 1 < keys.length; i++) {
-        const k1 = keys[i];
-        const k2 = keys[i + 1];
-        if (k1.i !== "smooth") continue;
-        const span = Math.max(1e-6, k2.t - k1.t);
-        const m1 = keySlope(keys, i, "to") * span;
-        const m2 = keySlope(keys, i + 1, "ti") * span;
+        if (keys[i].i !== "smooth") continue;
+        const span = Math.max(1e-6, keys[i + 1].t - keys[i].t);
         for (let s = 1; s < 8; s++) {
-          const v = hermite(k1, m1, k2, m2, s / 8);
+          const v = sampleSmoothSegment(keys, i, keys[i].t + (span * s) / 8);
           if (v < lo) lo = v;
           if (v > hi) hi = v;
         }
@@ -172,7 +187,11 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
             Math.min(Math.min(d.duration, t1), ((x - pad) / Math.max(1, w - pad * 2)) * (t1 - t0) + t0),
           )
         : 0;
-    // —— 选中/手动态的 smooth 帧生成切线手柄 ——
+    // —— 切线手柄（Unity 式）——
+    // 手动态帧常显两侧；选中帧常显两侧虚影（拖即固化——「入段暂为线性不生效」
+    // 也要显示：点插值下拉改平滑后立即有柄可拖，与 Unity 一致；出段恒有效，
+    // 末帧的 to 对应「末帧 → 右缘水平延长线」）。实线杆+圆点=手动、虚线+
+    // 琥珀空心=自动；联动（tm）的 ti 侧为镜像虚影。
     // 注意：手柄纵向占位【不】进值域——否则选中任一帧都会重映射 lo/hi，
     // 其它关键帧与曲线整体「跳位」（编辑态面板偏移抖动）；超出绘图区的手柄
     // 被 svg 裁剪，拖大斜率时自然出界即可。
@@ -181,23 +200,30 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
       sel && sel.prop === curveProp.value
         ? (keys.find((k) => Math.abs(k.t - sel.t) <= 1e-4) ?? null)
         : null;
-    const wantHandles = keys.filter(
-      (k) => k.i === "smooth" && (!isAutoTangent(k) || k === selKey),
-    );
     const handles: TangentHandle[] = [];
-    for (const k of wantHandles) {
-      const i = keys.indexOf(k);
-      const span = Math.max(0.05, d ? d.duration / 12 : 0.25);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (isAutoTangent(k) && k !== selKey) continue;
       for (const side of ["ti", "to"] as const) {
         const slope = keySlope(keys, i, side);
         const sgn = side === "to" ? 1 : -1;
+        // 手柄长度 = 权重 × 相邻段跨（与曲线控制点同一约定：拖曲线时手柄端点
+        // 恰好跟随曲线形变）；钳 0.05s 下限防段跨极小时手柄与帧点重合不可拖
+        const base = tangentWeightBase(keys, i, side, d ? d.duration / 4 : 1);
+        const span = Math.max(0.05, base * keyWeight(keys, i, side));
+        const kx = xOf(k.t);
+        const ky = yOf(k.v);
+        // 近垂直时斜率巨大，柄端会飞离画布：沿方向钳回绘图区，只截长度不改角
+        const end = clampHandleToPlot(kx, ky, xOf(k.t + sgn * span), yOf(k.v + slope * sgn * span), pad, pad, w - pad, h - pad);
         handles.push({
           index: i,
           side,
-          x: xOf(k.t + sgn * span),
-          y: yOf(k.v + slope * sgn * span),
+          base,
+          x: end.x,
+          y: end.y,
           manual: (side === "ti" ? k.ti : k.to) !== undefined,
-          ghost: k.tm === true && side === (sgn > 0 ? "ti" : "to"),
+          // 弱化：联动（tm）的镜像侧 + 自动态（拖即固化）
+          ghost: (k.tm === true && side === "ti") || isAutoTangent(k),
         });
       }
     }
@@ -226,10 +252,12 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
           }
           const span = Math.max(1e-6, k2.t - k1.t);
           if (k1.i === "smooth") {
-            const m1 = keySlope(keys, i, "to") * span;
-            const m2 = keySlope(keys, i + 1, "ti") * span;
+            // 权重形变下的参数化 Bézier：按时间均匀采样即视觉均匀（控制点同约定）
             const N = 24;
-            for (let s = 1; s <= N; s++) push(k1.t + (s / N) * span, hermite(k1, m1, k2, m2, s / N));
+            for (let s = 1; s <= N; s++) {
+              const t = k1.t + (s / N) * span;
+              push(t, sampleSmoothSegment(keys, i, t));
+            }
           } else {
             push(k2.t, k2.v);
           }
@@ -311,9 +339,23 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
       const k = g.keys[hitH.index];
       if (!k) return;
       ctx.selection.pickKey(curveProp.value, k.t);
+      // 越侧守卫（Unity 式）：指针在帧中心另一侧按下该侧手柄（联动侧手柄
+      // 跨过帧中心时常见）→ 本次按下不作用于手柄，落到关键帧命中（选中拖动）
+      if ((hitH.side === "to" && localX <= g.xOf(k.t)) || (hitH.side === "ti" && localX >= g.xOf(k.t))) {
+        curveDrag = { kind: "key", index: hitH.index, startX: localX, startY: localY, live: false };
+        svg.setPointerCapture?.(e.pointerId);
+        return;
+      }
       const idx = hitH.index;
       if (isAutoTangent(k)) ensureManualTangents(g.keys, idx);
-      curveDrag = { kind: "handle", index: idx, side: hitH.side, startX: localX, startY: localY };
+      curveDrag = {
+        kind: "handle",
+        index: idx,
+        side: hitH.side,
+        base: hitH.base,
+        startX: localX,
+        startY: localY,
+      };
       svg.setPointerCapture?.(e.pointerId);
       return;
     }
@@ -383,12 +425,39 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
     const key = curve?.keys[dragNow.index];
     if (!curve || !key) return;
     if (dragNow.kind === "handle") {
-      // 斜率 = 过关键帧与指针点的割线（时间差 < 20ms 不更新，防端点处爆斜率）
-      const dt = (dragNow.side === "to" ? 1 : -1) * (g.tOf(localX) - key.t);
-      if (dt < 0.02) return;
-      const slope = clampSlope((g.vOf(localY) - key.v) / dt);
+      // 拖手柄会把受影响的段强制转 smooth：线性/阶跃段不读斜率，若不转则
+      // 手柄可拖、端点跟着动，但曲线保持直线——用户看到「两端改了面板没变化」
+      if (dragNow.side === "to") {
+        if (key.i !== "smooth") key.i = "smooth";
+      } else {
+        const prev = curve.keys[dragNow.index - 1];
+        if (prev && prev.i !== "smooth") prev.i = "smooth";
+      }
+      // 两侧手柄统一按「指针在柄前」的屏幕像素割线换算：s = 沿本侧方向的
+      // 像素距离（to 侧向右、ti 侧向左），Δy = 屏幕向上为正。像素斜率再乘
+      // （值域跨度/像素高 ÷ 时间跨度/像素宽）换算成 dv/dt——漏掉这个比值
+      // 会让算出的斜率与手柄指向差一个缩放因子（左侧手柄拖出近水平的杆、
+      // 与入射曲线明显不切，即源于此）。指针在帧中心另一侧时冻结（侧别一致，
+      // 不翻转）；贴帧由命中死区兜底，不再用「时间差 < 20ms」限制角度——
+      // 那会让手柄拖不出陡峭/接近垂直的角度（拖到约 79° 就卡死）。
+      const sgn = dragNow.side === "to" ? 1 : -1;
+      const dxPx = sgn * (localX - g.xOf(key.t));
+      const dyPx = g.yOf(key.v) - localY;
+      const base = Math.max(1e-6, dragNow.base);
+      const tScale = Math.max(1e-6, g.t1 - g.t0) / Math.max(1, g.w - g.pad * 2);
+      const vScale = (g.hi - g.lo) / Math.max(1, g.h - g.pad * 2);
+      if (dxPx < 0) return; // 指针越过帧中心到另一侧：冻结（当前侧的斜率不受影响）
+      // 分母给 1px 下限防除零；斜率上限由 clampSlope 收敛（近垂直 = 含无穷斜率）
+      const slope = clampSlope(((sgn * dyPx) / Math.max(1, dxPx)) * (vScale / tScale));
       key[dragNow.side] = slope;
-      if (key.tm) key[dragNow.side === "to" ? "ti" : "to"] = slope;
+      // 水平分量写入权重（相对基准段跨）：手柄长度可编辑，曲线随控制点真实形变
+      const w = Math.min(Math.max((dxPx * tScale) / base, TANGENT_WEIGHT_MIN), TANGENT_WEIGHT_MAX);
+      key[dragNow.side === "to" ? "wo" : "wi"] = w;
+      if (key.tm) {
+        const opp = dragNow.side === "to" ? "ti" : "to";
+        key[opp] = slope;
+        key[opp === "to" ? "wo" : "wi"] = w;
+      }
       ctx.clip.touch();
       return;
     }

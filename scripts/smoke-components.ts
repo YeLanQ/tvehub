@@ -24,16 +24,23 @@ import {
   parseLightComponentSettings,
 } from "../src/framework/lighting/types";
 import {
+  DEFAULT_TANGENT_WEIGHT,
+  TANGENT_WEIGHT_MIN,
   clearTangents,
   ensureManualTangents,
   evaluateClip,
   evaluateCurve,
   isAutoTangent,
   keySlope,
+  keyWeight,
   parseAnimationClip,
   removeKeyAt,
+  sampleSmoothSegment,
+  tangentWeightBase,
   upsertKey,
 } from "../src/framework/animation/clip";
+// @ts-ignore 播放器镜像（mjs 无类型声明）：校验与 framework clip.ts 同语义
+import { __test } from "../public/web-preview/libs/animclip.mjs";
 import { DEFAULT_AUDIO_SETTINGS } from "../src/framework/audio/types";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";
 import { AudioSystem } from "../src/framework/audio/AudioSystem";
@@ -376,7 +383,7 @@ function check(name: string, cond: boolean, detail = ""): void {
         prop: "position.x",
         keys: [
           { t: 0, v: 0, i: "smooth", to: 2, ti: "bad" },
-          { t: 1, v: 1, i: "smooth", ti: -2, to: 99999, tm: true },
+          { t: 1, v: 1, i: "smooth", ti: -2, to: 5000000, tm: true },
           { t: 1.5, v: 1, i: "smooth", tm: "yes" },
         ],
       },
@@ -385,7 +392,7 @@ function check(name: string, cond: boolean, detail = ""): void {
   check(
     "切线解析：合法保留、非法剔除、斜率钳制、tm 仅认 true",
     bz.keys[0].to === 2 && bz.keys[0].ti === undefined && bz.keys[1].ti === -2 &&
-      bz.keys[1].to === 10000 && bz.keys[1].tm === true && bz.keys[2].tm === undefined,
+      bz.keys[1].to === 1000000 && bz.keys[1].tm === true && bz.keys[2].tm === undefined,
   );
   // 0.5 ∈ [0,1]（span=1）：h10=0.125、h11=-0.125 → 0.125×to(2) + 0.5×1 + (−0.125)×ti(−2) = 1
   check(
@@ -415,6 +422,116 @@ function check(name: string, cond: boolean, detail = ""): void {
   );
   clearTangents(bz2.keys[0]);
   check("clearTangents 恢复自动", isAutoTangent(bz2.keys[0]) && bz2.keys[0].tm === undefined);
+
+  // —— 切线手柄权重（wi/wo）：解析钳制 / 生效值 / 基准段 + 参数化 Bézier 形变 ——
+  const wtc = parseAnimationClip({
+    duration: 2,
+    loops: false,
+    curves: [
+      {
+        prop: "position.x",
+        keys: [
+          { t: 0, v: 0, i: "smooth", to: 1, wo: 0.4 },
+          { t: 1, v: 1, i: "smooth", ti: 2, wi: 9, wo: -1 },
+          { t: 1.5, v: 1, i: "smooth", wi: "x" },
+        ],
+      },
+    ],
+  }).curves[0];
+  check(
+    "权重解析：合法钳制保留、非法剔除（旧文件缺省 undefined 零改动兼容）",
+    wtc.keys[0].wo === 0.4 && wtc.keys[0].wi === undefined &&
+      wtc.keys[1].wi === 1.5 && wtc.keys[1].wo === 0.01 && wtc.keys[2].wi === undefined,
+  );
+  check(
+    "keyWeight 缺省 1/3 与钳制生效",
+    keyWeight(wtc.keys, 0, "ti") === DEFAULT_TANGENT_WEIGHT && keyWeight(wtc.keys, 0, "to") === 0.4 &&
+      keyWeight(wtc.keys, 1, "ti") === 1.5 && keyWeight(wtc.keys, 1, "to") === TANGENT_WEIGHT_MIN,
+    `ti0=${keyWeight(wtc.keys, 0, "ti")} to0=${keyWeight(wtc.keys, 0, "to")} ti1=${keyWeight(wtc.keys, 1, "ti")} to1=${keyWeight(wtc.keys, 1, "to")}`,
+  );
+  check(
+    "tangentWeightBase：own 段跨 / 缺侧借邻段 / 单帧回退",
+    tangentWeightBase(wtc.keys, 0, "to", 1) === 1 && tangentWeightBase(wtc.keys, 2, "to", 1) === 0.5 &&
+      tangentWeightBase([{ t: 0, v: 0, i: "smooth" }], 0, "ti", 0.75) === 0.75,
+  );
+  // 权重恒等于缺省（±ε 绕过快路径）时参数化 Bézier 与 Hermite 同曲线（形状回归）
+  const idn = {
+    prop: "p",
+    keys: [
+      { t: 0, v: 0, i: "smooth" as const, to: 3 },
+      { t: 1, v: 2, i: "smooth" as const, ti: -1 },
+    ],
+  };
+  let idMax = 0;
+  for (let s = 1; s < 20; s++) {
+    const t = s / 20;
+    idMax = Math.max(
+      idMax,
+      Math.abs(
+        sampleSmoothSegment(idn.keys, 0, t) -
+          sampleSmoothSegment(
+            [
+              { ...idn.keys[0], wo: DEFAULT_TANGENT_WEIGHT + 1e-9 },
+              { ...idn.keys[1], wi: DEFAULT_TANGENT_WEIGHT + 1e-9 },
+            ],
+            0,
+            t,
+          ),
+      ),
+    );
+  }
+  check("权重≈1/3 时参数化 Bézier 与 Hermite 同曲线", idMax < 1e-6, `maxΔ=${idMax}`);
+  // 手算：段 [0,1] 0→1、两端斜率 0、w1=w2=0.5 → X(u)=u³-1.5u²+1.5u（u=τ）
+  // → t=0.5 处 u=0.5 → Y(u)=3u²-2u³=0.5；拉偏 w1=0.9 → X=2.2u³-3.9u²+2.7u
+  // → X(u)=0.5 解 u≈0.282 → Y(u)=3u²-2u³ ≈ 0.193（形状随权重真实改变）
+  const shp = {
+    prop: "p",
+    keys: [
+      { t: 0, v: 0, i: "smooth" as const, to: 0, wo: 0.5 },
+      { t: 1, v: 1, i: "smooth" as const, ti: 0, wi: 0.5 },
+    ],
+  };
+  const vSym = evaluateCurve(shp, 0.5);
+  shp.keys[0].wo = 0.9;
+  const vBias = evaluateCurve(shp, 0.5);
+  check(
+    "权重真实形变 smooth 段（手算对照）",
+    Math.abs((vSym as number) - 0.5) < 1e-6 && Math.abs((vBias as number) - 0.193) < 0.01,
+    `vSym=${vSym} vBias=${vBias}`,
+  );
+  // 两侧权重都 >2/3 → 时间坐标非单调（S 形回勾）：求值不抛错、端点仍精确
+  const loop = {
+    prop: "p",
+    keys: [
+      { t: 0, v: 0, i: "smooth" as const, to: 1, wo: 1.5 },
+      { t: 1, v: 1, i: "smooth" as const, ti: 1, wi: 1.5 },
+    ],
+  };
+  let loopMax = 0;
+  for (let s = 1; s < 20; s++) {
+    const v = sampleSmoothSegment(loop.keys, 0, s / 20);
+    if (Number.isFinite(v)) loopMax = Math.max(loopMax, Math.min(v, 1 - v));
+  }
+  check(
+    "非单调回勾段：求值有限且端点精确",
+    loopMax > 0 && sampleSmoothSegment(loop.keys, 0, 0) === 0 &&
+      Math.abs(sampleSmoothSegment(loop.keys, 0, 1) - 1) < 1e-9,
+    `loopMax=${loopMax} e0=${sampleSmoothSegment(loop.keys, 0, 0)} e1=${sampleSmoothSegment(loop.keys, 0, 1)}`,
+  );
+  // 播放器镜像同语义：parseClip/sampleClip 黑盒对照（含权重与钳制值）
+  {
+    const mirrorDoc = JSON.parse(JSON.stringify(wtc));
+    const mc = __test.parseClip(mirrorDoc);
+    const out = new Map<string, number>();
+    let mMax = 0;
+    for (let s = 0; s <= 40; s++) {
+      const t = (s / 40) * 2;
+      __test.sampleClip(mc, t, out);
+      const mine = evaluateClip(parseAnimationClip(mirrorDoc), t).get("position.x");
+      if (mine !== undefined) mMax = Math.max(mMax, Math.abs((out.get("position.x") ?? NaN) - mine));
+    }
+    check("播放器镜像与框架求值逐点一致（含权重/钳制）", mMax < 1e-12, `maxΔ=${mMax}`);
+  }
 }
 
 if (failed) {

@@ -136,8 +136,11 @@ export function useAnimSelection(ctx: AnimEditorCtx): SelectionApi {
         disabled: auto,
         onClick: () => {
           k.tm = true;
+          // 联动补齐缺侧：斜率 + 手柄权重一起镜像（Unity 式对称）
           if (k.to !== undefined && k.ti === undefined) k.ti = k.to;
           if (k.ti !== undefined && k.to === undefined) k.to = k.ti;
+          if (k.wo !== undefined && k.wi === undefined) k.wi = k.wo;
+          if (k.wi !== undefined && k.wo === undefined) k.wo = k.wi;
           ctx.clip.touch();
         },
       },
