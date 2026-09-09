@@ -289,7 +289,14 @@ export class Entity {
    */
   find(nameOrPath: string): Entity | null;
 
-  /** 取本实体上挂载的首个指定类型脚本组件（无则 null） */
+  /**
+   * 获取实体上挂载的内置组件门面（只支持 "rigidBody"；未挂载返回 null）。
+   * 门面提供只读属性（mode/gravityScale/colliderCount）与常用物理方法，
+   * 方法与 engine.physics 同名接口等价（已绑定本实体）。
+   */
+  getComponent(component: "rigidBody"): RigidBodyFacade | null;
+
+  /** 获取实体上挂载的脚本组件实例（未挂载返回 null） */
   getComponent<T extends Component>(componentClass: new (...args: never[]) => T): T | null;
 }
 
@@ -401,6 +408,30 @@ export interface MathApi {
 }
 
 // ---------------------------------------------------------------------------
+// 内置组件门面（getComponent 按名称获取）
+// ---------------------------------------------------------------------------
+
+/** 刚体组件门面：mode 为刚体形态；物理方法与 engine.physics 同名接口等价（已绑定本实体） */
+export interface RigidBodyFacade {
+  /** 刚体形态：static（隐式静态）/ kinematic（运动学）/ dynamic（动力学） */
+  readonly mode: "static" | "kinematic" | "dynamic";
+  /** 当前重力缩放 */
+  readonly gravityScale: number;
+  /** 碰撞体数量 */
+  readonly colliderCount: number;
+  /** 设置重力缩放（0 = 不受重力） */
+  setGravityScale(scale: number): void;
+  /** 直接设置线速度（m/s） */
+  setLinearVelocity(x: number, y: number, z: number): void;
+  /** 读取线速度 */
+  getLinearVelocity(): Vec3 | null;
+  /** 施加冲量（世界空间，N·s） */
+  applyImpulse(x: number, y: number, z: number): void;
+  /** 唤醒 */
+  wakeUp(): void;
+}
+
+// ---------------------------------------------------------------------------
 // engine 入口
 // ---------------------------------------------------------------------------
 
@@ -494,6 +525,8 @@ export interface PhysicsApi {
   setAngularVelocity(entity: Entity, x: number, y: number, z: number): void;
   /** 读取线速度（未绑定/世界未就绪返回 null） */
   getLinearVelocity(entity: Entity): Vec3 | null;
+  /** 节点物理体信息（未绑定刚体/碰撞体返回 null） */
+  bodyInfo(entity: Entity): { mode: "static" | "kinematic" | "dynamic"; gravityScale: number; colliderCount: number } | null;
   /** 重力缩放（0 = 不受重力） */
   setGravityScale(entity: Entity, scale: number): void;
   /** 唤醒（修改参数后让睡眠中的体立即响应） */

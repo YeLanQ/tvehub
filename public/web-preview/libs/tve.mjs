@@ -327,6 +327,42 @@ class Entity {
   }
 
   getComponent(componentClass) {
+    // 内置组件（按名称字符串）：返回绑定到本实体的组件门面
+    //（属性只读快照 + 常用方法；门面方法按实体实时查询后端）
+    if (typeof componentClass === "string") {
+      if (componentClass === "rigidBody") {
+        const info = host?.physics?.bodyInfo(this.id);
+        if (!info) return null;
+        const self = this;
+        return {
+          get mode() {
+            return host?.physics?.bodyInfo(self.id)?.mode ?? "dynamic";
+          },
+          get gravityScale() {
+            return host?.physics?.bodyInfo(self.id)?.gravityScale ?? 1;
+          },
+          get colliderCount() {
+            return host?.physics?.bodyInfo(self.id)?.colliderCount ?? 0;
+          },
+          setGravityScale(s) {
+            physicsApi.setGravityScale(self, s);
+          },
+          setLinearVelocity(x, y, z) {
+            physicsApi.setLinearVelocity(self, x, y, z);
+          },
+          getLinearVelocity() {
+            return physicsApi.getLinearVelocity(self);
+          },
+          applyImpulse(x, y, z) {
+            physicsApi.applyImpulse(self, x, y, z);
+          },
+          wakeUp() {
+            physicsApi.wakeUp(self);
+          },
+        };
+      }
+      return null;
+    }
     const list = componentsByNode.get(this.id);
     if (!list) return null;
     return list.find((c) => c instanceof componentClass) ?? null;
@@ -530,6 +566,10 @@ const physicsApi = {
   },
   getLinearVelocity(entity) {
     return host?.physics?.getLinearVelocity(entity?.id) ?? null;
+  },
+  /** 节点物理体信息（mode/gravityScale/colliderCount；未绑定返回 null） */
+  bodyInfo(entity) {
+    return host?.physics?.bodyInfo(entity?.id) ?? null;
   },
   setGravityScale(entity, scale) {
     host?.physics?.setGravityScale(entity?.id, numOr(scale, 1));

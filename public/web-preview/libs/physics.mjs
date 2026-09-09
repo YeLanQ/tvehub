@@ -980,6 +980,17 @@ export async function createPhysics({ nodes, settings } = {}) {
   api.setLinearVelocity = (nodeId, x, y, z) => bodyOf(nodeId)?.setLinearVelocity({ x, y, z });
   api.setAngularVelocity = (nodeId, x, y, z) => bodyOf(nodeId)?.setAngularVelocity({ x, y, z });
   api.getLinearVelocity = (nodeId) => bodyOf(nodeId)?.getLinearVelocity() ?? null;
+  // 节点物理体信息（脚本 SDK getComponent("rigidBody") 门面数据源）：未绑定返回 null
+  api.bodyInfo = (nodeId) => {
+    const b = bindings.find((x) => x.nodeId === nodeId);
+    if (!b) return null;
+    return {
+      // 无刚体仅有碰撞体 = 隐式静态
+      mode: b.rb ? b.rb.mode : "static",
+      gravityScale: b.rb ? b.rb.gravityScale : 1,
+      colliderCount: b.colliders.length,
+    };
+  };
   api.setGravityScale = (nodeId, scale) => bodyOf(nodeId)?.setGravityScale(scale);
   api.wakeUp = (nodeId) => bodyOf(nodeId)?.wakeUp();
 

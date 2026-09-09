@@ -31,15 +31,16 @@ export async function listScriptPrototypes(): Promise<ScriptPrototype[]> {
   );
 }
 
-/** 写入原型文件（新建/覆盖；描述以首行 // @desc: 注释形式保存） */
+/** 写入原型文件（新建/覆盖；描述以首行 // @desc: 注释形式保存，旧描述行自动剥离防重复堆积） */
 export async function writeScriptPrototype(
   name: string,
   description: string,
   code: string,
 ): Promise<void> {
-  const head = description.trim() ? `// @desc: ${description.trim()}
-` : "";
-  await api.writeCodeProto(`${name}.ts`, head + code);
+  const lines = code.replace(/\r\n/g, "\n").split("\n");
+  while (lines.length && /^\s*\/\/\s*@desc[:：]/.test(lines[0])) lines.shift();
+  const head = description.trim() ? `// @desc: ${description.trim()}\n` : "";
+  await api.writeCodeProto(`${name}.ts`, head + lines.join("\n"));
 }
 
 /** 删除原型文件（file 含 .ts） */
@@ -49,5 +50,5 @@ export async function deleteScriptPrototype(file: string): Promise<void> {
 
 /** 模板代码注入：{{CLASS_NAME}} → 脚本类名（PascalCase，由调用方给出） */
 export function injectClassName(code: string, className: string): string {
-  return code.replace(/{{s*CLASS_NAMEs*}}/g, className);
+  return code.replace(/\{\{\s*CLASS_NAME\s*\}\}/g, className);
 }
