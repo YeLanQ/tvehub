@@ -4,6 +4,7 @@
 
 mod asset_protocol;
 mod build;
+mod code_repo;
 mod devtools;
 mod internal;
 mod js_minify;
@@ -475,6 +476,10 @@ fn builtin_root(kind: &str) -> PathBuf {
 pub(crate) fn internal_root() -> PathBuf {
     builtin_root("internal")
 }
+/// 代码工坊脚本原型目录（repos/code；与内置资源同源：开发=仓库 public，生产=exe 旁 public）
+pub(crate) fn code_repo_root() -> PathBuf {
+    builtin_root("repos/code")
+}
 
 /// build.rs 生成的归档：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]
 static INTERNAL_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/internal.bin"));
@@ -589,7 +594,11 @@ pub fn run() {
             pick_import_files,
             pick_import_folders,
             get_default_project_dir,
-            set_default_project_dir,
+             code_repo::list_code_protos,
+            code_repo::read_code_proto,
+            code_repo::write_code_proto,
+            code_repo::delete_code_proto,
+           set_default_project_dir,
             scan_assets,
             scan_asset_db,
             read_text,

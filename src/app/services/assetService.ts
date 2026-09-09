@@ -14,6 +14,7 @@ import {
 } from "../../framework/material";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
+import { injectClassName, type ScriptPrototype } from "../lib/script-prototypes";
 import { sanitizeAssetStem } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { remapAssetPath } from "../lib/asset-paths";
@@ -430,6 +431,8 @@ export const assetService = {
     destDir: string,
     stem: string,
     assets: AssetEntry[],
+    /** 代码工坊原型（缺省/内置原型走内置模板 internal/templates/Script.ts） */
+    proto?: ScriptPrototype,
   ): Promise<string | null> {
     const clean = validateAssetName(stem);
     if (!clean) {
@@ -452,10 +455,14 @@ export const assetService = {
           .filter(Boolean)
           .map((s) => s[0].toUpperCase() + s.slice(1))
           .join("") || "MyScript";
-      const content = await loadAssetTemplate("script", { CLASS_NAME: className });
+      // 工坊自定义原型 → 用原型代码注入类名；内置/缺省 → 内置模板
+      const content =
+        proto && proto.code.trim()
+          ? injectClassName(proto.code, className)
+          : await loadAssetTemplate("script", { CLASS_NAME: className });
       if (content == null) throw new Error("脚本模板读取失败");
       await api.writeText(root, rel, content);
-      logStore.log("success", `已新建脚本: ${rel}`);
+      logStore.log("success", `已新建脚本: ${rel}${proto ? "（工坊原型）" : ""}`);
       return rel;
     } catch (e) {
       logStore.log("error", `新建脚本失败: ${e}`);

@@ -3,6 +3,7 @@ import { api, type AssetEntry } from "../../lib/api";
 import { sceneApi } from "../../lib/scene-api";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { assetService } from "../services/assetService";
+import type { ScriptPrototype } from "../lib/script-prototypes";
 import { logStore } from "./log";
 import { getProjectStore } from "./project";
 
@@ -45,7 +46,13 @@ export interface AssetsStore {
     /** 显式指定名称；缺省按种类用 "PBR"/"Unlit"/"Toon"（资产面板「新建着色器」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
-  createScriptAsset: (root: string, destDir: string, stem: string) => Promise<string | null>;
+  createScriptAsset: (
+    root: string,
+    destDir: string,
+    stem: string,
+    /** 代码工坊原型（缺省走内置模板） */
+    proto?: ScriptPrototype,
+  ) => Promise<string | null>;
   createTextureCubeAsset: (
     root: string,
     destDir: string,
@@ -218,8 +225,8 @@ export function getAssetsStore(): AssetsStore {
       if (r) await reload(root);
       return r;
     },
-    async createScriptAsset(root, destDir, stem) {
-      const r = await assetService.createScriptAsset(root, destDir, stem, state.assets);
+    async createScriptAsset(root, destDir, stem, proto?: ScriptPrototype) {
+      const r = await assetService.createScriptAsset(root, destDir, stem, state.assets, proto);
       if (r) await reload(root);
       return r;
     },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { version as vueVersion } from "vue";
 import { REVISION as threeRevision } from "three";
 import { getProjectStore, type RecentProject } from "../stores/project";
@@ -12,6 +12,12 @@ import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
 import { isTauri } from "../../lib/tauri-env";
 import { api } from "../../lib/api";
+import {
+  listScriptPrototypes,
+  writeScriptPrototype,
+  deleteScriptPrototype,
+  type ScriptPrototype,
+} from "../lib/script-prototypes";
 import { BUILTIN_PROJECT_TEMPLATES, type ProjectTemplate } from "../lib/project-templates";
 import { PREFS_CATS, THEME_COLOR_DEFS } from "../lib/home-helpers";
 import {
@@ -41,7 +47,7 @@ import {
 
 const projectStore = getProjectStore();
 
-type Section = "projects" | "templates" | "prefs" | "dev";
+type Section = "projects" | "templates" | "workshop" | "prefs" | "dev";
 const section = ref<Section>("projects");
 const prefsCat = ref("theme");
 
@@ -55,6 +61,71 @@ const prefBusy = ref(false);
 
 /** 工程模板（内置数据驱动；后续可接入后端自定义模板） */
 const templates = ref<ProjectTemplate[]>(BUILTIN_PROJECT_TEMPLATES);
+
+// 代码工坊：脚本原型（repos/code 目录下的独立 .ts 文件；一原型一文件）
+const protoList = ref<ScriptPrototype[]>([]);
+const protoForm = reactive({ open: false, editingId: "", name: "", description: "", code: "" });
+
+/** 刷新原型清单（repos/code 目录 *.ts） */
+async function refreshProtos(): Promise<void> {
+  protoList.value = await listScriptPrototypes();
+}
+
+/** 打开添加/编辑表单 */
+function openProtoForm(p?: ScriptPrototype): void {
+  protoForm.open = true;
+  protoForm.editingId = p?.id ?? "";
+  protoForm.name = p?.name ?? "";
+  protoForm.description = p?.description ?? "";
+  protoForm.code = p?.code ?? "";
+}
+
+/** 保存表单（新增或编辑自定义原型；整表覆写到后端） */
+async function saveProtoForm(): Promise<void> {
+  const name = protoForm.name.trim();
+  if (!name) {
+    alert("请填写原型名称");
+    return;
+  }
+  if (!protoForm.code.trim()) {
+    alert("请填写原型代码（可用 {{CLASS_NAME}} 占位符）");
+    return;
+  }
+  try {
+    // 一个原型一个独立文件：public/repos/code/<名称>.ts
+    await writeScriptPrototype(name, protoForm.description.trim(), protoForm.code);
+    // 编辑时改名 = 另存新文件 + 删除旧文件
+    if (protoForm.editingId && protoForm.editingId !== `${name}.ts`) {
+      await deleteScriptPrototype(protoForm.editingId);
+    }
+  } catch (e) {
+    alert(`保存失败：${e}`);
+    return;
+  }
+  protoForm.open = false;
+  await refreshProtos();
+}
+
+/** 删除原型（删除对应 repos/code/*.ts 文件） */
+async function removeProto(p: ScriptPrototype): Promise<void> {
+  if (
+    !(await confirm({
+      title: "删除原型",
+      message: `确定删除原型「${p.name}」？将删除文件 ${p.id}`,
+      confirmText: "删除",
+      danger: true,
+    }))
+  ) {
+    return;
+  }
+  try {
+    await deleteScriptPrototype(p.id);
+  } catch (e) {
+    alert(`删除失败：${e}`);
+    return;
+  }
+  await refreshProtos();
+}
 
 /** 运行环境信息（开发者服务页展示） */
 const inTauri = isTauri();
@@ -81,6 +152,7 @@ const DOC_LINKS = [
 
 onMounted(() => {
   projectStore.refreshRecent();
+  void refreshProtos();
   void loadDefaultProjectDir().then((dir) => {
     defaultProjectDir.value = dir;
   });
@@ -359,6 +431,17 @@ watch(showNewProject, (val) => {
           <span>偏好设置</span>
         </button>
         <button
+          :class="{ active: section === 'workshop' }"
+          @click="section = 'workshop'"
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 4.5a1.5 1.5 0 0 1 3 0V12a1.5 1.5 0 0 1-3 0z" />
+            <path d="M6 12.5h6a1 1 0 0 0 1-1v-1.5" />
+            <path d="M8.5 5 7 6.5 8.5 8M11 5l1.5 1.5L11 8" />
+          </svg>
+          <span>代码工坊</span>
+        </button>
+        <button
           :class="{ active: section === 'dev' }"
           @click="section = 'dev'"
         >
@@ -536,6 +619,54 @@ watch(showNewProject, (val) => {
               </div>
             </div>
           </template>
+        </section>
+
+        <!-- ========== 代码工坊 ========== -->
+        <section v-if="section === 'workshop'" class="page">
+          <div class="page-head">
+            <div>
+              <h2>代码工坊</h2>
+              <p class='sub'>脚本原型：沉淀可复用的脚本模板，资产面板「新建脚本」时选用</p>
+            </div>
+            <div class="head-actions">
+              <button class="primary" @click="openProtoForm()">添加原型</button>
+            </div>
+          </div>
+
+          <div v-if="protoForm.open" class="settings-card proto-form">
+            <h3>{{ protoForm.editingId ? "编辑原型" : "添加原型" }}</h3>
+            <div class="proto-field">
+              <label>名称</label>
+              <input v-model="protoForm.name" placeholder="旋转脚本" />
+            </div>
+            <div class="proto-field">
+              <label>描述</label>
+              <input v-model="protoForm.description" placeholder="一句话说明用途（可选）" />
+            </div>
+            <div class="proto-field">
+              <label>代码（支持 <span v-pre>{{CLASS_NAME}}</span> 占位符，创建脚本时替换为脚本类名）</label>
+              <textarea v-model="protoForm.code" rows="12" spellcheck="false"></textarea>
+            </div>
+            <div class="proto-form-actions">
+              <button @click="protoForm.open = false">取消</button>
+              <button class="primary" @click="saveProtoForm">保存</button>
+            </div>
+          </div>
+
+          <div class="proto-grid">
+            <div v-for="p in protoList" :key="p.id" class="proto-card">
+              <div class="proto-head">
+                <span class="proto-name">{{ p.name }}</span>
+                <span class="proto-file">{{ p.id }}</span>
+              </div>
+              <p class="proto-desc">{{ p.description || "（无描述）" }}</p>
+              <pre class="proto-code">{{ p.code }}</pre>
+              <div class="proto-actions">
+                <button @click="openProtoForm(p)">编辑</button>
+                <button @click="removeProto(p)">删除</button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- ========== 开发者服务 ========== -->

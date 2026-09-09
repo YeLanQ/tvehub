@@ -7,13 +7,17 @@
  * - 底部状态栏：选中项 + 总数量
  * 右键菜单（新建目录/复制/重命名/删除/复制路径/刷新）。资产操作统一走 assets store。
  */
-import { computed, provide, onMounted, ref, watch } from "vue";
+import { computed, provide, onMounted, reactive, ref, watch } from "vue";
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
 import { assetService } from "../services/assetService";
 import { logStore } from "../stores/log";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
+import {
+  listScriptPrototypes,
+  type ScriptPrototype,
+} from "../lib/script-prototypes";
 import { confirm } from "../lib/confirm";
 import { instantiatePrefabAsset } from "../lib/prefabs";
 import { setAssetSelection } from "../lib/active-panel";
@@ -382,7 +386,43 @@ async function doNewScript(dir: string) {
     confirmText: "创建",
   });
   if (!name?.trim()) return;
-  await getScriptsStore().createScript(name.trim());
+  // 第二步：选择代码工坊脚本原型（基础脚本/自定义；取消 = 放弃创建）
+  const proto = await pickPrototype();
+  if (!proto) return;
+  await getScriptsStore().createScript(name.trim(), proto);
+}
+
+// —— 代码工坊原型选择（新建脚本第二步；清单来自主页代码工坊，后端持久化共享）——
+const protoPick = reactive({
+  open: false,
+  items: [] as ScriptPrototype[],
+  selectedId: "",
+  resolve: null as ((p: ScriptPrototype | null) => void) | null,
+});
+
+/** 弹出原型选择（确定返回所选原型；取消返回 null） */
+function pickPrototype(): Promise<ScriptPrototype | null> {
+  return new Promise((resolve) => {
+    void listScriptPrototypes().then((items) => {
+      protoPick.items = items;
+      protoPick.selectedId = items[0]?.id ?? "";
+      protoPick.open = true;
+      protoPick.resolve = resolve;
+    });
+  });
+}
+
+function confirmProtoPick(): void {
+  const picked = protoPick.items.find((p) => p.id === protoPick.selectedId) ?? null;
+  protoPick.open = false;
+  protoPick.resolve?.(picked);
+  protoPick.resolve = null;
+}
+
+function cancelProtoPick(): void {
+  protoPick.open = false;
+  protoPick.resolve?.(null);
+  protoPick.resolve = null;
 }
 
 /** 新建空白预制体（assets/prefabs 语义上的目录均可；模板创建） */
@@ -687,6 +727,30 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
       <div class="am-import-overlay-box">松开鼠标 · 导入资产到 {{ currentDir || "项目根" }}</div>
     </div>
 
+    <!-- 代码工坊原型选择（新建脚本第二步） -->
+    <div v-if="protoPick.open" class="proto-pick-mask" @click.self="cancelProtoPick">
+      <div class="proto-pick">
+        <div class="proto-pick-title">选择脚本原型</div>
+        <div class="proto-pick-list">
+          <button
+            v-for="p in protoPick.items"
+            :key="p.id"
+            class="proto-pick-item"
+            :class="{ active: p.id === protoPick.selectedId }"
+            @click="protoPick.selectedId = p.id"
+            @dblclick="confirmProtoPick()"
+          >
+            <span class="pp-name">{{ p.name }}</span>
+            <span class="pp-desc">{{ p.description }}</span>
+          </button>
+        </div>
+        <div class="proto-pick-foot">
+          <button @click="cancelProtoPick">取消</button>
+          <button class="primary" @click="confirmProtoPick">创建</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 拖拽浮动指示（跟随鼠标） -->
     <teleport to="body">
       <div
@@ -699,3 +763,84 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
     </teleport>
   </div>
 </template>
+
+<style scoped>
+.proto-pick-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.proto-pick {
+  width: 440px;
+  max-width: 86vw;
+  background: var(--bg-panel, #232323);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-pick-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.proto-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow: auto;
+}
+.proto-pick-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  cursor: pointer;
+}
+.proto-pick-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.proto-pick-item.active {
+  border-color: var(--accent, #4a9eff);
+  background: rgba(74, 158, 255, 0.12);
+}
+.pp-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.pp-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.pp-desc {
+  font-size: 11px;
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-pick-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.proto-pick-foot .primary {
+  background: var(--accent, #4a9eff);
+  border: none;
+  color: #fff;
+}
+</style>

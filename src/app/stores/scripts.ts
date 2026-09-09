@@ -10,6 +10,7 @@
 import { reactive } from "vue";
 import { api } from "../../lib/api";
 import { getAssetsStore } from "./assets";
+import type { ScriptPrototype } from "../lib/script-prototypes";
 import { getProjectStore } from "./project";
 import { getEditorStore } from "./editor";
 import { logStore } from "./log";
@@ -48,7 +49,7 @@ export interface ScriptsStore {
   setContent(rel: string, text: string): void;
   saveScript(rel: string): Promise<boolean>;
   saveAll(): Promise<boolean>;
-  createScript(name: string): Promise<string | null>;
+  createScript(name: string, proto?: ScriptPrototype): Promise<string | null>;
   renameScript(rel: string, newName: string): Promise<string | null>;
   deleteScript(rel: string): Promise<boolean>;
   /** 检查器用：按需读取并解析脚本 props 声明（缓存） */
@@ -184,11 +185,11 @@ export function getScriptsStore(): ScriptsStore {
       }
       return ok;
     },
-    async createScript(name) {
+    async createScript(name, proto) {
       const root = getProjectStore().currentPath;
       if (!root) return null;
       const assetsStore = getAssetsStore();
-      const rel = await assetsStore.createScriptAsset(root, "src", name);
+      const rel = await assetsStore.createScriptAsset(root, "src", name, proto);
       if (rel) await store.openScript(rel);
       return rel;
     },

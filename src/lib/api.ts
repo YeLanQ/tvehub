@@ -44,6 +44,16 @@ export interface DevToolPermInfo {
   enabled: boolean;
 }
 
+/** 代码工坊脚本原型（public/repos/code/*.ts，一个原型一个独立文件） */
+export interface CodeProtoEntry {
+  /** 文件名（含 .ts，如 "Spin.ts"） */
+  file: string;
+  /** 原型名（文件名去 .ts） */
+  name: string;
+  /** 首行 // @desc: 注释的描述（缺省空） */
+  description: string;
+}
+
 /** Tauri 资产命令封装 */
 export const api = {
   scanAssets: (root: string) => invoke<AssetEntry[]>("scan_assets", { root }),
@@ -191,6 +201,14 @@ export const api = {
   getDefaultProjectDir: () => invoke<string | null>("get_default_project_dir"),
   /** 设置默认项目位置（空值 = 清除） */
   setDefaultProjectDir: (dir: string) => invoke<void>("set_default_project_dir", { dir }),
+  /** 扫描代码工坊原型目录（*.ts 清单，按文件名排序） */
+  listCodeProtos: () => invoke<CodeProtoEntry[]>("list_code_protos"),
+  /** 读取原型文件内容 */
+  readCodeProto: (file: string) => invoke<string>("read_code_proto", { file }),
+  /** 写入原型文件（新建/覆盖） */
+  writeCodeProto: (file: string, code: string) => invoke<void>("write_code_proto", { file, code }),
+  /** 删除原型文件 */
+  deleteCodeProto: (file: string) => invoke<void>("delete_code_proto", { file }),
   /** 显示编辑器窗口并聚焦（首页打开/新建项目成功后调用） */
   showEditorWindow: () => invoke<void>("show_editor_window"),
   /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
