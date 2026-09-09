@@ -27,3 +27,4 @@ dist-ssr
 *.zcode*
 # smoke test build output
 .tmp-smoke
+.tmp*
