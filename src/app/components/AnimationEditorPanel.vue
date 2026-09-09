@@ -12,18 +12,30 @@
 // - 预览：播放/scrub 把采样值直接应用到选中节点的三维对象（不写节点数据，
 //   非破坏性，停止后还原）；
 // - 右侧视图下拉二选一（不同时显示）：帧动画（标尺 + 每通道关键帧轨道）/
-//   曲线编辑（单通道曲线占满视图区，时间网格 + 播放头 + 关键帧拖拽/插帧）。
+//   曲线编辑（单通道曲线占满视图区，时间网格 + 播放头 + 关键帧拖拽/插帧 +
+//   Unity 风格贝塞尔切线手柄：自动态虚影、拖动即固化、tm 对称联动、右键菜单
+//   切换插值/对称/断开/压平/删除；dope 轨道关键帧右键共用同一菜单；
+//   时间窗与鼠标方案两视图完全统一（底部「×」滑条 / 滚轮以指针为中心缩放 /
+//   Ctrl+滚轮平移；中键拖拽二维平移：dope 横=时间窗、纵=轨道滚动条，
+//   曲线横=时间窗、纵=数值窗；数值轴另配「值×」滑条与「适配」复位），
+//   窗口外曲线自动钳值延长线，越界手柄被裁剪）。
 // ---------------------------------------------------------------------------
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as THREE from "three";
 import type { Node } from "../../framework/prototype/Node";
 import {
+  clampSlope,
+  clearTangents,
+  ensureManualTangents,
   evaluateClip,
   evaluateCurve,
+  isAutoTangent,
+  keySlope,
   parseAnimationClip,
   removeKeyAt,
   upsertKey,
   type AnimClipCurve,
+  type AnimKey,
   type AnimKeyInterp,
   type AnimationClipData,
   type AnimProp,
@@ -35,7 +47,7 @@ import { getAssetsStore } from "../stores/assets";
 import { api } from "../../lib/api";
 import { animEditor } from "../lib/anim-editor";
 import NumberField from "./NumberField.vue";
-import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
+import { menuSeparator, openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
 
 const editorStore = getEditorStore();
 const projectStore = getProjectStore();
@@ -98,6 +110,14 @@ async function loadClip(rel: string): Promise<void> {
   time.value = 0;
   selected.value = null;
   curveProp.value = "";
+  // 切剪辑：曲线数值窗与共享时间窗复位
+  curveView.value = null;
+  curveZoom.value = 1;
+  curveViewFreeze = null;
+  tlT0.value = 0;
+  zoom.value = 1;
+  if (laneEl.value) laneEl.value.scrollTop = 0;
+  if (namesEl.value) namesEl.value.scrollTop = 0;
   if (!rel) {
     rev.value += 1;
     return;
@@ -329,6 +349,8 @@ function onDurationChange(v: number): void {
   if (!d) return;
   d.duration = Math.max(0.1, v);
   time.value = Math.min(time.value, d.duration);
+  // 时长变了重新钳共享时间窗（窗口宽 = 时长/zoom）并同步 dope 滚动位置
+  applyT0(tlT0.value, zoom.value);
   touch();
 }
 
@@ -557,8 +579,8 @@ function deleteSelected(): void {
   }
 }
 
-/** 选中关键帧的插值方式（未选中为空串，下拉禁用） */
-const selectedInterp = computed<AnimKeyInterp | "">(() => {
+/** 选中关键帧的插值方式：平滑且自动切线显示为虚拟态 "auto"；未选中为空串 */
+const selectedInterp = computed<AnimKeyInterp | "auto" | "">(() => {
   void rev.value;
   const d = doc.value;
   const sel = selected.value;
@@ -566,7 +588,8 @@ const selectedInterp = computed<AnimKeyInterp | "">(() => {
   const k = d.curves
     .find((c) => c.prop === sel.prop)
     ?.keys.find((kk) => Math.abs(kk.t - sel.t) <= 1e-4);
-  return k ? k.i : "";
+  if (!k) return "";
+  return k.i === "smooth" && isAutoTangent(k) ? "auto" : k.i;
 });
 
 function onInterpChange(e: Event): void {
@@ -577,10 +600,21 @@ function onInterpChange(e: Event): void {
     .find((c) => c.prop === sel.prop)
     ?.keys.find((kk) => Math.abs(kk.t - sel.t) <= 1e-4);
   if (!k) return;
-  const v = (e.target as HTMLSelectElement).value as AnimKeyInterp;
-  if (v === "linear" || v === "step" || v === "smooth") {
-    k.i = v;
+  const v = (e.target as HTMLSelectElement).value;
+  if (v === "auto") {
+    k.i = "smooth";
+    clearTangents(k);
     touch();
+    return;
+  }
+  if (v === "linear" || v === "step") {
+    k.i = v;
+    clearTangents(k); // 线性/阶跃不使用切线：清除避免残留
+    touch();
+    return;
+  }
+  if (v === "smooth") {
+    setInterp(sel.prop, sel.t, "smooth");
   }
 }
 
@@ -596,24 +630,223 @@ function onViewModeChange(e: Event): void {
 
 const viewHint = computed(() =>
   viewMode.value === "dope"
-    ? "拖拽关键帧改时间（Alt 关闭吸附）；点击选中后可在左下改插值/删除；点击左侧通道名选中曲线"
-    : "空白处点击 = 插入关键帧（Alt 关闭吸附）；拖拽关键帧改时间/数值；点击左侧通道名切换曲线",
+    ? "滚轮缩放时间轴 / Ctrl 滚轮平移；中键拖拽平移（横=时间窗，1× 全览时向左拖自动放大；纵=翻轨道）；右键关键帧：插值/切线/删除"
+    : "与帧动画同一套鼠标方案：滚轮缩放时间轴 / Ctrl 滚轮平移 / 中键拖拽平移（纵向平移数值轴）；拖方块改时间/数值，拖切线手柄调贝塞尔；空白单击插帧；右键关键帧弹菜单",
 );
 
 // ---------------------------------------------------------------------------
-// 时间轴几何与指针交互（标尺 scrub + 轨道关键帧拖拽共用换算）
+// 时间轴几何与指针交互（dope / 曲线两视图共用一套时间窗）：
+// 窗口 = [t0, t0 + 时长/zoom]。dope 侧以内容层（宽 = 全时长×倍率）+ scrollLeft
+// 承载，曲线侧以 viewBox 线性映射消费同一窗口；底部「×」滑条、两个视图的
+// 滚轮（以指针为中心缩放，Ctrl+滚轮 = 平移）都驱动同一状态，互相同步。
 // ---------------------------------------------------------------------------
 const laneEl = ref<HTMLElement | null>(null);
+/** 左列通道名面板（与轨道区纵向滚动同步保持行对齐） */
+const namesEl = ref<HTMLElement | null>(null);
 const laneWidth = ref(600);
 /** 右侧视图区高度（曲线模式 viewBox 用；dope 模式不消费） */
 const laneHeight = ref(0);
-/** 时间轴缩放倍率（1× = 铺满视图区宽度；仅 dope 视图消费） */
+/** 时间轴缩放倍率（1× = 全时长铺满视图区宽度；两视图共享） */
 const zoom = ref(1);
-const timelineWidth = computed(() => Math.max(1, laneWidth.value) * zoom.value);
+/** 可视时间窗原点（秒；dope 侧由 scrollLeft 派生，此处为曲线/编程设置的权威值） */
+const tlT0 = ref(0);
+
+const pxPerT0 = computed(() => Math.max(1, laneWidth.value) / Math.max(0.1, doc.value?.duration ?? 1));
+/** dope 内容层总宽（= 全时长 × 倍率：zoom=1 恰好铺满） */
+const timelineWidth = computed(() => Math.max(0.1, doc.value?.duration ?? 1) * zoom.value * pxPerT0.value);
+/** 缩放后指针 x 相对轨道内容原点（需加横向滚动量） */
+function laneScrollX(): number {
+  return laneEl.value?.scrollLeft ?? 0;
+}
+/** 可视时间窗（权威状态 tlT0；dope 滚动条通过 @scroll 写回，两视图共享） */
+const tWindow = computed<{ t0: number; t1: number }>(() => {
+  const dur = Math.max(0.1, doc.value?.duration ?? 3);
+  const span = dur / zoom.value;
+  const t0 = Math.min(Math.max(tlT0.value, 0), Math.max(0, dur - span));
+  return { t0, t1: t0 + span };
+});
+
+/** 写窗口原点（同步 dope 滚动位置与权威 tlT0） */
+function applyT0(t0: number, z: number): void {
+  const dur = Math.max(0.1, doc.value?.duration ?? 3);
+  const span = dur / z;
+  const clamped = span >= dur * 0.999 ? 0 : Math.min(Math.max(t0, 0), Math.max(0, dur - span));
+  const el = laneEl.value;
+  if (el) el.scrollLeft = clamped * z * pxPerT0.value;
+  tlT0.value = clamped;
+  zoom.value = z;
+}
+
+/** 视图切换时同步 dope 滚动位置与 tlT0（两视图共用时间窗） */
+function syncTimeWindow(): void {
+  const el = laneEl.value;
+  if (!el) return;
+  if (viewMode.value === "dope") {
+    tlT0.value = laneScrollX() / Math.max(1e-6, zoom.value * pxPerT0.value);
+  } else {
+    const dur = Math.max(0.1, doc.value?.duration ?? 3);
+    const span = dur / zoom.value;
+    tlT0.value = Math.min(Math.max(tlT0.value, 0), Math.max(0, dur - span));
+    el.scrollLeft = tlT0.value * zoom.value * pxPerT0.value;
+  }
+}
+watch(viewMode, syncTimeWindow);
+
+/** 统一改倍率（保持锚点：anchorT 时刻停在视图相对位置 anchorFrac 处） */
+function setTWindow(zNew: number, anchorFrac: number, anchorT: number): void {
+  const dur = Math.max(0.1, doc.value?.duration ?? 3);
+  const z = Math.min(8, Math.max(1, zNew));
+  applyT0(anchorT - anchorFrac * (dur / z), z);
+}
+
+/** 滚轮共享处理（dope / 曲线视图都接这里；frac = 指针在视图绘图区相对位置 0~1）：
+ *  默认滚轮缩放时间轴（指针时刻不动）；Ctrl+滚轮平移；Shift+滚轮不拦截（原生横滚） */
+function timelineWheel(e: WheelEvent, frac: number): void {
+  const win = tWindow.value;
+  const span = win.t1 - win.t0;
+  const anchorT = win.t0 + frac * span;
+  if (e.ctrlKey) {
+    const px = Math.max(1, laneWidth.value);
+    const dx = (e.deltaY || e.deltaX) * (span / px);
+    applyT0(win.t0 + dx, zoom.value);
+    return;
+  }
+  const f = Math.exp(e.deltaY * 0.0015); // 滚上 = 放大（窗口变小）
+  setTWindow(zoom.value / f, frac, anchorT);
+}
+
+/** dope 轨道区滚轮 */
+function onLaneWheel(e: WheelEvent): void {
+  if (!laneEl.value || !doc.value) return;
+  if (e.shiftKey && !e.ctrlKey) return;
+  e.preventDefault();
+  const r = laneEl.value.getBoundingClientRect();
+  timelineWheel(e, (e.clientX - r.left) / Math.max(1, r.width));
+}
 
 function onZoomInput(e: Event): void {
-  zoom.value = parseFloat((e.target as HTMLInputElement).value) || 1;
+  // 滑条改倍率：以可视窗中心为锚
+  const win = tWindow.value;
+  setTWindow(parseFloat((e.target as HTMLInputElement).value) || 1, 0.5, (win.t0 + win.t1) / 2);
 }
+
+// —— 中键拖拽平移时间窗（dope：标尺/轨道/内容层按下全局接管；曲线：见 CurveDrag pan）——
+let panUp: (() => void) | null = null;
+/** 同一 pointerdown 事件对象（冒泡多路径重入）按事件去重——
+ *  不可用 pointerId：鼠标 pointerId 恒定，一次 pointerup 丢失（如窗外释放）
+ *  会让基于 pointerId 的重入闸永久拦截后续所有中键 */
+const panHandled = new WeakSet<PointerEvent>();
+/** 平移中状态：必须走响应式 :class（命令式 classList 会被 Vue 重渲染冲掉） */
+const lanePanning = ref(false);
+/** 从指针 clientX 求窗口原点增量（÷ 1× 像素密度：平移结果与缩放倍率无关） */
+function tlDxFromClientX(x: number): number {
+  return (x - laneLeftCache) / Math.max(1e-6, pxPerT0.value);
+}
+/** 内容层冒泡兜底：标尺/关键帧之外的空白按中键也能平移（同指针事件已在别处处理则跳过） */
+function onWrapPointerDown(e: PointerEvent): void {
+  if (e.button === 1) beginLanePan(e);
+}
+
+/** 双向 scrollTop 同步防回环：本标志为 true 期间的 scroll 事件是程序写入产生的 */
+let syncingScroll = false;
+
+/** 右列滚动：横向写回共享时间窗 tlT0；纵向同步左列（防回环） */
+function onLanesScroll(): void {
+  const el = laneEl.value;
+  if (!el) return;
+  if (viewMode.value === "dope") {
+    tlT0.value = laneScrollX() / Math.max(1e-6, zoom.value * pxPerT0.value);
+  }
+  if (syncingScroll) {
+    syncingScroll = false;
+    return;
+  }
+  const names = namesEl.value;
+  if (names && names.scrollTop !== el.scrollTop) {
+    syncingScroll = true;
+    names.scrollTop = el.scrollTop;
+  }
+}
+
+/** 左列（通道名）滚动：把纵向位置同步给右列轨道区 */
+function onNamesScroll(): void {
+  const names = namesEl.value;
+  if (!names) return;
+  if (syncingScroll) {
+    syncingScroll = false;
+    return;
+  }
+  const el = laneEl.value;
+  if (el && el.scrollTop !== names.scrollTop) {
+    syncingScroll = true;
+    el.scrollTop = names.scrollTop;
+  }
+}
+
+/** 平移期间拦截中键默认行为（Chromium/WebView2 的中键自动滚动与拖拽：
+ *  仅 pointerdown preventDefault 在部分版本压不住，mousedown/auxclick 阶段兜底） */
+function panSuppress(e: Event): void {
+  e.preventDefault();
+}
+
+function beginLanePan(e: PointerEvent): void {
+  const el = laneEl.value;
+  if (!el || !doc.value || viewMode.value !== "dope") return;
+  // 重入闸：同一 pointerdown 冒泡经过多条处理路径（ruler→wrap 等），按事件对象去重
+  if (panHandled.has(e)) return;
+  panHandled.add(e);
+  // 自愈：上次平移若丢了 pointerup（窗外释放等），先清理再开始
+  panUp?.();
+  // 捕获到滚动容器自身（与曲线捕获到 svg 一致）：拖拽期间浏览器按捕获元素的
+  // 光标渲染，容器带 panning → grabbing 小手，指针压在标尺/关键帧上也不例外
+  el.setPointerCapture?.(e.pointerId);
+  laneLeftCache = e.clientX; // 平移按「相对按下点」计算（若用容器左缘，按下瞬间会跳一段）
+  const startX = e.clientX;
+  const startT0 = tWindow.value.t0;
+  const startTop = el.scrollTop;
+  const startY = e.clientY;
+  lanePanning.value = true;
+  const move = (ev: PointerEvent): void => {
+    if (ev.buttons === 0) return; // 中键已松开（边缘情况：up 未送达）
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    if (zoom.value === 1 && dx < 0) {
+      // 1× 全览没有横向平移余量：水平拖出 80px 未动 → 自动放大一级（以视口中心
+      // 为锚），继续拖动即为平移；纵向拖拽不受影响
+      if (-dx > 80) {
+        setTWindow(zoom.value + 1, 0.5, (tWindow.value.t0 + tWindow.value.t1) / 2);
+        laneLeftCache = ev.clientX; // 从当前位置重新计平移起点（startX 保持供纵向）
+      }
+    } else {
+      applyT0(startT0 - tlDxFromClientX(ev.clientX), zoom.value);
+    }
+    // 纵向 = 抓画布滚轨道（内容跟指针走）
+    el.scrollTop = Math.max(0, startTop - dy);
+  };
+  const cleanup = (): void => {
+    lanePanning.value = false;
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
+    window.removeEventListener("mousedown", panSuppress, true);
+    window.removeEventListener("auxclick", panSuppress, true);
+    window.removeEventListener("dragstart", panSuppress, true);
+    panUp = null;
+  };
+  panUp = cleanup;
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", cleanup);
+  window.addEventListener("pointercancel", cleanup);
+  window.addEventListener("mousedown", panSuppress, true);
+  window.addEventListener("auxclick", panSuppress, true);
+  window.addEventListener("dragstart", panSuppress, true);
+  e.preventDefault();
+}
+
+onBeforeUnmount(() => {
+  // 面板销毁时仍有按住的中键：清理全局平移监听
+  panUp?.();
+});
 let laneRo: ResizeObserver | null = null;
 let laneLeftCache = 0;
 
@@ -642,10 +875,6 @@ function tToX(t: number, duration: number): number {
 function xToT(x: number, duration: number): number {
   return Math.max(0, Math.min(duration, (x / Math.max(1, timelineWidth.value)) * duration));
 }
-/** 缩放后指针 x 相对轨道内容原点（需加横向滚动量） */
-function laneScrollX(): number {
-  return laneEl.value?.scrollLeft ?? 0;
-}
 
 // 播放/scrub 时把播放头保持在可视范围内（缩放后内容超出视口才有意义）
 watch(time, () => {
@@ -656,18 +885,17 @@ watch(time, () => {
   else if (x > el.scrollLeft + el.clientWidth - 12) el.scrollLeft = x - el.clientWidth + 12;
 });
 
-/** 刻度步长随缩放自适应：按当前每秒像素数选步长，保证刻度间距 ≥ ~80px
- *  （1× 时与原 d/8 行为接近；放大后出现更细的刻度 0.5/0.1/…；
- *  曲线视图不吃缩放，用视口宽计算，避免网格过密） */
-const viewWidth = computed(() =>
-  viewMode.value === "dope" ? timelineWidth.value : Math.max(1, laneWidth.value),
-);
+/** 刻度步长随缩放自适应：按当前时间窗的每秒像素数选步长，保证刻度间距 ≥ ~80px
+ *  （1× 时与原 d/8 行为接近；放大后出现更细的刻度，两视图共享同一时间窗） */
 const rulerStep = computed(() => {
-  const d = doc.value?.duration ?? 3;
-  const pxPerSec = viewWidth.value / Math.max(0.1, d);
-  const steps = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
+  const { t0, t1 } = tWindow.value;
+  const pxPerSec = Math.max(1, laneWidth.value) / Math.max(0.1, t1 - t0);
+  const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60];
   return steps.find((s) => s * pxPerSec >= 80) ?? 60;
 });
+
+/** 已缩放（时间窗 < 全时长）→ 曲线网格加 1/5 细线 */
+const tlZoomed = computed(() => zoom.value > 1.001);
 
 /** 标签小数位跟随步长（0.05→2 位、0.2→1 位、1s→整数） */
 const tickDecimals = computed(() => {
@@ -677,16 +905,30 @@ const tickDecimals = computed(() => {
 });
 
 function tickLabel(t: number): string {
-  return t.toFixed(tickDecimals.value);
+  return t >= 0 ? t.toFixed(tickDecimals.value) : "-" + (-t).toFixed(tickDecimals.value);
 }
 
 const rulerTicks = computed<number[]>(() => {
-  const d = doc.value?.duration ?? 3;
+  const { t0, t1 } = tWindow.value;
   const step = rulerStep.value;
   const out: number[] = [];
-  // 用整数索引乘步长，避免浮点累加漂移出重复刻度
-  for (let i = 0; i * step <= d + 1e-6; i++) out.push(i * step);
+  // 用整数索引乘步长，避免浮点累加漂移出重复刻度（只生成可视窗内刻度）
+  for (let i = Math.ceil(t0 / step - 1e-6); i * step <= t1 + 1e-6; i++) out.push(i * step);
   return out;
+});
+
+/** 曲线视图网格 = 主刻度 + 缩放态 1/5 细刻度 */
+const curveGridTicks = computed<number[]>(() => {
+  const majors = rulerTicks.value;
+  if (!tlZoomed.value) return majors;
+  const { t0, t1 } = tWindow.value;
+  const minor = rulerStep.value / 5;
+  const out = [...majors];
+  for (let i = Math.ceil(t0 / minor - 1e-6); i * minor <= t1 + 1e-6; i++) {
+    const t = i * minor;
+    if (!majors.some((m) => Math.abs(m - t) < minor / 2)) out.push(t);
+  }
+  return out.sort((a, b) => a - b);
 });
 
 /** 时间吸附（工具条开关，按住 Alt 临时关闭）：对齐到刻度步长的 1/10 细分网格 */
@@ -704,6 +946,8 @@ type Drag =
   | null;
 let drag: Drag = null;
 function beginScrub(e: PointerEvent): void {
+  if (e.button === 1) return beginLanePan(e); // 中键 = 平移视图
+  if (e.button !== 0) return;
   const rect = laneEl.value?.getBoundingClientRect();
   if (!rect) return;
   laneLeftCache = rect.left;
@@ -715,6 +959,8 @@ function beginScrub(e: PointerEvent): void {
 }
 
 function beginKeyDrag(e: PointerEvent, prop: AnimProp, index: number): void {
+  if (e.button === 1) return beginLanePan(e); // 中键 = 平移视图（不选中关键帧）
+  if (e.button !== 0) return; // 右键按下留给 contextmenu 菜单，不进拖拽
   const rect = laneEl.value?.getBoundingClientRect();
   if (!rect) return;
   laneLeftCache = rect.left;
@@ -766,6 +1012,112 @@ const curveSvgEl = ref<SVGSVGElement | null>(null);
 
 const curveProp = ref<AnimProp>("");
 
+/** Hermite 段插值（与 framework clip.ts evaluateCurve 同一公式；m = 斜率×段跨） */
+function hermite(k1: AnimKey, m1: number, k2: AnimKey, m2: number, u: number): number {
+  const u2 = u * u;
+  const u3 = u2 * u;
+  return (
+    (2 * u3 - 3 * u2 + 1) * k1.v +
+    (u3 - 2 * u2 + u) * m1 +
+    (-2 * u3 + 3 * u2) * k2.v +
+    (u3 - u2) * m2
+  );
+}
+
+/** 切线手柄绘制条目 */
+interface TangentHandle {
+  index: number;
+  side: "ti" | "to";
+  x: number;
+  y: number;
+  /** 手动态 = 实心可拖；自动态 = 虚影提示 */
+  manual: boolean;
+  /** 联动（tm）的非选中侧：弱化显示 */
+  ghost: boolean;
+}
+
+/** 曲线视图数值轴窗口（null = 自动适配；时间轴走共享的 tlT0/zoom 窗口） */
+const curveView = ref<{ lo: number; hi: number } | null>(null);
+/** 数值轴缩放滑条倍率（0.2 = 视野缩到 1/5 即放大 5 倍，4 = 拉远 4 倍） */
+const curveZoom = ref(1);
+
+/** 自动适配值域：关键帧值 + smooth 曲线鼓包极值 + 播放头采样值（保证可以其为中心缩放） */
+function fitCurveView(): { lo: number; hi: number } {
+  const d = doc.value;
+  const curve = d?.curves.find((c) => c.prop === curveProp.value) ?? null;
+  const keys = curve?.keys ?? [];
+  let lo = 0;
+  let hi = 0;
+  if (keys.length) {
+    lo = Math.min(...keys.map((k) => k.v));
+    hi = Math.max(...keys.map((k) => k.v));
+    // smooth 段可能鼓出关键帧值之外：8 等分采样纳入曲线极值
+    for (let i = 0; i + 1 < keys.length; i++) {
+      const k1 = keys[i];
+      const k2 = keys[i + 1];
+      if (k1.i !== "smooth") continue;
+      const span = Math.max(1e-6, k2.t - k1.t);
+      const m1 = keySlope(keys, i, "to") * span;
+      const m2 = keySlope(keys, i + 1, "ti") * span;
+      for (let s = 1; s < 8; s++) {
+        const v = hermite(k1, m1, k2, m2, s / 8);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+  }
+  if (hi - lo < 1e-6) {
+    lo -= 1;
+    hi += 1;
+  } else {
+    const padV = (hi - lo) * 0.15;
+    lo -= padV;
+    hi += padV;
+  }
+  // 播放头采样值纳入视野（滚轮以其为中心缩放；鼓包出界时可播放过去再放大）
+  if (curve) {
+    const pv = evaluateCurve(curve, time.value);
+    if (pv !== null) {
+      if (pv < lo) lo = pv - (hi - lo) * 0.05;
+      if (pv > hi) hi = pv + (hi - lo) * 0.05;
+    }
+  }
+  return { lo, hi };
+}
+
+/** 应用数值缩放：以播放头当前采样值为锚点（钳回 fit 视野内） */
+function applyCurveZoom(): void {
+  const base = fitCurveView();
+  const f = curveZoom.value;
+  const curve = doc.value?.curves.find((c) => c.prop === curveProp.value) ?? null;
+  const pv = curve ? evaluateCurve(curve, time.value) : null;
+  const anchor = Math.min(Math.max(pv ?? (base.lo + base.hi) / 2, base.lo), base.hi);
+  curveView.value = {
+    lo: anchor - (anchor - base.lo) * f,
+    hi: anchor + (base.hi - anchor) * f,
+  };
+}
+
+function onCurveZoomInput(e: Event): void {
+  curveZoom.value = parseFloat((e.target as HTMLInputElement).value) || 1;
+  applyCurveZoom();
+}
+
+/** 曲线视图数值轴复位：恢复自动适配（时间轴窗口不动） */
+function resetCurveView(): void {
+  curveView.value = null;
+  curveZoom.value = 1;
+}
+
+/** 拖拽期间的数值窗快照（冻结自动适配）：防止被拖帧/切线的值变化实时重映射
+ *  整条曲线导致漂移抖动；松手恢复。手动缩放（curveView）优先于快照 */
+let curveViewFreeze: { lo: number; hi: number } | null = null;
+function freezeCurveView(): void {
+  if (curveView.value) return; // 已有手动数值窗，本就不变，无需快照
+  const g = curveGeom.value;
+  curveViewFreeze = { lo: g.lo, hi: g.hi };
+}
+
 const curveGeom = computed(() => {
   void rev.value;
   const d = doc.value;
@@ -776,53 +1128,168 @@ const curveGeom = computed(() => {
   const w = Math.max(1, laneWidth.value);
   const h = Math.max(1, laneHeight.value);
   const pad = 16;
-  let lo = 0;
-  let hi = 0;
-  if (keys.length) {
-    lo = Math.min(...keys.map((k) => k.v));
-    hi = Math.max(...keys.map((k) => k.v));
-  }
-  if (hi - lo < 1e-6) {
-    lo -= 1;
-    hi += 1;
-  } else {
-    const padV = (hi - lo) * 0.15;
-    lo -= padV;
-    hi += padV;
-  }
-  const xOf = (t: number) => (d ? (t / Math.max(0.1, d.duration)) * (w - pad * 2) + pad : pad);
+  // 数值窗：手动缩放 > 拖拽冻结快照 > 自动适配；时间窗 = 共享时间窗（与 dope 同步）
+  const vview = curveView.value ?? (curveDrag && curveViewFreeze ? curveViewFreeze : fitCurveView());
+  const win = tWindow.value;
+  const t0 = win.t0;
+  const t1 = Math.max(win.t1, win.t0 + 1e-3);
+  const lo = vview.lo;
+  const hi = Math.max(vview.hi, vview.lo + 1e-6);
+  const xOf = (t: number) => ((t - t0) / (t1 - t0)) * (w - pad * 2) + pad;
   const yOf = (v: number) => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
-  // xOf 的逆映射（点击/拖拽换算 t；与绘制同套几何，不能用全宽的 xToT）
+  const vOf = (y: number) => lo + ((h - pad - y) / Math.max(1, h - pad * 2)) * (hi - lo);
+  // xOf 的逆映射（点击/拖拽换算 t；与绘制同套几何，不能用全宽的 xToT）；
+  // 钳制到「可视窗口 ∩ 剪辑范围」（插帧/拖帧不会把点放到视野外丢失）
   const tOf = (x: number) =>
     d
       ? Math.max(
-          0,
-          Math.min(d.duration, ((x - pad) / Math.max(1, w - pad * 2)) * d.duration),
+          Math.max(0, t0),
+          Math.min(Math.min(d.duration, t1), ((x - pad) / Math.max(1, w - pad * 2)) * (t1 - t0) + t0),
         )
       : 0;
-  const polyline: string[] = [];
-  if (keys.length && d) {
-    const N = 120;
-    for (let i = 0; i <= N; i++) {
-      const t = (i / N) * d.duration;
-      const v = evaluateCurve(curve as AnimClipCurve, t);
-      if (v !== null) polyline.push(`${xOf(t).toFixed(1)},${yOf(v).toFixed(1)}`);
+  // —— 选中/手动态的 smooth 帧生成切线手柄 ——
+  // 注意：手柄纵向占位【不】进值域——否则选中任一帧都会重映射 lo/hi，
+  // 其它关键帧与曲线整体「跳位」（编辑态面板偏移抖动）；超出绘图区的手柄
+  // 被 svg 裁剪，拖大斜率时自然出界即可。
+  const sel = selected.value;
+  const selKey =
+    sel && sel.prop === curveProp.value
+      ? (keys.find((k) => Math.abs(k.t - sel.t) <= 1e-4) ?? null)
+      : null;
+  const wantHandles = keys.filter(
+    (k) => k.i === "smooth" && (!isAutoTangent(k) || k === selKey),
+  );
+  const handles: TangentHandle[] = [];
+  for (const k of wantHandles) {
+    const i = keys.indexOf(k);
+    const span = Math.max(0.05, d ? d.duration / 12 : 0.25);
+    for (const side of ["ti", "to"] as const) {
+      const slope = keySlope(keys, i, side);
+      const sgn = side === "to" ? 1 : -1;
+      handles.push({
+        index: i,
+        side,
+        x: xOf(k.t + sgn * span),
+        y: yOf(k.v + slope * sgn * span),
+        manual: (side === "ti" ? k.ti : k.to) !== undefined,
+        ghost: k.tm === true && side === (sgn > 0 ? "ti" : "to"),
+      });
     }
   }
-  return { w, h, pad, lo, hi, xOf, yOf, tOf, keys, polyline: polyline.join(" ") };
+  // —— 曲线折线：按段类型精确绘制（钳到可视窗口，窗口外延长线 = 钳端点值）——
+  const pts: string[] = [];
+  if (keys.length && curve && d) {
+    const push = (t: number, v: number): void => {
+      pts.push(`${xOf(t).toFixed(1)},${yOf(v).toFixed(1)}`);
+    };
+    const wa = Math.max(t0, 0);
+    const wb = Math.min(t1, d.duration);
+    if (keys.length === 1) {
+      push(wa, keys[0].v);
+      push(wb, keys[0].v);
+    } else {
+      for (let i = 0; i + 1 < keys.length; i++) {
+        const k1 = keys[i];
+        const k2 = keys[i + 1];
+        if (i === 0 && wa < k1.t) push(wa, k1.v); // 首帧前钳制水平段
+        push(k1.t, k1.v);
+        if (k1.i === "step") {
+          // 阶跃：前值水平持续到下一帧时刻，再垂直跳变
+          push(k2.t, k1.v);
+          push(k2.t, k2.v);
+          continue;
+        }
+        const span = Math.max(1e-6, k2.t - k1.t);
+        if (k1.i === "smooth") {
+          const m1 = keySlope(keys, i, "to") * span;
+          const m2 = keySlope(keys, i + 1, "ti") * span;
+          const N = 24;
+          for (let s = 1; s <= N; s++) push(k1.t + (s / N) * span, hermite(k1, m1, k2, m2, s / N));
+        } else {
+          push(k2.t, k2.v);
+        }
+      }
+      // 末帧 → 可视窗右缘的水平延长（求值钳末值，与播放行为一致）
+      const lastK = keys[keys.length - 1];
+      if (wb > lastK.t) push(wb, lastK.v);
+    }
+  }
+  return {
+    w,
+    h,
+    pad,
+    t0,
+    t1,
+    lo,
+    hi,
+    xOf,
+    yOf,
+    vOf,
+    tOf,
+    keys,
+    selKey,
+    handles,
+    polyline: pts.join(" "),
+  };
 });
 
-type CurveDrag = { index: number; startX: number; startY: number; live: boolean } | null;
+type CurveDrag =
+  | { kind: "key"; index: number; startX: number; startY: number; live: boolean }
+  | { kind: "handle"; index: number; side: "ti" | "to"; startX: number; startY: number }
+  | {
+      kind: "pan";
+      startT0: number;
+      tSpan: number;
+      startLo: number;
+      vSpan: number;
+      startX: number;
+      startY: number;
+    }
+  | null;
 let curveDrag: CurveDrag = null;
+/** 曲线视图中键平移中（grab 光标态） */
+const curvePanning = ref(false);
 
 function onCurveDown(e: PointerEvent): void {
   const d = doc.value;
   const svg = curveSvgEl.value;
   if (!d || !svg) return;
+  if (e.button === 2) return; // 右键交给 contextmenu（关键帧菜单）
   const r = svg.getBoundingClientRect();
   const g = curveGeom.value;
   const localX = e.clientX - r.left;
   const localY = e.clientY - r.top;
+  if (e.button === 1) {
+    // 中键 = 抓画布平移：水平拖共享时间窗、垂直拖数值窗（按下点保持跟随指针）
+    e.preventDefault();
+    const win = tWindow.value;
+    curveDrag = {
+      kind: "pan",
+      startT0: win.t0,
+      tSpan: win.t1 - win.t0,
+      startLo: g.lo,
+      vSpan: g.hi - g.lo,
+      startX: localX,
+      startY: localY,
+    };
+    curvePanning.value = true;
+    svg.setPointerCapture?.(e.pointerId);
+    return;
+  }
+  // 任何拖拽起点先冻结值域（松手恢复自动适配），编辑期间整图保持稳定
+  freezeCurveView();
+  // 手柄端点优先命中（自动态虚影不可拖：按下即固化两侧为手动再拖）
+  const hitH = g.handles.find((hd) => Math.hypot(hd.x - localX, hd.y - localY) < 10);
+  if (hitH) {
+    const k = g.keys[hitH.index];
+    if (!k) return;
+    pickKey(curveProp.value, k.t);
+    const idx = hitH.index;
+    if (isAutoTangent(k)) ensureManualTangents(g.keys, idx);
+    curveDrag = { kind: "handle", index: idx, side: hitH.side, startX: localX, startY: localY };
+    svg.setPointerCapture?.(e.pointerId);
+    return;
+  }
   // 命中 = 到关键帧中心的二维距离（不只 x；否则相邻 t 不同 v 的点选不中）
   const hit = g.keys.find(
     (k) => Math.hypot(g.xOf(k.t) - localX, g.yOf(k.v) - localY) < 9,
@@ -830,14 +1297,15 @@ function onCurveDown(e: PointerEvent): void {
   if (hit) {
     pickKey(curveProp.value, hit.t);
     // live=false：先按点击处理，移出死区才转拖拽（防止点选时的抖动改值）
-    curveDrag = { index: g.keys.indexOf(hit), startX: localX, startY: localY, live: false };
+    curveDrag = { kind: "key", index: g.keys.indexOf(hit), startX: localX, startY: localY, live: false };
   } else {
     const t = snapT(g.tOf(localX), d.duration, snapEnabled.value && !e.altKey);
-    const v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
+    const v = g.vOf(localY);
     const curve = curveOf(d, curveProp.value);
     upsertKey(curve, t, v);
     pickKey(curveProp.value, t);
     curveDrag = {
+      kind: "key",
       index: curve.keys.findIndex((k) => Math.abs(k.t - t) <= 1e-4),
       startX: localX,
       startY: localY,
@@ -856,15 +1324,39 @@ function onCurveMove(e: PointerEvent): void {
   const g = curveGeom.value;
   const localX = e.clientX - r.left;
   const localY = e.clientY - r.top;
-  if (!dragNow.live) {
-    if (Math.hypot(localX - dragNow.startX, localY - dragNow.startY) < 3) return;
-    dragNow.live = true;
+  if (dragNow.kind === "pan") {
+    // 抓画布：按下瞬间画布下的 (t, v) 必须始终跟在指针下
+    const plotW = Math.max(1, g.w - g.pad * 2);
+    const plotH = Math.max(1, g.h - g.pad * 2);
+    const tHold = dragNow.startT0 + ((dragNow.startX - g.pad) / plotW) * dragNow.tSpan;
+    applyT0(tHold - ((localX - g.pad) / plotW) * dragNow.tSpan, zoom.value);
+    const vHold = dragNow.startLo + ((g.h - g.pad - dragNow.startY) / plotH) * dragNow.vSpan;
+    const lo = vHold - ((g.h - g.pad - localY) / plotH) * dragNow.vSpan;
+    curveView.value = { lo, hi: lo + dragNow.vSpan };
+    return;
   }
   const curve = d.curves.find((c) => c.prop === curveProp.value);
   const key = curve?.keys[dragNow.index];
   if (!curve || !key) return;
+  if (dragNow.kind === "handle") {
+    // 斜率 = 过关键帧与指针点的割线（时间差 < 20ms 不更新，防端点处爆斜率）
+    const dt = (dragNow.side === "to" ? 1 : -1) * (g.tOf(localX) - key.t);
+    if (dt < 0.02) return;
+    const slope = clampSlope((g.vOf(localY) - key.v) / dt);
+    key[dragNow.side] = slope;
+    if (key.tm) key[dragNow.side === "to" ? "ti" : "to"] = slope;
+    touch();
+    return;
+  }
+  if (!dragNow.live) {
+    if (Math.hypot(localX - dragNow.startX, localY - dragNow.startY) < 3) return;
+    dragNow.live = true;
+  }
+  // Unity 式：自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
+  if (isAutoTangent(key)) ensureManualTangents(curve.keys, dragNow.index);
   key.t = snapT(g.tOf(localX), d.duration, snapEnabled.value && !e.altKey);
-  key.v = g.lo + ((g.h - g.pad - localY) / Math.max(1, g.h - g.pad * 2)) * (g.hi - g.lo);
+  // 数值钳回可视窗：缩放后拖到底/顶不会把关键帧「拖出视野失联」
+  key.v = Math.min(Math.max(g.vOf(localY), g.lo), g.hi);
   curve.keys.sort((a, b) => a.t - b.t);
   dragNow.index = curve.keys.indexOf(key);
   selected.value = { prop: curveProp.value, t: key.t };
@@ -872,7 +1364,151 @@ function onCurveMove(e: PointerEvent): void {
 }
 
 function onCurveUp(): void {
+  curvePanning.value = false;
+  if (curveDrag?.kind === "pan" && curveView.value) {
+    // 平移未改动数值窗（或被钳回原处）→ 清掉手动值窗恢复自动适配
+    const fit = fitCurveView();
+    if (Math.abs(curveView.value.lo - fit.lo) < 1e-9 && Math.abs(curveView.value.hi - fit.hi) < 1e-9) {
+      curveView.value = null;
+      curveZoom.value = 1;
+    }
+  }
   curveDrag = null;
+  curveViewFreeze = null;
+}
+
+// 切换查看通道：丢弃手动缩放窗口（回到新通道的自动适配）；编辑中不重置
+watch(curveProp, () => {
+  if (!curveDrag) {
+    curveView.value = null;
+    curveZoom.value = 1;
+  }
+});
+
+/** 滚轮缩放曲线视图：默认缩放时间轴（以指针时刻为中心，滚上 = 放大）；
+ *  Shift+滚轮缩放数值轴（以指针值为中心）；Ctrl+滚轮平移时间轴。
+ *  时间窗限幅 [1% 时长, 1.4×时长]（可越过 0/时长看钳制延长段），
+ *  窗口拉回全览时复位为自动适配。 */
+/** 曲线视图滚轮：与 dope 完全同一套方案——滚轮缩放共享时间窗（指针时刻不动）、
+ *  Ctrl+滚轮平移、Shift+滚轮不拦截（统一方案）；数值轴不设鼠标滚轮操作，
+ *  用中键纵向拖拽平移或工具条「值×」滑条调整。 */
+function onCurveWheel(e: WheelEvent): void {
+  const d = doc.value;
+  const svg = curveSvgEl.value;
+  if (!d || !svg) return;
+  if (e.shiftKey && !e.ctrlKey) return; // 与 dope 一致：Shift 滚轮不拦截
+  e.preventDefault();
+  const r = svg.getBoundingClientRect();
+  const frac = (e.clientX - r.left - 16) / Math.max(1, r.width - 32);
+  timelineWheel(e, Math.min(Math.max(frac, 0), 1));
+}
+
+/** 曲线视图右键：命中帧弹出关键帧菜单（阻止默认浏览器菜单） */
+function onCurveContextMenu(e: MouseEvent): void {
+  e.preventDefault();
+  const svg = curveSvgEl.value;
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  const g = curveGeom.value;
+  const hit = g.keys.find(
+    (k) => Math.hypot(g.xOf(k.t) - (e.clientX - r.left), g.yOf(k.v) - (e.clientY - r.top)) < 9,
+  );
+  if (hit) onKeyMenu(e, curveProp.value, hit.t);
+}
+
+// ---------------------------------------------------------------------------
+// 关键帧右键菜单（曲线视图 + dope 轨道共用）：插值 / 贝塞尔切线 / 删除
+// ---------------------------------------------------------------------------
+function keyAt(prop: AnimProp, t: number): AnimKey | null {
+  return doc.value?.curves.find((c) => c.prop === prop)?.keys.find((k) => Math.abs(k.t - t) <= 1e-4) ?? null;
+}
+
+/** 设为平滑：自动态保持自动；从线性/阶跃转入时固化邻域自动切线 */
+function setSmooth(prop: AnimProp, t: number): void {
+  const curve = doc.value?.curves.find((c) => c.prop === prop);
+  if (!curve) return;
+  const i = curve.keys.findIndex((k) => Math.abs(k.t - t) <= 1e-4);
+  const k = curve.keys[i];
+  if (!k || k.i === "smooth") return;
+  ensureManualTangents(curve.keys, i);
+  k.i = "smooth";
+  touch();
+}
+
+function setInterp(prop: AnimProp, t: number, i: AnimKeyInterp): void {
+  const k = keyAt(prop, t);
+  if (!k) return;
+  if (i === "smooth") {
+    setSmooth(prop, t);
+    return;
+  }
+  k.i = i;
+  clearTangents(k); // 线性/阶跃不使用切线：清除避免残留
+  touch();
+}
+
+function onKeyMenu(e: MouseEvent, prop: AnimProp, t: number): void {
+  const k = keyAt(prop, t);
+  if (!k) return;
+  pickKey(prop, t);
+  const auto = isAutoTangent(k);
+  const items: CtxMenuItem[] = [
+    {
+      label: "平滑（自动切线）",
+      disabled: k.i === "smooth" && auto,
+      onClick: () => {
+        k.i = "smooth";
+        clearTangents(k);
+        touch();
+      },
+    },
+    {
+      label: "线性",
+      disabled: k.i === "linear",
+      onClick: () => setInterp(prop, t, "linear"),
+    },
+    {
+      label: "阶跃",
+      disabled: k.i === "step",
+      onClick: () => setInterp(prop, t, "step"),
+    },
+    menuSeparator(),
+    {
+      label: "切线对称（联动）",
+      disabled: auto,
+      onClick: () => {
+        k.tm = true;
+        if (k.to !== undefined && k.ti === undefined) k.ti = k.to;
+        if (k.ti !== undefined && k.to === undefined) k.to = k.ti;
+        touch();
+      },
+    },
+    {
+      label: "切线断开（独立）",
+      disabled: auto || k.tm !== true,
+      onClick: () => {
+        k.tm = false;
+        touch();
+      },
+    },
+    {
+      label: "切线压平（水平）",
+      disabled: k.ti === 0 && k.to === 0,
+      onClick: () => {
+        k.ti = 0;
+        k.to = 0;
+        k.tm = true;
+        touch();
+      },
+    },
+    menuSeparator(),
+    {
+      label: "删除关键帧",
+      danger: true,
+      onClick: () => deleteSelected(),
+    },
+  ];
+  openContextMenu(e, items);
 }
 </script>
 
@@ -925,6 +1561,14 @@ function onCurveUp(): void {
           <option value="dope">帧动画</option>
           <option value="curve">曲线编辑</option>
         </select>
+        <template v-if="viewMode === 'curve'">
+          <span class="anim-sep"></span>
+          <label class="zoom-ctl" title="曲线数值轴缩放（1 = 自动适配全曲线；调小 = 放大查看）。鼠标方案与帧动画统一：滚轮缩放时间轴、Ctrl 滚轮平移、中键拖拽平移（纵向拖动可平移数值轴）">
+            <input type="range" min="0.2" max="4" step="0.1" :value="curveZoom" @input="onCurveZoomInput" />
+            <span class="mono">值×{{ curveZoom.toFixed(1) }}</span>
+          </label>
+          <button class="anim-btn" :disabled="!curveView" title="复位数值轴（恢复自动适配全曲线；时间轴用底部滑条/滚轮）" @click="resetCurveView">适配</button>
+        </template>
       </template>
     </div>
 
@@ -935,49 +1579,51 @@ function onCurveUp(): void {
 
     <template v-else>
       <div class="anim-body">
-        <!-- 左列：添加属性 + 层级轨道树（组可折叠，叶子 = 通道） -->
+        <!-- 左列：层级轨道树滚动区（与右列双向同步滚动）+ 底部固定添加属性按钮 -->
         <div class="anim-names">
-          <div class="anim-row-head head-label">通道</div>
-          <template v-for="row in trackRows" :key="row.kind + row.key">
-            <!-- 组行：点击折叠/展开 -->
-            <div
-              v-if="row.kind === 'group'"
-              class="anim-row-head group-row"
-              :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
-              @click="toggleGroup(row.key)"
-            >
-              <span class="h-caret-mini">{{ isGroupCollapsed(row.key) ? "▸" : "▾" }}</span>
-              <span class="ch-label">{{ row.name }}</span>
-            </div>
-            <!-- 叶子行：通道（K / 移除 / 点选曲线视图） -->
-            <div
-              v-else
-              class="anim-row-head name-row"
-              :class="{ on: curveProp === row.prop }"
-              :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
-              :title="fullPathOf(row.prop) + ' · ' + keyCount(row.prop) + ' 关键帧'"
-              @click="curveProp = row.prop"
-            >
-              <span class="ch-label">{{ row.name }}</span>
-              <button
-                class="k-btn"
-                title="在当前时间 K（取选中节点当前值）"
-                @click.stop="keyChannel(row.prop)"
-              >K</button>
-              <button
-                class="k-btn del"
-                title="移除该通道（连同其全部关键帧）"
-                @click.stop="removeChannel(row.prop)"
-              >✕</button>
-            </div>
-          </template>
+          <div class="names-scroll" ref="namesEl" @scroll="onNamesScroll()">
+            <div class="anim-row-head head-label">通道</div>
+            <template v-for="row in trackRows" :key="row.kind + row.key">
+              <!-- 组行：点击折叠/展开 -->
+              <div
+                v-if="row.kind === 'group'"
+                class="anim-row-head group-row"
+                :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
+                @click="toggleGroup(row.key)"
+              >
+                <span class="h-caret-mini">{{ isGroupCollapsed(row.key) ? "▸" : "▾" }}</span>
+                <span class="ch-label">{{ row.name }}</span>
+              </div>
+              <!-- 叶子行：通道（K / 移除 / 点选曲线视图） -->
+              <div
+                v-else
+                class="anim-row-head name-row"
+                :class="{ on: curveProp === row.prop }"
+                :style="{ paddingLeft: 4 + row.depth * 12 + 'px' }"
+                :title="fullPathOf(row.prop) + ' · ' + keyCount(row.prop) + ' 关键帧'"
+                @click="curveProp = row.prop"
+              >
+                <span class="ch-label">{{ row.name }}</span>
+                <button
+                  class="k-btn"
+                  title="在当前时间 K（取选中节点当前值）"
+                  @click.stop="keyChannel(row.prop)"
+                >K</button>
+                <button
+                  class="k-btn del"
+                  title="移除该通道（连同其全部关键帧）"
+                  @click.stop="removeChannel(row.prop)"
+                >✕</button>
+              </div>
+            </template>
+          </div>
           <button class="add-prop-btn" title="为剪辑添加可动画属性（按选中节点能力提供）" @click.stop="onAddPropertyMenu($event)">＋ 添加属性</button>
         </div>
 
-        <!-- 右侧视图区：帧动画轨道 / 曲线编辑（下拉切换，二选一显示） -->
-        <div class="anim-lanes" ref="laneEl">
+        <!-- 右侧视图区：帧动画轨道 / 曲线编辑（下拉切换，二选一显示；共享时间窗缩放） -->
+        <div class="anim-lanes" :class="{ panning: lanePanning }" ref="laneEl" @wheel="onLaneWheel($event)" @scroll="onLanesScroll()">
           <template v-if="viewMode === 'dope'">
-            <div class="lane-wrap" :style="{ width: timelineWidth + 'px' }">
+            <div class="lane-wrap" :style="{ width: timelineWidth + 'px' }" @pointerdown="onWrapPointerDown($event)">
             <div
               class="lane ruler"
               @pointerdown="beginScrub($event)"
@@ -1021,20 +1667,21 @@ function onCurveUp(): void {
                   class="key-dot"
                   :class="{ sel: selected?.prop === row.prop && Math.abs(selected.t - k.t) <= 1e-4 }"
                   :style="{ left: tToX(k.t, doc.duration) + 'px' }"
-                  :title="`${k.t.toFixed(2)}s = ${k.v.toFixed(2)}（${k.i === 'linear' ? '线性' : k.i === 'step' ? '阶跃' : '平滑'}）；拖拽改时间`"
+                  :title="`${k.t.toFixed(2)}s = ${k.v.toFixed(2)}（${k.i === 'linear' ? '线性' : k.i === 'step' ? '阶跃' : '平滑'}）；拖拽改时间，右键菜单`"
                   @pointerdown.stop="beginKeyDrag($event, row.prop, i)"
+                  @contextmenu.stop.prevent="onKeyMenu($event, row.prop, k.t)"
                 ></button>
                 <span class="playhead thin" :style="{ left: tToX(time, doc.duration) + 'px' }"></span>
               </div>
             </template>
             <div v-if="tracks.length === 0" class="hint lane-empty">
-              尚未添加属性：点击左下「＋ 添加属性」（变换 / 灯光 / 材质按节点能力提供）
+              尚未添加属性：「＋ 添加属性」
             </div>
             </div>
           </template>
           <template v-else>
             <div v-if="tracks.length === 0" class="hint lane-empty">
-              尚未添加属性：点击左下「＋ 添加属性」（变换 / 灯光 / 材质按节点能力提供）
+              尚未添加属性：「＋ 添加属性」
             </div>
             <div v-else-if="!curveProp" class="hint lane-empty">点击左侧通道名显示其曲线</div>
             <template v-else>
@@ -1042,30 +1689,63 @@ function onCurveUp(): void {
               <svg
                 ref="curveSvgEl"
                 class="anim-curve"
+                :class="{ panning: curvePanning }"
                 :viewBox="`0 0 ${curveGeom.w} ${curveGeom.h}`"
                 @pointerdown="onCurveDown"
                 @pointermove="onCurveMove"
                 @pointerup="onCurveUp"
                 @pointercancel="onCurveUp"
+                @contextmenu="onCurveContextMenu($event)"
+                @wheel.prevent="onCurveWheel($event)"
               >
                 <line
-                  v-for="tk in rulerTicks"
-                  :key="tk"
+                  v-for="(tk, gi) in curveGridTicks"
+                  :key="gi"
                   class="c-grid"
+                  :class="{ minor: !rulerTicks.includes(tk) }"
                   :x1="curveGeom.xOf(tk)"
                   :y1="curveGeom.pad"
                   :x2="curveGeom.xOf(tk)"
                   :y2="curveGeom.h - curveGeom.pad"
                 />
+                <text
+                  v-for="(tk, gi) in rulerTicks"
+                  :key="'g' + gi"
+                  class="c-gridlab mono"
+                  :x="curveGeom.xOf(tk) + 3"
+                  :y="curveGeom.pad - 4"
+                >{{ tickLabel(tk) }}</text>
                 <line class="c-playhead" :x1="curveGeom.xOf(time)" :y1="0" :x2="curveGeom.xOf(time)" :y2="curveGeom.h" />
                 <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.h - curveGeom.pad" :x2="curveGeom.w - curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
                 <line class="c-axis" :x1="curveGeom.pad" :y1="curveGeom.pad" :x2="curveGeom.pad" :y2="curveGeom.h - curveGeom.pad" />
                 <polyline class="c-line" :points="curveGeom.polyline" />
+                <!-- 切线手柄（杆 + 端点）：自动态虚影提示，手动态实心可拖 -->
+                <template v-for="(hd, hi) in curveGeom.handles" :key="'h' + hi">
+                  <line
+                    class="c-handle"
+                    :class="{ auto: !hd.manual, ghost: hd.ghost }"
+                    :x1="curveGeom.xOf(curveGeom.keys[hd.index].t)"
+                    :y1="curveGeom.yOf(curveGeom.keys[hd.index].v)"
+                    :x2="hd.x"
+                    :y2="hd.y"
+                  />
+                  <circle
+                    class="c-handle-end"
+                    :class="{ auto: !hd.manual, ghost: hd.ghost }"
+                    :cx="hd.x"
+                    :cy="hd.y"
+                    r="4"
+                  />
+                </template>
                 <rect
-                  v-for="(k, i) in curveGeom.keys"
-                  :key="i"
+                  v-for="k in curveGeom.keys"
+                  :key="k.t"
                   class="c-key"
-                  :class="{ sel: selected?.prop === curveProp && Math.abs(selected.t - k.t) <= 1e-4 }"
+                  :class="{
+                    sel: selected?.prop === curveProp && Math.abs(selected.t - k.t) <= 1e-4,
+                    manual: !isAutoTangent(k),
+                    sym: k.tm === true,
+                  }"
                   :x="curveGeom.xOf(k.t) - 4"
                   :y="curveGeom.yOf(k.v) - 4"
                   width="8"
@@ -1084,17 +1764,20 @@ function onCurveUp(): void {
             class="interp-pick"
             :value="selectedInterp"
             :disabled="!selected"
-            title="选中关键帧的插值方式"
+            title="选中关键帧的插值方式（自动 = 平滑 + Catmull-Rom 自动切线）"
             @change="onInterpChange($event)"
           >
             <option value="" disabled>（未选中关键帧）</option>
+            <option value="auto" :disabled="selectedInterp !== 'auto' && selectedInterp !== 'smooth'">
+              平滑 · 自动切线
+            </option>
             <option value="linear">线性</option>
             <option value="step">阶跃</option>
             <option value="smooth">平滑</option>
           </select>
           <button class="anim-btn danger" :disabled="!selected" title="删除选中的关键帧" @click="deleteSelected">删除 K</button>
           <span class="anim-hint">{{ viewHint }}</span>
-          <label class="zoom-ctl" title="缩放时间轴轨道（1× 铺满视图区宽度，放大后可横向滚动）">
+          <label class="zoom-ctl" title="时间轴缩放（1× 铺满；帧动画与曲线视图共用同一时间窗，滚轮同样可缩放）">
             <input type="range" min="1" max="8" step="0.5" :value="zoom" @input="onZoomInput" />
             <span class="mono">×{{ zoom.toFixed(1) }}</span>
           </label>

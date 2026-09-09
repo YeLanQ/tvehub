@@ -162,7 +162,37 @@
   width: 168px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+
+  /* 通道行独立滚动容器：滚轮可直接在此列滚动，纵向与右列轨道双向同步；
+     隐藏自身滚动条（滚动条统一由右列呈现，避免双列宽度抖动） */
+  .names-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+
+    /* 「通道」头行吸顶（与右侧标尺同步，纵向滚动不消失） */
+    .head-label {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--bg-panel-2);
+    }
+  }
+
+  /* 添加属性按钮固定在底部（不随通道列表滚动，永远可达） */
+  .add-prop-btn {
+    flex-shrink: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
 }
 
 .anim-row-head {
@@ -263,9 +293,20 @@
 .anim-lanes {
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto;
   position: relative;
+
+  /* 中键拖拽平移中（dope）：cursor 跟随指针下最上层元素，
+     必须用 !important 盖过标尺/关键帧菱形自身的 ew-resize（↔ 箭头），
+     否则指针恰好压在这些元素上时看不到抓取小手 */
+  &.panning {
+    cursor: grabbing;
+    user-select: none;
+
+    * {
+      cursor: grabbing !important;
+    }
+  }
 }
 
 /* dope 视图内容层：宽度 = 视口宽 × 缩放倍率，缩放后随轨道区横向滚动 */
@@ -282,6 +323,10 @@
   &.ruler {
     cursor: ew-resize;
     background: var(--bg-panel-2);
+    /* 纵向滚动时标尺吸顶（与左列「通道」头行同步） */
+    position: sticky;
+    top: 0;
+    z-index: 2;
   }
 
   &.key-lane.on {
@@ -323,7 +368,12 @@
   background: var(--accent, #4a9eff);
   border: 1px solid #fff;
   transform: rotate(45deg);
-  cursor: ew-resize;
+  /* 与曲线编辑统一：关键帧拖拽 = 抓取小手（横向语义由 panning/操作提示传达） */
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
 
   &.sel {
     background: #fff;
@@ -417,10 +467,32 @@
   cursor: crosshair;
   touch-action: none;
 
+  /* 中键拖拽平移中（时间窗 + 数值窗）：盖过手柄端点等子元素自身光标 */
+  &.panning {
+    cursor: grabbing;
+
+    * {
+      cursor: grabbing !important;
+    }
+  }
+
   .c-grid {
     stroke: var(--border);
     stroke-width: 1;
     opacity: 0.5;
+
+    /* 缩放态 1/5 细刻度 */
+    &.minor {
+      opacity: 0.18;
+    }
+  }
+
+  /* 曲线视图顶部时间刻度标签（随缩放窗口更新） */
+  .c-gridlab {
+    font-size: 9px;
+    fill: var(--text-dim);
+    user-select: none;
+    pointer-events: none;
   }
 
   .c-playhead {
@@ -444,10 +516,65 @@
     fill: var(--accent, #4a9eff);
     stroke: #fff;
     stroke-width: 1;
+    /* 与帧动画轨道关键帧统一：抓取小手光标 */
+    cursor: grab;
+
+    &:active {
+      cursor: grabbing;
+    }
+
+    /* 手动贝塞尔切线帧：琥珀色区分自动帧 */
+    &.manual {
+      fill: var(--warn, #d7b45a);
+    }
+
+    /* 切线对称（联动）：虚线描边 */
+    &.sym {
+      stroke-dasharray: 2 2;
+    }
 
     &.sel {
       fill: #fff;
       stroke: var(--accent);
+    }
+  }
+
+  /* 切线手柄杆：手动态白色实线；自动态虚线虚影（拖即固化）；联动非拖侧弱化 */
+  .c-handle {
+    stroke: rgba(255, 255, 255, 0.8);
+    stroke-width: 1;
+    pointer-events: none;
+
+    &.auto {
+      stroke: var(--text-dim);
+      stroke-dasharray: 3 3;
+      opacity: 0.55;
+    }
+
+    &.ghost {
+      opacity: 0.35;
+    }
+  }
+
+  .c-handle-end {
+    fill: #fff;
+    stroke: var(--accent, #4a9eff);
+    stroke-width: 1;
+    cursor: grab;
+
+    &:active {
+      cursor: grabbing;
+    }
+
+    &.auto {
+      fill: transparent;
+      stroke: var(--text-dim);
+      stroke-dasharray: 2 2;
+    }
+
+    &.ghost {
+      opacity: 0.4;
+      cursor: default;
     }
   }
 }

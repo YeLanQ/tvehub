@@ -8,21 +8,30 @@
 //   材质 → 对象材质、灯光 → 对象子树内的灯光）。可动画通道目录见
 //   app/lib/anim-props.ts（按节点能力提供）；
 // - 关键帧（key）：t 秒 + v 值 + 到下一关键帧的插值 i（linear/step/smooth）；
-//   smooth = 三次 Hermite（Catmull-Rom 切线，支持非均匀时间）；
+//   smooth = 三次 Hermite，切线默认自动（Catmull-Rom 中心差分，支持非均匀时间），
+//   可被手动贝塞尔切线覆盖：ti/to = 入/出切线斜率（dv/dt，缺省 = 自动）、
+//   tm = true 时两侧联动（对称，拖一侧镜像另一侧；缺省 = 独立）；
 // - 求值在关键帧区间外钳制到端点值；曲线按 t 升序保持（操作函数负责排序）。
 // ---------------------------------------------------------------------------
 
 /** 通道键（字符串；分组约定见文件头） */
 export type AnimProp = string;
 
-/** 关键帧插值：线性 / 阶跃（保持前值）/ 平滑（Catmull-Rom） */
+/** 关键帧插值：线性 / 阶跃（保持前值）/ 平滑（Hermite，切线自动或手动） */
 export type AnimKeyInterp = "linear" | "step" | "smooth";
 
-/** 单个关键帧：t 秒、v 值、i 为该帧到下一帧区间的插值方式 */
+/** 手动切线斜率的钳制上限（dv/dt；超过按上限收敛） */
+export const TANGENT_CLAMP = 10000;
+
+/** 单个关键帧：t 秒、v 值、i 为该帧到下一帧区间的插值方式；
+ *  ti/to 为手动入/出切线斜率（undefined = 自动 Catmull-Rom）、tm 两侧联动 */
 export interface AnimKey {
   t: number;
   v: number;
   i: AnimKeyInterp;
+  ti?: number;
+  to?: number;
+  tm?: boolean;
 }
 
 /** 单通道曲线：一条属性的关键帧序列（t 升序） */
@@ -55,7 +64,7 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** 任意来源 → 收敛的关键帧（t/v 非法剔除，插值回退 linear） */
+/** 任意来源 → 收敛的关键帧（t/v 非法剔除，插值回退 linear，切线钳制/非法剔除） */
 function parseKeys(v: unknown): AnimKey[] {
   if (!Array.isArray(v)) return [];
   const keys: AnimKey[] = [];
@@ -65,11 +74,17 @@ function parseKeys(v: unknown): AnimKey[] {
     const t = num(ko.t, NaN);
     const val = num(ko.v, NaN);
     if (!Number.isFinite(t) || !Number.isFinite(val)) continue;
-    keys.push({
+    const key: AnimKey = {
       t,
       v: val,
       i: INTERPS.includes(ko.i as AnimKeyInterp) ? (ko.i as AnimKeyInterp) : "linear",
-    });
+    };
+    const ti = num(ko.ti, NaN);
+    if (Number.isFinite(ti)) key.ti = clamp(ti, -TANGENT_CLAMP, TANGENT_CLAMP);
+    const to = num(ko.to, NaN);
+    if (Number.isFinite(to)) key.to = clamp(to, -TANGENT_CLAMP, TANGENT_CLAMP);
+    if (ko.tm === true) key.tm = true;
+    keys.push(key);
   }
   keys.sort((a, b) => a.t - b.t);
   return keys;
@@ -131,6 +146,38 @@ function tangentOf(keys: AnimKey[], i: number): number {
   return 0;
 }
 
+/** 关键帧某侧生效切线斜率（dv/dt）：手动 ti/to 优先，否则自动 Catmull-Rom */
+export function keySlope(keys: AnimKey[], i: number, side: "ti" | "to"): number {
+  const manual = side === "ti" ? keys[i]?.ti : keys[i]?.to;
+  return manual ?? tangentOf(keys, i);
+}
+
+/** 该帧两侧切线是否处于自动态（无任一手动斜率） */
+export function isAutoTangent(k: AnimKey): boolean {
+  return k.ti === undefined && k.to === undefined;
+}
+
+/** 固化自动切线为手动值（拖手柄/拖帧前调用，保持曲线形状不跳变） */
+export function ensureManualTangents(keys: AnimKey[], i: number): void {
+  const k = keys[i];
+  if (!k || !isAutoTangent(k)) return;
+  k.ti = tangentOf(keys, i);
+  k.to = k.ti;
+  k.tm = true; // Unity 式默认：新固化的切线两侧联动
+}
+
+/** 清除手动切线（恢复自动 Catmull-Rom，并去掉对称标记） */
+export function clearTangents(k: AnimKey): void {
+  delete k.ti;
+  delete k.to;
+  delete k.tm;
+}
+
+/** 斜率钳制（±TANGENT_CLAMP；供编辑器写入手柄斜率） */
+export function clampSlope(v: number): number {
+  return clamp(v, -TANGENT_CLAMP, TANGENT_CLAMP);
+}
+
 /** 采样单通道曲线（区间外钳端点；空曲线返回 null） */
 export function evaluateCurve(curve: AnimClipCurve, time: number): number | null {
   const keys = curve.keys;
@@ -146,9 +193,9 @@ export function evaluateCurve(curve: AnimClipCurve, time: number): number | null
   const span = Math.max(1e-6, k2.t - k1.t);
   const u = (time - k1.t) / span;
   if (k1.i === "smooth") {
-    // 三次 Hermite：切线取 Catmull-Rom（相邻关键帧中心差分）
-    const m1 = tangentOf(keys, i) * span;
-    const m2 = tangentOf(keys, i + 1) * span;
+    // 三次 Hermite：切线 = 手动 ti/to（贝塞尔编辑）优先，缺省自动 Catmull-Rom
+    const m1 = keySlope(keys, i, "to") * span;
+    const m2 = keySlope(keys, i + 1, "ti") * span;
     const u2 = u * u;
     const u3 = u2 * u;
     return (

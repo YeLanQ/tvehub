@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // 关键帧动画剪辑播放（.anim 资产 → 节点属性）：
 // - 与编辑器 AnimationClipData 同一套数据语义（通道键 = 组.路径 字符串、
-//   关键帧插值 linear/step/smooth、时长/循环/速度）；
+//   关键帧插值 linear/step/smooth、smooth 支持手动贝塞尔切线 ti/to/tm、
+//   时长/循环/速度）；
 // - 通道应用规则（与编辑器 anim-props.ts 目录镜像）：
 //     position.* / rotation.*（度）/ scale.*  → 节点对象变换；
 //     material.*                              → 对象材质（颜色分量为 0~1）；
@@ -14,6 +15,7 @@
 
 const D2R = Math.PI / 180;
 const INTERPS = ["linear", "step", "smooth"];
+const TANGENT_CLAMP = 10000;
 
 function num(v, fb) {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
@@ -32,11 +34,20 @@ function parseClip(v) {
     if (typeof prop !== "string" || !prop || seen.has(prop)) continue;
     seen.add(prop);
     const keys = (Array.isArray(c.keys) ? c.keys : [])
-      .map((k) => ({
-        t: num(k && k.t, NaN),
-        v: num(k && k.v, NaN),
-        i: INTERPS.includes(k && k.i) ? k.i : "linear",
-      }))
+      .map((k) => {
+        const key = {
+          t: num(k && k.t, NaN),
+          v: num(k && k.v, NaN),
+          i: INTERPS.includes(k && k.i) ? k.i : "linear",
+        };
+        // 手动贝塞尔切线斜率（dv/dt；与 framework clip.ts 同步语义）
+        const ti = num(k && k.ti, NaN);
+        if (Number.isFinite(ti)) key.ti = clamp(ti, -TANGENT_CLAMP, TANGENT_CLAMP);
+        const to = num(k && k.to, NaN);
+        if (Number.isFinite(to)) key.to = clamp(to, -TANGENT_CLAMP, TANGENT_CLAMP);
+        if (k && k.tm === true) key.tm = true;
+        return key;
+      })
       .filter((k) => Number.isFinite(k.t) && Number.isFinite(k.v))
       .sort((a, b) => a.t - b.t);
     curves.push({ prop, keys });
@@ -56,6 +67,12 @@ function tangentAt(keys, i) {
   if (next) return (next.v - cur.v) / Math.max(1e-6, next.t - cur.t);
   if (prev) return (cur.v - prev.v) / Math.max(1e-6, cur.t - prev.t);
   return 0;
+}
+
+/** 关键帧某侧生效切线：手动 ti/to 优先，否则自动 Catmull-Rom */
+function keySlope(keys, i, side) {
+  const manual = side === "ti" ? keys[i] && keys[i].ti : keys[i] && keys[i].to;
+  return manual === undefined ? tangentAt(keys, i) : manual;
 }
 
 function indexBefore(keys, t) {
@@ -88,8 +105,8 @@ function evalCurve(curve, t) {
   const span = Math.max(1e-6, k2.t - k1.t);
   const u = (t - k1.t) / span;
   if (k1.i === "smooth") {
-    const m1 = tangentAt(keys, i) * span;
-    const m2 = tangentAt(keys, i + 1) * span;
+    const m1 = keySlope(keys, i, "to") * span;
+    const m2 = keySlope(keys, i + 1, "ti") * span;
     const u2 = u * u;
     const u3 = u2 * u;
     return (2 * u3 - 3 * u2 + 1) * k1.v + (u3 - 2 * u2 + u) * m1 + (-2 * u3 + 3 * u2) * k2.v + (u3 - u2) * m2;

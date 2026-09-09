@@ -24,8 +24,12 @@ import {
   parseLightComponentSettings,
 } from "../src/framework/lighting/types";
 import {
+  clearTangents,
+  ensureManualTangents,
   evaluateClip,
   evaluateCurve,
+  isAutoTangent,
+  keySlope,
   parseAnimationClip,
   removeKeyAt,
   upsertKey,
@@ -362,6 +366,55 @@ function check(name: string, cond: boolean, detail = ""): void {
   upsertKey(curve, 0.5, 44);
   check("upsert 同帧覆盖不重复", curve.keys.filter((k) => Math.abs(k.t - 0.5) <= 1e-4).length === 1 && curve.keys.find((k) => Math.abs(k.t - 0.5) <= 1e-4)?.v === 44);
   check("removeKeyAt 删除", removeKeyAt(curve, 0.5) && !curve.keys.some((k) => Math.abs(k.t - 0.5) <= 1e-4));
+
+  // —— 贝塞尔切线（Unity 风格）：解析收敛 / 手动态求值 / 自动态回归 / 固化 / 对称 ——
+  const bz = parseAnimationClip({
+    duration: 1,
+    loops: false,
+    curves: [
+      {
+        prop: "position.x",
+        keys: [
+          { t: 0, v: 0, i: "smooth", to: 2, ti: "bad" },
+          { t: 1, v: 1, i: "smooth", ti: -2, to: 99999, tm: true },
+          { t: 1.5, v: 1, i: "smooth", tm: "yes" },
+        ],
+      },
+    ],
+  }).curves[0];
+  check(
+    "切线解析：合法保留、非法剔除、斜率钳制、tm 仅认 true",
+    bz.keys[0].to === 2 && bz.keys[0].ti === undefined && bz.keys[1].ti === -2 &&
+      bz.keys[1].to === 10000 && bz.keys[1].tm === true && bz.keys[2].tm === undefined,
+  );
+  // 0.5 ∈ [0,1]（span=1）：h10=0.125、h11=-0.125 → 0.125×to(2) + 0.5×1 + (−0.125)×ti(−2) = 1
+  check(
+    "手动切线求值与手算 Hermite 一致",
+    Math.abs((evaluateCurve(bz, 0.5) as number) - 1) < 1e-9,
+  );
+  // 自动态与旧 Catmull-Rom 行为回归一致（两帧对称段中点 = 值中点）
+  const bz2 = {
+    prop: "position.x",
+    keys: [
+      { t: 0, v: 0, i: "smooth" as const },
+      { t: 1, v: 1, i: "smooth" as const },
+    ],
+  };
+  check(
+    "自动态求值回归：与纯 Catmull-Rom 相同（中点=值中点）",
+    Math.abs((evaluateCurve(bz2 as never, 0.5) as number) - 0.5) < 1e-9 &&
+      isAutoTangent(bz2.keys[0]) &&
+      keySlope(bz2.keys, 0, "to") === 1 &&
+      keySlope(bz2.keys, 0, "ti") === 1,
+  );
+  ensureManualTangents(bz2.keys, 0);
+  check(
+    "固化自动切线：求值不变 + 两侧相等 + tm 联动",
+    !isAutoTangent(bz2.keys[0]) && bz2.keys[0].ti === 1 && bz2.keys[0].to === 1 && bz2.keys[0].tm === true &&
+      Math.abs((evaluateCurve(bz2 as never, 0.5) as number) - 0.5) < 1e-9,
+  );
+  clearTangents(bz2.keys[0]);
+  check("clearTangents 恢复自动", isAutoTangent(bz2.keys[0]) && bz2.keys[0].tm === undefined);
 }
 
 if (failed) {
