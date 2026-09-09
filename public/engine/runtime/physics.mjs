@@ -374,9 +374,32 @@ async function loadJolt() {
         pendingCollisions.push({ a, b, started });
       };
       try {
+        // emscripten JSImplementation 要求实现 ContactListenerJS 全部虚函数，
+        // 缺任一属性在接触处理时即抛错（wasm 侧 hasOwnProperty 检查）。
+        // 回调入参（本 wasm 构建传裸指针）：Added/Persisted = (Body 指针,
+        // Body 指针, Manifold, Settings)；Removed = 一个 SubShapeIDPair 对象。
+        // Body 指针经 wrapPointer 还原后取 GetID().GetIndex() 映射节点。
+        const bodyIdOf = (b) => {
+          if (b && typeof b === "object") {
+            return typeof b.GetID === "function" ? b.GetID() : b;
+          }
+          if (typeof b === "number" && b) {
+            return Jolt.wrapPointer(b, Jolt.Body).GetID();
+          }
+          return b;
+        };
         const listener = new Jolt.ContactListenerJS();
-        listener.OnContactAdded = (id1, id2) => pushCollision(id1, id2, true);
-        listener.OnContactRemoved = (id1, id2) => pushCollision(id1, id2, false);
+        listener.OnContactValidate = () => 1; // 1 = AcceptAllContactsForContact
+        listener.OnContactAdded = (b1, b2) => pushCollision(bodyIdOf(b1), bodyIdOf(b2), true);
+        listener.OnContactPersisted = () => {};
+        listener.OnContactRemoved = (pair) => {
+          if (pair && typeof pair === "object") {
+            pushCollision(pair.GetBody1ID(), pair.GetBody2ID(), false);
+          } else if (typeof pair === "number" && pair) {
+            const p = Jolt.wrapPointer(pair, Jolt.SubShapeIDPair);
+            pushCollision(p.GetBody1ID(), p.GetBody2ID(), false);
+          }
+        };
         system.SetContactListener(listener);
       } catch (e) {
         postLog("warn", `[物理] jolt 碰撞事件不可用: ${e?.message ?? e}`);
@@ -507,15 +530,19 @@ async function loadJolt() {
               bi.SetMotionQuality(body.GetID(), on ? Jolt.EMotionQuality_LinearCast : Jolt.EMotionQuality_Discrete);
             },
             applyImpulse(v) {
+              bi.ActivateBody(body.GetID()); // 休眠体先唤醒（与 rapier wakeUp=true 同语义）
               body.AddImpulse(new Jolt.Vec3(v.x, v.y, v.z));
             },
             applyForce(v) {
+              bi.ActivateBody(body.GetID());
               body.AddForce(new Jolt.Vec3(v.x, v.y, v.z));
             },
             setLinearVelocity(v) {
+              bi.ActivateBody(body.GetID());
               body.SetLinearVelocity(new Jolt.Vec3(v.x, v.y, v.z));
             },
             setAngularVelocity(v) {
+              bi.ActivateBody(body.GetID());
               body.SetAngularVelocity(new Jolt.Vec3(v.x, v.y, v.z));
             },
             getLinearVelocity() {
@@ -846,7 +873,9 @@ export async function createPhysics({ nodes, settings } = {}) {
   const enabled = cfg.physicsEnabled === true;
   const backendId = ["ammo", "jolt", "rapier"].includes(cfg.backend) ? cfg.backend : "rapier";
 
-  /** 脚本宿主/调试用的运行控制面（未启用/未就绪时安全空转） */
+  /** 脚本宿主/调试用的运行控制面（未启用/未就绪时安全空转；方法集与真实
+   *  后端接线完全一致——脚本经 getComponent("rigidBody")/engine.physics 访问
+   *  任一方法都不应抛错，否则脚本宿主会把整个脚本实例停用） */
   const api = {
     /** 每帧推进（渲染循环调用） */
     update() {},
@@ -856,6 +885,10 @@ export async function createPhysics({ nodes, settings } = {}) {
     setLinearVelocity() {},
     setAngularVelocity() {},
     getLinearVelocity() {
+      return null;
+    },
+    /** 物理体信息（物理未启用时恒为 null → getComponent("rigidBody") 返回 null） */
+    bodyInfo() {
       return null;
     },
     setGravityScale() {},
@@ -922,6 +955,14 @@ export async function createPhysics({ nodes, settings } = {}) {
       gravityScale: rb.gravityScale,
       ccd: rb.ccd,
     });
+    // 动力学体：上一帧/当前帧物理位姿（世界空间）快照，供帧间插值回写
+    if (rb.mode === "dynamic") {
+      b.prevPos = new THREE.Vector3();
+      b.prevQuat = new THREE.Quaternion();
+      b.currPos = new THREE.Vector3();
+      b.currQuat = new THREE.Quaternion();
+      b.hasPose = false;
+    }
   }
   postLog("info", `[物理] ${backendId} 世界就绪（${bindings.length} 体，重力 ${gravity.y}）`);
 
@@ -950,15 +991,36 @@ export async function createPhysics({ nodes, settings } = {}) {
       accumulator -= FIXED_DT;
       stepped = true;
     }
-    if (!stepped) return;
-    // 3) 动力学体回写对象局部变换
+    // 3) 动力学体回写对象局部变换（带帧间插值）：
+    //    物理按固定步长推进，渲染帧率与之不同步——若仅在发生步进的帧写回，
+    //    位置会以「跳一帧、追两帧」的方式到达，视觉上呈锯齿抖动。这里每帧
+    //    对 prev/curr 两次物理位姿按 accumulator/FIXED_DT 插值后写回，运动在
+    //    任意帧率下都平滑；非步进帧 prev=curr，插值结果保持不变。
+    const alpha = Math.max(0, Math.min(1, accumulator / FIXED_DT));
     for (const b of bindings) {
       if (!b.body || !b.rb || b.rb.mode !== "dynamic") continue;
-      const t = b.body.readTransform();
-      if (!t) continue;
+      if (stepped) {
+        const t = b.body.readTransform();
+        if (t) {
+          if (!b.hasPose) {
+            // 首次读到位姿：prev = curr，插值恒定（不外推）
+            b.currPos.set(t.position.x, t.position.y, t.position.z);
+            b.currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+            b.prevPos.copy(b.currPos);
+            b.prevQuat.copy(b.currQuat);
+            b.hasPose = true;
+          } else {
+            b.prevPos.copy(b.currPos);
+            b.prevQuat.copy(b.currQuat);
+            b.currPos.set(t.position.x, t.position.y, t.position.z);
+            b.currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+          }
+        }
+      }
+      if (!b.hasPose) continue;
+      writePos.lerpVectors(b.prevPos, b.currPos, alpha);
+      writeQuat.copy(b.prevQuat).slerp(b.currQuat, alpha);
       const parent = b.obj.parent;
-      writePos.set(t.position.x, t.position.y, t.position.z);
-      writeQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
       if (parent) {
         parent.updateWorldMatrix(true, false);
         tmpMat.copy(parent.matrixWorld).invert();
