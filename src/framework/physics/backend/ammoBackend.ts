@@ -71,6 +71,7 @@ interface AmmoRigidBody {
   applyCentralForce(v: AmmoVector3): void;
   setLinearVelocity(v: AmmoVector3): void;
   setAngularVelocity(v: AmmoVector3): void;
+  setAngularFactor(v: AmmoVector3): void;
   getLinearVelocity(): AmmoVector3;
   setCcdMotionThreshold(t: number): void;
   setCcdSweptSphereRadius(r: number): void;
@@ -431,6 +432,14 @@ class AmmoWorldAdapter implements IPhysicsWorld {
     body.setFriction(desc.colliders[0]?.friction ?? 0.6);
     body.setRestitution(desc.colliders[0]?.restitution ?? 0.1);
     body.setDamping(desc.linearDamping, desc.angularDamping);
+    if (desc.lockRotation) {
+      // 锁定旋转：角因子归零并清空当前角速度（碰撞不改变姿态，防撞倒）
+      body.setAngularFactor(new api.btVector3(0, 0, 0));
+      body.setAngularVelocity(new api.btVector3(0, 0, 0));
+    } else if (desc.upright) {
+      // 直立不倒：仅保留 Y 轴旋转（碰撞不产生俯仰/翻滚，脚本可水平转向）
+      body.setAngularFactor(new api.btVector3(0, 1, 0));
+    }
     if (desc.ccd) {
       body.setCcdMotionThreshold(0.01);
       body.setCcdSweptSphereRadius(0.02);

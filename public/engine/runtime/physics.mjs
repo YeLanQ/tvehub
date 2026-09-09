@@ -42,6 +42,8 @@ function parseRigidBody(v) {
     angularDamping: Math.max(0, num(o.angularDamping, 0.05)),
     gravityScale: Math.max(0, num(o.gravityScale, 1)),
     ccd: o.ccd === true,
+    lockRotation: o.lockRotation === true,
+    upright: o.upright === true,
   };
 }
 
@@ -227,6 +229,8 @@ async function loadRapier() {
             .setGravityScale(desc.gravityScale)
             .setCcdEnabled(desc.ccd);
           const body = world.createRigidBody(bd);
+          if (desc.lockRotation) body.lockRotations(true, true);
+          else if (desc.upright) body.restrictRotations(false, true, false, true);
           for (const col of desc.colliders) {
             const cd = shapeOf(col)
               .setTranslation(col.offset.x, col.offset.y, col.offset.z)
@@ -475,6 +479,20 @@ async function loadJolt() {
             motionType,
             layer,
           );
+          if (desc.lockRotation) {
+            // 锁定旋转 = 只允许平移自由度（X|Y|Z）
+            creation.mAllowedDOFs =
+              Jolt.EAllowedDOFs_TranslationX |
+              Jolt.EAllowedDOFs_TranslationY |
+              Jolt.EAllowedDOFs_TranslationZ;
+          } else if (desc.upright) {
+            // 直立不倒 = 平移 + 仅 Y 轴旋转（碰撞不产生俯仰/翻滚）
+            creation.mAllowedDOFs =
+              Jolt.EAllowedDOFs_TranslationX |
+              Jolt.EAllowedDOFs_TranslationY |
+              Jolt.EAllowedDOFs_TranslationZ |
+              Jolt.EAllowedDOFs_RotationY;
+          }
           const body = bi.CreateBody(creation);
           if (!body) return null;
           bi.AddBody(body.GetID(), Jolt.EActivation_Activate);
@@ -704,6 +722,14 @@ async function loadAmmo() {
           body.setFriction(desc.colliders[0]?.friction ?? 0.6);
           body.setRestitution(desc.colliders[0]?.restitution ?? 0.1);
           body.setDamping(desc.linearDamping, desc.angularDamping);
+          if (desc.lockRotation) {
+            // 锁定旋转：角因子归零并清空当前角速度（碰撞不改变姿态，防撞倒）
+            body.setAngularFactor(new Ammo.btVector3(0, 0, 0));
+            body.setAngularVelocity(new Ammo.btVector3(0, 0, 0));
+          } else if (desc.upright) {
+            // 直立不倒：仅保留 Y 轴旋转（碰撞不产生俯仰/翻滚，脚本可水平转向）
+            body.setAngularFactor(new Ammo.btVector3(0, 1, 0));
+          }
           if (desc.ccd) {
             body.setCcdMotionThreshold(0.01);
             body.setCcdSweptSphereRadius(0.02);
@@ -942,7 +968,7 @@ export async function createPhysics({ nodes, settings } = {}) {
       quaternion: obj.quaternion.clone(),
       scale: obj.scale.clone(),
     });
-    const rb = b.rb ?? { mode: "static", mass: 1, linearDamping: 0, angularDamping: 0, gravityScale: 1, ccd: false };
+    const rb = b.rb ?? { mode: "static", mass: 1, linearDamping: 0, angularDamping: 0, gravityScale: 1, ccd: false, lockRotation: false, upright: false };
     b.body = world.createBody({
       nodeId: b.nodeId,
       mode: rb.mode,
@@ -954,6 +980,8 @@ export async function createPhysics({ nodes, settings } = {}) {
       angularDamping: rb.angularDamping,
       gravityScale: rb.gravityScale,
       ccd: rb.ccd,
+      lockRotation: rb.lockRotation,
+      upright: rb.upright,
     });
     // 动力学体：上一帧/当前帧物理位姿（世界空间）快照，供帧间插值回写
     if (rb.mode === "dynamic") {

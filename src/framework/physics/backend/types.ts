@@ -48,6 +48,10 @@ export interface PhysicsBodyDesc {
   angularDamping: number;
   gravityScale: number;
   ccd: boolean;
+  /** 锁定旋转（碰撞不改变姿态，防撞倒） */
+  lockRotation: boolean;
+  /** 直立不倒（只保留水平旋转；lockRotation 优先） */
+  upright: boolean;
 }
 
 /** 刚体位姿快照（世界空间） */

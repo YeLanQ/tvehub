@@ -194,6 +194,8 @@ class RapierWorldAdapter implements IPhysicsWorld {
       .setGravityScale(desc.gravityScale)
       .setCcdEnabled(desc.ccd);
     const body = this.world.createRigidBody(bd);
+    if (desc.lockRotation) body.lockRotations(true, true);
+    else if (desc.upright) body.restrictRotations(false, true, false, true);
     for (const col of desc.colliders) {
       const cd = colliderDesc(R, col);
       if (!cd) continue;

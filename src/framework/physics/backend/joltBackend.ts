@@ -261,6 +261,16 @@ class JoltWorldAdapter implements IPhysicsWorld {
       motionType,
       layer,
     );
+    if (desc.lockRotation) {
+      // 锁定旋转 = 只允许平移自由度（X|Y|Z）
+      creation.mAllowedDOFs =
+        j.EAllowedDOFs_TranslationX | j.EAllowedDOFs_TranslationY | j.EAllowedDOFs_TranslationZ;
+    } else if (desc.upright) {
+      // 直立不倒 = 平移 + 仅 Y 轴旋转（碰撞不产生俯仰/翻滚）
+      creation.mAllowedDOFs =
+        j.EAllowedDOFs_TranslationX | j.EAllowedDOFs_TranslationY | j.EAllowedDOFs_TranslationZ |
+        j.EAllowedDOFs_RotationY;
+    }
     const body = this.bodyInterface.CreateBody(creation);
     if (!body) return null;
     this.bodyInterface.AddBody(body.GetID(), j.EActivation_Activate);

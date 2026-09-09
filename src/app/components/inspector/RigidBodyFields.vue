@@ -69,6 +69,23 @@ const MODE_OPTIONS: { value: string; label: string; title: string }[] = [
       @commit="(v) => emit('update', 'Set RigidBody GravityScale', v)"
     />
   </div>
+  <label v-if="comp.rigidBody.mode === 'dynamic'" class="comp-check" @click.stop>
+    <input
+      type="checkbox"
+      :checked="comp.rigidBody.lockRotation"
+      @change="emit('update', 'Set RigidBody LockRotation', ($event.target as HTMLInputElement).checked)"
+    />
+    <span>锁定旋转（碰撞不改变姿态，防撞倒）</span>
+  </label>
+  <label v-if="comp.rigidBody.mode === 'dynamic'" class="comp-check" @click.stop>
+    <input
+      type="checkbox"
+      :checked="comp.rigidBody.upright"
+      title="碰撞不翻倒，但保留水平（Y 轴）旋转——脚本仍可转向"
+      @change="emit('update', 'Set RigidBody Upright', ($event.target as HTMLInputElement).checked)"
+    />
+    <span>直立不倒（可水平转向）</span>
+  </label>
   <label class="comp-check" @click.stop>
     <input
       type="checkbox"

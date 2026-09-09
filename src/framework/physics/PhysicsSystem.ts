@@ -202,6 +202,8 @@ export class PhysicsSystem {
         rb.angularDamping.toFixed(4),
         rb.gravityScale.toFixed(4),
         String(rb.ccd),
+        rb.lockRotation ? "lock" : "",
+        rb.upright ? "upright" : "",
       );
     } else {
       parts.push("static-implicit");
@@ -358,6 +360,8 @@ export class PhysicsSystem {
       angularDamping: 0,
       gravityScale: 1,
       ccd: false,
+      lockRotation: false,
+      upright: false,
     };
     const desc = {
       nodeId: binding.nodeId,
@@ -370,6 +374,8 @@ export class PhysicsSystem {
       angularDamping: rb.angularDamping,
       gravityScale: rb.gravityScale,
       ccd: rb.ccd,
+      lockRotation: rb.lockRotation,
+      upright: rb.upright,
     };
     binding.body = desc.colliders.length ? world.createBody(desc) : null;
     this.notify(binding.nodeId);

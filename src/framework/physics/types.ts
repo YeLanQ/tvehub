@@ -39,6 +39,10 @@ export interface RigidBodySettings {
   gravityScale: number;
   /** 连续碰撞检测（高速物体防穿透） */
   ccd: boolean;
+  /** 锁定旋转（碰撞不改变姿态，防撞倒） */
+  lockRotation: boolean;
+  /** 直立不倒（只保留水平旋转：碰撞不翻倒，脚本仍可水平转向） */
+  upright: boolean;
 }
 
 export const DEFAULT_RIGID_BODY_SETTINGS: RigidBodySettings = {
@@ -48,6 +52,8 @@ export const DEFAULT_RIGID_BODY_SETTINGS: RigidBodySettings = {
   angularDamping: 0.05,
   gravityScale: 1,
   ccd: false,
+  lockRotation: false,
+  upright: false,
 };
 
 /** 碰撞形状（尺寸可从节点渲染包围盒自动推导，或显式指定） */
@@ -116,6 +122,8 @@ export function parseRigidBodySettings(v: unknown): RigidBodySettings {
     angularDamping: Math.max(0, num(o.angularDamping, DEFAULT_RIGID_BODY_SETTINGS.angularDamping)),
     gravityScale: Math.max(0, num(o.gravityScale, DEFAULT_RIGID_BODY_SETTINGS.gravityScale)),
     ccd: bool(o.ccd, DEFAULT_RIGID_BODY_SETTINGS.ccd),
+    lockRotation: bool(o.lockRotation, DEFAULT_RIGID_BODY_SETTINGS.lockRotation),
+    upright: bool(o.upright, DEFAULT_RIGID_BODY_SETTINGS.upright),
   };
 }
 

@@ -773,6 +773,14 @@ function onRigidBodyUpdate(label: string, value: unknown): void {
       case "Set RigidBody CCD":
         rb.ccd = value === true;
         break;
+      case "Set RigidBody LockRotation":
+        rb.lockRotation = value === true;
+        if (rb.lockRotation) rb.upright = false;
+        break;
+      case "Set RigidBody Upright":
+        rb.upright = value === true;
+        if (rb.upright) rb.lockRotation = false;
+        break;
     }
   }, label);
 }
