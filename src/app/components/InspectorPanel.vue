@@ -1203,6 +1203,7 @@ const materialOpen = ref(true);
             <AnimationClipFields
               v-else-if="isAnimationClipComponent(c)"
               :comp="c"
+              :node-id="node?.id"
               @update="(label, value) => onAnimClipComponentUpdate(c.id, label, value)"
             />
             <AudioSection

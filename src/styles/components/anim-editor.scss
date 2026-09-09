@@ -123,6 +123,12 @@
   color: var(--text-dim);
 }
 
+/* 聚焦编辑模式的「退出编辑」按钮（强调色，置于目标标签旁） */
+.anim-btn.exit-edit {
+  color: var(--accent, #4a9eff);
+  border-color: var(--accent, #4a9eff);
+}
+
 /* 视图模式下拉（帧动画 / 曲线编辑，工具条右端） */
 .anim-view-pick {
   height: 22px;

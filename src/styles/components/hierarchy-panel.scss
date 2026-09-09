@@ -70,6 +70,30 @@
     outline-offset: -1px;
   }
 
+  /* 动画聚焦编辑：目标子树高亮（根节点加左侧强调条）、其余节点置灰 */
+  &.edit-hl {
+    color: var(--accent, #4a9eff);
+    background: rgba(74, 158, 255, 0.1);
+
+    .name {
+      color: var(--accent, #4a9eff);
+      font-weight: 600;
+    }
+  }
+
+  &.edit-root {
+    box-shadow: inset 3px 0 0 var(--accent, #4a9eff);
+  }
+
+  &.edit-dim {
+    opacity: 0.35;
+    color: var(--text-dim);
+
+    .badge {
+      opacity: 0.5;
+    }
+  }
+
   &.drop-before::after,
   &.drop-after::after {
     content: "";

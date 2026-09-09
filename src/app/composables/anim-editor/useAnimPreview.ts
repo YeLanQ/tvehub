@@ -8,6 +8,7 @@ import * as THREE from "three";
 import type { Node } from "../../../framework/prototype/Node";
 import { evaluateClip, type AnimProp } from "../../../framework/animation/clip";
 import { getEditorStore } from "../../stores/editor";
+import { animEditMode } from "../../lib/anim-edit-mode";
 import type { AnimEditorCtx, PreviewApi } from "./ctx";
 
 const D2R = Math.PI / 180;
@@ -17,7 +18,8 @@ export function useAnimPreview(ctx: AnimEditorCtx): PreviewApi {
   const { engine } = editorStore;
 
   const targetNode = computed<Node | null>(() => {
-    const id = editorStore.state.selectedId;
+    // 聚焦编辑模式锁定到目标子树根（组件所在节点）；否则跟随场景选中
+    const id = animEditMode.active ? animEditMode.rootId : editorStore.state.selectedId;
     return id ? (engine.graph.get(id) ?? null) : null;
   });
 

@@ -1,4 +1,5 @@
 import { reactive, watch } from "vue";
+import { animEditMode } from "../lib/anim-edit-mode";
 
 export type DockPanelId = "hierarchy" | "inspector" | "console" | "assets" | "animation";
 export type DockZoneId = "left" | "right" | "bottom";
@@ -138,11 +139,18 @@ export function panelZone(panel: DockPanelId): DockZoneId | null {
   return null;
 }
 
+/** 动画聚焦编辑中：禁止切走底部动画面板（其它面板激活/移动/关闭动画面板都忽略） */
+function editLockBlocks(panel: DockPanelId): boolean {
+  return animEditMode.active && panel !== "animation";
+}
+
 export function activate(zone: DockZoneId, panel: DockPanelId) {
+  if (editLockBlocks(panel)) return;
   if (docks.zones[zone].includes(panel)) docks.active[zone] = panel;
 }
 
 export function removePanel(panel: DockPanelId): DockZoneId | null {
+  if (editLockBlocks(panel)) return null;
   const from = panelZone(panel);
   if (from) {
     const list = docks.zones[from];
@@ -156,6 +164,7 @@ export function removePanel(panel: DockPanelId): DockZoneId | null {
 }
 
 export function dockTo(panel: DockPanelId, zone: DockZoneId, index?: number) {
+  if (editLockBlocks(panel)) return;
   const list = docks.zones[zone];
   if (list.includes(panel)) {
     const i = list.indexOf(panel);
@@ -173,6 +182,7 @@ export function dockTo(panel: DockPanelId, zone: DockZoneId, index?: number) {
 
 let floatId = 1;
 export function floatPanel(panel: DockPanelId, x: number, y: number, origin: DockZoneId) {
+  if (editLockBlocks(panel)) return;
   const existed = docks.floating.find((f) => f.panel === panel);
   removePanel(panel);
   docks.floating.push({

@@ -24,6 +24,7 @@ import { dispatchCommand } from "../commands";
 import { prompt } from "../lib/prompt";
 import { saveNodeAsPrefab, updatePrefabFromNode } from "../lib/prefabs";
 import { getScriptsStore } from "../stores/scripts";
+import { animEditMode, collectSubtreeIds } from "../lib/anim-edit-mode";
 import "../../styles/components/hierarchy-panel.scss";
 
 const store = getEditorStore();
@@ -149,6 +150,23 @@ function isSelected(id: string): boolean {
 }
 function isMultiSelected(id: string): boolean {
   return state.selectionIds.length > 1 && state.selectionIds.includes(id) && state.selectedId !== id;
+}
+
+// ---------- 动画聚焦编辑：层级高亮目标子树、置灰其它 ----------
+const editRootId = computed(() => (animEditMode.active ? animEditMode.rootId : ""));
+const editSubtreeIds = computed(() => {
+  void animEditMode.active;
+  void store.revision();
+  const rootId = editRootId.value;
+  if (!rootId) return new Set<string>();
+  return new Set(collectSubtreeIds(engine.graph, rootId));
+});
+/** 编辑中：属于目标子树 → 高亮；否则置灰 */
+function inEditSubtree(id: string): boolean {
+  return editRootId.value !== "" && editSubtreeIds.value.has(id);
+}
+function isEditRoot(id: string): boolean {
+  return editRootId.value !== "" && editRootId.value === id;
 }
 
 function visibleNodeIds(): string[] {
@@ -484,6 +502,9 @@ onUnmounted(() => {
           'drop-inside': dnd.active && dnd.target?.id === node.id && dnd.target.mode === 'inside',
           'drop-before': dnd.active && dnd.target?.id === node.id && dnd.target.mode === 'before',
           'drop-after': dnd.active && dnd.target?.id === node.id && dnd.target.mode === 'after',
+          'edit-dim': editRootId !== '' && !inEditSubtree(node.id),
+          'edit-hl': inEditSubtree(node.id),
+          'edit-root': isEditRoot(node.id),
         }"
         :style="{ paddingLeft: 8 + depth * 14 + 'px' }"
         @mousedown="onRowMouseDown($event, node.id)"

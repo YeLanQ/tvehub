@@ -7,7 +7,7 @@ import { getAssetsStore } from "../../stores/assets";
 import { openInAnimEditor } from "../../lib/anim-editor";
 import NumberField from "../NumberField.vue";
 
-defineProps<{ comp: AnimationClipComponentRef; rev?: number }>();
+defineProps<{ comp: AnimationClipComponentRef; rev?: number; nodeId?: string }>();
 
 const emit = defineEmits<{
   update: [label: string, value: unknown];
@@ -88,8 +88,8 @@ function onClipChange(e: Event): void {
   <button
     class="anim-open-editor"
     :disabled="!comp.clip.clip"
-    title="在动画编辑窗口中打开该剪辑（底部停靠区）"
-    @click="openInAnimEditor(comp.clip.clip)"
+    title="在动画编辑窗口中打开该剪辑（底部停靠区，聚焦本节点及其子树）"
+    @click="openInAnimEditor(comp.clip.clip, nodeId)"
   >
     在动画编辑器中打开
   </button>

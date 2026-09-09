@@ -6,7 +6,9 @@
 // useAnimTimeline/useAnimSelection/useAnimCurve），此处只解构暴露给模板；
 // 样式在 styles/components/anim-editor.scss（scoped）。功能说明见各模块头部。
 // ---------------------------------------------------------------------------
+import { onBeforeUnmount } from "vue";
 import { useAnimEditor } from "../composables/anim-editor/useAnimEditor";
+import { animEditMode, exitAnimEditMode } from "../lib/anim-edit-mode";
 import NumberField from "./NumberField.vue";
 
 const {
@@ -70,6 +72,9 @@ const {
   },
   view: { viewMode, onViewModeChange, viewHint },
 } = useAnimEditor();
+
+// 聚焦编辑模式：面板卸载（整机/编辑器关闭）时兜底解除，避免选中范围过滤残留
+onBeforeUnmount(() => exitAnimEditMode());
 </script>
 
 <template>
@@ -111,6 +116,12 @@ const {
         <span class="anim-target" :title="targetNode?.name">
           目标：{{ targetNode ? targetNode.name : "（未选中节点）" }}
         </span>
+        <button
+          v-if="animEditMode.active"
+          class="anim-btn exit-edit"
+          title="退出聚焦编辑：恢复其它节点可选与面板切换"
+          @click="exitAnimEditMode"
+        >退出编辑</button>
         <span class="anim-dirty" :class="{ dirty }">{{ saving ? "保存中…" : dirty ? "未保存" : "已保存" }}</span>
         <select
           class="anim-view-pick"

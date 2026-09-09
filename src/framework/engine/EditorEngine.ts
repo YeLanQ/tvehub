@@ -127,6 +127,18 @@ export class EditorEngine {
   private selectedIds: string[] = [];
   private raycaster = new THREE.Raycaster();
   private mouse = new THREE.Vector2();
+  /** 选中范围谓词（动画聚焦编辑用：非 null 时仅允许其返回 true 的节点被选中；
+   *  设置为 null 恢复全场景可选）。谓词由 app 层闭包提供，引擎不感知编辑模式。 */
+  private _selectionFilter: ((id: string | null) => boolean) | null = null;
+
+  setSelectionFilter(fn: ((id: string | null) => boolean) | null): void {
+    this._selectionFilter = fn;
+  }
+
+  /** 选中目标是否被当前范围允许（无过滤器 = 一律允许） */
+  private allowedToSelect(id: string | null): boolean {
+    return this._selectionFilter ? this._selectionFilter(id) : true;
+  }
 
   // —— gizmo 拖动“独占”期间的全局输入拦截（避免左键/键位串扰变换）——
   private onCapturePointerDown = (e: PointerEvent): void => {
@@ -719,6 +731,8 @@ export class EditorEngine {
   }
 
   select(id: string | null): void {
+    // 动画聚焦编辑中：仅允许范围树内的节点被选中（空点/范围外一律忽略）
+    if (!this.allowedToSelect(id)) return;
     this.selectedIds = id ? [id] : [];
     this.selectedId = id;
     this.gizmo.select(id, this.synchronizer.getObjectMap());
@@ -728,6 +742,7 @@ export class EditorEngine {
 
   addToSelection(id: string): void {
     if (!id || this.selectedIds.includes(id)) return;
+    if (!this.allowedToSelect(id)) return;
     if (this.selectedIds.length === 0) this.selectedId = id;
     this.selectedIds.push(id);
     this.syncGizmo();
@@ -736,6 +751,7 @@ export class EditorEngine {
 
   toggleSelection(id: string): void {
     if (!id) return;
+    if (!this.allowedToSelect(id)) return;
     if (this.selectedIds.includes(id)) {
       this.selectedIds = this.selectedIds.filter((s) => s !== id);
       this.selectedId = this.selectedIds[this.selectedIds.length - 1] ?? null;
