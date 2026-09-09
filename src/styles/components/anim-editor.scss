@@ -293,8 +293,12 @@
 .anim-lanes {
   flex: 1;
   min-width: 0;
-  overflow: auto;
   position: relative;
+  /* 去掉原生横向滚动条：横向（时间窗）由滚轮/中键拖拽/程序写 scrollLeft 驱动，
+     横向滚动条只会在缩放时出现（z 轴滑条语义重复且浪费底栏高度）；程序化
+     scrollLeft 在 overflow-x:hidden 下依然可写。纵向滚动条保留（翻轨道用） */
+  overflow-x: hidden;
+  overflow-y: auto;
 
   /* 中键拖拽平移中（dope）：cursor 跟随指针下最上层元素，
      必须用 !important 盖过标尺/关键帧菱形自身的 ew-resize（↔ 箭头），
