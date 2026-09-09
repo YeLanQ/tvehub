@@ -7,7 +7,12 @@ import { WEB_EXPORT_TEMPLATES } from "../../generated/template-registry";
 import { logStore } from "../stores/log";
 import { getScriptsStore } from "../stores/scripts";
 import { saveCurrentSceneToMain } from "./save-scene";
-import { fetchWebPreviewRuntimeTexts, configUsesPhysics, withHtmlTitle } from "./web-preview-runtime";
+import {
+  fetchWebPreviewRuntimeTexts,
+  configUsesPhysics,
+  configPhysicsBackend,
+  withHtmlTitle,
+} from "./web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "./script-compile";
 
 /** 构建渠道（wechat 为 UI 占位，后端未实现——构建按钮禁用并提示） */
@@ -204,14 +209,17 @@ export async function runBuild(opts: {
   // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
   await getScriptsStore().saveAll();
 
-  // 物理启用状态在项目配置中：启用时物理引擎运行时才随产物打包（体积大，按需包含）
-  let includePhysics = false;
+  // 物理启用状态与后端在项目配置中：启用时仅打包配置的后端运行时（体积大，按需包含）
+  let physicsConfigText: string | null = null;
   try {
-    includePhysics = configUsesPhysics(await api.readText(opts.root, "project.config.json"));
+    physicsConfigText = await api.readText(opts.root, "project.config.json");
   } catch {
     /* 配置读取失败按未启用处理 */
   }
-  const runtime = await fetchWebPreviewRuntimeTexts({ includePhysics });
+  const runtime = await fetchWebPreviewRuntimeTexts({
+    includePhysics: configUsesPhysics(physicsConfigText),
+    physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
+  });
   // 用户脚本编译产物（src/**.js）并入运行时文件：Rust 端按运行时代码处理
   // （多文件落盘 / 单页进内联代码表 / gzip 进归档 / 发布模式参与压缩）
   try {

@@ -14,7 +14,11 @@ import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
-import { fetchWebPreviewRuntimeTexts, configUsesPhysics } from "../lib/web-preview-runtime";
+import {
+  fetchWebPreviewRuntimeTexts,
+  configUsesPhysics,
+  configPhysicsBackend,
+} from "../lib/web-preview-runtime";
 import { ensureEntryScript } from "../lib/script-compile";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
 import "../../styles/components/web-preview.scss";
@@ -48,7 +52,10 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     /* 无配置按未启用处理 */
   }
   const includePhysics = configUsesPhysics(configText);
-  const files = await fetchWebPreviewRuntimeTexts({ includePhysics });
+  const files = await fetchWebPreviewRuntimeTexts({
+    includePhysics,
+    physicsBackend: configPhysicsBackend(configText) ?? undefined,
+  });
   files["config.json"] = configText;
   // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
   try {

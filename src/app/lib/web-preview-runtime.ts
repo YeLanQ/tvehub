@@ -40,21 +40,26 @@ export const WEB_PREVIEW_RUNTIME_FILES = [
 
 /**
  * 物理引擎（体积大：rapier/jolt 3MB 级、ammo wasm 内联 1MB 级）。
- * 仅当导出场景启用了物理（settings.physics.physicsEnabled === true）时才随产物
- * 打包；engine/runtime/physics.mjs 本体极小（在基础清单内），其引擎加载是惰性的——
- * 场景未启用物理时不会请求这些文件。
+ * 仅当导出场景启用了物理（physics.physicsEnabled === true）时才随产物打包，
+ * 且按项目配置的 backend（physics.backend，缺省/未知回退 rapier，与运行时
+ * physics.mjs 的收敛规则一致）只带对应后端——engine/runtime/physics.mjs 本体
+ * 极小（在基础清单内），其引擎加载是惰性的，场景未启用物理时不会请求这些文件。
  */
-export const WEB_PREVIEW_PHYSICS_FILES = [
-  "engine/runtime/physics-engines/rapier.mjs",
-  "engine/runtime/physics-engines/jolt.mjs",
-  "engine/runtime/physics-engines/ammo/ammo-esm.mjs",
-  "engine/runtime/physics-engines/ammo/ammo-glue.mjs",
-  "engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs",
-];
+export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = {
+  rapier: ["engine/runtime/physics-engines/rapier.mjs"],
+  jolt: ["engine/runtime/physics-engines/jolt.mjs"],
+  ammo: [
+    "engine/runtime/physics-engines/ammo/ammo-esm.mjs",
+    "engine/runtime/physics-engines/ammo/ammo-glue.mjs",
+    "engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs",
+  ],
+};
 
 export interface WebPreviewRuntimeOptions {
   /** 场景启用了物理 → 物理运行时随导出（缺省 false） */
   includePhysics?: boolean;
+  /** 物理后端 id（physics.backend；缺省/未知回退 rapier） */
+  physicsBackend?: string;
 }
 
 /** 读取网页运行产物文本：index.html/player.mjs 相对 public/web-preview，
@@ -63,7 +68,11 @@ export async function fetchWebPreviewRuntimeTexts(
   opts?: WebPreviewRuntimeOptions,
 ): Promise<Record<string, string>> {
   const list = opts?.includePhysics
-    ? [...WEB_PREVIEW_RUNTIME_FILES, ...WEB_PREVIEW_PHYSICS_FILES]
+    ? [
+        ...WEB_PREVIEW_RUNTIME_FILES,
+        ...(WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND[opts.physicsBackend ?? ""] ??
+          WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND.rapier),
+      ]
     : WEB_PREVIEW_RUNTIME_FILES;
   const files: Record<string, string> = {};
   for (const rel of list) {
@@ -80,12 +89,33 @@ export async function fetchWebPreviewRuntimeTexts(
  * 文本读取失败/解析失败一律视为未启用（导出按未用物理处理）。
  */
 export function configUsesPhysics(configText: string | null | undefined): boolean {
-  if (!configText) return false;
+  return readPhysicsConfig(configText).enabled;
+}
+
+/** 解析项目配置的物理后端 id（未启用/非法/缺失返回 null；调用方回退 rapier） */
+export function configPhysicsBackend(configText: string | null | undefined): string | null {
+  const { enabled, backend } = readPhysicsConfig(configText);
+  return enabled ? backend : null;
+}
+
+function readPhysicsConfig(configText: string | null | undefined): {
+  enabled: boolean;
+  backend: string | null;
+} {
+  if (!configText) return { enabled: false, backend: null };
   try {
-    const cfg = JSON.parse(configText) as { physics?: { physicsEnabled?: unknown } };
-    return cfg.physics?.physicsEnabled === true;
+    const cfg = JSON.parse(configText) as {
+      physics?: { physicsEnabled?: unknown; backend?: unknown };
+    };
+    const enabled = cfg.physics?.physicsEnabled === true;
+    const backend =
+      typeof cfg.physics?.backend === "string" &&
+      cfg.physics.backend in WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND
+        ? cfg.physics.backend
+        : null;
+    return { enabled, backend };
   } catch {
-    return false;
+    return { enabled: false, backend: null };
   }
 }
 

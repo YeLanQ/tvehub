@@ -12,7 +12,11 @@ import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
-import { fetchWebPreviewRuntimeTexts } from "../lib/web-preview-runtime";
+import {
+  fetchWebPreviewRuntimeTexts,
+  configUsesPhysics,
+  configPhysicsBackend,
+} from "../lib/web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
 import { registerCommand } from "./registry";
 
@@ -26,12 +30,17 @@ function requireRoot(): string {
 /** 组装网页预览导出文件（与 WebPreviewPanel 同一链路：运行时 + 项目配置 + 编译脚本） */
 async function buildPreviewFiles(): Promise<Record<string, string>> {
   const root = requireRoot();
-  const files = await fetchWebPreviewRuntimeTexts();
+  let physicsConfigText: string | null = null;
   try {
-    files["config.json"] = await api.readText(root, "project.config.json");
+    physicsConfigText = await api.readText(root, "project.config.json");
   } catch {
-    files["config.json"] = "{}";
+    /* 无配置按未启用物理处理 */
   }
+  const files = await fetchWebPreviewRuntimeTexts({
+    includePhysics: configUsesPhysics(physicsConfigText),
+    physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
+  });
+  files["config.json"] = physicsConfigText ?? "{}";
   try {
     await getScriptsStore().saveAll();
   } catch {
