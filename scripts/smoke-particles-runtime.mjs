@@ -35,7 +35,7 @@ const core = (rel) => pathToFileURL(resolve(root, "public/engine/core", rel)).hr
 
 const { buildSceneTree } = await import(runtime("nodes.mjs"));
 const { createParticles } = await import(runtime("particles.mjs"));
-const { createParticleEmitter, parseParticleSettings, PARTICLES_CHILD_NAME } = await import(
+const { createParticleEmitter, parseParticleSettings, PARTICLES_CHILD_NAME, getParticleSpriteTexture } = await import(
   core("particles.mjs")
 );
 const THREE = await import(core("three.module.min.js"));
@@ -44,6 +44,8 @@ function advance(api, seconds, step = 1 / 60) {
   const n = Math.round(seconds / step);
   for (let i = 0; i < n; i++) api.update(step);
 }
+/** 等待异步贴图链路落定 */
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 console.log("[1] 场景树建出");
 const scene = new THREE.Scene();
@@ -117,6 +119,8 @@ console.log("[2] 设置收敛（与编辑器 parseParticleSystemSettings 同语�
   ok(p.maxParticles === 4, "maxParticles 取整");
   ok(p.shape === "cone" && p.simulationSpace === "local" && p.blending === "additive", "枚举非法回默认");
   ok(p.looping === true, "非布尔回默认");
+  ok(parseParticleSettings({}).texture === "" && parseParticleSettings({ texture: 7 }).texture === "", "texture 缺省/非字符串 → 空串");
+  ok(parseParticleSettings({ texture: "assets/textures/spark.png" }).texture === "assets/textures/spark.png", "texture 字符串保留");
 }
 
 console.log("[3] createParticles 每帧推进");
@@ -250,15 +254,82 @@ console.log("[5] 脚本 SDK 接线");
     "实体方法：play/pause/stop/restart/clear/setSettings",
   );
   ok(
-    ["emissionRate", "startColor", "maxParticles", "blending", "playing", "aliveCount", "settings"].every(
+    ["emissionRate", "startColor", "maxParticles", "blending", "texture", "playing", "aliveCount", "settings"].every(
       (k) => !!Object.getOwnPropertyDescriptor(proto, k)?.get,
     ),
-    "实体属性访问器（发射参数 + 运行态）",
+    "实体属性访问器（发射参数 + texture + 运行态）",
   );
   const scriptsSrc = readFileSync(resolve(root, "public/engine/core/scripts.mjs"), "utf8");
   ok(/particles:\s*particles \?\? null/.test(scriptsSrc), "scripts.mjs 把 particles 注入宿主");
   const nodesSrc = readFileSync(resolve(root, "public/engine/runtime/nodes.mjs"), "utf8");
   ok(/case "particleSystemNode":/.test(nodesSrc), "nodes.mjs 登记 particleSystemNode 分支");
+  const playerSrc = readFileSync(resolve(root, "public/web-preview/player.mjs"), "utf8");
+  ok(/loadImageTex\(particleTexCache, rel, true\)/.test(playerSrc), "player.mjs 注入粒子贴图加载器（sRGB）");
+}
+
+console.log("[6] 贴图异步加载（加载器注入 / 热替换 / 过期丢弃 / 结构重建后重取）");
+{
+  const sprite = getParticleSpriteTexture();
+  const texA = new THREE.Texture();
+  const texB = new THREE.Texture();
+  const calls = [];
+  let resolveSlow = () => {};
+  const loader = (rel) => {
+    calls.push(rel);
+    if (rel === "slow.png") return new Promise((r) => (resolveSlow = r));
+    if (rel === "b.png") return Promise.resolve(texB);
+    if (rel === "fail.png") return Promise.reject(new Error("nope"));
+    return Promise.resolve(null);
+  };
+  const hostA = new THREE.Group();
+  const emA = createParticleEmitter({ texture: "b.png" });
+  hostA.add(emA.object);
+  const hostN = new THREE.Group();
+  const emN = createParticleEmitter({ texture: "" });
+  hostN.add(emN.object);
+  const api6 = createParticles(
+    [
+      { json: { id: "t" }, obj: hostA, emitter: emA },
+      { json: { id: "none" }, obj: hostN, emitter: emN },
+    ],
+    loader,
+  );
+  ok(emA.texture === sprite && emN.texture === sprite, "建出时先采样内置软圆点");
+  ok(calls.length === 1 && calls[0] === "b.png", "有贴图引用的绑定触发加载；空串不调用加载器");
+  await tick();
+  ok(emA.texture === texB && emN.texture === sprite, "加载完成热替换；空贴图保持内置");
+
+  ok(api6.updateSettings("t", { texture: "slow.png" }) === true, "updateSettings 改贴图");
+  ok(api6.updateSettings("t", { texture: "b.png" }) === true, "再切回快贴图");
+  await tick();
+  resolveSlow(texA);
+  await tick();
+  ok(emA.texture === texB, "过期的慢结果不覆盖新选择");
+  api6.updateSettings("t", { texture: "fail.png" });
+  await tick();
+  ok(emA.texture === sprite, "加载失败回内置软圆点");
+  api6.updateSettings("t", { texture: "b.png" });
+  await tick();
+  api6.updateSettings("t", { texture: "" });
+  ok(emA.texture === sprite, "清空贴图立即回内置");
+
+  api6.updateSettings("t", { texture: "b.png" });
+  await tick();
+  const before = calls.length;
+  api6.updateSettings("t", { maxParticles: 21 });
+  const rebuilt = hostA.children.find((c) => c.name === PARTICLES_CHILD_NAME).userData.particleEmitter;
+  ok(rebuilt !== emA && rebuilt.texture === sprite, "结构重建：新发射器先为内置");
+  await tick();
+  ok(calls.length === before + 1 && rebuilt.texture === texB, "结构重建后重新取贴图并热替换");
+
+  const dynHost = new THREE.Group();
+  const dyn = api6.add({ id: "dyn", particles: { texture: "b.png" } }, dynHost);
+  await tick();
+  ok(dyn.texture === texB, "add 动态绑定同样加载贴图");
+
+  const noLoader = createParticles([{ json: { id: "x" }, obj: new THREE.Group(), emitter: createParticleEmitter({ texture: "b.png" }) }]);
+  await tick();
+  ok(noLoader.settingsOf("x").texture === "b.png" && noLoader.infoOf("x") !== null, "无加载器时不报错（保持内置软圆点）");
 }
 
 console.log(`\n粒子运行时冒烟：${passed} 通过，${failed} 失败`);

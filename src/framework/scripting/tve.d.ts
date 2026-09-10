@@ -473,6 +473,8 @@ export interface ParticleSettings {
   sizeOverLifetime: boolean;
   /** 混合：additive 叠加 / normal 透明混合（改动会重建发射器） */
   blending: "additive" | "normal";
+  /** 粒子贴图（图片资产相对路径；空串 = 内置软圆点。RGB 与粒子颜色相乘、alpha 相乘） */
+  texture: string;
 }
 
 /** 粒子系统运行态 */
@@ -548,6 +550,8 @@ export class ParticleSystemNode extends Entity {
   colorOverLifetime: boolean;
   sizeOverLifetime: boolean;
   blending: "additive" | "normal";
+  /** 粒子贴图（图片资产相对路径；空串 = 内置软圆点；运行态异步加载后热替换） */
+  texture: string;
 }
 
 export {

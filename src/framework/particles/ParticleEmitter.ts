@@ -89,9 +89,13 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D uMap;
   varying vec4 vColor;
   void main() {
-    float a = texture2D( uMap, gl_PointCoord ).a * vColor.a;
+    // gl_PointCoord 原点在左上，three 贴图（flipY）原点在左下：翻转 y 与 PointsMaterial 同约定，
+    // 用户贴图不会上下颠倒（内置软圆点径向对称，不受影响）
+    vec4 t = texture2D( uMap, vec2( gl_PointCoord.x, 1.0 - gl_PointCoord.y ) );
+    float a = t.a * vColor.a;
     if ( a <= 0.002 ) discard;
-    gl_FragColor = vec4( vColor.rgb, a );
+    // 贴图 RGB 与粒子颜色相乘（白底透明贴图即"着色精灵"；内置软圆点 RGB 为白）
+    gl_FragColor = vec4( vColor.rgb * t.rgb, a );
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -208,6 +212,23 @@ export class ParticleEmitter {
     const prevSpace = this.settings.simulationSpace;
     this.settings = cloneParticleSystemSettings(next);
     if (prevSpace !== next.simulationSpace) this.clear();
+  }
+
+  /**
+   * 替换粒子贴图（null = 回到内置程序化软圆点）。贴图由调用方按 settings.texture
+   * 异步加载后传入（编辑器 ParticleSystem / 播放器 runtime/particles.mjs），
+   * 发射器不持有资产加载逻辑；贴图对象由调用方缓存与释放。
+   */
+  setTexture(tex: THREE.Texture | null): void {
+    const u = this.object.material.uniforms;
+    const next = tex ?? getParticleSpriteTexture();
+    if (u.uMap.value === next) return;
+    u.uMap.value = next;
+  }
+
+  /** 当前采样贴图（内置软圆点或已加载的用户贴图；冒烟测试/调试用） */
+  get texture(): THREE.Texture {
+    return this.object.material.uniforms.uMap.value as THREE.Texture;
   }
 
   // ===================== 播放控制 =====================

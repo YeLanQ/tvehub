@@ -35,6 +35,7 @@ const LABEL_FIELD: Record<string, keyof ParticleSystemSettings> = {
   "Toggle Color Over Lifetime": "colorOverLifetime",
   "Toggle Size Over Lifetime": "sizeOverLifetime",
   "Set Blending": "blending",
+  "Set Texture": "texture",
 };
 
 export interface InspectorParticlesApi {

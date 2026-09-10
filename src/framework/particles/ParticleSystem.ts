@@ -3,8 +3,9 @@
 // 时由 EditorEngine 调 syncNode，渲染循环每帧 update(dt) 推进模拟。
 //
 // 同步策略：结构参数（缓冲容量/混合模式）变化 → 重建发射器（粒子从头开始）；
-// 其余参数原地更新（存活粒子不重置，检查器拖滑块画面连续）。运行时控制
-// （播放/暂停/停止/重启）为瞬态操作，不落盘。
+// 其余参数原地更新（存活粒子不重置，检查器拖滑块画面连续）。贴图按
+// settings.texture 经注入的加载器异步取得后热替换到材质（空串/失败回内置软圆点；
+// 过期结果按序号丢弃）。运行时控制（播放/暂停/停止/重启）为瞬态操作，不落盘。
 // 播放器侧镜像：public/engine/runtime/particles.mjs（createParticles）。
 // ---------------------------------------------------------------------------
 import type * as THREE from "three";
@@ -20,16 +21,35 @@ export interface ParticleEmitterNode {
   layer?: number;
 }
 
+/** 贴图加载器（rel → Texture；引擎注入 EditorEngine.loadTexture，未注入则一律内置软圆点） */
+export type ParticleTextureLoader = (rel: string) => Promise<THREE.Texture | null>;
+
 type ParticleChangeListener = (nodeId: string) => void;
 
 interface Binding {
   emitter: ParticleEmitter;
   host: THREE.Object3D;
+  /** 已请求的贴图引用（与 settings.texture 比对决定是否重新加载） */
+  textureRel: string;
+  /** 贴图请求序号（异步结果返回时比对，过期结果丢弃） */
+  textureSeq: number;
 }
 
 export class ParticleSystem {
   private bindings = new Map<string, Binding>();
   private listeners = new Set<ParticleChangeListener>();
+  private textureLoader: ParticleTextureLoader | null = null;
+
+  /** 注入贴图加载器（应用层/引擎按项目根封装；null = 断开，全部回内置软圆点） */
+  setTextureLoader(fn: ParticleTextureLoader | null): void {
+    this.textureLoader = fn;
+    // 加载器变化（项目切换）后已绑定发射器按新加载器重取贴图
+    this.bindings.forEach((b) => {
+      const rel = b.textureRel;
+      b.textureRel = "\u0000";
+      this.syncTexture(b, rel);
+    });
+  }
 
   /** 订阅运行时变化（播放控制后广播，供面板刷新状态文案） */
   onChange(l: ParticleChangeListener): () => void {
@@ -43,7 +63,8 @@ export class ParticleSystem {
 
   /**
    * 按节点数据同步发射器：首次绑定建出并挂到节点对象下；结构参数变化整体重建；
-   * 其余参数原地更新。节点对象变化（场景重建）时按新对象重挂。
+   * 其余参数原地更新。节点对象变化（场景重建）时按新对象重挂。贴图引用变化时
+   * 异步重取并热替换。
    */
   syncNode(node: ParticleEmitterNode, obj: THREE.Object3D): void {
     const s = node.particles;
@@ -60,12 +81,33 @@ export class ParticleSystem {
       for (const c of stale) obj.remove(c);
       const emitter = new ParticleEmitter(s);
       obj.add(emitter.object);
-      b = { emitter, host: obj };
+      b = { emitter, host: obj, textureRel: "", textureSeq: 0 };
       this.bindings.set(node.id, b);
     } else {
       b.emitter.setSettings(s);
     }
     b.emitter.object.layers.set(layer);
+    this.syncTexture(b, s.texture);
+  }
+
+  /**
+   * 贴图同步：引用未变不动；空串立即回内置软圆点；否则经加载器异步取得后热替换。
+   * 结果返回时若绑定已释放/引用已变（序号不符）则丢弃，避免旧贴图覆盖新选择。
+   */
+  private syncTexture(b: Binding, rel: string): void {
+    if (b.textureRel === rel) return;
+    b.textureRel = rel;
+    const seq = ++b.textureSeq;
+    if (!rel || !this.textureLoader) {
+      b.emitter.setTexture(null);
+      return;
+    }
+    void this.textureLoader(rel)
+      .catch(() => null)
+      .then((tex) => {
+        if (b.textureSeq !== seq) return;
+        b.emitter.setTexture(tex);
+      });
   }
 
   /** 每帧推进全部发射器（渲染循环调用） */
@@ -129,17 +171,22 @@ export class ParticleSystem {
   unbind(nodeId: string): void {
     const b = this.bindings.get(nodeId);
     if (!b) return;
+    b.textureSeq++; // 在途贴图结果作废
     b.emitter.dispose();
     this.bindings.delete(nodeId);
   }
 
   unbindAll(): void {
-    this.bindings.forEach((b) => b.emitter.dispose());
+    this.bindings.forEach((b) => {
+      b.textureSeq++;
+      b.emitter.dispose();
+    });
     this.bindings.clear();
   }
 
   dispose(): void {
     this.unbindAll();
     this.listeners.clear();
+    this.textureLoader = null;
   }
 }

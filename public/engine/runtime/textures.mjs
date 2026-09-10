@@ -13,8 +13,9 @@ const TEXTURE_CHANNELS = [
 
 /** 加载相对路径贴图（同路径同色彩空间共享缓存；失败返回 null）。
  * imageOrientation: "flipY" 必须显式指定——WebGL 对 ImageBitmap 上传忽略
- * UNPACK_FLIP_Y_WEBGL，不预翻转贴图会上下颠倒（与编辑器 TextureLoader 不一致）。 */
-function loadImageTex(texCache, rel, srgb) {
+ * UNPACK_FLIP_Y_WEBGL，不预翻转贴图会上下颠倒（与编辑器 TextureLoader 不一致）。
+ * 导出供其它回放系统复用（粒子贴图等），texCache 由调用方持有。 */
+export function loadImageTex(texCache, rel, srgb) {
   const key = `${srgb ? "c" : "n"}|${rel}`;
   if (texCache.has(key)) return texCache.get(key);
   const p = fetch(rel)

@@ -1104,6 +1104,42 @@ pub fn collect_anim_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集粒子系统节点的贴图引用（图片二进制资产；去重）：
+/// particleSystemNode 的 particles.texture 字段（空串 = 内置软圆点，不收集）。
+/// 扩展名集合与前端 PARTICLE_TEXTURE_EXTS / 材质贴图通道一致。
+pub fn collect_particle_texture_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_image_rel(rel: &str) -> bool {
+        let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tga" | "svg"
+        ) && rel.contains('.')
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_particle_texture_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            if o.get("type").and_then(Value::as_str) == Some("particleSystemNode") {
+                if let Some(rel) = o.get("particles").and_then(|p| p.get("texture")).and_then(Value::as_str) {
+                    if is_image_rel(rel) && !out.iter().any(|r| r == rel) {
+                        out.push(rel.to_string());
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_particle_texture_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_particle_texture_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {
@@ -1334,6 +1370,39 @@ mod tests {
                 "internal/audio/bgm.ogg".to_string(),
             ],
             "组件引用去重收集（不看 enabled：导出兜底宁多勿缺，播放端按 enabled 决定是否实例化）"
+        );
+    }
+
+    /// 粒子系统节点 particles.texture 的图片引用：去重、跳过空串（内置软圆点）与
+    /// 非图片扩展名，递归 root/children（构建导出打包用）。
+    #[test]
+    fn collect_particle_texture_refs_dedups_and_skips_builtin() {
+        let doc = json!({
+            "type": "scene",
+            "root": {
+                "type": "node", "id": "r",
+                "children": [
+                    { "type": "particleSystemNode", "id": "p1", "particles": { "emissionRate": 20, "texture": "assets/textures/spark.png" } },
+                    { "type": "particleSystemNode", "id": "p2", "particles": { "texture": "" } },
+                    { "type": "particleSystemNode", "id": "p3" },
+                    { "type": "particleSystemNode", "id": "p4", "particles": { "texture": "assets/materials/not-image.mat" } },
+                    { "type": "node", "id": "n", "children": [
+                        { "type": "particleSystemNode", "id": "p5", "particles": { "texture": "assets/textures/spark.png" } },
+                        { "type": "particleSystemNode", "id": "p6", "particles": { "texture": "internal/textures/smoke.webp" } }
+                    ] },
+                    { "type": "meshNode", "id": "m", "material": "assets/materials/M.mat" }
+                ]
+            }
+        });
+        let mut refs = Vec::new();
+        collect_particle_texture_refs(&doc, &mut refs);
+        assert_eq!(
+            refs,
+            vec![
+                "assets/textures/spark.png".to_string(),
+                "internal/textures/smoke.webp".to_string(),
+            ],
+            "去重收集、空串/无 particles/非图片扩展名跳过、递归子级"
         );
     }
 

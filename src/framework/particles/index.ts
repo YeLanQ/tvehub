@@ -1,5 +1,5 @@
 export { ParticleSystem } from "./ParticleSystem";
-export type { ParticleEmitterNode } from "./ParticleSystem";
+export type { ParticleEmitterNode, ParticleTextureLoader } from "./ParticleSystem";
 export {
   ParticleEmitter,
   PARTICLES_CHILD_NAME,
@@ -9,7 +9,9 @@ export {
 export {
   DEFAULT_PARTICLE_SETTINGS,
   PARTICLE_LIMITS,
+  PARTICLE_TEXTURE_EXTS,
   cloneParticleSystemSettings,
+  isParticleTextureRel,
   parseParticleSystemSettings,
   particleStructureSignature,
 } from "./types";

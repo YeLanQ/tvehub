@@ -26,6 +26,8 @@ import {
   ParticleEmitter,
   ParticleSystem,
   cloneParticleSystemSettings,
+  getParticleSpriteTexture,
+  isParticleTextureRel,
   parseParticleSystemSettings,
   particleStructureSignature,
   type ParticleSystemSettings,
@@ -104,21 +106,29 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 深拷贝 / 结构签名
   check("未知 simulationSpace 回 local", p.simulationSpace === "local");
   check("未知 blending 回 additive", p.blending === "additive");
   check("布尔字段非布尔回默认", p.colorOverLifetime === true && p.looping === true);
+  check("texture 缺省为空串（内置软圆点）", d.texture === "");
+  check("texture 非字符串回空串", parseParticleSystemSettings({ texture: 42 }).texture === "");
+  check("texture 字符串原样保留", parseParticleSystemSettings({ texture: "assets/textures/spark.png" }).texture === "assets/textures/spark.png");
+  check("isParticleTextureRel：png/webp 通过，mat/无扩展名拒绝", isParticleTextureRel("a/b.PNG") && isParticleTextureRel("x.webp") && !isParticleTextureRel("m.mat") && !isParticleTextureRel("noext"));
 
   const a = settings({ emissionRate: 7 });
   const b = cloneParticleSystemSettings(a);
   b.emissionRate = 99;
   check("cloneParticleSystemSettings 为独立副本", a.emissionRate === 7 && b.emissionRate === 99);
 
-  check(
-    "结构签名只含容量与混合",
-    particleStructureSignature(settings({ emissionRate: 1 })) ===
-      particleStructureSignature(settings({ emissionRate: 999 })) &&
-      particleStructureSignature(settings({ maxParticles: 10 })) !==
-        particleStructureSignature(settings({ maxParticles: 11 })) &&
-      particleStructureSignature(settings({ blending: "normal" })) !==
-        particleStructureSignature(settings({ blending: "additive" })),
-  );
+    check(
+      "结构签名只含容量与混合",
+      particleStructureSignature(settings({ emissionRate: 1 })) ===
+        particleStructureSignature(settings({ emissionRate: 999 })) &&
+        particleStructureSignature(settings({ maxParticles: 10 })) !==
+          particleStructureSignature(settings({ maxParticles: 11 })) &&
+        particleStructureSignature(settings({ blending: "normal" })) !==
+          particleStructureSignature(settings({ blending: "additive" })),
+    );
+    check(
+      "贴图不属结构参数（换贴图不重建）",
+      particleStructureSignature(settings({ texture: "a.png" })) === particleStructureSignature(settings({ texture: "" })),
+    );
 }
 
 // ===========================================================================
@@ -448,6 +458,27 @@ console.log("[3] 发射器模拟");
     check("单帧最多推进 0.1s（10s 帧只发约 10 粒子）", em.aliveCount <= 12, String(em.aliveCount));
     em.dispose();
   }
+  // —— 贴图：默认内置软圆点；setTexture 热替换；null 回内置 ——
+  {
+    const em = new ParticleEmitter(settings({}));
+    const sprite = getParticleSpriteTexture();
+    check("默认采样内置软圆点", em.texture === sprite);
+    check(
+      "内置软圆点为 64×64 RGBA DataTexture（全局共享一份）",
+      sprite.image.width === 64 && sprite.image.height === 64 && getParticleSpriteTexture() === sprite,
+    );
+    const user = new THREE.Texture();
+    em.setTexture(user);
+    check("setTexture 热替换材质 uniform", em.texture === user && em.object.material.uniforms.uMap.value === user);
+    em.setTexture(null);
+    check("setTexture(null) 回内置软圆点", em.texture === sprite);
+    const fs = em.object.material.fragmentShader;
+    check(
+      "片元着色器：翻转 gl_PointCoord.y（用户贴图不倒置）并把贴图 RGB 乘进颜色",
+      /1\.0 - gl_PointCoord\.y/.test(fs) && /vColor\.rgb \* t\.rgb/.test(fs),
+    );
+    em.dispose();
+  }
   // —— dispose ——
   {
     const host = new THREE.Group();
@@ -552,10 +583,120 @@ console.log("[5] 脚本 SDK 契约（tve.d.ts ↔ tve.mjs 镜像）");
   check("mjs：engine 挂 particles", /particles:\s*particlesApi/.test(mjs));
   check("mjs：导出 ParticleSystemNode 与小写别名", /ParticleSystemNode as particleSystemNode/.test(mjs));
   check("mjs：灯光设置 cullingMask 收敛语句完整（回归：曾被截断成 umber）", /typeof s\.cullingMask === "number"/.test(mjs) && !/\number &&/.test(mjs));
+  check("d.ts：ParticleSettings / ParticleSystemNode 声明 texture", (dts.match(/^\s+texture: string;/gm) ?? []).length >= 2);
+  check("mjs：ParticleSystemNode 属性表含 texture", /"blending",\s*"texture",/.test(mjs));
   const player = readFileSync(resolve(process.cwd(), "public/web-preview/player.mjs"), "utf8");
-  check("player：接线 createParticles 并每帧推进", /createParticles\(particles\)/.test(player) && /particlesApi\.update\(dt\)/.test(player));
+  check("player：接线 createParticles 并每帧推进", /createParticles\(particles/.test(player) && /particlesApi\.update\(dt\)/.test(player));
   check("player：粒子控制传入脚本宿主", /particles:\s*particlesApi/.test(player));
+  check("player：粒子贴图走 textures.mjs 的 loadImageTex（sRGB）", /loadImageTex\(particleTexCache, rel, true\)/.test(player));
+  const texSrc = readFileSync(resolve(process.cwd(), "public/engine/runtime/textures.mjs"), "utf8");
+  check("textures.mjs 导出 loadImageTex 供粒子复用", /export function loadImageTex/.test(texSrc));
+  // 构建导出：Rust 侧收集 particles.texture 并在发布重命名时重写引用
+  const migrate = readFileSync(resolve(process.cwd(), "src-tauri/src/scene/migrate.rs"), "utf8");
+  const preview = readFileSync(resolve(process.cwd(), "src-tauri/src/preview.rs"), "utf8");
+  const build = readFileSync(resolve(process.cwd(), "src-tauri/src/build.rs"), "utf8");
+  check("Rust：collect_particle_texture_refs 存在并在导出收集中调用", /pub fn collect_particle_texture_refs/.test(migrate) && /collect_particle_texture_refs\(&scene_json/.test(preview));
+  check("Rust：发布重命名重写 particles.texture", /k == "particles"/.test(build) && /get_mut\("texture"\)/.test(build));
 }
 
-console.log(failed ? `\n粒子系统冒烟：${failed} 项失败` : "\n粒子系统冒烟：全部通过");
-process.exitCode = failed > 0 ? 1 : 0;
+/** 等待异步贴图链路（catch + then 两级微任务）落定 */
+function tick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+// ===========================================================================
+async function textureSection(): Promise<void> {
+  console.log("[6] ParticleSystem 贴图异步加载（加载器注入 / 热替换 / 过期丢弃 / 失败回退）");
+  const runtime = new ParticleSystem();
+  const host = new THREE.Group();
+  const factory = createNodeFactory(createDefaultRegistry());
+  const ps = factory.createParticleSystem();
+  const sprite = getParticleSpriteTexture();
+  const texA = new THREE.Texture();
+  const texB = new THREE.Texture();
+  const calls: string[] = [];
+  let resolveSlow: (t: THREE.Texture | null) => void = () => {};
+  runtime.setTextureLoader((rel) => {
+    calls.push(rel);
+    if (rel === "slow.png") return new Promise((r) => (resolveSlow = r));
+    if (rel === "b.png") return Promise.resolve(texB);
+    if (rel === "fail.png") return Promise.reject(new Error("nope"));
+    return Promise.resolve(null);
+  });
+  const emitter = () => runtime.emitterOf(ps.id)!;
+
+  runtime.syncNode(ps, host);
+  check("空贴图：不调用加载器，采样内置软圆点", calls.length === 0 && emitter().texture === sprite);
+
+  ps.particles.texture = "b.png";
+  runtime.syncNode(ps, host);
+  check("贴图引用变更触发加载（rel 原样传入）", calls.length === 1 && calls[0] === "b.png");
+  check("加载中仍采样内置软圆点（不闪黑）", emitter().texture === sprite);
+  await tick();
+  check("加载完成热替换到用户贴图", emitter().texture === texB);
+  runtime.syncNode(ps, host);
+  check("同一引用重复 sync 不重复加载", calls.length === 1);
+
+  // 过期结果丢弃：先选慢贴图，再切回快贴图；慢贴图之后才返回，不应覆盖
+  ps.particles.texture = "slow.png";
+  runtime.syncNode(ps, host);
+  ps.particles.texture = "b.png";
+  runtime.syncNode(ps, host);
+  await tick();
+  check("切换后先采样后选的贴图", emitter().texture === texB);
+  resolveSlow(texA);
+  await tick();
+  check("过期的慢结果不覆盖新选择", emitter().texture === texB);
+
+  ps.particles.texture = "fail.png";
+  runtime.syncNode(ps, host);
+  await tick();
+  check("加载失败回内置软圆点", emitter().texture === sprite);
+  ps.particles.texture = "missing.png";
+  runtime.syncNode(ps, host);
+  await tick();
+  check("加载器返回 null 回内置软圆点", emitter().texture === sprite);
+
+  ps.particles.texture = "b.png";
+  runtime.syncNode(ps, host);
+  await tick();
+  ps.particles.texture = "";
+  runtime.syncNode(ps, host);
+  check("清空贴图立即回内置（不等异步）", emitter().texture === sprite);
+
+  ps.particles.texture = "b.png";
+  runtime.syncNode(ps, host);
+  await tick();
+  const before = calls.length;
+  ps.particles.maxParticles = 33;
+  runtime.syncNode(ps, host);
+  await tick();
+  check("结构重建后新发射器重新取贴图", calls.length === before + 1 && emitter().texture === texB);
+
+  const before2 = calls.length;
+  runtime.setTextureLoader((rel) => {
+    calls.push(rel);
+    return Promise.resolve(texA);
+  });
+  await tick();
+  check("重装加载器（项目切换）后已绑定发射器按新加载器重取", calls.length === before2 + 1 && emitter().texture === texA);
+  runtime.setTextureLoader(null);
+  check("断开加载器回内置软圆点", emitter().texture === sprite);
+
+  // 解绑后在途结果作废（不抛错、不写入已释放的发射器）
+  runtime.setTextureLoader((rel) => {
+    calls.push(rel);
+    return new Promise((r) => (resolveSlow = r));
+  });
+  const doomed = emitter();
+  runtime.unbind(ps.id);
+  resolveSlow(texA);
+  await tick();
+  check("解绑后在途贴图结果被丢弃", runtime.emitterOf(ps.id) === null && doomed.texture === sprite);
+  runtime.dispose();
+}
+
+void textureSection().then(() => {
+  console.log(failed ? `\n粒子系统冒烟：${failed} 项失败` : "\n粒子系统冒烟：全部通过");
+  process.exitCode = failed > 0 ? 1 : 0;
+});

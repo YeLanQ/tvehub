@@ -292,6 +292,20 @@ pub(crate) fn collect_scene_assets(
             Err(_) => missing.push(rel.clone()),
         }
     }
+    // 粒子系统节点贴图引用：图片二进制随导出（缺失跳过，player 回退内置软圆点）
+    let mut particle_tex_refs = Vec::new();
+    crate::scene::migrate::collect_particle_texture_refs(&scene_json, &mut particle_tex_refs);
+    for rel in &particle_tex_refs {
+        if binaries.contains_key(rel) {
+            continue;
+        }
+        match read_asset_bytes(root_path, rel) {
+            Ok(bytes) => {
+                binaries.insert(rel.clone(), bytes);
+            }
+            Err(_) => missing.push(rel.clone()),
+        }
+    }
     missing
 }
 

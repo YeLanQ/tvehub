@@ -51,9 +51,9 @@ Particle System 卡片（Unity ParticleSystem 语义子集；每项改动一次�
 | Shape | Shape（Cone / Sphere / Hemisphere / Box）、Radius、Angle（圆锥半角，仅 Cone） |
 | Color over Lifetime | Enabled、End Color |
 | Size over Lifetime | Enabled |
-| Renderer | Blending（Additive / Normal） |
+| Renderer | Blending（Additive / Normal）、Texture（内置软圆点 / 内置图片 / 项目图片；贴图 RGB 与 Start/End Color 相乘、alpha 相乘，白底透明 PNG 即着色精灵；缺失回退软圆点，资产被删时回显路径并标「未找到」） |
 
-`Max Particles` 与 `Blending` 属于结构参数，改动会重建发射器（粒子从头开始）；其余参数原地更新。切换 Simulation Space 会清空当前粒子。
+`Max Particles` 与 `Blending` 属于结构参数，改动会重建发射器（粒子从头开始）；其余参数原地更新，换贴图异步加载完成后热替换。切换 Simulation Space 会清空当前粒子。
 
 ## 添加组件
 

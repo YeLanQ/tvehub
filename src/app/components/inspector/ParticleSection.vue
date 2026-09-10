@@ -5,14 +5,16 @@
  * - Emission：发射速率；
  * - Shape：形状（圆锥/球/半球/盒）+ 半径 + 圆锥半角；
  * - Color / Size over Lifetime：开关 + 终点颜色；
- * - Renderer：混合模式；
+ * - Renderer：混合模式 + 贴图（内置软圆点 / 内置图片 / 项目图片资产）；
  * - 运行时控制（播放/暂停/停止/重启）直连引擎，不落盘。
  * 事件统一 emit("update", label, value)，label 即撤销历史文案。
  */
 import { computed } from "vue";
 import { getEditorStore } from "../../stores/editor";
+import { getAssetsStore } from "../../stores/assets";
+import { isInternalAsset } from "../../../lib/internal-assets";
 import type { ParticleSystemNode } from "../../../framework/prototype/derived/Primitives";
-import { PARTICLE_LIMITS } from "../../../framework/particles";
+import { PARTICLE_LIMITS, isParticleTextureRel } from "../../../framework/particles";
 import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ node: ParticleSystemNode; rev?: number }>();
@@ -22,12 +24,35 @@ const emit = defineEmits<{
 }>();
 
 const engine = getEditorStore().engine;
+const assetsStore = getAssetsStore();
 const L = PARTICLE_LIMITS;
 
 /** 节点是普通类实例（非响应式）：以 rev 为失效信号读取设置 */
 const s = computed(() => {
   void props.rev;
   return props.node.particles;
+});
+
+/** 贴图候选（内置图片 + 项目图片；导入 png/jpg 等后自动出现），与材质贴图通道同一集合 */
+const textureOptions = computed(() => {
+  const internal: { rel: string; name: string }[] = [];
+  const project: { rel: string; name: string }[] = [];
+  for (const a of assetsStore.assets) {
+    if (a.kind === "dir" || !isParticleTextureRel(a.path)) continue;
+    if (isInternalAsset(a.path)) internal.push({ rel: a.path, name: a.name });
+    else if (a.path.startsWith("assets/")) project.push({ rel: a.path, name: a.name });
+  }
+  return { internal, project };
+});
+
+/** 当前贴图引用是否在候选里（资产被删/移走时仍回显路径，不静默丢失） */
+const textureListed = computed(() => {
+  const cur = s.value.texture;
+  if (!cur) return true;
+  return (
+    textureOptions.value.internal.some((o) => o.rel === cur) ||
+    textureOptions.value.project.some((o) => o.rel === cur)
+  );
 });
 
 /** 运行时状态（存活数/播放态；随 particles:changed 与图变化的 rev 刷新） */
@@ -291,8 +316,30 @@ function rtRestart(): void {
         <option value="normal">Normal（透明混合）</option>
       </select>
     </div>
+    <div class="field">
+      <label title="Texture：粒子精灵贴图。贴图 RGB 与粒子颜色相乘、alpha 与透明度相乘（白底透明 PNG 即着色精灵）；空 = 内置程序化软圆点">
+        Texture
+      </label>
+      <select :value="s.texture" @change="onSelect('Set Texture', $event)">
+        <option value="">（内置软圆点）</option>
+        <option v-if="!textureListed" :value="s.texture" :title="s.texture">{{ s.texture }}（未找到）</option>
+        <optgroup v-if="textureOptions.internal.length" label="内置图片">
+          <option v-for="o in textureOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
+            {{ o.name }}
+          </option>
+        </optgroup>
+        <optgroup label="项目图片">
+          <option v-if="textureOptions.project.length === 0" value="" disabled>
+            （项目内暂无图片，可在资产面板「导入」png/jpg 等文件）
+          </option>
+          <option v-for="o in textureOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
+            {{ o.name }}
+          </option>
+        </optgroup>
+      </select>
+    </div>
     <div class="hint">
-      粒子为程序化软圆点（billboard），随节点变换与层级；预览/构建按同一参数回放。
+      粒子为 billboard 精灵（默认程序化软圆点，可换图片贴图），随节点变换与层级；预览/构建按同一参数回放。
     </div>
   </div>
 </template>

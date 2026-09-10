@@ -173,7 +173,8 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// 递归重写 JSON 里 meshNode 的 material/model、skyboxNode 的 cubeMap、组件 animationClip 的 clip 资产引用
+/// 递归重写 JSON 里 meshNode 的 material/model、skyboxNode 的 cubeMap、组件 animationClip 的 clip、
+/// 音源的 audio.source、粒子系统的 particles.texture 资产引用
 fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
     match v {
         serde_json::Value::Array(items) => {
@@ -193,6 +194,15 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
                         if src.is_string() {
                             if let Some(new) = renames.get(src.as_str().unwrap_or("")) {
                                 *src = serde_json::Value::String(new.clone());
+                            }
+                        }
+                    }
+                } else if k == "particles" {
+                    // 粒子系统节点：particles.texture 为图片资产引用（其余发射参数不含路径）
+                    if let Some(tex) = val.get_mut("texture") {
+                        if tex.is_string() {
+                            if let Some(new) = renames.get(tex.as_str().unwrap_or("")) {
+                                *tex = serde_json::Value::String(new.clone());
                             }
                         }
                     }
@@ -1271,6 +1281,8 @@ mod tests {
         fs::write(root.join("assets/models/tree.bin"), [1u8, 2, 3, 4]).unwrap();
         fs::write(root.join("assets/models/tree.png"), [7u8; 4]).unwrap();
         fs::write(root.join("assets/models/rock.obj"), "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+        // 粒子系统节点引用的贴图（不经材质，直接在 particles.texture 上）
+        fs::write(root.join("assets/textures/spark.png"), [5u8; 6]).unwrap();
 
         let scene = r#"{
   "type": "scene",
@@ -1280,7 +1292,8 @@ mod tests {
       { "type": "meshNode", "source": "primitive", "material": "assets/materials/M.mat" },
       { "type": "meshNode", "source": "model", "model": "assets/models/tree.gltf", "material": "assets/materials/M.mat" },
       { "type": "meshNode", "source": "model", "model": "assets/models/cube.glb" },
-      { "type": "meshNode", "source": "model", "model": "assets/models/rock.obj" }
+      { "type": "meshNode", "source": "model", "model": "assets/models/rock.obj" },
+      { "type": "particleSystemNode", "particles": { "emissionRate": 20, "texture": "assets/textures/spark.png" } }
     ]
   }
 }"#;
@@ -1323,6 +1336,8 @@ mod tests {
         let scene_text = fs::read_to_string(out.join("scenes/Main.json")).unwrap();
         assert!(scene_text.contains("assets/materials/M.mat"));
         assert!(scene_text.contains('\n'), "未发布保留原格式");
+        assert!(out.join("assets/textures/spark.png").is_file(), "粒子贴图随导出拷贝");
+        assert!(scene_text.contains("assets/textures/spark.png"), "未发布粒子贴图引用保持原名");
 
         // 发布：uuid 文件名 + 引用重写 + JSON 紧凑
         let result = run(true);
@@ -1339,6 +1354,12 @@ mod tests {
         let fallback = fallback_uid("assets/textures/a.png");
         assert!(out.join(format!("assets/textures/{fallback}.png")).is_file(), "无 .meta 走路径哈希 uid");
         assert!(mat_text.contains(&fallback), "材质贴图引用重写为哈希 uid");
+        // 粒子贴图：文件重命名 + particles.texture 引用重写
+        let spark_uid = fallback_uid("assets/textures/spark.png");
+        assert!(!out.join("assets/textures/spark.png").exists(), "粒子贴图原名不保留");
+        assert!(out.join(format!("assets/textures/{spark_uid}.png")).is_file(), "粒子贴图重命名为哈希 uid");
+        assert!(scene_text.contains(&format!("assets/textures/{spark_uid}.png")), "particles.texture 引用已重写");
+        assert!(!scene_text.contains("spark.png"), "场景内不残留粒子贴图原名");
 
         // 脚本压缩：player/engine 脚本去注释压缩；*.min.* 跳过
         let player_min = fs::read_to_string(out.join("player.mjs")).unwrap();

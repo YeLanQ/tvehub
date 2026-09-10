@@ -1435,6 +1435,7 @@ for (const key of [
   "colorOverLifetime",
   "sizeOverLifetime",
   "blending",
+  "texture",
 ]) {
   Object.defineProperty(ParticleSystemNode.prototype, key, {
     configurable: true,

@@ -43,6 +43,7 @@ const DEFAULTS = {
   colorOverLifetime: true,
   sizeOverLifetime: true,
   blending: "additive",
+  texture: "",
 };
 
 /** 取值域（与编辑器 PARTICLE_LIMITS 同一份边界） */
@@ -101,6 +102,8 @@ export function parseParticleSettings(v) {
     colorOverLifetime: bool(o.colorOverLifetime, d.colorOverLifetime),
     sizeOverLifetime: bool(o.sizeOverLifetime, d.sizeOverLifetime),
     blending: o.blending === "normal" ? "normal" : "additive",
+    // 粒子贴图（图片资产相对路径；空串 = 内置软圆点）；加载由 runtime/particles.mjs 负责
+    texture: typeof o.texture === "string" ? o.texture : "",
   };
 }
 
@@ -159,9 +162,12 @@ const FRAGMENT_SHADER = `
   uniform sampler2D uMap;
   varying vec4 vColor;
   void main() {
-    float a = texture2D( uMap, gl_PointCoord ).a * vColor.a;
+    // gl_PointCoord 原点在左上，three 贴图原点在左下：翻转 y 与 PointsMaterial 同约定
+    vec4 t = texture2D( uMap, vec2( gl_PointCoord.x, 1.0 - gl_PointCoord.y ) );
+    float a = t.a * vColor.a;
     if ( a <= 0.002 ) discard;
-    gl_FragColor = vec4( vColor.rgb, a );
+    // 贴图 RGB 与粒子颜色相乘（内置软圆点 RGB 为白，等价于只取 alpha）
+    gl_FragColor = vec4( vColor.rgb * t.rgb, a );
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -455,6 +461,16 @@ export function createParticleEmitter(raw) {
       const prevSpace = settings.simulationSpace;
       settings = parseParticleSettings(next);
       if (prevSpace !== settings.simulationSpace) clear();
+    },
+    /** 替换粒子贴图（null = 回内置软圆点）；贴图由调用方按 settings.texture 异步加载后传入 */
+    setTexture(tex) {
+      const u = points.material.uniforms;
+      const next = tex ?? getParticleSpriteTexture();
+      if (u.uMap.value !== next) u.uMap.value = next;
+    },
+    /** 当前采样贴图 */
+    get texture() {
+      return points.material.uniforms.uMap.value;
     },
     update(dt, host) {
       if (paused) return;

@@ -39,7 +39,7 @@ Particle System 节点是场景中的粒子发射器（Unity ParticleSystem 语�
 - **模拟空间**：`Local` 粒子跟随节点移动（火把/引擎尾焰），`World` 粒子留在世界空间（烟迹/拖尾）；
 - **循环与预热**：循环系统持续发射；非循环系统发射 `Duration` 秒后停止，粒子全部消亡即播完（检查器 ▶ 可重播）；`Prewarm` 让循环系统入图/重启时快进一个周期，粒子瞬间就位；
 - **随寿命变化**：`Color over Lifetime`（Start Color → End Color 渐变并在末段淡出）与 `Size over Lifetime`（线性缩到 0）可独立开关；
-- **渲染**：程序化软圆点 billboard，`Additive`（叠加，火焰/魔法）或 `Normal`（透明混合，烟雾/雨雪）；粒子跟随节点的渲染层，相机 Culling Mask 排除该层时一同排除；
+- **渲染**：billboard 精灵，默认程序化软圆点，可在 Renderer 里换成图片贴图（内置图片 / 项目 png、jpg、webp 等；贴图 RGB 与粒子颜色相乘、alpha 相乘，白底透明 PNG 即"着色精灵"；缺失或加载失败回退软圆点）；`Additive`（叠加，火焰/魔法）或 `Normal`（透明混合，烟雾/雨雪）；粒子跟随节点的渲染层，相机 Culling Mask 排除该层时一同排除；构建导出会自动把粒子引用的贴图一并打包；
 - **上限**：`Max Particles` 为同时存活上限（缓冲容量），到上限后新粒子等待旧粒子消亡；
 - 视口中以火花图标标示发射器位置（预览/构建不显示图标，只回放粒子）；播放/暂停/停止/重启为运行时控制，不写入场景文件；脚本可经 SDK `ParticleSystemNode` / `engine.particles` 控制。
 

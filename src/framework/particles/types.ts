@@ -17,6 +17,16 @@ export type ParticleBlendMode = "additive" | "normal";
 /** 模拟空间：local = 粒子跟随节点移动 | world = 粒子留在世界空间（拖尾/烟迹） */
 export type ParticleSimulationSpace = "local" | "world";
 
+/** 粒子贴图可用的图片资产扩展名（小写；与材质贴图通道同一集合） */
+export const PARTICLE_TEXTURE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tga", "svg"] as const;
+
+/** 是否可作粒子贴图的图片资产相对路径（按扩展名判断） */
+export function isParticleTextureRel(rel: string): boolean {
+  const i = rel.lastIndexOf(".");
+  if (i < 0) return false;
+  return (PARTICLE_TEXTURE_EXTS as readonly string[]).includes(rel.slice(i + 1).toLowerCase());
+}
+
 /** 粒子系统发射设置（ParticleSystemNode.particles 的形状） */
 export interface ParticleSystemSettings {
   /** 发射周期（秒）：非循环系统发射持续该时长后停止；循环系统作为预热（prewarm）快进量 */
@@ -57,6 +67,12 @@ export interface ParticleSystemSettings {
   sizeOverLifetime: boolean;
   /** 混合模式 */
   blending: ParticleBlendMode;
+  /**
+   * 粒子贴图（图片资产相对路径；空串 = 内置程序化软圆点）。
+   * 贴图 RGB 与粒子颜色相乘、alpha 与粒子透明度相乘（白底透明 PNG 即"着色精灵"）。
+   * 缺失/加载失败回退内置软圆点。
+   */
+  texture: string;
 }
 
 export const DEFAULT_PARTICLE_SETTINGS: ParticleSystemSettings = {
@@ -79,6 +95,7 @@ export const DEFAULT_PARTICLE_SETTINGS: ParticleSystemSettings = {
   colorOverLifetime: true,
   sizeOverLifetime: true,
   blending: "additive",
+  texture: "",
 };
 
 /** 各数值字段的取值域（检查器钳制 / parse 收敛 / 运行时镜像共用同一份边界） */
@@ -114,6 +131,9 @@ function num(v: unknown, fb: number): number {
 }
 function bool(v: unknown, fb: boolean): boolean {
   return typeof v === "boolean" ? v : fb;
+}
+function str(v: unknown, fb = ""): string {
+  return typeof v === "string" ? v : fb;
 }
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -157,6 +177,7 @@ export function parseParticleSystemSettings(v: unknown): ParticleSystemSettings 
     colorOverLifetime: bool(o.colorOverLifetime, d.colorOverLifetime),
     sizeOverLifetime: bool(o.sizeOverLifetime, d.sizeOverLifetime),
     blending: o.blending === "normal" ? "normal" : "additive",
+    texture: str(o.texture),
   };
 }
 
@@ -168,6 +189,7 @@ export function cloneParticleSystemSettings(s: ParticleSystemSettings): Particle
 /**
  * 结构签名：变化时必须重建渲染对象（缓冲容量 / 混合模式决定几何缓冲与材质），
  * 其余字段可在不重置已存活粒子的前提下原地更新（检查器拖滑块不闪断）。
+ * 贴图不属结构参数：换贴图只需替换材质采样 uniform（异步加载完成后热替换）。
  */
 export function particleStructureSignature(s: ParticleSystemSettings): string {
   return `${s.maxParticles}|${s.blending}`;

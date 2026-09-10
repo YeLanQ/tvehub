@@ -265,6 +265,8 @@ export class EditorEngine {
     this.physics.onChange((nodeId) => this.events.emit("physics:changed", { nodeId }));
     // 粒子运行时变化（播放控制）→ 广播给检查器刷新状态文案
     this.particles.onChange((nodeId) => this.events.emit("particles:changed", { nodeId }));
+    // 粒子贴图走与材质贴图同一套 rel → asset:// 加载缓存（颜色贴图 sRGB）
+    this.particles.setTextureLoader((rel) => this.loadTexture(rel, true));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -471,6 +473,8 @@ export class EditorEngine {
     this.texCubeCache.clear();
     // 音频与贴图同一套 rel → URL 语义：解析器变化后旧缓冲失效并按新解析器重载
     this.audio.setUrlResolver(fn);
+    // 粒子贴图同理：重装加载器让已绑定发射器按新解析器重取贴图
+    this.particles.setTextureLoader((rel) => this.loadTexture(rel, true));
     this.applySkyFromGraph();
   }
 

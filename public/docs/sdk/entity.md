@@ -68,7 +68,7 @@ export default class Explode extends Component {
 }
 ```
 
-方法：`play()`（暂停态续播 / 停止、播完态从头开始）、`pause()`、`stop()`（停止发射，粒子自然消亡）、`restart()`、`clear()`、`setSettings(patch)`；只读：`playing` / `paused` / `finished` / `aliveCount` / `settings`。可写字段：`duration` `looping` `prewarm` `startDelay` `startLifetime` `startSpeed` `startSize` `startColor` `endColor` `gravityModifier` `emissionRate` `maxParticles` `shape` `shapeRadius` `shapeAngle` `simulationSpace` `colorOverLifetime` `sizeOverLifetime` `blending`。改 `maxParticles` / `blending` 会重建发射器（粒子从头开始）。
+方法：`play()`（暂停态续播 / 停止、播完态从头开始）、`pause()`、`stop()`（停止发射，粒子自然消亡）、`restart()`、`clear()`、`setSettings(patch)`；只读：`playing` / `paused` / `finished` / `aliveCount` / `settings`。可写字段：`duration` `looping` `prewarm` `startDelay` `startLifetime` `startSpeed` `startSize` `startColor` `endColor` `gravityModifier` `emissionRate` `maxParticles` `shape` `shapeRadius` `shapeAngle` `simulationSpace` `colorOverLifetime` `sizeOverLifetime` `blending` `texture`（图片资产相对路径，空串 = 内置软圆点；运行态异步加载后热替换，只能引用已随构建打包的图片）。改 `maxParticles` / `blending` 会重建发射器（粒子从头开始）。
 
 ## 场景查询：engine.scene
 

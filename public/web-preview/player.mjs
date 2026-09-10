@@ -24,7 +24,7 @@ import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
-import { applyMeshTextures } from "../engine/runtime/textures.mjs";
+import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createStage } from "../engine/runtime/stage.mjs";
@@ -420,8 +420,10 @@ async function main() {
   const audiosApi = createAudios(audios, cam);
 
   // 粒子系统（粒子节点 CPU 模拟 + Points 渲染；每帧渲染前推进，
-  // 脚本经 engine.particles / ParticleSystemNode 控制播放）
-  const particlesApi = createParticles(particles);
+  // 脚本经 engine.particles / ParticleSystemNode 控制播放）。
+  // 粒子贴图走与网格贴图同一 fetch + ImageBitmap 链路（颜色贴图 sRGB），异步到位后热替换
+  const particleTexCache = new Map();
+  const particlesApi = createParticles(particles, (rel) => loadImageTex(particleTexCache, rel, true));
 
   // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
   // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。
