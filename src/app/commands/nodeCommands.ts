@@ -243,6 +243,22 @@ registerCommand({
 });
 
 registerCommand({
+  id: "node.alignCameraToViewport",
+  label: "相机对齐当前视口",
+  group: "节点",
+  description: "把相机节点位姿与取景参数对齐到当前编辑器视口相机（id 缺省 = 当前选中节点；一次撤销）",
+  run: (_ctx, args: any) => {
+    const st = editor();
+    if (!st.state.mounted) throw new Error("编辑器未就绪，无法对齐相机");
+    const id = args?.id ? String(args.id) : st.state.selectedId;
+    if (!id) return { aligned: false };
+    const aligned = engine().alignCameraToViewport(id);
+    if (!aligned) console.warn("对齐失败：目标不是相机节点");
+    return { aligned, id };
+  },
+});
+
+registerCommand({
   id: "node.select",
   label: "选中节点",
   group: "节点",

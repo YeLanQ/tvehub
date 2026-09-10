@@ -306,6 +306,13 @@ function createItems(parentId: string): CtxMenuItem[] {
     },
   });
   const isRoot = engine.graph.root?.id === parentId;
+  // 相机节点：把位姿与取景参数对齐到当前编辑器视口（Unity Align With View 语义）
+  if (engine.graph.get(parentId)?.typeKey === "cameraNode") {
+    items.push({
+      label: "对齐到当前视口",
+      onClick: () => void dispatchCommand("node.alignCameraToViewport", { id: parentId }),
+    });
+  }
   // 预制体：把子树存为 .prefab 资产；实例（带来源引用）可回写更新资产
   items.push({
     label: "存储为预制体…",

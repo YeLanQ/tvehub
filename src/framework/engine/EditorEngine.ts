@@ -23,6 +23,7 @@ import {
   type SkyboxKind,
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
+import { clampCameraParam } from "../camera";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
@@ -631,6 +632,61 @@ export class EditorEngine {
     if (!node) return;
     const before = snapshotTransform(node);
     this.graph.commitTransform(nodeId, before, snap);
+  }
+
+  /**
+   * 把相机节点对齐到当前编辑器视口（Unity Camera > Align With View 语义）：
+   * 取自由轨道相机（透视）的世界位姿，经所在父对象的世界矩阵换算为节点局部位姿
+   * （旋转写度制欧拉角 XYZ，与编辑器变换语义一致）；透视相机同步 fov，
+   * 正交相机按「视口竖直视场 × 轨道注视距离」折算正交半高（与当前取景范围一致）。
+   * 位姿与取景参数一次节点补丁（一次撤销）。目标非相机节点返回 false。
+   */
+  alignCameraToViewport(nodeId: string): boolean {
+    const node = this.graph.get(nodeId);
+    if (!(node instanceof CameraNode)) return false;
+    const cam = this.renderer.camera;
+    // 世界位姿（缩放分量固定取 1：节点 scale 保持原值，不随对齐改写）
+    const world = new THREE.Matrix4().compose(
+      cam.position,
+      cam.quaternion,
+      new THREE.Vector3(1, 1, 1),
+    );
+    // 世界 → 局部：local = parentWorld⁻¹ · world（根直挂/对象未同步时按世界原样写入）
+    let local = world;
+    const obj = this.synchronizer.getObjectMap().get(nodeId);
+    if (obj?.parent) {
+      obj.parent.updateWorldMatrix(true, false);
+      local = world.clone().premultiply(obj.parent.matrixWorld.clone().invert());
+    }
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    local.decompose(pos, quat, scl);
+    const euler = new THREE.Euler().setFromQuaternion(quat, "XYZ");
+    const rotationDeg = radToDeg({ x: euler.x, y: euler.y, z: euler.z });
+    const before = node.toJSON() as JsonRecord;
+    const tf = before.transform as JsonRecord;
+    const after: JsonRecord = {
+      ...before,
+      transform: {
+        ...tf,
+        position: { x: pos.x, y: pos.y, z: pos.z },
+        rotation: { ...rotationDeg },
+      },
+    };
+    // 取景参数：轨道相机 fov 为竖直视场；正交半高 = tan(竖直视场/2) × 到注视点距离
+    const target = this.renderer.orbitControls.target;
+    const distance = Math.max(0.01, cam.position.distanceTo(target));
+    if (node.cameraType === "orthographic") {
+      after.orthoSize = clampCameraParam(
+        "orthoSize",
+        Math.tan(((cam.fov * Math.PI) / 180) / 2) * distance,
+      );
+    } else {
+      after.fov = clampCameraParam("fov", cam.fov);
+    }
+    this.patchNode(nodeId, before, after, "相机对齐当前视口");
+    return true;
   }
 
   patchNode(nodeId: string, before: JsonRecord, after: JsonRecord, label?: string): void {
