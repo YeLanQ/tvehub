@@ -25,7 +25,7 @@ export class PointLightNode extends LightNode implements IPointLightNode {
   readonly lightKind = "point" as const;
 
   /** 光照有效距离（0 = 无限远，不衰减到零） */
-  distance = 0;
+  distance = 10;
   /** 物理衰减指数 */
   decay = 2;
   /** 投射阴影（默认关：立方阴影贴图渲染 6 个面，开销高于平面阴影） */

@@ -28,7 +28,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
   readonly lightKind = "spot" as const;
 
   /** 光束有效距离（0 = 无限远） */
-  distance = 0;
+  distance = 10;
   /** 物理衰减指数 */
   decay = 2;
   /** 光束半角（度，界面友好单位；映射到 three 的 angle 弧度） */

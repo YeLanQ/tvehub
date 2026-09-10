@@ -32,6 +32,8 @@ import {
   shadowMapSizeOf,
 } from "../src/framework/lighting/shadow";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";
+import { LightNodeHelper } from "../src/framework/engine/modules/helpers/LightNodeHelper";
+import { HelperSystem } from "../src/framework/engine/modules/HelperSystem";
 import type { GraphLike, SceneChange } from "../src/framework/scene/SceneClient";
 import type { Node } from "../src/framework/prototype/Node";
 
@@ -340,6 +342,11 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
   sync.rebuildAll(fakeGraph([spot, box]));
   const sl = findLight<THREE.SpotLight>(objOf(sync, spot), (l) => l.isSpotLight === true);
   check("聚光灯节点建出真实 SpotLight 且开启阴影", !!sl && sl.castShadow === true);
+  check(
+    "聚光灯位置归零（世界位姿与节点一致，方向 = 节点 -Z，与辅助线光锥同轴）",
+    !!sl && sl.position.x === 0 && sl.position.y === 0 && sl.position.z === 0,
+    sl ? JSON.stringify(sl.position.toArray()) : "",
+  );
   if (sl) {
     sync.refitShadowCameras(true);
     // three 的 SpotLightShadow 以 distance || camera.far 作远平面；distance=0 时用我们推的 far
@@ -420,6 +427,93 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
     !!dl && dl.shadow.mapSize.width === 512,
     dl ? String(dl.shadow.mapSize.width) : "",
   );
+}
+
+// ---------- ⑥ 灯光辅助线：参数绑定（Range/Spot Angle）+ 选中显示 ----------
+{
+  const ctx = { getAspect: () => 1, getEditorDistanceTo: () => 10 };
+
+  // 点光：范围环跟随 Range；Range=0（无限远）→ 示意半径 3，默认选中即有可读范围
+  const p = new PointLightNode();
+  check(
+    "点光/聚光默认 Range = 10（新灯辅助线与光照范围天然可见，Unity 同款默认）",
+    p.distance === 10 && new SpotLightNode().distance === 10,
+  );
+  p.distance = 0;
+  const ph = new LightNodeHelper();
+  ph.sync(p, undefined, ctx);
+  const pSeg = ph.object.children.find(
+    (c) => (c as THREE.LineSegments).isLineSegments === true,
+  ) as THREE.LineSegments | undefined;
+  pSeg?.geometry.computeBoundingSphere();
+  check(
+    "点光 Range=0 → 范围环收拢隐藏（不弹回示意尺寸）",
+    !!pSeg && (pSeg.geometry.getAttribute("position")?.count ?? 0) === 0,
+    String(pSeg?.geometry.getAttribute("position")?.count ?? "无属性"),
+  );
+  p.distance = 7;
+  ph.sync(p, undefined, ctx);
+  pSeg.geometry.computeBoundingSphere();
+  check("点光范围环跟随 Range（半径 7）", approx(pSeg.geometry.boundingSphere?.radius ?? -1, 7));
+  ph.dispose();
+}
+{
+  const ctx = { getAspect: () => 1, getEditorDistanceTo: () => 10 };
+
+  // 聚光：光锥 = 底圆(32 段) + 四条斜线；长度 = Range，底圆半径 = tan(Spot Angle) × 长度
+  const s = new SpotLightNode({ castShadow: true });
+  s.angle = 30;
+  s.distance = 10;
+  const sh = new LightNodeHelper();
+  sh.sync(s, undefined, ctx);
+  const seg = sh.object.children.find(
+    (c) => (c as THREE.LineSegments).isLineSegments === true,
+  ) as THREE.LineSegments | undefined;
+  const geom = seg?.geometry;
+  const posCount = geom?.getAttribute("position")?.count ?? 0;
+  check(
+    "光锥 = 底圆(32 段) + 四条斜线（顶点数 = (32+4)×2）",
+    posCount === (32 + 4) * 2,
+    String(posCount),
+  );
+  geom?.computeBoundingBox();
+  const bb = geom?.boundingBox;
+  check(
+    "光锥长度跟随 Range（本地 -Z 方向 z ∈ [-10, 0]）",
+    !!bb && approx(-bb.min.z, 10) && approx(bb.max.z, 0),
+    bb ? `z∈[${bb.min.z}, ${bb.max.z}]` : "",
+  );
+  check(
+    "光锥半径跟随 Spot Angle（tan30° × 10 ≈ 5.77）",
+    !!bb && approx(bb.max.x, Math.tan((30 * Math.PI) / 180) * 10, 1e-2),
+    bb ? String(bb.max.x) : "",
+  );
+  // Range=0（无限远）→ 光锥收拢隐藏
+  s.distance = 0;
+  sh.sync(s, undefined, ctx);
+  const seg2 = sh.object.children.find(
+    (c) => (c as THREE.LineSegments).isLineSegments === true,
+  ) as THREE.LineSegments;
+  check(
+    "聚光 Range=0 → 光锥收拢隐藏（不弹回示意尺寸）",
+    (seg2.geometry.getAttribute("position")?.count ?? 0) === 0,
+    String(seg2.geometry.getAttribute("position")?.count ?? "无属性"),
+  );
+  sh.dispose();
+}
+{
+  // 选中显示门控：未选中的灯光辅助线不可见，选中即现，取消选中隐藏
+  const scene = new THREE.Scene();
+  const hs = new HelperSystem(scene, { getAspect: () => 1, getEditorDistanceTo: () => 10 });
+  const p = new PointLightNode();
+  hs.rebuildAll(fakeGraph([p]), new Map());
+  const helperObj = scene.getObjectByName("__helper_light");
+  check("未选中的灯光辅助线不可见", !!helperObj && helperObj.visible === false);
+  hs.setSelectedIds([p.id]);
+  check("选中后辅助线立即显示", !!helperObj && helperObj.visible === true);
+  hs.setSelectedIds([]);
+  check("取消选中后辅助线隐藏", helperObj!.visible === false);
+  hs.dispose();
 }
 
 console.log(failed === 0 ? "\n阴影系统冒烟：全部通过" : `\n阴影系统冒烟：${failed} 项失败`);

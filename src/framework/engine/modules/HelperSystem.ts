@@ -2,12 +2,21 @@ import * as THREE from "three";
 import type { Node } from "../../prototype/Node";
 import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import { ColliderNodeHelper } from "./helpers/ColliderNodeHelper";
+import { LightNodeHelper } from "./helpers/LightNodeHelper";
 import { createNodeHelper } from "./helpers/createNodeHelper";
 import type { HelperContext, NodeHelper } from "./helpers/types";
 
 interface HelperEntry {
   node: Node;
   helper: NodeHelper;
+}
+
+/**
+ * 选中可见的辅助线类型：碰撞体线框（选中即现）与灯光辅助线/方向线
+ * （范围环/光锥/方向箭头，常驻会遮挡场景，仅选中该灯时显示）。
+ */
+function isSelectionGatedHelper(helper: NodeHelper): boolean {
+  return helper instanceof ColliderNodeHelper || helper instanceof LightNodeHelper;
 }
 
 /**
@@ -79,13 +88,13 @@ export class HelperSystem {
   }
 
   /**
-   * 选中集变化（引擎选择变化时调用）：碰撞体线框只对选中节点显示。
-   * 立即重贴一次碰撞体辅助线显隐（不等下一帧 tick）。
+   * 选中集变化（引擎选择变化时调用）：选中可见的辅助线（碰撞体线框、灯光
+   * 辅助线/方向线）只对选中节点显示。立即切换显隐（不等下一帧 tick）。
    */
   setSelectedIds(ids: string[]): void {
     this.selectedIds = new Set(ids);
     for (const entry of this.entries.values()) {
-      if (entry.helper instanceof ColliderNodeHelper) {
+      if (isSelectionGatedHelper(entry.helper)) {
         entry.helper.object.visible = this.selectedIds.has(entry.node.id);
       }
     }
@@ -115,10 +124,13 @@ export class HelperSystem {
 
   private syncEntry(entry: HelperEntry, obj: THREE.Object3D | undefined): void {
     entry.helper.sync(entry.node, obj, this.ctx);
-    // 碰撞体线框叠加选中过滤（helper.sync 会按组件启停自设 visible，这里取交集；
-    // 未选中的碰撞体仍保持同步，选中即现、数据变化照常重建）
+    // 选中可见的辅助线在此门控（未选中的保持同步，选中即现、数据变化照常重建）：
+    // - 碰撞体线框：helper.sync 会按组件启停自设 visible，这里取交集；
+    // - 灯光辅助线/方向线：sync 不管可见性，直接按选中集开关。
     if (entry.helper instanceof ColliderNodeHelper) {
       if (!this.selectedIds.has(entry.node.id)) entry.helper.object.visible = false;
+    } else if (entry.helper instanceof LightNodeHelper) {
+      entry.helper.object.visible = this.selectedIds.has(entry.node.id);
     }
   }
 

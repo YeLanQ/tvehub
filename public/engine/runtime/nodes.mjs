@@ -156,11 +156,13 @@ export function buildSceneTree(rootJson, scene, ctx) {
       const sl = new THREE.SpotLight(
         color,
         intensity,
-        num(json.distance, 0),
+        num(json.distance, 10),
         num(json.angle, 45) * D2R,
         num(json.penumbra, 0.2),
         num(json.decay, 2),
       );
+      // 聚光灯位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z（与编辑器同语义）
+      sl.position.set(0, 0, 0);
       sl.castShadow = json.castShadow === true;
       applyLightShadow(sl, json);
       light = sl;
@@ -168,7 +170,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
       const pl = new THREE.PointLight(
         color,
         intensity,
-        num(json.distance, 0),
+        num(json.distance, 10),
         num(json.decay, 2),
       );
       // 点光阴影：立方体阴影贴图（六个 90° 面），开销高于平面阴影，默认关

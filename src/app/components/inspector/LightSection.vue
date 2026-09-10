@@ -133,8 +133,9 @@ function penumbraOf(): number {
     <NumberField
       :model-value="distanceOf()"
       :step="0.5"
-      title="照射距离（0 = 无限远）"
-      @commit="(v) => emit('update', 'Set Distance', clamp(v, 0, 10000))"
+      :min="0.01"
+      title="照射距离（0 = 无限远；界面最小 0.01，避免拖动归零误入无限远模式）"
+      @commit="(v) => emit('update', 'Set Distance', clamp(v, 0.01, 10000))"
     />
   </div>
 
@@ -175,8 +176,9 @@ function penumbraOf(): number {
     <NumberField
       :model-value="node.intensity"
       :step="0.1"
-      title="Intensity"
-      @commit="(v) => emit('update', 'Set Intensity', v)"
+      :min="0.01"
+      title="Intensity（最小 0.01；需要完全关灯请关闭灯光组件或勾掉节点可见性）"
+      @commit="(v) => emit('update', 'Set Intensity', Math.max(0.01, v))"
     />
   </div>
 

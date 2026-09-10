@@ -9,19 +9,20 @@ import {
   type NodeHelper,
 } from "./types";
 
+/** 平行光：方向箭头长度（世界单位） */
 const ARROW_LENGTH = 2.2;
-const CONE_LENGTH = 1.6;
-const CONE_SEGMENTS = 20;
+/** 点光范围环的分段数 */
 const RING_SEGMENTS = 24;
+/** 聚光底圆的分段数 */
+const CIRCLE_SEGMENTS = 32;
 
 /**
- * 灯光辅助线（线框形式，不参与拾取），按灯光类型绘制：
- * - point       → 仅当 distance > 0 时绘制两个相互垂直的圆环（半径 = distance），
- *                  distance = 0（无限）时无线框
- * - directional → 沿灯光本地 -Z 的方向箭头
- * - spot        → 沿本地 -Z 的圆锥光束线框（角度随节点参数变化）
- * - ambient     → 无方向无范围，不绘制任何线框，仅保留图标
- * 颜色跟随灯光颜色实时更新。
+ * 灯光辅助线（线框形式，不参与拾取），按灯光类型绘制，全部跟随节点参数实时变化：
+ * - point       → 两个相互垂直的范围圆环（半径 = Range；Range=0 无限远时收拢隐藏）；
+ * - directional → 沿灯光本地 -Z 的方向箭头；
+ * - spot        → 光锥 = 底圆 + 四条斜线（Unity 样式）：长度跟随 Range（0 = 收拢隐藏），
+ *                 底圆半径 = tan(Spot Angle) × 长度。
+ * 颜色跟随灯光颜色实时更新；显示时机由 HelperSystem 门控（仅选中该灯时可见）。
  */
 export class LightNodeHelper implements NodeHelper {
   readonly object: THREE.Group;
@@ -59,9 +60,9 @@ export class LightNodeHelper implements NodeHelper {
       this.kindKey = light.lightKind;
     }
     if (light.lightKind === "point" && node instanceof PointLightNode) {
-      this.updateRangeSphere(node.distance);
+      this.updatePointRange(node.distance);
     } else if (light.lightKind === "spot" && node instanceof SpotLightNode) {
-      this.updateSpotCone(node.angle);
+      this.updateSpotCone(node.angle, node.distance);
     }
     this.lineMat.color.setHex(light.lightColor);
     if (this.arrow) this.arrow.setColor(light.lightColor);
@@ -113,63 +114,29 @@ export class LightNodeHelper implements NodeHelper {
       this.coneGeom = geom;
       this.object.add(seg);
     }
-    // ambient：无方向、无范围，不绘制线框
+    // ambient：无方向无范围，不绘制线框
   }
 
-  /** 点光范围：distance>0 时绘制两个垂直圆环（半径=distance）；distance=0（无限）时清空 */
-  private updateRangeSphere(distance: number): void {
-    const radius = distance > 0 ? distance : 0;
+  /** 点光范围环：半径跟随 Range；Range=0（无限远）时收拢隐藏（不弹回示意尺寸） */
+  private updatePointRange(distance: number): void {
+    const radius = Math.max(0, distance);
     const sig = radius.toFixed(3);
     if (sig === this.rangeSig || !this.rangeSeg || !this.rangeGeom) return;
     this.rangeSig = sig;
     this.rangeGeom.dispose();
-
-    if (radius <= 0) {
-      this.rangeGeom = new THREE.BufferGeometry();
-    } else {
-      this.rangeGeom = buildRangeRings(radius, RING_SEGMENTS);
-    }
+    this.rangeGeom = radius > 0 ? buildRangeRings(radius, RING_SEGMENTS) : new THREE.BufferGeometry();
     this.rangeSeg.geometry = this.rangeGeom;
   }
 
-  /** 依据光束半角（度）更新锥形辅助线：顶点在原点，向 -Z 张开 */
-  private updateSpotCone(angleDeg: number): void {
-    const sig = angleDeg.toFixed(3);
+  /** 聚光光锥：长度跟随 Range（0 = 收拢隐藏），底圆半径 = tan(Spot Angle) × 长度 */
+  private updateSpotCone(angleDeg: number, distance: number): void {
+    const length = Math.max(0, distance);
+    const sig = `${angleDeg.toFixed(3)}|${length.toFixed(3)}`;
     if (sig === this.coneSig || !this.coneSeg || !this.coneGeom) return;
     this.coneSig = sig;
-
-    const angle = Math.max(0.5, Math.min(89, angleDeg));
-    const radius = Math.tan((angle * Math.PI) / 180) * CONE_LENGTH;
-    const n = CONE_SEGMENTS;
-    const vertices = n * 4; // 环边 n 段 × 2 + 顶角连线 n 段 × 2
-    const pos = new Float32Array(vertices * 3);
-    const k = (i: number): number => i % n;
-    let w = 0;
-    const put = (a: THREE.Vector3, b: THREE.Vector3): void => {
-      pos[w++] = a.x;
-      pos[w++] = a.y;
-      pos[w++] = a.z;
-      pos[w++] = b.x;
-      pos[w++] = b.y;
-      pos[w++] = b.z;
-    };
-    const apex = new THREE.Vector3(0, 0, 0);
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < n; i++) {
-      const t = (i / n) * Math.PI * 2;
-      pts.push(
-        new THREE.Vector3(Math.cos(t) * radius, Math.sin(t) * radius, -CONE_LENGTH),
-      );
-    }
-    for (let i = 0; i < n; i++) put(pts[k(i)], pts[k(i + 1)]);
-    for (let i = 0; i < n; i++) put(apex, pts[i]);
-
     this.coneGeom.dispose();
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.computeBoundingSphere();
-    this.coneGeom = geom;
-    this.coneSeg.geometry = geom;
+    this.coneGeom = length > 0 ? buildSpotCone(angleDeg, length) : new THREE.BufferGeometry();
+    this.coneSeg.geometry = this.coneGeom;
   }
 
   private clearChildren(): void {
@@ -228,6 +195,39 @@ function buildRangeRings(radius: number, segments: number): THREE.BufferGeometry
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geom.computeBoundingSphere();
+  return geom;
+}
+
+/**
+ * 聚光光锥线框（Unity 样式）：底圆 + 四条斜线。
+ * - 底圆：CIRCLE_SEGMENTS 段，位于本地 -Z 的 length 处，半径 = tan(半角) × length；
+ * - 四条斜线：顶点（原点）连到底圆 0°/90°/180°/270° 四个点。
+ */
+function buildSpotCone(angleDeg: number, length: number): THREE.BufferGeometry {
+  const angle = Math.max(0.5, Math.min(89, angleDeg));
+  const radius = Math.tan((angle * Math.PI) / 180) * length;
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < CIRCLE_SEGMENTS; i++) {
+    const t = (i / CIRCLE_SEGMENTS) * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(t) * radius, Math.sin(t) * radius, -length));
+  }
+  const pos: number[] = [];
+  const put = (a: THREE.Vector3, b: THREE.Vector3): void => {
+    pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+  };
+  // 底圆
+  for (let i = 0; i < CIRCLE_SEGMENTS; i++) {
+    put(pts[i], pts[(i + 1) % CIRCLE_SEGMENTS]);
+  }
+  // 四条斜线（0°/90°/180°/270°）
+  put(new THREE.Vector3(0, 0, 0), new THREE.Vector3(radius, 0, -length));
+  put(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, radius, -length));
+  put(new THREE.Vector3(0, 0, 0), new THREE.Vector3(-radius, 0, -length));
+  put(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -radius, -length));
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   geom.computeBoundingSphere();
   return geom;
 }

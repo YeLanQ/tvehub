@@ -602,7 +602,7 @@ class Light extends BuiltinComponent {
   }
   /** 点光/聚光灯：照射距离（0 = 无限远） */
   get distance() {
-    return numOr(this.__settings()?.distance, 0);
+    return numOr(this.__settings()?.distance, 10);
   }
   set distance(v) {
     const s = this.__settings();
@@ -1156,7 +1156,7 @@ function lightSettingsFrom(s) {
     kind: "point",
     lightColor: 0xffffff,
     intensity: 1,
-    distance: 0,
+    distance: 10,
     decay: 2,
     angle: 45,
     penumbra: 0.2,

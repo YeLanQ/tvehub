@@ -393,6 +393,8 @@ export class SceneSynchronizer {
           s.penumbra,
           s.decay,
         );
+        // 聚光灯位置归零（three 默认 (0,1,0)），与灯光节点同方向语义（本地 -Z）
+        sl.position.set(0, 0, 0);
         sl.castShadow = s.castShadow;
         this.configureShadowLight(sl, componentShadowConfig(s));
         if (dirTarget) sl.target = dirTarget;
@@ -854,6 +856,9 @@ export class SceneSynchronizer {
         light.penumbra,
         light.decay,
       );
+      // three 的 SpotLight 默认位置同样是 (0,1,0)：不归零会让实际光照方向
+      // 偏离节点 -Z 约 45°（(0,0,-1)-(0,1,0)），辅助线光锥也随之对不上
+      sl.position.set(0, 0, 0);
       sl.castShadow = light.castShadow;
       this.configureShadowLight(sl, light.shadow);
       if (dirTarget) sl.target = dirTarget;

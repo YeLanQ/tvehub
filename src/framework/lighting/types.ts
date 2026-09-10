@@ -47,7 +47,7 @@ export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
   kind: "point",
   lightColor: 0xffffff,
   intensity: 1,
-  distance: 0,
+  distance: 10,
   decay: 2,
   angle: 45,
   penumbra: 0.2,

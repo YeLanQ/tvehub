@@ -65,17 +65,19 @@ export function buildComponentLight(s, obj) {
     const sl = new THREE.SpotLight(
       color,
       intensity,
-      num(s.distance, 0),
+      num(s.distance, 10),
       num(s.angle, 45) * D2R,
       num(s.penumbra, 0.2),
       num(s.decay, 2),
     );
+    // 聚光灯位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z 的项目语义
+    sl.position.set(0, 0, 0);
     sl.castShadow = s.castShadow === true;
     applyLightShadow(sl, s);
     light = sl;
   } else {
     // 点光阴影：立方体阴影贴图（六个 90° 面），开销高于平面阴影，默认关
-    const pl = new THREE.PointLight(color, intensity, num(s.distance, 0), num(s.decay, 2));
+    const pl = new THREE.PointLight(color, intensity, num(s.distance, 10), num(s.decay, 2));
     pl.castShadow = s.castShadow === true;
     applyLightShadow(pl, s);
     light = pl;
