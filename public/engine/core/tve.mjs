@@ -13,7 +13,7 @@ import * as THREE from "./three.module.min.js";
 import { postLog } from "./log.mjs";
 import { buildComponentLight } from "./lights.mjs";
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
@@ -1379,6 +1379,156 @@ export function nodeType(options) {
 }
 
 // ---------------------------------------------------------------------------
+// 委托（Delegate）：多播事件容器（参考 C# Delegate / UnityEvent）。
+// 广播式回调的登记与触发，回调异常逐个隔离上报，不影响其余回调与其他脚本；
+// invoke 用快照迭代，回调内 add/remove 自身或他人均安全。
+// ---------------------------------------------------------------------------
+
+/** 委托移除令牌（add 返回；remove 可传令牌或原函数） */
+class DelegateToken {
+  constructor(seq) {
+    this.__delegateToken = seq;
+  }
+}
+
+class Delegate {
+  constructor() {
+    this.__handlers = [];
+    this.__seq = 0;
+  }
+
+  /** 已订阅回调数量 */
+  get count() {
+    return this.__handlers.length;
+  }
+
+  /**
+   * 订阅回调：同一函数重复订阅只登记一次。
+   * @param {Function} fn 回调（成员函数建议先 bind，或用返回的令牌退订）
+   * @returns {DelegateToken|null} 移除令牌（非法入参返回 null）
+   */
+  add(fn) {
+    if (typeof fn !== "function") return null;
+    if (this.__handlers.some((h) => h.fn === fn)) return fn;
+    const token = new DelegateToken((this.__seq += 1));
+    this.__handlers.push({ fn, token });
+    return token;
+  }
+
+  /**
+   * 退订回调：传 add 返回的令牌或原函数均可。
+   * @returns {boolean} 是否移除了一个订阅
+   */
+  remove(tokenOrFn) {
+    const idx = this.__handlers.findIndex((h) => h.fn === tokenOrFn || h.token === tokenOrFn);
+    if (idx < 0) return false;
+    this.__handlers.splice(idx, 1);
+    return true;
+  }
+
+  /** 清空全部订阅 */
+  clear() {
+    this.__handlers.length = 0;
+  }
+
+  /**
+   * 广播：按订阅顺序逐个调用全部回调。
+   * 单个回调抛错只停用该次调用并上报（编辑器控制台/浏览器控制台），不影响其余回调。
+   */
+  invoke(...args) {
+    for (const { fn } of this.__handlers.slice()) {
+      try {
+        fn(...args);
+      } catch (e) {
+        const text = e && e.message ? e.message : String(e);
+        postLog("error", "[tve] 委托回调异常: " + text);
+        console.error(e);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 对象池（Pool）：复用对象，避免频繁创建/销毁带来的卡顿与 GC 压力。
+// get 复用空闲对象（无则新建）；put 归还（先调 reset 清理，空闲数达上限则丢弃）。
+// 池只回收自己发出的对象：重复归还/外来对象会被拒绝。
+// ---------------------------------------------------------------------------
+
+class Pool {
+  /**
+   * @param {Function} factory 对象工厂（无参；新建对象时调用）
+   * @param {{reset?: Function, initial?: number, max?: number}} [options]
+   *        reset = 归还时清理回调；initial = 预热数量；max = 空闲上限（缺省无限）
+   */
+  constructor(factory, options) {
+    if (typeof factory !== "function") {
+      throw new Error("[tve] Pool 需要一个 factory 工厂函数");
+    }
+    const o = options && typeof options === "object" ? options : {};
+    this.__factory = factory;
+    this.__reset = typeof o.reset === "function" ? o.reset : null;
+    this.__max = typeof o.max === "number" && Number.isFinite(o.max) ? Math.max(0, Math.floor(o.max)) : Infinity;
+    this.__free = [];
+    this.__live = new Set();
+    this.__created = 0;
+    const initial = typeof o.initial === "number" && Number.isFinite(o.initial) ? Math.max(0, Math.floor(o.initial)) : 0;
+    if (initial > 0) this.prewarm(initial);
+  }
+
+  /** 空闲对象数量 */
+  get count() {
+    return this.__free.length;
+  }
+
+  /** 累计创建的对象总数（评估池命中率用） */
+  get totalCreated() {
+    return this.__created;
+  }
+
+  /** 预热：提前创建 n 个空闲对象（受 max 上限约束） */
+  prewarm(n) {
+    const total = typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+    while (this.__free.length < Math.min(total, this.__max)) {
+      this.__free.push(this.__create());
+    }
+  }
+
+  __create() {
+    this.__created += 1;
+    return this.__factory();
+  }
+
+  /** 取一个对象：优先复用空闲对象，池空则新建 */
+  get() {
+    const item = this.__free.pop() ?? this.__create();
+    this.__live.add(item);
+    return item;
+  }
+
+  /**
+   * 归还对象：先调用 reset 清理（若配置），再入空闲池（达 max 上限则丢弃交给 GC）。
+   * 非本池发出的对象或重复归还返回 false。
+   */
+  put(item) {
+    if (!this.__live.delete(item)) return false;
+    if (this.__reset) {
+      try {
+        this.__reset(item);
+      } catch (e) {
+        postLog("warn", "[tve] 对象池 reset 异常: " + (e && e.message ? e.message : String(e)));
+      }
+    }
+    if (this.__free.length < this.__max) this.__free.push(item);
+    return true;
+  }
+
+  /** 清空空闲列表（释放引用交给 GC；不影响已借出的对象） */
+  clear() {
+    this.__free.length = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // engine 入口
 // ---------------------------------------------------------------------------
 
@@ -1708,6 +1858,9 @@ export {
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
+  // 脚本通用系统（委托/对象池）
+  Delegate,
+  Pool,
   // 内置组件门面类（getComponent/addComponent 参数；组件字段声明类型）
   RigidBody,
   Collider,

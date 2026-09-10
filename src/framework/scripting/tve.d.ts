@@ -503,6 +503,108 @@ export interface MathApi {
 }
 
 // ---------------------------------------------------------------------------
+// 脚本通用系统：委托（多播事件）与对象池。两者均为纯脚本设施，与引擎接线无关，
+// 在预览/发布产物中行为一致。
+// ---------------------------------------------------------------------------
+
+/**
+ * 委托：多播事件容器（参考 C# Delegate / UnityEvent）。
+ * 用于把"某件事发生"广播给多个订阅者——组件间解耦通信的标准设施：
+ *
+ * ```ts
+ * import { Delegate, Component } from "tve";
+ *
+ * export class GameEvents extends Component {
+ *   static readonly onScore = new Delegate<(delta: number) => void>();
+ * }
+ * // 订阅方（任意组件）：
+ * const token = GameEvents.onScore.add((delta) => engine.log("得分", delta));
+ * GameEvents.onScore.remove(token);   // 或 remove(原函数)
+ * // 发布方：
+ * GameEvents.onScore.invoke(10);
+ * ```
+ *
+ * 语义：同一函数重复订阅只登记一次；invoke 按订阅顺序逐个调用（快照迭代，
+ * 回调内 add/remove 安全）；单个回调抛错被隔离上报，不影响其余回调。
+ * 建议在组件 onDestroy 中 clear()，避免悬挂订阅。
+ */
+export class Delegate<T extends (...args: never[]) => unknown = () => void> {
+  /** @internal 由脚本直接 new，无需参数 */
+  constructor();
+  /** 已订阅回调数量 */
+  readonly count: number;
+  /**
+   * 订阅回调（同一函数重复订阅只登记一次）。
+   * @returns 移除令牌（退订时传回 remove；成员函数建议用令牌退订）
+   */
+  add(handler: T): DelegateToken;
+  /** 退订回调：传 add 返回的令牌或原函数均可。返回是否移除了一个订阅 */
+  remove(tokenOrHandler: DelegateToken | T): boolean;
+  /** 清空全部订阅（onDestroy 中调用可防悬挂订阅） */
+  clear(): void;
+  /** 广播：按订阅顺序逐个调用全部回调（参数透传给每个订阅者） */
+  invoke(...args: Parameters<T>): void;
+}
+
+/** 委托移除令牌（不透明句柄；只能从 Delegate.add 获得） */
+export interface DelegateToken {
+  /** @internal 令牌序号 */
+  readonly __delegateToken: number;
+}
+
+/**
+ * 对象池：复用对象，避免频繁创建/销毁带来的卡顿与 GC 压力。
+ * 典型用途：子弹、特效、飘字、临时列表等高频小对象：
+ *
+ * ```ts
+ * import { Pool, Component, engine } from "tve";
+ *
+ * interface Bullet { active: boolean; x: number; y: number; }
+ *
+ * export default class Gun extends Component {
+ *   private pool = new Pool<Bullet>(
+ *     () => ({ active: false, x: 0, y: 0 }),        // 工厂：新建
+ *     { reset: (b) => { b.active = false; }, initial: 10, max: 100 },
+ *   );
+ *
+ *   fire() {
+ *     const b = this.pool.get();                    // 复用空闲对象，池空才新建
+ *     b.active = true;
+ *     // ...使用后归还：
+ *     this.pool.put(b);
+ *   }
+ * }
+ * ```
+ *
+ * 语义：get 优先复用空闲对象（池空才调用工厂新建）；put 先调 reset 清理再入池
+ * （空闲数达 max 上限则丢弃交给 GC）；池只回收自己发出的对象——外来对象或重复
+ * 归还返回 false。reset 抛错被捕获忽略（告警上告）。
+ */
+export class Pool<T> {
+  /** @internal factory = 对象工厂；options 全部可选 */
+  constructor(factory: () => T, options?: {
+    /** 归还时的清理回调（put 时调用；抛错被捕获忽略） */
+    reset?: (item: T) => void;
+    /** 预热数量（创建即备好空闲对象） */
+    initial?: number;
+    /** 空闲上限（超出后归还的对象被丢弃交给 GC） */
+    max?: number;
+  });
+  /** 空闲对象数量 */
+  readonly count: number;
+  /** 累计创建的对象总数（评估池命中率用） */
+  readonly totalCreated: number;
+  /** 预热：提前创建 n 个空闲对象（受 max 上限约束） */
+  prewarm(n: number): void;
+  /** 取一个对象：优先复用空闲对象，池空则新建 */
+  get(): T;
+  /** 归还对象：先 reset 清理再入池；非本池对象/重复归还返回 false */
+  put(item: T): boolean;
+  /** 清空空闲列表（释放引用交给 GC；不影响已借出的对象） */
+  clear(): void;
+}
+
+// ---------------------------------------------------------------------------
 // 内置组件门面（getComponent / addComponent / 组件字段声明的对象）。
 // 门面 = 组件设置 + 运行时后端的实时视图：属性写入即时生效（预览运行态，
 // 不回写场景文件）；@internal 构造器由运行时创建，脚本不要 new。
