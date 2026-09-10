@@ -64,9 +64,11 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      layer: this.layer,
       prefab: this.prefab,
       components: this.components,
       intensity: this.intensity,
+      cullingMask: this.cullingMask,
       lightColor: this.lightColor,
     });
     node.distance = this.distance;

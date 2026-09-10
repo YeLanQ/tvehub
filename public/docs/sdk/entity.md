@@ -10,6 +10,7 @@ entity.id: string;              // 节点 id（与场景文件一致）
 entity.kind: EntityKind;        // 节点类型键：node/meshNode/pointLightNode…
 entity.name: string;            // 名称（可写，即时生效）
 entity.tag: string;             // 标签（检查器 Node 卡设置，空串 = 无标签）
+entity.layer: number;           // 渲染层级索引 0~31（可写，应用到对象子树渲染层）
 entity.visible: boolean;        // 可见性（可写；含子级继承）
 entity.position: Vec3;          // 本地位置（读取返回快照副本；写入接受部分字段）
 entity.rotation: Vec3;          // 本地旋转（度制欧拉角；同上）

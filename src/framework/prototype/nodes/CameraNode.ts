@@ -9,6 +9,7 @@ import {
   type CameraClearFlags,
   type CameraKind,
 } from "../../camera";
+import { ALL_LAYERS_MASK, parseCullingMask } from "../../layers";
 
 export interface CameraNodeInit extends NodeInit {
   cameraType?: CameraKind;
@@ -21,6 +22,8 @@ export interface CameraNodeInit extends NodeInit {
   clearFlags?: CameraClearFlags;
   /** 纯色清屏色（clearFlags=solidColor 生效；0xRRGGBB） */
   clearColor?: number;
+  /** 渲染层级掩码（Unity Culling Mask 语义：只渲染掩码内层的对象；-1 = 全部） */
+  cullingMask?: number;
   isEditorCamera?: boolean;
 }
 
@@ -39,6 +42,8 @@ export interface ICameraNode extends INode {
   clearFlags: CameraClearFlags;
   /** 纯色清屏色（clearFlags=solidColor 时的背景；0xRRGGBB） */
   clearColor: number;
+  /** 渲染层级掩码（Unity Culling Mask：只渲染掩码内层的对象；-1 = 全部层） */
+  cullingMask: number;
   isEditorCamera: boolean;
 }
 
@@ -58,6 +63,8 @@ export class CameraNode extends Node implements ICameraNode {
   clearFlags: CameraClearFlags = DEFAULT_CAMERA_CLEAR_FLAGS;
   /** 纯色清屏色（clearFlags=solidColor 时的背景；0xRRGGBB） */
   clearColor = 0x000000;
+  /** 渲染层级掩码（默认全部层；编辑器自由视角不受此值影响，恒全层可见） */
+  cullingMask: number = ALL_LAYERS_MASK;
   isEditorCamera = false;
 
   constructor(init: CameraNodeInit = {}) {
@@ -69,6 +76,7 @@ export class CameraNode extends Node implements ICameraNode {
     this.orthoSize = clampCameraParam("orthoSize", init.orthoSize ?? this.orthoSize);
     this.clearFlags = parseCameraClearFlags(init.clearFlags ?? this.clearFlags);
     this.clearColor = (init.clearColor ?? this.clearColor) & 0xffffff;
+    this.cullingMask = parseCullingMask(init.cullingMask ?? this.cullingMask);
     this.isEditorCamera = init.isEditorCamera ?? this.isEditorCamera;
   }
 
@@ -78,6 +86,7 @@ export class CameraNode extends Node implements ICameraNode {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      layer: this.layer,
       prefab: this.prefab,
       components: this.components,
       cameraType: this.cameraType,
@@ -87,6 +96,7 @@ export class CameraNode extends Node implements ICameraNode {
       orthoSize: this.orthoSize,
       clearFlags: this.clearFlags,
       clearColor: this.clearColor,
+      cullingMask: this.cullingMask,
       isEditorCamera: this.isEditorCamera,
     });
   }
@@ -99,6 +109,7 @@ export class CameraNode extends Node implements ICameraNode {
     target.orthoSize = this.orthoSize;
     target.clearFlags = this.clearFlags;
     target.clearColor = this.clearColor;
+    target.cullingMask = this.cullingMask;
     target.isEditorCamera = this.isEditorCamera;
   }
 
@@ -113,6 +124,7 @@ export class CameraNode extends Node implements ICameraNode {
     );
     this.clearFlags = parseCameraClearFlags(source.clearFlags);
     this.clearColor = ((source.clearColor as number) ?? this.clearColor) & 0xffffff;
+    this.cullingMask = parseCullingMask(source.cullingMask);
     this.isEditorCamera = (source.isEditorCamera as boolean) ?? this.isEditorCamera;
   }
 }

@@ -299,6 +299,10 @@ export class Entity {
   /** 节点标签（GameObject Tag 语义；检查器 Node 卡设置，空串 = 无标签） */
   readonly tag: string;
 
+  /** 渲染层级索引（Unity Layer 语义，0~31；可写，应用到对象子树的渲染层） */
+  get layer(): number;
+  set layer(value: number);
+
   /** 可见性（可写，即时生效；含子级继承） */
   get visible(): boolean;
   set visible(value: boolean);
@@ -776,6 +780,9 @@ export declare class Light {
   /** 强度 */
   get intensity(): number;
   set intensity(value: number);
+  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  get cullingMask(): number;
+  set cullingMask(value: number);
   /** 点光/聚光灯：照射距离（0 = 无限远） */
   get distance(): number;
   set distance(value: number);
@@ -1011,6 +1018,8 @@ export interface LightAddOptions {
   color?: number;
   lightColor?: number;
   intensity?: number;
+  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  cullingMask?: number;
   distance?: number;
   decay?: number;
   /** 聚光灯光束半角（度） */

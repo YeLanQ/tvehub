@@ -25,6 +25,11 @@ export function applyLightShadow(light, s) {
     resolution: [512, 1024, 2048, 4096].includes(num(s.shadowResolution, 0)) ? num(s.shadowResolution, 0) : 0,
   };
   light.userData.shadowCfg = cfg;
+  // 阴影相机层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+  // 的对象投影进它的阴影贴图）。three 阴影通道按 shadowCamera.layers 过滤物体，
+  // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。调用方在置位灯光
+  // layers.mask 之后调用本函数，这里镜像即可。
+  light.shadow.camera.layers.mask = light.layers.mask;
   if (light.castShadow !== true) return;
   const isPoint = light.isPointLight === true;
   // 显式分辨率档位优先；0 = 自动（平面 2048 / 点光 1024，立方体贴图 ×6 开销降档）
@@ -48,17 +53,23 @@ export function buildComponentLight(s, obj) {
   const kind = typeof s.kind === "string" ? s.kind : "point";
   const color = num(s.lightColor, 0xffffff) & 0xffffff;
   const intensity = num(s.intensity, 1);
+  // 灯光 Culling Mask（Unity 语义）：真实灯光对象的 layers = 掩码（缺省全部层）
+  const lightMask = typeof s.cullingMask === "number" && Number.isFinite(s.cullingMask)
+    ? s.cullingMask | 0
+    : -1;
   const group = new THREE.Group();
   group.name = "__compLight";
   let light;
   if (kind === "ambient") {
     light = new THREE.AmbientLight(color, intensity);
+    light.layers.mask = lightMask;
   } else if (kind === "directional") {
     const dl = new THREE.DirectionalLight(color, intensity);
     // 平行光位置归零（three 默认 (0,1,0)）：光照方向 = 节点本地 -Z 的项目语义，
     // 也让运行时阴影相机沿轴后推的位移精确落在光照轴上
     dl.position.set(0, 0, 0);
     dl.castShadow = s.castShadow === true;
+    dl.layers.mask = lightMask;
     applyLightShadow(dl, s);
     light = dl;
   } else if (kind === "spot") {
@@ -73,12 +84,14 @@ export function buildComponentLight(s, obj) {
     // 聚光灯位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z 的项目语义
     sl.position.set(0, 0, 0);
     sl.castShadow = s.castShadow === true;
+    sl.layers.mask = lightMask;
     applyLightShadow(sl, s);
     light = sl;
   } else {
     // 点光阴影：立方体阴影贴图（六个 90° 面），开销高于平面阴影，默认关
     const pl = new THREE.PointLight(color, intensity, num(s.distance, 10), num(s.decay, 2));
     pl.castShadow = s.castShadow === true;
+    pl.layers.mask = lightMask;
     applyLightShadow(pl, s);
     light = pl;
   }

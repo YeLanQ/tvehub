@@ -17,6 +17,7 @@ import {
   type CameraParamKey,
 } from "../../../framework/camera";
 import NumberField from "../NumberField.vue";
+import CullingMaskField from "../CullingMaskField.vue";
 
 const props = defineProps<{ node: CameraNode; rev?: number }>();
 
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   changeType: [type: string];
   editClearFlags: [flags: string];
   editClearColor: [color: number];
+  editCullingMask: [mask: number];
 }>();
 
 /** 已注册相机类型（类型下拉选项；特有分组也按当前类型 def 取） */
@@ -104,9 +106,17 @@ function onClearColorInput(e: Event): void {
       </select>
     </div>
 
-    <!-- 渲染分组：清除标志（预览/运行渲染的清屏方式与背景） -->
+    <!-- 渲染分组：Culling Mask + 清除标志（预览/运行渲染的层级筛选与清屏方式） -->
     <div class="cam-group">
       <span class="cam-group-title">渲染（Rendering）</span>
+    </div>
+    <div class="field" :data-rev="rev">
+      <label title="Culling Mask（只渲染掩码内层的对象；预览与运行时生效）">Culling Mask</label>
+      <CullingMaskField
+        :mask="node.cullingMask"
+        :rev="rev"
+        @change="(m) => emit('editCullingMask', m)"
+      />
     </div>
     <div class="field">
       <label title="Clear Flags">清除标志</label>

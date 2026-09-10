@@ -1,0 +1,49 @@
+// 由 scripts/gen-web-preview-files.mjs 自动生成（vite 启动/构建与 pnpm build
+// 时重建；请勿手动编辑）
+export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
+  "engine/core/lights.mjs",
+  "engine/core/log.mjs",
+  "engine/core/scripts.mjs",
+  "engine/core/three.core.min.js",
+  "engine/core/three.module.min.js",
+  "engine/core/tve.mjs",
+  "engine/core/utils.mjs",
+  "engine/runtime/animation.mjs",
+  "engine/runtime/animclip.mjs",
+  "engine/runtime/audio.mjs",
+  "engine/runtime/camera.mjs",
+  "engine/runtime/layerpass.mjs",
+  "engine/runtime/loaders/BufferGeometryUtils.js",
+  "engine/runtime/loaders/FBXLoader.js",
+  "engine/runtime/loaders/GLTFLoader.js",
+  "engine/runtime/loaders/NURBSCurve.js",
+  "engine/runtime/loaders/NURBSUtils.js",
+  "engine/runtime/loaders/OBJLoader.js",
+  "engine/runtime/loaders/SkeletonUtils.js",
+  "engine/runtime/loaders/fflate.module.js",
+  "engine/runtime/material.mjs",
+  "engine/runtime/mesh.mjs",
+  "engine/runtime/model.mjs",
+  "engine/runtime/nodes.mjs",
+  "engine/runtime/pak.mjs",
+  "engine/runtime/physics.mjs",
+  "engine/runtime/shaderlab.mjs",
+  "engine/runtime/sky.mjs",
+  "engine/runtime/stage.mjs",
+  "engine/runtime/textures.mjs",
+  "index.html",
+  "player.mjs"
+];
+export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = {
+  "ammo": [
+    "engine/runtime/physics-engines/ammo/ammo-esm.mjs",
+    "engine/runtime/physics-engines/ammo/ammo-glue.mjs",
+    "engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs"
+  ],
+  "jolt": [
+    "engine/runtime/physics-engines/jolt.mjs"
+  ],
+  "rapier": [
+    "engine/runtime/physics-engines/rapier.mjs"
+  ]
+};

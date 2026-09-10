@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:layers": "node scripts/check-layers.mjs",
-    "build": "vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
+    "build": "node scripts/gen-web-preview-files.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
@@ -19,7 +19,10 @@
     "smoke:shadow-runtime": "node scripts/smoke-shadow-runtime.mjs",
     "smoke:node-menu": "vite build --ssr scripts/smoke-node-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-node-menu.js",
     "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js",
-    "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js"
+    "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js",
+    "smoke:layers": "vite build --ssr scripts/smoke-layers.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-layers.js",
+    "smoke:layers-runtime": "node scripts/smoke-layers-runtime.mjs",
+    "gen:preview-files": "node scripts/gen-web-preview-files.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

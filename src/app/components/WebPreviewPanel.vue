@@ -184,10 +184,10 @@ onMounted(() => {
 onUnmounted(() => {
   runSeq++; // 使进行中的导出/同步失效
   window.removeEventListener("message", onPreviewLog);
-  // 离开预览页签即释放端口（再次进入会重新导出并启动）
-  void api.stopWebPreview().catch(() => {
-    /* ignore */
-  });
+  // 不随页签关闭而停服务：固定端口（39110）正是「在外部浏览器里打开预览」的入口，
+  // 停服会让常驻的浏览器标签页在加载中途成片中断（net::ERR_CONNECTION_ABORTED）。
+  // 再次进入页签会重新导出并复用既有服务（后端按目录热切换，不重建监听）。
+  // 需要释放端口时用工具条的「停止预览服务」（preview.stop）。
 });
 </script>
 

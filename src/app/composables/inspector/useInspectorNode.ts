@@ -46,6 +46,8 @@ export interface InspectorNodeApi {
   onNodeToggleVisible: (value: boolean) => void;
   /** 设置节点标签（GameObject Tag 语义） */
   onNodeSetTag: (tag: string) => void;
+  /** 设置节点渲染层级（Unity Layer 语义；渲染侧经 SceneSynchronizer 落到 object.layers） */
+  onNodeSetLayer: (layer: number) => void;
   onTransformChange: (axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number) => void;
   onMeshUpdate: (label: string, value: unknown) => void;
   onAnimUpdate: (label: string, value: unknown) => void;
@@ -194,6 +196,13 @@ export function useInspectorNode(): InspectorNodeApi {
     }, "设置标签");
   }
 
+  /** 设置节点渲染层级（Unity Layer 语义，0~31；越界值在数据层收敛） */
+  function onNodeSetLayer(layer: number): void {
+    commit((n) => {
+      n.layer = layer;
+    }, "Set Layer");
+  }
+
   return {
     node,
     revision,
@@ -208,6 +217,7 @@ export function useInspectorNode(): InspectorNodeApi {
     onNodeRename,
     onNodeToggleVisible,
     onNodeSetTag,
+    onNodeSetLayer,
     onTransformChange,
     onMeshUpdate,
     onAnimUpdate,

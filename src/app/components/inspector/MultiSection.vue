@@ -10,6 +10,8 @@ import { computed } from "vue";
 import type { Node } from "../../../framework/prototype/Node";
 import type { JsonRecord } from "../../../framework/prototype/types";
 import { getEditorStore } from "../../stores/editor";
+import { getProjectStore } from "../../stores/project";
+import { clampLayerIndex, definedLayerIndices, layerNameAt } from "../../../framework/layers";
 import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ ids: string[]; rev?: number }>();
@@ -19,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const editorStore = getEditorStore();
+const projectStore = getProjectStore();
 const engine = editorStore.engine;
 
 /** 选中节点列表（rev 为失效信号） */
@@ -103,6 +106,34 @@ function commitTag(): void {
   }, "批量设置标签");
 }
 
+// —— 层（渲染层级批量设置） ——
+
+const layerUniform = computed<number | null>(() => {
+  void props.rev;
+  const nodes0 = nodes.value;
+  if (!nodes0.length) return null;
+  const l0 = clampLayerIndex(nodes0[0].layer);
+  return nodes0.every((n) => clampLayerIndex(n.layer) === l0) ? l0 : null;
+});
+
+const layerOptions = computed(() => {
+  void props.rev;
+  const indices = new Set<number>(definedLayerIndices(projectStore.layers));
+  const cur = layerUniform.value;
+  if (cur !== null) indices.add(cur);
+  return [...indices]
+    .sort((a, b) => a - b)
+    .map((i) => ({ index: i, name: layerNameAt(projectStore.layers, i) }));
+});
+
+function commitLayer(e: Event): void {
+  const v = parseInt((e.target as HTMLSelectElement).value, 10);
+  if (!Number.isFinite(v)) return;
+  applyToAll((n) => {
+    n.layer = v;
+  }, "批量设置层");
+}
+
 const activeUniform = computed<boolean | null>(() => {
   void props.rev;
   const nodes0 = nodes.value;
@@ -134,6 +165,20 @@ const visibleUniform = computed<boolean | null>(() => {
         :title="tagUniform === null ? '各节点标签不同，输入将统一应用到全部' : '标签'"
         @change="commitTag"
       />
+    </div>
+
+    <div class="field" :data-rev="rev">
+      <label title="批量设置渲染层级（Unity Layer 语义）">层</label>
+      <select
+        :value="layerUniform ?? -1"
+        :title="layerUniform === null ? '各节点层不同，选择将统一应用到全部' : '渲染层级'"
+        @change="commitLayer"
+      >
+        <option v-if="layerUniform === null" :value="-1" disabled>（混合）</option>
+        <option v-for="o in layerOptions" :key="o.index" :value="o.index">
+          {{ o.name }}（{{ o.index }}）
+        </option>
+      </select>
     </div>
 
     <div class="field">

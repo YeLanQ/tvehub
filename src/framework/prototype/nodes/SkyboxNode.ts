@@ -135,6 +135,7 @@ export class SkyboxNode extends Node implements ISkyboxNode {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      layer: this.layer,
       prefab: this.prefab,
       components: this.components,
       skyKind: this.skyKind,

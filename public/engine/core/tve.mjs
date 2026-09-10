@@ -300,6 +300,23 @@ class Entity {
     return typeof t === "string" ? t : "";
   }
 
+  /** 渲染层级索引（Unity Layer 语义，0~31；写入应用到对象子树的渲染层） */
+  get layer() {
+    const l = this.__obj.userData?.nodeLayer;
+    return typeof l === "number" && Number.isFinite(l) ? Math.round(l) : 0;
+  }
+  set layer(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const i = Math.min(31, Math.max(0, Math.round(n)));
+    this.__obj.layers.set(i);
+    this.__obj.traverse((o) => {
+      // 灯光对象自带 cullingMask 语义，不随节点层覆盖
+      if (o.isLight !== true) o.layers.set(i);
+    });
+    this.__obj.userData.nodeLayer = i;
+  }
+
   get visible() {
     return this.__obj.visible === true;
   }
@@ -599,6 +616,23 @@ class Light extends BuiltinComponent {
     s.intensity = Math.max(0, n);
     const light = this.__lightObj();
     if (light) light.intensity = s.intensity;
+  }
+  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  get cullingMask() {
+    const m = this.__settings()?.cullingMask;
+    return typeof m === "number" && Number.isFinite(m) ? m | 0 : -1;
+  }
+  set cullingMask(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.cullingMask = n | 0;
+    const light = this.__lightObj();
+    if (light) {
+      light.layers.mask = s.cullingMask;
+      // 阴影相机层同步（不同步会让非 0 层对象有光无影，与建出逻辑一致）
+      if (light.shadow) light.shadow.camera.layers.mask = s.cullingMask;
+    }
   }
   /** 点光/聚光灯：照射距离（0 = 无限远） */
   get distance() {
@@ -1174,6 +1208,10 @@ function lightSettingsFrom(s) {
   };
   out.intensity = num(s.intensity, out.intensity, 0);
   out.distance = num(s.distance, out.distance, 0);
+  // 渲染层级掩码（Unity 灯光 Culling Mask；缺省全部层）
+  out.cullingMask =
+    typeof s.cullingMask === 
+umber && Number.isFinite(s.cullingMask) ? s.cullingMask | 0 : -1;
   out.decay = num(s.decay, out.decay, 0);
   out.angle = num(s.angle, out.angle, 1, 89);
   out.penumbra = num(s.penumbra, out.penumbra, 0, 1);

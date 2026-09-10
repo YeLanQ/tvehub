@@ -5,6 +5,7 @@ import { computed } from "vue";
 import type { LightComponentRef } from "../../../framework/prototype/Node";
 import { LIGHT_KIND_OPTIONS } from "../../lib/component-registry";
 import NumberField from "../NumberField.vue";
+import CullingMaskField from "../CullingMaskField.vue";
 
 const props = defineProps<{ comp: LightComponentRef }>();
 
@@ -134,6 +135,17 @@ function onResolutionSelect(e: Event): void {
       :step="0.1"
       title="物理衰减指数"
       @commit="(v) => emit('update', 'Set Decay', clamp(v, 0, 10))"
+    />
+  </div>
+
+  <!-- Culling Mask（Unity 灯光同名字段）：只照亮掩码内层的对象 -->
+  <div class="field">
+    <label title="Culling Mask（只照亮掩码内层的对象；相机 Culling Mask 排除的层本灯也不参与）">
+      Culling Mask
+    </label>
+    <CullingMaskField
+      :mask="comp.light.cullingMask"
+      @change="(m) => emit('update', 'Set Culling Mask', m)"
     />
   </div>
 

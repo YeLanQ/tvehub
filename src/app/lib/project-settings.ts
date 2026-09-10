@@ -6,6 +6,12 @@ import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
 import { remapAssetPath } from "./asset-paths";
 import { DEFAULT_PHYSICS_BACKEND, isPhysicsBackendId, type PhysicsBackendId } from "../../framework/physics";
+import {
+  parseLayerTable,
+  layerTableToJSON,
+  parseTagList,
+  type LayerTable,
+} from "../../framework/layers";
 
 /** 项目设置配置文件（相对项目根） */
 export const PROJECT_CONFIG_REL = "project.config.json";
@@ -39,6 +45,10 @@ export interface ProjectDraft {
   physicsEnabled: boolean;
   /** 重力向量（项目级） */
   physicsGravity: { x: number; y: number; z: number };
+  /** 项目标签列表（Unity Tags 语义；不含内置 Untagged，节点 tag 自由文本可不在列表） */
+  tags: string[];
+  /** 层表（稠密 32 项，下标即层索引，空串 = 未定义；index 0 恒为内置 Default） */
+  layers: LayerTable;
 }
 
 /** 常用分辨率预设（label 即「宽 × 高」，竖屏/横屏分组） */
@@ -112,6 +122,8 @@ export function defaultDraft(): ProjectDraft {
     physicsBackend: DEFAULT_PHYSICS_BACKEND,
     physicsEnabled: false,
     physicsGravity: { x: 0, y: -9.81, z: 0 },
+    tags: [],
+    layers: parseLayerTable(undefined),
   };
 }
 
@@ -156,6 +168,8 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
         z: n(g.z, d.physicsGravity.z),
       };
     })(),
+    tags: parseTagList(cfg.tags),
+    layers: parseLayerTable(cfg.layers),
   };
 }
 
@@ -199,6 +213,9 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
         z: draft.physicsGravity.z,
       },
     },
+    // 标签/层表保存前统一收敛（trim / 去重 / 去空；index 0 强制内置 Default）
+    tags: parseTagList(draft.tags),
+    layers: layerTableToJSON(parseLayerTable(draft.layers)),
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
   p.setRendererBackend(draft.renderer);
@@ -207,6 +224,8 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   p.setPhysicsGravity(draft.physicsGravity);
   p.setAntiAliasing(clampInt(draft.antiAliasing, 0, 8));
   p.setHDRMode(draft.hdrMode);
+  p.setTags(parseTagList(draft.tags));
+  p.setLayers(parseLayerTable(draft.layers));
   const w = clampInt(draft.designWidth, 1, 16384);
   const h = clampInt(draft.designHeight, 1, 16384);
   p.setDesignSize(w, h);

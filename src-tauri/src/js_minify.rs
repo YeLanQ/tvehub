@@ -27,7 +27,8 @@ pub fn minify_js(source: &str) -> String {
     let mut last_word = String::new(); // 最近的完整词（关键字判定用）
     let mut pending_space = false; // 有待定空白
     let mut pending_newline = false; // 待定空白源自换行（ASI 保护，禁止删除）
-    // 模板串栈：`${` 进入代码态，元素为该插值的花括号深度，`}` 配对后回模板字面态
+    // 模板串栈：处于某个插值的**代码态**时占一项，值为花括号深度（`${` 后为 1，
+    // 嵌套花括号递增）；插值收尾的 `}`（深度 1）回到字面态并出栈，模板串闭合不占栈。
     let mut template_stack: Vec<usize> = Vec::new();
     let mut i = 0;
 
@@ -75,19 +76,27 @@ pub fn minify_js(source: &str) -> String {
                 pending_newline = false;
             }
             '`' => {
-                template_stack.push(0);
-                let last = copy_template_chunk(&chars, i, &mut out);
-                i = last.0;
-                finish_token(&mut prev_sig, &mut prev_sig2, &mut last_word, Some(last.1));
+                // 模板串开始（字面部分由 copy_template_chunk 一次性拷贝）：
+                // 闭合 → 不入栈；进入插值 → 以花括号深度 1 入栈
+                let (next_i, last, end) = copy_template_chunk(&chars, i, &mut out);
+                i = next_i;
+                if end == TplEnd::Interp {
+                    template_stack.push(1);
+                }
+                finish_token(&mut prev_sig, &mut prev_sig2, &mut last_word, Some(last));
                 pending_space = false;
                 pending_newline = false;
             }
-            '}' if template_stack.last() == Some(&0) => {
-                // 插值结束，回到模板串字面部分
+            '}' if template_stack.last() == Some(&1) => {
+                // 插值结束（深度 1 的 `}` = 该插值的收尾），回到模板串字面部分；
+                // 字面部分可能再次进入插值（深度 1 入栈）或闭合（出栈）
+                let (next_i, last, end) = copy_template_chunk(&chars, i, &mut out);
+                i = next_i;
                 template_stack.pop();
-                let last = copy_template_chunk(&chars, i, &mut out);
-                i = last.0;
-                finish_token(&mut prev_sig, &mut prev_sig2, &mut last_word, Some(last.1));
+                if end == TplEnd::Interp {
+                    template_stack.push(1);
+                }
+                finish_token(&mut prev_sig, &mut prev_sig2, &mut last_word, Some(last));
                 pending_space = false;
                 pending_newline = false;
             }
@@ -210,11 +219,21 @@ fn copy_regex(chars: &[char], mut i: usize, out: &mut String) -> (usize, char) {
     (i, out[start..].chars().last().unwrap_or('/'))
 }
 
-/// 拷贝模板串字面部分到串尾或 `${`（进入代码态），返回（新下标，末字符）
-fn copy_template_chunk(chars: &[char], mut i: usize, out: &mut String) -> (usize, char) {
+/// 模板串字面部分的结束形态
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TplEnd {
+    /// 模板串闭合（遇到收尾反引号）
+    Closed,
+    /// 进入插值代码态（遇到 `${`）
+    Interp,
+}
+
+/// 拷贝模板串字面部分到串尾（`Closed`）或 `${`（`Interp`），返回（新下标，末字符，结束形态）
+fn copy_template_chunk(chars: &[char], mut i: usize, out: &mut String) -> (usize, char, TplEnd) {
     let start = out.len();
     out.push(chars[i]); // '`' 或 '}'
     i += 1;
+    let mut end = TplEnd::Closed;
     while i < chars.len() {
         let c = chars[i];
         out.push(c);
@@ -230,10 +249,11 @@ fn copy_template_chunk(chars: &[char], mut i: usize, out: &mut String) -> (usize
         if c == '$' && i < chars.len() && chars[i] == '{' {
             out.push('{');
             i += 1;
+            end = TplEnd::Interp;
             break;
         }
     }
-    (i, out[start..].chars().last().unwrap_or('`'))
+    (i, out[start..].chars().last().unwrap_or('`'), end)
 }
 
 #[cfg(test)]
@@ -265,6 +285,31 @@ mod tests {
     }
 
     #[test]
+    fn multiple_interpolations_keep_template_state() {
+        // 回归（发布产物语法错误 Uncaught SyntaxError: Unexpected identifier 'gl_FragColor'）：
+        // 模板串含 ≥2 个插值时，旧实现遇首个 `${}` 就丢弃模板状态，其后代码被当成
+        // 模板内容整段吞掉 → 产物非法。这里覆盖 shaderlab.mjs 的真实形态：
+        // 多插值模板、以 `//` 开头的模板、含 GLSL 花括号的模板，其后紧跟函数体。
+        let src = concat!(
+            "function uniformDecl(prop, ty) {\n",
+            "  return `uniform ${ty} ${prop.key};\\n`;\n",
+            "}\n",
+            "function stageHeader(rel, stage) {\n",
+            "  return `// TVE: ${rel}（${stage}）\\n`;\n",
+            "}\n",
+            "function wrap(entry, body) {\n",
+            "  return `void main() {\\n${body}\\n  gl_FragColor = ${entry}();\\n}\\n`;\n",
+            "}\n",
+        );
+        let out = minify_js(src);
+        assert!(out.contains("`uniform ${ty} ${prop.key};\\n`"), "out={out}");
+        assert!(out.contains("`// TVE: ${rel}（${stage}）\\n`"), "out={out}");
+        assert!(out.contains("gl_FragColor = ${entry}();\\n}\\n`"), "out={out}");
+        // 模板闭合后的代码没有被吞进模板内容
+        assert_eq!(out.matches("return").count(), 3, "out={out}");
+    }
+
+    #[test]
     fn asi_and_incdec_safe() {
         // 换行来源的空白永不删除：ASI 受限产物语义不变
         assert_eq!(minify_js("let a = 1\n++b;\n"), "let a=1 ++b;");
@@ -291,4 +336,6 @@ mod tests {
         assert!(out.contains("export async function f(){return 1;}"), "out={out}");
     }
 }
+
+
 

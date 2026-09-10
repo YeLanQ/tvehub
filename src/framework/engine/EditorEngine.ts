@@ -24,6 +24,7 @@ import {
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { clampCameraParam } from "../camera";
+import { parseCullingMask } from "../layers";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
@@ -266,6 +267,12 @@ export class EditorEngine {
     this.renderer.registerCamera(this.previewCamera);
     // 正交预览相机：视口宽高比变化时按半高重算左右/上下范围（而非写 aspect）
     this.renderer.registerCamera(this.previewOrthoCamera, () => this.syncOrthoPreviewFrustum());
+    // 预览相机默认全层可见：只有激活相机节点时才应用该节点的 cullingMask
+    //（syncPreviewCameraTo），回退默认视角/退出预览时恢复全层
+    this.previewCamera.layers.enableAll();
+    this.previewOrthoCamera.layers.enableAll();
+    // 视口拾取射线不按层过滤（编辑器要能选中任意层的节点；渲染裁剪是另一回事）
+    this.raycaster.layers.enableAll();
     // 清除标志：渲染循环每帧按活动相机取清除状态（预览相机节点决定清屏方式）
     this.renderer.setClearProvider((cam) => this.resolveClearState(cam));
   }
@@ -1253,6 +1260,9 @@ export class EditorEngine {
   private applySkyEnvLight(sky: SkyboxNode): void {
     if (!this.skyLight) {
       this.skyLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.55);
+      // 引擎注入的环境光照明全部层（three 新建灯光默认只算层 0，会被分层渲染
+      // 当作"部分掩码灯光"，且多层场景下只照亮层 0）
+      this.skyLight.layers.enableAll();
       this.skyLight.name = "__skyEnvLight";
       this.renderer.scene.add(this.skyLight);
     }
@@ -1374,6 +1384,9 @@ export class EditorEngine {
       quad.renderOrder = -1000000; // 最先绘制，被其后绘制的场景物体覆盖
       quad.frustumCulled = false;
       quad.visible = false;
+      // 分层多 pass 渲染（Culling Mask）：天空背景面只在首个 pass 绘制，
+      // 后续 pass 由 RendererManager 据此标记隐藏（叠加 pass 不能再画天空）
+      quad.userData.skyOnlyFirstPass = true;
       this.renderer.scene.add(quad);
       this.orthoSkyQuad = quad;
     }
@@ -1498,6 +1511,9 @@ export class EditorEngine {
     const far = Math.max(node.far, near + 1e-4);
     cam.near = near;
     cam.far = far;
+    // 相机节点的 Culling Mask（Unity 语义）：预览即真实渲染，只画掩码内层的对象；
+    // RendererManager 在掩码内占用多层时按层拆 pass，使灯光 Culling Mask 一并生效
+    cam.layers.mask = parseCullingMask(node.cullingMask);
     if (node.cameraType === "orthographic") {
       this.previewOrthoSize = node.orthoSize;
       this.syncOrthoPreviewFrustum();
@@ -1596,6 +1612,8 @@ export class EditorEngine {
     cam.position.set(7, 5, 8);
     cam.lookAt(0, 0.6, 0);
     cam.updateProjectionMatrix();
+    // 回退取景不是任何相机节点的渲染：恢复全层可见
+    cam.layers.enableAll();
   }
 
   /**

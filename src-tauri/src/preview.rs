@@ -24,7 +24,10 @@ pub struct PreviewServerState {
 }
 
 struct PreviewServer {
-    root: PathBuf,
+    /// 当前服务目录：可热切换（切到构建产物 / 网页预览产物）而不重建监听。
+    /// 监听套接字一旦重建，外部浏览器（固定端口 39110）在途请求会被中断，
+    /// 表现为 net::ERR_CONNECTION_ABORTED。
+    root: Arc<Mutex<PathBuf>>,
     base_url: String,
     shutdown: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
@@ -369,14 +372,14 @@ pub async fn start_web_preview_server(
         return Err(format!("预览产物目录不存在，请先导出: '{}'", out.display()));
     }
     let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
-    // 幂等：同目录重复启动直接复用现有服务器（外部引用的 URL 保持有效）
+    // 已在运行：只热切换服务目录（不重建监听、端口不漂移、在途请求不中断）。
+    // 外部浏览器常驻固定端口（书签/手动打开）时，重建监听会让整页资源加载中断。
     if let Some(old) = guard.as_ref() {
-        if old.root == out {
-            return Ok(old.base_url.clone());
+        let mut cur = old.root.lock().map_err(|e| e.to_string())?;
+        if *cur != out {
+            *cur = out;
         }
-    }
-    if let Some(old) = guard.take() {
-        stop_server(old);
+        return Ok(old.base_url.clone());
     }
     let server = start_server(out)?;
     let url = server.base_url.clone();
@@ -406,10 +409,11 @@ fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
         .map_err(|e| format!("读取预览服务器地址失败: {}", e))?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let flag = shutdown.clone();
-    let loop_root = root.clone();
+    let shared_root = Arc::new(Mutex::new(root.clone()));
+    let loop_root = shared_root.clone();
     let handle = thread::spawn(move || accept_loop(listener, loop_root, flag));
     Ok(PreviewServer {
-        root,
+        root: shared_root,
         base_url: format!("http://{addr}"),
         shutdown,
         handle: Some(handle),
@@ -424,7 +428,11 @@ fn stop_server(server: PreviewServer) {
     }
 }
 
-fn accept_loop(listener: TcpListener, root: PathBuf, shutdown: Arc<AtomicBool>) {
+fn accept_loop(
+    listener: TcpListener,
+    root: Arc<Mutex<PathBuf>>,
+    shutdown: Arc<AtomicBool>,
+) {
     let _ = listener.set_nonblocking(true);
     while !shutdown.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -451,7 +459,15 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|w| w == needle)
 }
 
-fn handle_connection(mut stream: TcpStream, root: PathBuf) {
+fn handle_connection(mut stream: TcpStream, root: Arc<Mutex<PathBuf>>) {
+    // 阻塞模式 + 读超时：Windows 上 accept() 返回的连接会继承监听套接字的非阻塞
+    // 模式（POSIX 不会），而监听套接字为非阻塞轮询 accept。不改回阻塞的话，请求头
+    // 可能立刻读到 WouldBlock（被当成非法方法响应 405），响应体更会在内核缓冲写满
+    // 时由 write_all 半途返回（错误被忽略）——浏览器收到被截断的响应并报
+    // net::ERR_CONNECTION_ABORTED（并发拉取大文件时高发）。读超时保证连接后不发
+    // 数据（预连接/探测）的 socket 不会永久占住线程。
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     // 读请求头（最多 64KB，遇到空行即止）
     let mut buf: Vec<u8> = Vec::with_capacity(2048);
     let mut chunk = [0u8; 4096];
@@ -473,6 +489,10 @@ fn handle_connection(mut stream: TcpStream, root: PathBuf) {
         }
     }
     let head_len = header_end.unwrap_or(buf.len());
+    // 空请求 = 连接探测/预连接（浏览器提前开的 socket）：直接关闭，不写响应
+    if buf.is_empty() {
+        return;
+    }
     let head = String::from_utf8_lossy(&buf[..head_len]);
     let request_line = head.lines().next().unwrap_or("").trim();
     let mut parts = request_line.split_whitespace();
@@ -492,6 +512,14 @@ fn handle_connection(mut stream: TcpStream, root: PathBuf) {
         Some(rel) => rel,
         None => {
             respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found");
+            return;
+        }
+    };
+    // 服务目录在请求时刻读取（支持运行中热切换：网页预览产物 ↔ 构建产物）
+    let root = match root.lock() {
+        Ok(g) => g.clone(),
+        Err(_) => {
+            respond(&mut stream, "500 Internal Server Error", "text/plain; charset=utf-8", b"500");
             return;
         }
     };
@@ -587,9 +615,21 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(body);
+    // 头与响应体合并为单次写入（禁用 Nagle 立即发出），减少浏览器并行拉取
+    // 大文件（loaders 等）时的分段时间窗口
+    let mut out = Vec::with_capacity(head.len() + body.len());
+    out.extend_from_slice(head.as_bytes());
+    out.extend_from_slice(body);
+    let _ = stream.set_nodelay(true);
+    let _ = stream.write_all(&out);
     let _ = stream.flush();
+    // 显式半关闭（发 FIN）代替直接 drop：Windows 上带未读入站数据时 drop 会让
+    // 内核发 RST，把刚写出的响应一起掐断（浏览器报 net::ERR_CONNECTION_ABORTED，
+    // 且并行加载下偶发）。再短暂排干对端关闭前的残留字节，让其读到干净 EOF。
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
+    let mut sink = [0u8; 1024];
+    while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 #[cfg(test)]
@@ -599,6 +639,11 @@ mod tests {
 
     #[test]
     fn preview_server_reuses_fixed_port() {
+        // 应用本体在跑时固定端口被其预览服务器占用 → 跳过（不漂移由运行期保证）
+        if std::net::TcpStream::connect(("127.0.0.1", PREVIEW_FIXED_PORT)).is_ok() {
+            eprintln!("固定端口被运行中的应用占用，跳过");
+            return;
+        }
         // 固定端口：连续启动/停止，端口不漂移（外部引用的 URL 保持有效）
         let root = std::env::temp_dir().join("tve-preview-port-test");
         fs::create_dir_all(&root).unwrap();
@@ -612,6 +657,118 @@ mod tests {
         stop_server(b);
     }
 
+    /// 并发拉取回归（浏览器并行加载模块的真实形态）：多个线程同时请求，每个
+    /// 都必须拿到**完整**响应体。缺陷背景：Windows 上 accept() 返回的连接继承
+    /// 监听套接字的非阻塞模式，read/write 立刻 WouldBlock 且错误被忽略，响应被
+    /// 截断，浏览器报 net::ERR_CONNECTION_ABORTED（大文件 + 高并发高发）。
+    /// 这里直接驱动 accept_loop（自绑随机端口），不与固定端口测试互扰。
+    #[test]
+    fn preview_server_serves_parallel_requests_completely() {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        const FILES: usize = 8;
+        // 单个 300KB（大于常见内核发送缓冲）：非阻塞写必然半途而废
+        const SIZE: usize = 300_000;
+        let root = std::env::temp_dir().join("tve-preview-parallel-test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let mut expect = Vec::new();
+        for i in 0..FILES {
+            let body: Vec<u8> = (0..SIZE).map(|k| (i as u8).wrapping_add(k as u8)).collect();
+            fs::write(root.join(format!("f{i}.js")), &body).unwrap();
+            expect.push(body);
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let flag = shutdown.clone();
+        let loop_root = Arc::new(std::sync::Mutex::new(root.clone()));
+        let accept = std::thread::spawn(move || super::accept_loop(listener, loop_root, flag));
+
+        let handles: Vec<_> = (0..FILES)
+            .map(|i| {
+                std::thread::spawn(move || {
+                    let mut s =
+                        TcpStream::connect(addr).expect("连接预览服务器失败");
+                    // 小块发送请求（模拟浏览器分两次写出请求行与头）
+                    s.write_all(format!("GET /f{i}.js HTTP/1.1\r\n").as_bytes()).unwrap();
+                    s.write_all(b"Host: 127.0.0.1\r\n\r\n").unwrap();
+                    let mut raw = Vec::new();
+                    s.read_to_end(&mut raw).expect("读取响应失败");
+                    let split = raw
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .expect("响应缺少头体分隔");
+                    let head = String::from_utf8_lossy(&raw[..split]).to_string();
+                    let body = raw[split + 4..].to_vec();
+                    (i, head, body)
+                })
+            })
+            .collect();
+
+        for h in handles {
+            let (i, head, body) = h.join().expect("请求线程 panic");
+            assert!(head.starts_with("HTTP/1.1 200 OK"), "f{i}.js 状态异常: {head}");
+            assert_eq!(body.len(), SIZE, "f{i}.js 响应体被截断（{} 字节）", body.len());
+            assert_eq!(body, expect[i], "f{i}.js 响应体内容不一致");
+        }
+
+        shutdown.store(true, Ordering::Relaxed);
+        let _ = accept.join();
+    }
+
+
+    /// 服务目录热切换回归：切换目录（网页预览产物 ↔ 构建产物）复用同一监听，
+    /// 端口与 URL 不变、后续请求读到新目录内容。重建监听会让外部浏览器在途
+    /// 请求中断（net::ERR_CONNECTION_ABORTED），这正是预览页签切换时的故障形态。
+    #[test]
+    fn preview_server_swaps_root_without_rebinding() {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let dir_a = std::env::temp_dir().join("tve-preview-root-a");
+        let dir_b = std::env::temp_dir().join("tve-preview-root-b");
+        for (dir, body) in [(&dir_a, "AAA"), (&dir_b, "BBB")] {
+            let _ = fs::remove_dir_all(dir);
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join("index.html"), body).unwrap();
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let flag = shutdown.clone();
+        let root = Arc::new(Mutex::new(dir_a.clone()));
+        let loop_root = root.clone();
+        let accept = std::thread::spawn(move || super::accept_loop(listener, loop_root, flag));
+
+        let get = |path: &str| -> String {
+            let mut s = TcpStream::connect(addr).unwrap();
+            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut raw = Vec::new();
+            s.read_to_end(&mut raw).unwrap();
+            let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            String::from_utf8_lossy(&raw[split + 4..]).to_string()
+        };
+
+        assert_eq!(get("/index.html"), "AAA");
+        // 热切换：同一监听、同一 URL，内容立刻跟随新目录
+        *root.lock().unwrap() = dir_b.clone();
+        assert_eq!(get("/index.html"), "BBB");
+        // 切换回来后旧目录仍可服务（监听未重建，端口未漂移）
+        *root.lock().unwrap() = dir_a;
+        assert_eq!(get("/index.html"), "AAA");
+
+        shutdown.store(true, Ordering::Relaxed);
+        let _ = accept.join();
+    }
 
     #[test]
     fn gltf_sibling_resolves_against_model_dir() {

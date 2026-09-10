@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { Node } from "../../../framework/prototype/Node";
+import { getProjectStore } from "../../stores/project";
+import {
+  UNTAGGED_LABEL,
+  clampLayerIndex,
+  definedLayerIndices,
+  layerNameAt,
+} from "../../../framework/layers";
 
 const props = defineProps<{ node: Node; rev?: number }>();
 
 const emit = defineEmits<{
   rename: [name: string];
   setTag: [tag: string];
+  setLayer: [layer: number];
   toggleVisible: [value: boolean];
 }>();
+
+const projectStore = getProjectStore();
 
 const localName = ref("");
 /** 名称输入框是否正在编辑（编辑中不做外部回填，避免打断输入） */
@@ -47,12 +57,52 @@ function commitName(): void {
 }
 
 /** 提交标签（GameObject Tag 语义；脚本经 entity.tag / engine.scene.findByTag 查询） */
-function commitTag(): void {
-  const v = localTag.value.trim();
-  if (v !== props.node.tag) {
-    localTag.value = v;
-    emit("setTag", v);
+function commitTag(v: string): void {
+  const t = v.trim();
+  if (t !== props.node.tag) {
+    localTag.value = t;
+    emit("setTag", t);
   }
+}
+
+/** 选中「添加标签…」→ 打开项目设置（在「标签与层」页维护标签列表）；其余选项提交标签 */
+function onTagSelect(e: Event): void {
+  const v = (e.target as HTMLSelectElement).value;
+  if (v === "__add__") {
+    localTag.value = props.node.tag;
+    projectStore.openSettings();
+    return;
+  }
+  commitTag(v);
+}
+
+// —— 标签下拉（内置 Untagged + 项目标签列表；节点上不在列表中的旧值原样保留） ——
+const tagOptions = computed(() => {
+  void props.rev;
+  const tags = projectStore.tags;
+  const extra = props.node.tag && !tags.includes(props.node.tag) ? [props.node.tag] : [];
+  return [...tags, ...extra];
+});
+
+// —— 层下拉（项目层表 + 已删除层的 Layer N 兜底；Unity Layer 单选语义） ——
+const layerOptions = computed(() => {
+  void props.rev;
+  const layer = clampLayerIndex(props.node.layer);
+  const indices = new Set<number>(definedLayerIndices(projectStore.layers));
+  indices.add(layer);
+  return [...indices]
+    .sort((a, b) => a - b)
+    .map((i) => ({ index: i, name: layerNameAt(projectStore.layers, i) }));
+});
+
+const currentLayer = computed(() => {
+  void props.rev;
+  return clampLayerIndex(props.node.layer);
+});
+
+function onLayerSelect(e: Event): void {
+  const v = parseInt((e.target as HTMLSelectElement).value, 10);
+  if (Number.isFinite(v) && v !== currentLayer.value) emit("setLayer", v);
 }
 </script>
 
@@ -67,16 +117,21 @@ function commitTag(): void {
       @change="commitName"
     />
   </div>
-  <div class="field">
+  <div class="field" :data-rev="rev">
+    <label title="渲染层级（Unity Layer 语义；相机/灯光的 Culling Mask 按层筛选渲染与光照）">层</label>
+    <select :value="currentLayer" @change="onLayerSelect">
+      <option v-for="o in layerOptions" :key="o.index" :value="o.index">
+        {{ o.name }}（{{ o.index }}）
+      </option>
+    </select>
+  </div>
+  <div class="field" :data-rev="rev">
     <label title="标签（GameObject Tag 语义；脚本按标签查找实体）">标签</label>
-    <input
-      v-model="localTag"
-      type="text"
-      placeholder="（无）"
-      @focus="editingTag = true"
-      @blur="editingTag = false"
-      @change="commitTag"
-    />
+    <select :value="localTag" @focus="editingTag = true" @change="onTagSelect">
+      <option value="">{{ UNTAGGED_LABEL }}</option>
+      <option v-for="t in tagOptions" :key="t" :value="t">{{ t }}</option>
+      <option value="__add__">添加标签…</option>
+    </select>
   </div>
   <div v-if="node.prefab" class="field">
     <label title="实例来源的预制体资产（右键层级可「更新预制体」回写）">预制体</label>

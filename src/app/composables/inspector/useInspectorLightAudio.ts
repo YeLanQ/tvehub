@@ -29,6 +29,7 @@ import {
   LIGHT_SHADOW_TYPE_SOFT_RADIUS,
   SHADOW_RESOLUTIONS,
 } from "../../../framework/lighting/shadow";
+import { parseCullingMask } from "../../../framework/layers";
 import type { InspectorNodeApi } from "./useInspectorNode";
 
 /** 可投影灯光节点（点光/平行光/聚光灯）的阴影配置；环境光返回 null */
@@ -72,6 +73,9 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           break;
         case "Set Intensity":
           s.intensity = Math.max(0, typeof value === "number" ? value : 1);
+          break;
+        case "Set Culling Mask":
+          s.cullingMask = parseCullingMask(value);
           break;
         case "Toggle Shadow":
           s.castShadow = value === true;
@@ -172,6 +176,9 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           break;
         case "Set Intensity":
           light.intensity = value as number;
+          break;
+        case "Set Culling Mask":
+          light.cullingMask = parseCullingMask(value);
           break;
         case "Set Distance":
           if (light instanceof PointLightNode || light instanceof SpotLightNode) {

@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 import { CameraNode, SkyboxNode } from "../../../framework/prototype/derived/Primitives";
 import { clampCameraParam, cameraParamDef, parseCameraClearFlags, type CameraParamKey } from "../../../framework/camera";
+import { parseCullingMask } from "../../../framework/layers";
 import { duplicateMaterialToProject } from "../../lib/materials";
 import { logStore } from "../../stores/log";
 import type { InspectorNodeApi } from "./useInspectorNode";
@@ -20,6 +21,7 @@ export interface InspectorCameraSkyApi {
   onCameraChangeType: (type: string) => void;
   onCameraClearFlags: (flags: string) => void;
   onCameraClearColor: (color: number) => void;
+  onCameraCullingMask: (mask: number) => void;
   onSetSkyMaterial: (rel: string) => void;
   onSkyMaterialCopyToProject: () => Promise<void>;
 }
@@ -68,6 +70,17 @@ export function useInspectorCameraSky(ctx: InspectorNodeApi): InspectorCameraSky
     }, "Set Clear Color");
   }
 
+  /** 修改 Culling Mask（只渲染掩码内层的对象；预览激活该相机时生效） */
+  function onCameraCullingMask(mask: number): void {
+    const n = node.value;
+    if (!n || !(n instanceof CameraNode)) return;
+    const v = parseCullingMask(mask);
+    if (v === n.cullingMask) return;
+    commit((target) => {
+      (target as CameraNode).cullingMask = v;
+    }, "Set Culling Mask");
+  }
+
   /** 切换天空盒材质引用（内置或项目资产；类型不变，仅切换引用的 .mat） */
   function onSetSkyMaterial(rel: string): void {
     const n = node.value;
@@ -99,6 +112,7 @@ export function useInspectorCameraSky(ctx: InspectorNodeApi): InspectorCameraSky
     onCameraChangeType,
     onCameraClearFlags,
     onCameraClearColor,
+    onCameraCullingMask,
     onSetSkyMaterial,
     onSkyMaterialCopyToProject,
   };

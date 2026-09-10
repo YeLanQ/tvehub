@@ -5,6 +5,7 @@ import {
   isPhysicsBackendId,
   type PhysicsBackendId,
 } from "../../framework/physics";
+import { parseLayerTable, parseTagList, type LayerTable } from "../../framework/layers";
 
 /** 项目默认主场景（打开项目时加载；之后可双击任意 .scene 资产切换） */
 export const DEFAULT_SCENE_REL = "assets/Main.scene";
@@ -40,6 +41,10 @@ export interface ProjectStore {
   physicsEnabled: boolean;
   /** 重力向量（项目级） */
   physicsGravity: { x: number; y: number; z: number };
+  /** 项目标签列表（Unity Tags；不含内置 Untagged。检查器 Tag 下拉用） */
+  tags: string[];
+  /** 层表（稠密 32 项，空串 = 未定义；index 0 恒为内置 Default。检查器 Layer/Culling Mask 用） */
+  layers: LayerTable;
   /** 项目设计分辨率（project.config.json designResolution；相机辅助视锥取景用） */
   designWidth: number;
   designHeight: number;
@@ -49,6 +54,8 @@ export interface ProjectStore {
   setPhysicsGravity: (v: { x: number; y: number; z: number }) => void;
   setAntiAliasing: (v: number) => void;
   setHDRMode: (v: "hdr" | "ldr") => void;
+  setTags: (v: string[]) => void;
+  setLayers: (v: LayerTable) => void;
   setDesignSize: (width: number, height: number) => void;
   setView: (view: "home" | "editor") => void;
   /**
@@ -106,6 +113,8 @@ export function getProjectStore(): ProjectStore {
     physicsBackend: DEFAULT_PHYSICS_BACKEND as PhysicsBackendId,
     physicsEnabled: false,
     physicsGravity: { x: 0, y: -9.81, z: 0 },
+    tags: [] as string[],
+    layers: parseLayerTable(undefined),
     designWidth: 1280,
     designHeight: 720,
   });
@@ -136,6 +145,8 @@ export function getProjectStore(): ProjectStore {
       const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
       state.designWidth = dw > 0 ? dw : 1280;
       state.designHeight = dh > 0 ? dh : 720;
+      state.tags = parseTagList(cfg.tags);
+      state.layers = parseLayerTable(cfg.layers);
     } catch {
       state.rendererBackend = "webgl";
       state.antiAliasing = 2;
@@ -145,6 +156,8 @@ export function getProjectStore(): ProjectStore {
       state.physicsGravity = { x: 0, y: -9.81, z: 0 };
       state.designWidth = 1280;
       state.designHeight = 720;
+      state.tags = [];
+      state.layers = parseLayerTable(undefined);
     }
   }
 
@@ -249,6 +262,12 @@ export function getProjectStore(): ProjectStore {
     get physicsGravity() {
       return state.physicsGravity;
     },
+    get tags() {
+      return state.tags;
+    },
+    get layers() {
+      return state.layers;
+    },
     get designWidth() {
       return state.designWidth;
     },
@@ -272,6 +291,12 @@ export function getProjectStore(): ProjectStore {
     },
     setPhysicsGravity(v) {
       state.physicsGravity = { ...v };
+    },
+    setTags(v) {
+      state.tags = parseTagList(v);
+    },
+    setLayers(v) {
+      state.layers = parseLayerTable(v);
     },
     setDesignSize(width, height) {
       state.designWidth = Math.max(1, Math.min(16384, Math.round(width)));

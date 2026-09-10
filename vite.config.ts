@@ -2,6 +2,10 @@ import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  WEB_PREVIEW_ROOTS,
+  generateWebPreviewFiles,
+} from "./scripts/gen-web-preview-files.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -16,6 +20,10 @@ const host = process.env.TAURI_DEV_HOST;
 const TEMPLATE_ROOT = "public/templates";
 const WEB_EXPORT_ROOT = "public/exports/web";
 const REGISTRY_PATH = "src/generated/template-registry.ts";
+
+// 网页运行产物清单的扫描/生成在 scripts/gen-web-preview-files.mjs（单一事实来源：
+// 同一函数也被 package.json 的 build 脚本在 vue-tsc 之前调用，避免干净检出的
+// 类型检查因生成文件缺失而报 TS2307）。
 
 interface TplMeta {
   name?: string;
@@ -83,15 +91,25 @@ function templateIndexPlugin(): Plugin {
     name: "three-visual-editor-template-index",
     buildStart() {
       generateTemplateRegistry();
+      generateWebPreviewFiles();
     },
     configureServer(server) {
       generateTemplateRegistry();
+      generateWebPreviewFiles();
       for (const root of [TEMPLATE_ROOT, WEB_EXPORT_ROOT]) {
         const abs = path.resolve(root);
         if (fs.existsSync(abs)) server.watcher.add(abs);
       }
+      for (const root of WEB_PREVIEW_ROOTS) {
+        const abs = path.resolve(root);
+        if (fs.existsSync(abs)) server.watcher.add(abs, { recursive: true });
+      }
       const onChange = (file: string) => {
         if (file.includes("template.json")) generateTemplateRegistry();
+        const norm = file.split(path.sep).join("/");
+        if (WEB_PREVIEW_ROOTS.some((root) => norm.startsWith(`${root}/`))) {
+          generateWebPreviewFiles();
+        }
       };
       server.watcher.on("add", onChange);
       server.watcher.on("unlink", onChange);

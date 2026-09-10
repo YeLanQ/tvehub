@@ -1,4 +1,5 @@
 import { nextId } from "../../platform_abstraction/id";
+import { clampLayerIndex } from "../layers";
 import { Prototype } from "./Prototype";
 import { Transform } from "./Transform";
 import type { INode } from "./interfaces";
@@ -44,6 +45,8 @@ export interface NodeInit {
   parentId?: string | null;
   /** GameObject 标签（Unity Tag 语义：脚本按标签查找实体；空串 = 无标签） */
   tag?: string;
+  /** 渲染层级索引（Unity Layer 语义，0~31；0 = 内置 Default；相机/灯光按 cullingMask 筛选） */
+  layer?: number;
   /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
   prefab?: string;
   transform?: Transform;
@@ -70,6 +73,8 @@ export class Node extends Prototype implements INode {
   visible: boolean;
   /** GameObject 标签（Unity Tag 语义；播放器 SDK 经 entity.tag / findByTag 查询） */
   tag: string;
+  /** 渲染层级索引（Unity Layer 语义：0~31，0 = 内置 Default；three 侧为 object.layers） */
+  layer: number;
   /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
   prefab: string;
   /** 组合的变换基元原型 */
@@ -88,6 +93,7 @@ export class Node extends Prototype implements INode {
     this.active = true;
     this.visible = true;
     this.tag = init.tag ?? "";
+    this.layer = clampLayerIndex(init.layer);
     this.prefab = init.prefab ?? "";
     this.transform = init.transform ? init.transform.clone() : new Transform();
     this.properties = { ...(init.properties ?? {}) };
@@ -101,6 +107,7 @@ export class Node extends Prototype implements INode {
       name: this.name,
       parentId: null,
       tag: this.tag,
+      layer: this.layer,
       prefab: this.prefab,
       transform: this.transform.clone(),
       properties: cloneRecord(this.properties),
@@ -152,6 +159,8 @@ export class Node extends Prototype implements INode {
     };
     // 标签非空才写入（旧场景文件保持字节兼容）
     if (this.tag) record.tag = this.tag;
+    // 层非 0 才写入（0 = 内置 Default，缺字段即默认；旧场景文件保持字节兼容）
+    if (this.layer !== 0) record.layer = this.layer;
     // 预制体引用非空才写入（仅预制体实例携带）
     if (this.prefab) record.prefab = this.prefab;
     // 组件列表非空才写入（旧场景文件保持字节兼容；写出约定见各组件描述符）
@@ -172,6 +181,7 @@ export class Node extends Prototype implements INode {
     this.active = (json.active as boolean) ?? this.active;
     this.visible = (json.visible as boolean) ?? this.visible;
     this.tag = typeof json.tag === "string" ? json.tag : "";
+    this.layer = clampLayerIndex(json.layer);
     this.prefab = typeof json.prefab === "string" ? json.prefab : "";
     if (json.transform) {
       this.transform = Transform.fromJSON(json.transform as JsonRecord);

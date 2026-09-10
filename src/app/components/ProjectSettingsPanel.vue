@@ -19,18 +19,25 @@ import {
   type ProjectDraft,
 } from "../lib/project-settings";
 import { physicsBackendRegistry, type PhysicsBackendId } from "../../framework/physics";
+import {
+  MAX_LAYERS,
+  UNTAGGED_LABEL,
+  definedLayerIndices,
+  nextFreeLayerIndex,
+} from "../../framework/layers";
 import "../../styles/components/project-settings.scss";
 
 const projectStore = getProjectStore();
 const assetsStore = getAssetsStore();
 const editorStore = getEditorStore();
 
-type SettingsCat = "basic" | "display" | "physics";
+type SettingsCat = "basic" | "display" | "physics" | "tagsLayers";
 const cat = ref<SettingsCat>("basic");
 const CATS: { id: SettingsCat; label: string }[] = [
   { id: "basic", label: "基础信息" },
   { id: "display", label: "显示与运行" },
   { id: "physics", label: "物理" },
+  { id: "tagsLayers", label: "标签与层" },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -63,6 +70,37 @@ function close(): void {
 }
 
 const backendOptions = physicsBackendRegistry.list();
+
+// —— 标签与层（Unity Tags and Layers 语义；保存时经 parse* 统一收敛） ——
+
+/** 已定义层的索引（升序；层 0 内置恒在） */
+const layerRows = computed(() => (draft.value ? definedLayerIndices(draft.value.layers) : []));
+/** 是否还有空闲层位（决定「添加层」可用性） */
+const layerFull = computed(() => (draft.value ? nextFreeLayerIndex(draft.value.layers) < 0 : true));
+
+function addTag(): void {
+  if (!draft.value) return;
+  draft.value.tags.push("");
+}
+
+function removeTag(i: number): void {
+  draft.value?.tags.splice(i, 1);
+}
+
+/** 添加层：占用最低空闲索引，默认名 Layer N（重名保存时自动收敛保留首个） */
+function addLayer(): void {
+  if (!draft.value) return;
+  const idx = nextFreeLayerIndex(draft.value.layers);
+  if (idx < 0) return;
+  const candidate = `Layer ${idx}`;
+  draft.value.layers[idx] = draft.value.layers.includes(candidate) ? `New Layer ${idx}` : candidate;
+}
+
+/** 删除层 = 清空该索引（引用它的节点回退显示 Layer N，掩码位保留原语义） */
+function removeLayer(i: number): void {
+  if (!draft.value || i === 0) return;
+  draft.value.layers[i] = "";
+}
 
 async function save(): Promise<void> {
   if (!draft.value) return;
@@ -283,6 +321,68 @@ onMounted(async () => {
                   />
                 </div>
                 <p class="ps-note">世界加速度（米/秒²；地球重力约为 -9.81 沿 -Y），影响全部动力学体。</p>
+              </div>
+            </section>
+
+            <!-- 标签与层 -->
+            <section v-else-if="cat === 'tagsLayers'" class="ps-section">
+              <h3 class="ps-section-title">标签与层</h3>
+              <div class="ps-field">
+                <label>标签（Tags）</label>
+                <div class="ps-tag-list">
+                  <div class="ps-tag-row builtin">
+                    <span class="ps-layer-index">—</span>
+                    <input :value="UNTAGGED_LABEL" disabled title="内置标签：即节点标签为空" />
+                    <button class="ps-row-del" disabled title="内置标签不可删除">✕</button>
+                  </div>
+                  <div v-for="(t, i) in draft.tags" :key="i" class="ps-tag-row">
+                    <span class="ps-layer-index">{{ i + 1 }}</span>
+                    <input
+                      :value="t"
+                      placeholder="标签名"
+                      @change="draft.tags[i] = ($event.target as HTMLInputElement).value.trim()"
+                    />
+                    <button class="ps-row-del" title="删除标签" @click="removeTag(i)">✕</button>
+                  </div>
+                </div>
+                <button class="ps-add-row" @click="addTag">＋ 添加标签</button>
+                <p class="ps-note">
+                  标签是节点的字符串标识（GameObject Tag 语义）：在节点检查器中选择，
+                  用户脚本经 entity.tag / findByTag 按标签筛选实体；引擎不附加内置语义。
+                  节点上已存储但不在列表中的标签会原样保留。
+                </p>
+              </div>
+
+              <div class="ps-field">
+                <label>层（Layers）</label>
+                <div class="ps-tag-list">
+                  <div v-for="i in layerRows" :key="i" class="ps-tag-row">
+                    <span class="ps-layer-index">{{ i }}</span>
+                    <input
+                      v-model="draft.layers[i]"
+                      placeholder="层名"
+                      :disabled="i === 0"
+                      :title="i === 0 ? '内置层不可改名不可删除' : '层名（保存时自动去重）'"
+                      @change="draft.layers[i] = draft.layers[i].trim()"
+                    />
+                    <button
+                      class="ps-row-del"
+                      :disabled="i === 0"
+                      :title="i === 0 ? '内置层不可删除' : '删除层（引用它的节点回退显示 Layer N）'"
+                      @click="removeLayer(i)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                <button class="ps-add-row" :disabled="layerFull" @click="addLayer">
+                  ＋ 添加层
+                </button>
+                <p class="ps-note">
+                  最多 {{ MAX_LAYERS }} 个层（three.js 渲染管线上限）；节点在检查器中选择所属层
+                  （单选，Unity Layer 语义），相机与灯光用 Culling Mask 只渲染/照亮所选层。
+                  内置层 0「Default」不可删除；节点层为 0 时不写入场景文件（旧场景天然兼容）。
+                </p>
               </div>
             </section>
           </template>

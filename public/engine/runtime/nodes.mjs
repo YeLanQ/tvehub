@@ -12,6 +12,24 @@ import { num, vec, D2R } from "../core/utils.mjs";
 import { buildComponentLight } from "../core/lights.mjs";
 import { createMesh } from "./mesh.mjs";
 
+/** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
+function parseLayerIndex(v) {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0;
+  return n >= 0 && n < 32 ? n : 0;
+}
+
+/** culling mask 收敛（与编辑器 parseCullingMask 同语义：int32 位掩码，缺省全部层） */
+export function parseCullingMask(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v | 0 : -1;
+}
+
+const LIGHT_NODE_TYPES = new Set([
+  "pointLightNode",
+  "directionalLightNode",
+  "spotLightNode",
+  "ambientLightNode",
+]);
+
 /**
  * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
  * - cameras：cameraNode 列表（{ json, obj }，供渲染相机取位姿/参数）；
@@ -56,6 +74,19 @@ export function buildSceneTree(rootJson, scene, ctx) {
     obj.userData.nodeKind = typeof type === "string" ? type : "";
     obj.userData.nodeTag = typeof json.tag === "string" ? json.tag : "";
     obj.visible = json.active !== false && json.visible !== false;
+
+    // 渲染层级（Unity Layer 语义）：
+    // - 网格/普通节点：根对象与其生成的渲染内容子树（描边壳等）同层；
+    // - 灯光节点：包装组随层，内部真实灯光对象 = cullingMask（wrapLight 内置位），
+    //   不能被子树覆盖。
+    const layer = parseLayerIndex(json.layer);
+    obj.layers.set(layer);
+    obj.userData.nodeLayer = layer;
+    if (!LIGHT_NODE_TYPES.has(type)) {
+      obj.traverse((o) => {
+        o.layers.set(layer);
+      });
+    }
 
     const p = vec(tr.position, { x: 0, y: 0, z: 0 });
     const r = vec(tr.rotation, { x: 0, y: 0, z: 0 });
@@ -121,6 +152,10 @@ export function buildSceneTree(rootJson, scene, ctx) {
       resolution: [512, 1024, 2048, 4096].includes(num(raw.resolution, 0)) ? num(raw.resolution, 0) : 0,
     };
     light.userData.shadowCfg = cfg;
+    // 阴影相机层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+    // 的对象投影进它的阴影贴图）。three 阴影通道按 shadowCamera.layers 过滤物体，
+    // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。
+    light.shadow.camera.layers.mask = light.layers.mask;
     if (light.castShadow !== true) return;
     const isPoint = light.isPointLight === true;
     // 显式分辨率档位优先；0 = 自动（平面 2048 / 点光 1024，立方体贴图 ×6 开销降档）
@@ -142,14 +177,19 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const group = new THREE.Group();
     const color = num(json.lightColor, 0xffffff) & 0xffffff;
     const intensity = num(json.intensity, 1);
+    // 灯光 Culling Mask（Unity 语义）：真实灯光对象的 layers = 掩码，
+    // 渲染按"灯层 vs 相机层"收集判定 + player 分层多 pass 实现"只照亮所选层"
+    const lightMask = parseCullingMask(json.cullingMask);
     let light;
     if (kind === "ambient") {
       light = new THREE.AmbientLight(color, intensity);
+      light.layers.mask = lightMask;
     } else if (kind === "directional") {
       const dl = new THREE.DirectionalLight(color, intensity);
       // 平行光位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z（与编辑器同语义）
       dl.position.set(0, 0, 0);
       dl.castShadow = json.castShadow === true;
+      dl.layers.mask = lightMask;
       applyLightShadow(dl, json);
       light = dl;
     } else if (kind === "spot") {
@@ -164,6 +204,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
       // 聚光灯位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z（与编辑器同语义）
       sl.position.set(0, 0, 0);
       sl.castShadow = json.castShadow === true;
+      sl.layers.mask = lightMask;
       applyLightShadow(sl, json);
       light = sl;
     } else {
@@ -175,6 +216,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
       );
       // 点光阴影：立方体阴影贴图（六个 90° 面），开销高于平面阴影，默认关
       pl.castShadow = json.castShadow === true;
+      pl.layers.mask = lightMask;
       applyLightShadow(pl, json);
       light = pl;
     }

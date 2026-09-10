@@ -8,6 +8,7 @@ import {
   SpotLightNode,
 } from "../../../framework/prototype/derived/Primitives";
 import NumberField from "../NumberField.vue";
+import CullingMaskField from "../CullingMaskField.vue";
 
 const props = defineProps<{ node: LightNode; rev?: number }>();
 
@@ -190,6 +191,18 @@ function penumbraOf(): number {
       :step="0.1"
       title="物理衰减指数"
       @commit="(v) => emit('update', 'Set Decay', clamp(v, 0, 10))"
+    />
+  </div>
+
+  <!-- Culling Mask（Unity 灯光同名字段）：只照亮掩码内层的对象 -->
+  <div class="field" :data-rev="rev">
+    <label title="Culling Mask（只照亮掩码内层的对象；相机 Culling Mask 排除的层本灯也不参与）">
+      Culling Mask
+    </label>
+    <CullingMaskField
+      :mask="node.cullingMask"
+      :rev="rev"
+      @change="(m) => emit('update', 'Set Culling Mask', m)"
     />
   </div>
 

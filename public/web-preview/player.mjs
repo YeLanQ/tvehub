@@ -27,6 +27,7 @@ import { applyMeshTextures } from "../engine/runtime/textures.mjs";
 import { tickShaderTime } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createStage } from "../engine/runtime/stage.mjs";
+import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
 
 const app = document.getElementById("app");
@@ -247,8 +248,10 @@ async function main() {
               azimuth: sky.sunAzimuth,
               elevation: sky.sunElevation,
             });
-      // 天空作为环境光照参与网格材质（与编辑器注入的半球环境光一致）
+      // 天空作为环境光照参与网格材质（与编辑器注入的半球环境光一致）；
+      // 照明全部层（three 新建灯光默认只算层 0）
       const env = new THREE.HemisphereLight(mixHexColor(top, horizon, 0.5), ground, 0.55);
+      env.layers.enableAll();
       scene.add(env);
     }
   }
@@ -333,6 +336,8 @@ async function main() {
     orthoSkyQuad.renderOrder = -1000000; // 最先绘制，被其后绘制的场景物体覆盖
     orthoSkyQuad.frustumCulled = false;
     orthoSkyQuad.visible = false;
+    // 分层多 pass 渲染（Culling Mask）：天空背景面只在首个 pass 绘制
+    orthoSkyQuad.userData.skyOnlyFirstPass = true;
     scene.add(orthoSkyQuad);
     // uniforms 在 applyClearFlags 每帧更新前先按纹理形态就位
     orthoSkyQuad.material.uniforms.tSky.value = isCube ? null : skyTexture;
@@ -465,7 +470,11 @@ async function main() {
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
     applyClearFlags();
-    renderer.render(scene, cam);
+    // 分层渲染（Culling Mask）：相机掩码全开/单层占用 → 单 pass（零开销）；
+    // 多层占用 → 按层拆 pass，灯光只照亮各自掩码内的层（layerpass.mjs）
+    const bits = layerPassBits(scene, cam);
+    if (!bits) renderer.render(scene, cam);
+    else renderLayerPasses(renderer, scene, cam, bits);
   }
   frame();
 

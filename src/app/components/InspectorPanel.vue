@@ -50,6 +50,7 @@ const {
   onNodeRename,
   onNodeToggleVisible,
   onNodeSetTag,
+  onNodeSetLayer,
   onTransformChange,
   onMeshUpdate,
   onAnimUpdate,
@@ -90,6 +91,7 @@ const {
   onCameraChangeType,
   onCameraClearFlags,
   onCameraClearColor,
+  onCameraCullingMask,
   onSetSkyMaterial,
   onSkyMaterialCopyToProject,
 } = useInspectorCameraSky(inspector);
@@ -166,6 +168,7 @@ onBeforeUnmount(flushMaterialPersist);
           :rev="revision"
           @rename="onNodeRename"
           @setTag="onNodeSetTag"
+          @setLayer="onNodeSetLayer"
           @toggleVisible="onNodeToggleVisible"
         />
       </ComponentCard>
@@ -204,6 +207,7 @@ onBeforeUnmount(flushMaterialPersist);
           @changeType="onCameraChangeType"
           @editClearFlags="onCameraClearFlags"
           @editClearColor="onCameraClearColor"
+          @editCullingMask="onCameraCullingMask"
         />
       </ComponentCard>
 

@@ -8,6 +8,8 @@
 // 读取经 parseLightComponentSettings 统一收敛（缺失/越界字段回退默认）。
 // ---------------------------------------------------------------------------
 
+import { ALL_LAYERS_MASK, parseCullingMask } from "../layers";
+
 /** 灯光类型（与 LightNode 的 LightKind 同一取值集） */
 export type LightComponentKind = "point" | "directional" | "ambient" | "spot";
 
@@ -19,6 +21,8 @@ export interface LightComponentSettings {
   lightColor: number;
   /** 强度 */
   intensity: number;
+  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  cullingMask: number;
   /** 点光/聚光灯：照射距离（0 = 无限远） */
   distance: number;
   /** 点光/聚光灯：物理衰减指数 */
@@ -47,6 +51,7 @@ export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
   kind: "point",
   lightColor: 0xffffff,
   intensity: 1,
+  cullingMask: ALL_LAYERS_MASK,
   distance: 10,
   decay: 2,
   angle: 45,
@@ -83,6 +88,7 @@ export function parseLightComponentSettings(v: unknown): LightComponentSettings 
       : d.kind,
     lightColor: num(o.lightColor, d.lightColor) & 0xffffff,
     intensity: Math.max(0, num(o.intensity, d.intensity)),
+    cullingMask: parseCullingMask(o.cullingMask),
     distance: Math.max(0, num(o.distance, d.distance)),
     decay: clamp(num(o.decay, d.decay), 0, 10),
     angle: clamp(num(o.angle, d.angle), 0.1, 89.9),

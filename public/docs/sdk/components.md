@@ -141,7 +141,7 @@ sk.ensureGraph(graph);
 
 | 组件 | 参数 |
 | --- | --- |
-| `Light` | `kind` / `color` / `intensity` / `distance` / `decay` / `angle` / `penumbra` / `castShadow` |
+| `Light` | `kind` / `color` / `intensity` / `cullingMask`（只照亮掩码内层，-1 = 全部）/ `distance` / `decay` / `angle` / `penumbra` / `castShadow` |
 | `AudioSource` | `source` / `autoplay` / `loop` / `volume` / `speed` / `spatial` / `refDistance` / `maxDistance` / `rolloff` |
 | `AnimationClip` | `clip` / `autoplay` / `loop` / `speed` |
 | `SkeletalAnimation`（仅模型网格节点） | `clip` / `autoplay` / `speed` / `loop` / `graph`（传即创建动画图模式） |

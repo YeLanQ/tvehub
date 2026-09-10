@@ -43,6 +43,7 @@ export class AudioNode extends Node implements IAudioNode {
       transform: this.transform,
       properties: cloneRecord(this.properties),
       tag: this.tag,
+      layer: this.layer,
       prefab: this.prefab,
       components: this.components,
       audio: cloneAudioSettings(this.audio),

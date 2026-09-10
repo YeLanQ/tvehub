@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { layerPassBits, renderLayerPasses } from "./layerPass";
 
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
@@ -133,6 +134,9 @@ export class RendererManager {
     this.scene.background = new THREE.Color(EDITOR_BACKGROUND_COLOR);
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
     this.camera.position.set(6, 6, 9);
+    // 编辑器自由视角恒全层可见（节点可挂任意渲染层级；Culling Mask 只作用于
+    // 场景中的相机节点预览，自由视角若跟随掩码会出现"对象凭空消失"）
+    this.camera.layers.enableAll();
 
     this.orbit = new OrbitControls(this.camera, dom);
     this.orbit.enableDamping = true;
@@ -270,11 +274,26 @@ export class RendererManager {
     this.applySizeIfNeeded();
     this.orbit?.update();
     this.renderCb?.();
-    if (this.renderer) {
-      this.applyClearState(this.activeCamera ?? this.camera);
-      this.renderer.render(this.scene, this.activeCamera ?? this.camera);
-    }
+    if (this.renderer) this.renderActive();
   };
+
+  /**
+   * 渲染当前活动相机（含分层多 pass）：
+   * 相机掩码全开或在用层 ≤1 时单 pass（与旧渲染路径一致，零额外开销）；
+   * 相机节点收窄了 Culling Mask 且场景占用多个掩码内层时按层拆 pass ——
+   * 每个 pass 只渲染该层对象，three 的灯光收集（light.layers vs 相机层）使
+   * 每盏灯只照亮其掩码内的层（Unity 灯光 Culling Mask 语义），详见 layerPass.ts。
+   */
+  private renderActive(): void {
+    const cam = this.activeCamera ?? this.camera;
+    this.applyClearState(cam);
+    const bits = layerPassBits(this.scene, cam);
+    if (!bits) {
+      this.renderer.render(this.scene, cam);
+      return;
+    }
+    renderLayerPasses(this.renderer, this.scene, cam, bits);
+  }
 
   get domElement(): HTMLElement {
     return this.renderer.domElement;

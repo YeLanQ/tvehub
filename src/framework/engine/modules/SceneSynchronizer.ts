@@ -18,6 +18,7 @@ import {
   type LightShadowConfig,
 } from "../../lighting/shadow";
 import type { LightComponentSettings } from "../../lighting/types";
+import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
@@ -313,6 +314,7 @@ export class SceneSynchronizer {
     const obj = this.objectMap.get(node.id);
     if (!obj) return;
     obj.visible = node.visible && node.active;
+    this.applyNodeLayer(node, obj);
     if (node instanceof MeshNode) this.refreshMesh(node, obj as THREE.Mesh);
     else if (node instanceof LightNode) this.refreshLight(node, obj);
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
@@ -320,6 +322,28 @@ export class SceneSynchronizer {
     // 组件模式：灯光组件挂任意节点（含网格/空组），与节点类型原生能力并存
     this.refreshComponentLights(node, obj);
     this.applyTransform(node);
+  }
+
+  /**
+   * 节点渲染层级落位（Unity Layer 语义）：
+   * - 节点根对象设为节点层（three 的 object.layers）；
+   * - 渲染内容子对象跟随（卡通描边壳/模型实例/占位体）——它们与根对象是同一
+   *   渲染体，不跟随会在相机 Culling Mask 排除该层时只剩"半个物体"；
+   * - 编辑器装饰子对象（图标精灵/灯光容器/方向目标点）保持层 0：预览渲染本就
+   *   隐藏辅助物，自由视角恒全层可见，无需跟随；真实灯光对象的层 = 灯光自身的
+   *   cullingMask（见 refreshLight / refreshComponentLights），不能被覆盖。
+   */
+  private applyNodeLayer(node: Node, obj: THREE.Object3D): void {
+    const layer = clampLayerIndex(node.layer);
+    obj.layers.set(layer);
+    obj.userData.nodeLayer = layer;
+    obj.children.forEach((c) => {
+      if (c.name === OUTLINE_CHILD_NAME) {
+        c.layers.set(layer);
+      } else if (c.name === MODEL_CHILD_NAME || c.name === MODEL_PENDING_NAME) {
+        c.traverse((d) => d.layers.set(layer));
+      }
+    });
   }
 
   /**
@@ -344,6 +368,7 @@ export class SceneSynchronizer {
       s.kind,
       s.lightColor,
       s.intensity,
+      s.cullingMask,
       s.distance,
       s.decay,
       s.angle,
@@ -373,12 +398,15 @@ export class SceneSynchronizer {
       wrapper.add(dirTarget);
     }
     let light: THREE.Light;
+    // 灯光 Culling Mask（与灯光节点同语义）：真实灯光对象的 layers = 掩码
+    const lightMask = parseCullingMask(s.cullingMask);
     switch (s.kind) {
       case "directional": {
         const dl = new THREE.DirectionalLight(s.lightColor, s.intensity);
         // 平行光位置归零（three 默认 (0,1,0)），与灯光节点同一方向语义（本地 -Z）
         dl.position.set(0, 0, 0);
         dl.castShadow = s.castShadow;
+        dl.layers.mask = lightMask;
         this.configureShadowLight(dl, componentShadowConfig(s));
         if (dirTarget) dl.target = dirTarget;
         light = dl;
@@ -396,17 +424,22 @@ export class SceneSynchronizer {
         // 聚光灯位置归零（three 默认 (0,1,0)），与灯光节点同方向语义（本地 -Z）
         sl.position.set(0, 0, 0);
         sl.castShadow = s.castShadow;
+        sl.layers.mask = lightMask;
         this.configureShadowLight(sl, componentShadowConfig(s));
         if (dirTarget) sl.target = dirTarget;
         light = sl;
         break;
       }
-      case "ambient":
-        light = new THREE.AmbientLight(s.lightColor, s.intensity);
+      case "ambient": {
+        const al = new THREE.AmbientLight(s.lightColor, s.intensity);
+        al.layers.mask = lightMask;
+        light = al;
         break;
+      }
       default: {
         const pl = new THREE.PointLight(s.lightColor, s.intensity, s.distance, s.decay);
         pl.castShadow = s.castShadow;
+        pl.layers.mask = lightMask;
         this.configureShadowLight(pl, componentShadowConfig(s));
         light = pl;
         break;
@@ -475,6 +508,8 @@ export class SceneSynchronizer {
       inst.name = MODEL_CHILD_NAME;
       inst.userData.modelRel = mesh.model;
       inst.userData.sharedResources = true;
+      // 模型克隆子树整体跟随节点层（蒙皮网格/子网格等都是节点的渲染内容）
+      inst.traverse((d) => d.layers.set(mesh.layer));
       obj.add(inst);
       this.lookup.onModelInstance?.(mesh, inst);
       return;
@@ -485,6 +520,7 @@ export class SceneSynchronizer {
       new THREE.MeshBasicMaterial({ color: 0x8a7a3a, wireframe: true }),
     );
     pending.name = MODEL_PENDING_NAME;
+    pending.layers.set(mesh.layer);
     obj.add(pending);
   }
 
@@ -581,6 +617,8 @@ export class SceneSynchronizer {
         new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide }),
       );
       outline.name = OUTLINE_CHILD_NAME;
+      // 描边壳是主网格的渲染内容：跟随节点层（相机 Culling Mask 排除时一同排除）
+      outline.layers.mask = obj.layers.mask;
       obj.add(outline);
     }
     const base = obj.geometry as THREE.BufferGeometry | undefined;
@@ -623,6 +661,10 @@ export class SceneSynchronizer {
     // 入口统一 parse 兜底（缺字段回默认），调用方传部分配置也不会把 undefined 写进 three
     const cfg = parseLightShadow(raw);
     light.userData.shadowCfg = { ...cfg };
+    // 阴影相机的层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+    // 的对象投影进它的阴影贴图）。three 的阴影通道按 shadowCamera.layers 过滤物体，
+    // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。
+    light.shadow.camera.layers.mask = light.layers.mask;
     if (!light.castShadow) return;
     const isPoint = (light as THREE.PointLight).isPointLight === true;
     const size = shadowMapSizeOf(cfg.resolution, isPoint);
@@ -828,10 +870,14 @@ export class SceneSynchronizer {
 
     const lamp = new THREE.Group();
     lamp.userData.lamp = true;
+    // 灯光 Culling Mask（Unity 语义）：写到真实 three 灯光对象的 layers 上，
+    // 渲染时按"灯层 vs 相机层"收集判定 + 分层多 pass 实现"只照亮所选层"
+    const lightMask = parseCullingMask(light.cullingMask);
     let iconKind: SpriteIconKind = "light-point";
     if (light instanceof PointLightNode) {
       const pl = new THREE.PointLight(light.lightColor, light.intensity, light.distance, light.decay);
       pl.castShadow = light.castShadow;
+      pl.layers.mask = lightMask;
       this.configureShadowLight(pl, light.shadow);
       lamp.add(pl);
       iconKind = "light-point";
@@ -842,6 +888,7 @@ export class SceneSynchronizer {
       // 方向恰为 -Z），后推阴影相机时位移即精确落在光照轴上
       dl.position.set(0, 0, 0);
       dl.castShadow = light.castShadow;
+      dl.layers.mask = lightMask;
       this.configureShadowLight(dl, light.shadow);
       if (dirTarget) dl.target = dirTarget;
       lamp.add(dl);
@@ -860,13 +907,16 @@ export class SceneSynchronizer {
       // 偏离节点 -Z 约 45°（(0,0,-1)-(0,1,0)），辅助线光锥也随之对不上
       sl.position.set(0, 0, 0);
       sl.castShadow = light.castShadow;
+      sl.layers.mask = lightMask;
       this.configureShadowLight(sl, light.shadow);
       if (dirTarget) sl.target = dirTarget;
       lamp.add(sl);
       iconKind = "light-spot";
     } else {
       // AmbientLightNode
-      lamp.add(new THREE.AmbientLight(light.lightColor, light.intensity));
+      const al = new THREE.AmbientLight(light.lightColor, light.intensity);
+      al.layers.mask = lightMask;
+      lamp.add(al);
       iconKind = "light-ambient";
     }
 

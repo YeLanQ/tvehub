@@ -295,9 +295,10 @@ async function stopPreview(): Promise<void> {
   }
 }
 
-// 关闭面板即释放预览服务（与编辑器网页预览「离开页签即停」一致）
+// 关闭面板不释放预览服务：固定端口常驻，外部浏览器标签页不会因面板关闭而中断
+// （停止请用面板上的「停止预览服务」；与 WebPreviewPanel 同一策略）
 onUnmounted(() => {
-  if (previewBase.value) void api.stopWebPreview().catch(() => {});
+  previewBase.value = "";
 });
 
 onMounted(async () => {
