@@ -56,6 +56,7 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
   items.push({ label: "Camera", type: "camera" });
   items.push({ label: "Group", type: "group" });
   items.push({ label: "Audio Source", type: "audio" });
+  items.push({ label: "Particle System", type: "particle" });
   items.push({ separator: true });
   items.push({
     label: "天空盒",
@@ -103,6 +104,8 @@ export function addNodeArgs(
     args.kind = "camera";
   } else if (type === "audio") {
     args.kind = "audio";
+  } else if (type === "particle") {
+    args.kind = "particle";
   } else {
     return null;
   }

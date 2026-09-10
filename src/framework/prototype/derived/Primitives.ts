@@ -8,9 +8,11 @@ export { SpotLightNode } from "../nodes/SpotLightNode";
 export { CameraNode } from "../nodes/CameraNode";
 export { SkyboxNode, type SkyboxKind, type SkySunDisk, skyMaterialForKind } from "../nodes/SkyboxNode";
 export { AudioNode } from "../nodes/AudioNode";
+export { ParticleSystemNode } from "../nodes/ParticleSystemNode";
 export type {
   MeshNodeInit,
   LightNodeInit,
   CameraNodeInit,
   AudioNodeInit,
+  ParticleSystemNodeInit,
 } from "../nodes/index";

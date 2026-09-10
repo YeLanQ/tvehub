@@ -34,7 +34,8 @@ export type EntityKind =
   | "ambientLightNode"
   | "spotLightNode"
   | "skyboxNode"
-  | "audioNode";
+  | "audioNode"
+  | "particleSystemNode";
 
 /** 节点类型 token 类的构造器形状（@property 的 type 选项可用） */
 export type NodeClass =
@@ -42,7 +43,8 @@ export type NodeClass =
   | typeof MeshNode
   | typeof LightNode
   | typeof CameraNode
-  | typeof SkyboxNode;
+  | typeof SkyboxNode
+  | typeof ParticleSystemNode;
 
 /** 内置组件门面类（@property 组件引用字段 / getComponent / addComponent 可用） */
 export type ComponentClass =
@@ -64,7 +66,13 @@ export interface PropDef {
 }
 
 /** 脚本声明的可创建节点类型基础（对应编辑器节点类型键） */
-export type ScriptNodeKind = "node" | "meshNode" | "cameraNode" | "lightNode" | "skyboxNode";
+export type ScriptNodeKind =
+  | "node"
+  | "meshNode"
+  | "cameraNode"
+  | "lightNode"
+  | "skyboxNode"
+  | "particleSystemNode";
 
 // ---------------------------------------------------------------------------
 // 装饰器（参考 Cocos Creator @property / @ccclass 的声明式写法）
@@ -78,7 +86,7 @@ export type ScriptNodeKind = "node" | "meshNode" | "cameraNode" | "lightNode" | 
  * {x,y,z} 向量对象需显式传 type 或声明对应类型。
  *
  * **场景节点引用**：type 传节点类型类（Transform / MeshNode / LightNode /
- * CameraNode / SkyboxNode，或用小写别名 meshNode 等）即声明"引用一个场景节点"。
+ * CameraNode / SkyboxNode / ParticleSystemNode，或用小写别名 meshNode 等）即声明"引用一个场景节点"。
  * 检查器按类型过滤列出可选的场景节点，选择结果在运行期解析为该节点的 Entity
  * （未选择为 null）：
  *
@@ -423,12 +431,132 @@ export class CameraNode extends Entity {}
 /** 天空盒节点（编辑器 skyboxNode） */
 export class SkyboxNode extends Entity {}
 
+/** 粒子发射形状：cone = 圆锥（沿节点本地 -Z）| sphere = 球面 | hemisphere = 上半球 | box = 盒体 */
+export type ParticleShape = "cone" | "sphere" | "hemisphere" | "box";
+
+/** 粒子系统发射设置（与编辑器检查器 Particle System 卡同一字段集） */
+export interface ParticleSettings {
+  /** 发射周期（秒）：非循环系统发射持续该时长后停止 */
+  duration: number;
+  /** 循环发射 */
+  looping: boolean;
+  /** 预热：重启时快进一个周期（仅循环系统） */
+  prewarm: boolean;
+  /** 起始延迟（秒） */
+  startDelay: number;
+  /** 粒子寿命（秒） */
+  startLifetime: number;
+  /** 初速度（世界单位/秒） */
+  startSpeed: number;
+  /** 初始直径（世界单位） */
+  startSize: number;
+  /** 初始颜色（0xRRGGBB） */
+  startColor: number;
+  /** 终点颜色（0xRRGGBB；colorOverLifetime 开启时插值到该色） */
+  endColor: number;
+  /** 重力系数（1 = 标准重力；0 = 无重力；负值上浮） */
+  gravityModifier: number;
+  /** 发射速率（粒子/秒） */
+  emissionRate: number;
+  /** 同时存活粒子上限（改动会重建发射器） */
+  maxParticles: number;
+  shape: ParticleShape;
+  /** 形状半径（圆锥底圆 / 球 / 盒半边长） */
+  shapeRadius: number;
+  /** 圆锥半角（度；仅 cone） */
+  shapeAngle: number;
+  /** 模拟空间：local 跟随节点 / world 留在世界 */
+  simulationSpace: "local" | "world";
+  /** 颜色随寿命（start → end + 末段淡出） */
+  colorOverLifetime: boolean;
+  /** 尺寸随寿命（线性缩到 0） */
+  sizeOverLifetime: boolean;
+  /** 混合：additive 叠加 / normal 透明混合（改动会重建发射器） */
+  blending: "additive" | "normal";
+}
+
+/** 粒子系统运行态 */
+export interface ParticleState {
+  /** 正在推进（未暂停且未播完） */
+  playing: boolean;
+  paused: boolean;
+  /** 非循环系统已发射完毕且粒子全部消亡 */
+  finished: boolean;
+  /** 当前存活粒子数 */
+  alive: number;
+  /** 系统时间（秒；自播放起累计） */
+  time: number;
+}
+
+/**
+ * 粒子系统节点（编辑器 particleSystemNode）：通用节点能力 + 运行时播放控制 +
+ * 发射参数读写（运行态生效，不回写场景文件）。
+ *
+ * ```ts
+ * export default class Explode extends Component {
+ *   @property({ type: ParticleSystemNode, label: "爆炸特效" })
+ *   fx: ParticleSystemNode | null = null;
+ *
+ *   onStart() {
+ *     if (!this.fx) return;
+ *     this.fx.startColor = 0xffcc33;
+ *     this.fx.emissionRate = 200;
+ *     this.fx.restart();
+ *   }
+ * }
+ * ```
+ */
+export class ParticleSystemNode extends Entity {
+  /** 播放（暂停态续播；停止/播完态从头开始） */
+  play(): void;
+  /** 暂停（保留当前粒子） */
+  pause(): void;
+  /** 停止发射（存活粒子自然消亡） */
+  stop(): void;
+  /** 清空粒子并从头开始（预热系统下一帧快进一个周期） */
+  restart(): void;
+  /** 立即清空全部粒子（不改变播放态） */
+  clear(): void;
+  readonly playing: boolean;
+  readonly paused: boolean;
+  /** 非循环系统已发射完毕且粒子全部消亡 */
+  readonly finished: boolean;
+  /** 当前存活粒子数 */
+  readonly aliveCount: number;
+  /** 发射设置快照（未绑定返回 null） */
+  readonly settings: ParticleSettings | null;
+  /** 批量合并发射设置（子集；maxParticles/blending 变化会重建发射器） */
+  setSettings(patch: Partial<ParticleSettings>): void;
+  duration: number;
+  looping: boolean;
+  prewarm: boolean;
+  startDelay: number;
+  startLifetime: number;
+  startSpeed: number;
+  startSize: number;
+  /** 初始颜色（0xRRGGBB） */
+  startColor: number;
+  /** 终点颜色（0xRRGGBB） */
+  endColor: number;
+  gravityModifier: number;
+  emissionRate: number;
+  maxParticles: number;
+  shape: ParticleShape;
+  shapeRadius: number;
+  shapeAngle: number;
+  simulationSpace: "local" | "world";
+  colorOverLifetime: boolean;
+  sizeOverLifetime: boolean;
+  blending: "additive" | "normal";
+}
+
 export {
   Transform as transform,
   MeshNode as meshNode,
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
+  ParticleSystemNode as particleSystemNode,
 };
 
 // ---------------------------------------------------------------------------
@@ -1166,6 +1294,27 @@ export interface AudioApi {
   setVolume(entity: Entity, volume: number): void;
 }
 
+/**
+ * 粒子系统运行期控制（按实体寻址；仅粒子系统节点有效）。
+ * 拿到 {@link ParticleSystemNode} 实体时也可直接调用其同名方法/属性。
+ */
+export interface ParticlesApi {
+  /** 播放（暂停态续播；停止/播完态从头开始） */
+  play(entity: Entity): void;
+  /** 暂停（保留当前粒子） */
+  pause(entity: Entity): void;
+  /** 停止发射（存活粒子自然消亡） */
+  stop(entity: Entity): void;
+  /** 清空粒子并从头开始 */
+  restart(entity: Entity): void;
+  /** 立即清空全部粒子 */
+  clear(entity: Entity): void;
+  /** 运行态（非粒子节点返回 null） */
+  stateOf(entity: Entity): ParticleState | null;
+  /** 合并发射设置（子集；运行态生效，不回写场景文件） */
+  setSettings(entity: Entity, patch: Partial<ParticleSettings>): void;
+}
+
 /** 物理运行期控制（按实体寻址；仅挂了刚体组件的节点有效） */
 export interface PhysicsApi {
   /** 施加冲量（世界空间，N·s；动力学体） */
@@ -1188,13 +1337,14 @@ export interface PhysicsApi {
   setGravity(x: number, y: number, z: number): void;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 物理 / 日志） */
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
   readonly scene: SceneApi;
   readonly animation: AnimationApi;
   readonly audio: AudioApi;
+  readonly particles: ParticlesApi;
   readonly physics: PhysicsApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */
   log(...args: unknown[]): void;

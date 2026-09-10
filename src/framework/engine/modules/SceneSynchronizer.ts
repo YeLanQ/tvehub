@@ -10,7 +10,9 @@ import {
   DirectionalLightNode,
   SpotLightNode,
   CameraNode,
+  ParticleSystemNode,
 } from "../../prototype/derived/Primitives";
+import { PARTICLES_CHILD_NAME } from "../../particles/ParticleEmitter";
 import {
   SHADOW_MAP_SIZE_PLANE,
   shadowMapSizeOf,
@@ -78,6 +80,8 @@ const MODEL_CHILD_NAME = "__modelRoot";
 const MODEL_PENDING_NAME = "__modelPending";
 /** 音源节点图标着色（就绪态；加载中黄/失败红/未绑定灰见 refreshAudio） */
 const AUDIO_ICON_COLOR = 0x7ed49a;
+/** 粒子系统节点图标子对象名（编辑器辅助物；粒子 Points 由 ParticleSystem 挂 __particles） */
+const PARTICLE_ICON_NAME = "__particleIcon";
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
 
@@ -319,6 +323,7 @@ export class SceneSynchronizer {
     else if (node instanceof LightNode) this.refreshLight(node, obj);
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
     else if (node instanceof AudioNode) this.refreshAudio(node, obj);
+    else if (node instanceof ParticleSystemNode) this.refreshParticleSystem(node, obj);
     // 组件模式：灯光组件挂任意节点（含网格/空组），与节点类型原生能力并存
     this.refreshComponentLights(node, obj);
     this.applyTransform(node);
@@ -342,6 +347,9 @@ export class SceneSynchronizer {
         c.layers.set(layer);
       } else if (c.name === MODEL_CHILD_NAME || c.name === MODEL_PENDING_NAME) {
         c.traverse((d) => d.layers.set(layer));
+      } else if (c.name === PARTICLES_CHILD_NAME) {
+        // 粒子 Points 是节点的渲染内容：跟随节点层（ParticleSystem 首次挂载时也置位）
+        c.layers.set(layer);
       }
     });
   }
@@ -965,6 +973,21 @@ export class SceneSynchronizer {
           ? AUDIO_ICON_COLOR
           : 0xd7b45a;
     (icon.material as THREE.SpriteMaterial).color.setHex(color);
+  }
+
+  /**
+   * 粒子系统节点刷新：火花图标精灵标示发射器位置（编辑器辅助物，预览隐藏）。
+   * 图标按 startColor 着色；粒子 Points 本身由 ParticleSystem 挂 __particles 子对象
+   * （引擎在同步器之后调 syncNode），这里不建渲染内容。
+   */
+  private refreshParticleSystem(node: ParticleSystemNode, obj: THREE.Object3D): void {
+    let icon = obj.children.find((c) => c.name === PARTICLE_ICON_NAME) as THREE.Sprite | null;
+    if (!icon) {
+      icon = createIconSprite("particle", node.particles.startColor, 0.9);
+      icon.name = PARTICLE_ICON_NAME;
+      obj.add(icon);
+    }
+    (icon.material as THREE.SpriteMaterial).color.setHex(node.particles.startColor & 0xffffff);
   }
 
   dispose(): void {

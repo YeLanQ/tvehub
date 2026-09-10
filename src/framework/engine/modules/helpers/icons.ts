@@ -80,6 +80,13 @@ export const AUDIO_ICON_PATHS: string[] = [
   "M19.6 4.4a10.8 10.8 0 0 1 0 15.2",
 ];
 
+/** 粒子系统节点：大四角星 + 两颗小星（火花/特效发射器语义） */
+export const PARTICLE_ICON_PATHS: string[] = [
+  "M10 3.5l1.6 4.6 4.6 1.6-4.6 1.6L10 15.9l-1.6-4.6-4.6-1.6 4.6-1.6z",
+  "M18.5 13.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z",
+  "M6.5 17.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

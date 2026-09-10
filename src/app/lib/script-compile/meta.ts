@@ -28,7 +28,13 @@ import { literalValue, parsePropDef, vec3Value } from "./props";
 // ---------------------------------------------------------------------------
 
 /** 脚本类可声明的节点类型基础（对应引擎节点类型键；缺省 group = node 基类） */
-export type ScriptNodeKind = "node" | "meshNode" | "cameraNode" | "lightNode" | "skyboxNode";
+export type ScriptNodeKind =
+  | "node"
+  | "meshNode"
+  | "cameraNode"
+  | "lightNode"
+  | "skyboxNode"
+  | "particleSystemNode";
 
 export interface ScriptNodeType {
   /** 基础节点类型（缺省 "node"=空组；运行时按此创建对应节点） */
@@ -45,7 +51,14 @@ export interface ScriptClassMeta {
   nodeType: ScriptNodeType | null;
 }
 
-const NODE_KINDS: ScriptNodeKind[] = ["node", "meshNode", "cameraNode", "lightNode", "skyboxNode"];
+const NODE_KINDS: ScriptNodeKind[] = [
+  "node",
+  "meshNode",
+  "cameraNode",
+  "lightNode",
+  "skyboxNode",
+  "particleSystemNode",
+];
 
 /** 解析脚本类 `static nodeType = { kind, label }` 声明（非法/未声明返回 null） */
 function parseNodeType(ts: TsModule, member: ts.PropertyDeclaration): ScriptNodeType | null {

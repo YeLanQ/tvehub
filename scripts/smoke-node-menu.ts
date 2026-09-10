@@ -44,6 +44,8 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
       return "skyboxNode";
     case "audio":
       return "audioNode";
+    case "particle":
+      return "particleSystemNode";
     case "light":
       return `${subtype}LightNode`; // point → pointLightNode / directional → directionalLightNode …
     default:
@@ -54,7 +56,7 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
 console.log("[1] 菜单项定义");
 check("菜单非空", types.length > 0, `${types.length} 项`);
 check("菜单不含已移除的阴影节点入口", !types.includes("shadow"), types.join(", "));
-check("含网格/灯光/天空盒/相机/空组/音源入口", ["mesh:", "light:", "skybox:", "camera", "group", "audio"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
+check("含网格/灯光/天空盒/相机/空组/音源/粒子入口", ["mesh:", "light:", "skybox:", "camera", "group", "audio", "particle"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
 check("脚本节点分组只在有脚本时出现", types.some((t) => t.startsWith("script:")));
 
 console.log("[2] 每个菜单项都能映射成 node.add 参数");
@@ -109,6 +111,7 @@ console.log("[4] 工厂真能造出对应类型（菜单 → 命令 → 节点�
     { type: "skybox:procedural", make: (a) => factory.createSkybox(a?.subtype as SkyboxKind) },
     { type: "skybox:cube", make: (a) => factory.createSkybox(a?.subtype as SkyboxKind) },
     { type: "audio", make: () => factory.createAudio() },
+    { type: "particle", make: () => factory.createParticleSystem() },
   ];
   for (const c of cases) {
     const args = addNodeArgs(c.type, "p1");

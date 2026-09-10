@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
   isAudioSourceComponent,
@@ -15,6 +15,7 @@ import { useInspectorComponents } from "../composables/inspector/useInspectorCom
 import { useInspectorPhysics } from "../composables/inspector/useInspectorPhysics";
 import { useInspectorLightAudio } from "../composables/inspector/useInspectorLightAudio";
 import { useInspectorCameraSky } from "../composables/inspector/useInspectorCameraSky";
+import { useInspectorParticles } from "../composables/inspector/useInspectorParticles";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
@@ -26,6 +27,7 @@ import LightSection from "./inspector/LightSection.vue";
 import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
+import ParticleSection from "./inspector/ParticleSection.vue";
 import AssetInspector from "./inspector/AssetInspector.vue";
 import ScriptFields from "./inspector/ScriptFields.vue";
 import RigidBodyFields from "./inspector/RigidBodyFields.vue";
@@ -95,6 +97,7 @@ const {
   onSetSkyMaterial,
   onSkyMaterialCopyToProject,
 } = useInspectorCameraSky(inspector);
+const { onParticleUpdate } = useInspectorParticles(inspector);
 
 // ---------------------------------------------------------------------------
 // 资产检查器模式（最后点击优先）：点击资产面板条目 → 显示资产预览与属性；
@@ -222,6 +225,10 @@ onBeforeUnmount(flushMaterialPersist);
 
       <ComponentCard v-if="node instanceof AudioNode" title="Audio" :open="true">
         <AudioSection :settings="node.audio" :runtime-id="node.id" :rev="revision" @update="onAudioUpdate" />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof ParticleSystemNode" title="Particle System" :open="true">
+        <ParticleSection :node="node" :rev="revision" @update="onParticleUpdate" />
       </ComponentCard>
 
       <!-- —— 已挂组件卡（按挂载序 = 卡片序；Unity 组件卡语义：启用勾选 + ⋮ 菜单） —— -->

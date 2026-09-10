@@ -4,6 +4,7 @@ import {
   CameraNode,
   LightNode,
   MeshNode,
+  ParticleSystemNode,
   SkyboxNode,
   skyMaterialForKind,
   type LightKind,
@@ -20,7 +21,8 @@ export type EditorNodeType =
   | "lightNode"
   | "cameraNode"
   | "skyboxNode"
-  | "audioNode";
+  | "audioNode"
+  | "particleSystemNode";
 
 export interface CreateOptions {
   parentId?: string | null;
@@ -122,6 +124,14 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建粒子系统节点（默认为循环的叠加混合圆锥发射器；参数经检查器调整） */
+  createParticleSystem(opts: CreateOptions = {}): ParticleSystemNode {
+    const node = this.registry.create("particleSystemNode") as ParticleSystemNode;
+    node.name = opts.name ?? "Particle System";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   fromJSON(json: JsonRecord): Node {
     return this.registry.createFromJSON(json);
   }
@@ -137,13 +147,15 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
         ? SkyboxNode
         : K extends "audioNode"
           ? AudioNode
-          : Node;
+          : K extends "particleSystemNode"
+            ? ParticleSystemNode
+            : Node;
 
 function defaultSkyboxName(kind: SkyboxKind): string {
   return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";
 }
 
-export type { MeshNode, LightNode, CameraNode, SkyboxNode, AudioNode };
+export type { MeshNode, LightNode, CameraNode, SkyboxNode, AudioNode, ParticleSystemNode };
 
 export function createNodeFactory(registry: PrototypeRegistry): NodeFactory {
   return new NodeFactory(registry);

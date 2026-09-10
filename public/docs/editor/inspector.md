@@ -39,6 +39,22 @@ Light 卡片：灯光类型（点光/平行光/聚光/环境光，切换即重�
 
 Audio 卡片：音频资产引用、自动播放、循环、音量、倍速、空间化（2d/3d）。
 
+## 粒子系统节点
+
+Particle System 卡片（Unity ParticleSystem 语义子集；每项改动一次撤销，实时生效不打断已存活粒子）：
+
+| 分组 | 字段 |
+| --- | --- |
+| 运行时控制 | ▶ 播放（暂停态续播 / 播完态重播）、⏸ 暂停、⏹ 停止发射（粒子自然消亡）、↻ 重启（清空并从头开始）；状态文案显示存活粒子数。**不落盘** |
+| Main | Duration（发射周期）、Looping、Prewarm（仅循环）、Start Delay、Start Lifetime、Start Speed、Start Size、Start Color、Gravity（重力系数，1 = 9.81；负值上浮）、Simulation Space（Local / World）、Max Particles |
+| Emission | Rate over Time（粒子/秒） |
+| Shape | Shape（Cone / Sphere / Hemisphere / Box）、Radius、Angle（圆锥半角，仅 Cone） |
+| Color over Lifetime | Enabled、End Color |
+| Size over Lifetime | Enabled |
+| Renderer | Blending（Additive / Normal） |
+
+`Max Particles` 与 `Blending` 属于结构参数，改动会重建发射器（粒子从头开始）；其余参数原地更新。切换 Simulation Space 会清空当前粒子。
+
 ## 添加组件
 
 检查器底部「添加组件」菜单按分类列出（多实例约束：同一节点不可重复挂载的项会禁用）：

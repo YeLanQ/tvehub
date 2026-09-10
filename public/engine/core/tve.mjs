@@ -30,6 +30,7 @@ const R2D = 180 / Math.PI;
  * @property {{play,stop,pause,resume,bindingOf,clipsOf,reapply,applyAnim,applyGraph,removeGraph,setSpeed,setLoop,setAutoplay,setParam}|null} animations 动画控制（按节点 id 寻址）
  * @property {{play,stop,pause,resume,setVolume,addSource,updateSettings,infoOf}|null} audios 音频控制（按节点 id / 组件 id 寻址）
  * @property {{bindingOf,play,pause,resume,stop,setTime,setSpeed,setLoop,setAutoplay,changeClip,add}|null} clipAnims 关键帧动画剪辑控制（按组件 id 寻址）
+ * @property {{play,pause,stop,restart,clear,infoOf,settingsOf,updateSettings}|null} particles 粒子系统控制（按节点 id 寻址）
  * @property {{spawn(entity, tokenOrClass, props?): object|null}|null} scripts 脚本组件动态创建（getComponent 字段 get-or-create / addComponent 用）
  */
 
@@ -1210,8 +1211,7 @@ function lightSettingsFrom(s) {
   out.distance = num(s.distance, out.distance, 0);
   // 渲染层级掩码（Unity 灯光 Culling Mask；缺省全部层）
   out.cullingMask =
-    typeof s.cullingMask === 
-umber && Number.isFinite(s.cullingMask) ? s.cullingMask | 0 : -1;
+    typeof s.cullingMask === "number" && Number.isFinite(s.cullingMask) ? s.cullingMask | 0 : -1;
   out.decay = num(s.decay, out.decay, 0);
   out.angle = num(s.angle, out.angle, 1, 89);
   out.penumbra = num(s.penumbra, out.penumbra, 0, 1);
@@ -1365,6 +1365,90 @@ class LightNode extends Transform {}
 class CameraNode extends Transform {}
 class SkyboxNode extends Transform {}
 
+/**
+ * 粒子系统节点（编辑器 particleSystemNode）：除通用节点能力外提供运行时播放控制
+ * 与发射参数读写（运行态生效，不回写场景文件）。全部经 host.particles 按节点 id 转发。
+ */
+class ParticleSystemNode extends Transform {
+  /** 播放（暂停态续播；停止/播完态从头开始） */
+  play() {
+    host?.particles?.play(this.id);
+  }
+  /** 暂停（保留当前粒子） */
+  pause() {
+    host?.particles?.pause(this.id);
+  }
+  /** 停止发射（存活粒子自然消亡） */
+  stop() {
+    host?.particles?.stop(this.id);
+  }
+  /** 清空粒子并从头开始（预热系统下一帧快进一个周期） */
+  restart() {
+    host?.particles?.restart(this.id);
+  }
+  /** 立即清空全部粒子（不改变播放态） */
+  clear() {
+    host?.particles?.clear(this.id);
+  }
+  get playing() {
+    return host?.particles?.infoOf(this.id)?.playing ?? false;
+  }
+  get paused() {
+    return host?.particles?.infoOf(this.id)?.paused ?? false;
+  }
+  /** 非循环系统已发射完毕且粒子全部消亡 */
+  get finished() {
+    return host?.particles?.infoOf(this.id)?.finished ?? false;
+  }
+  /** 当前存活粒子数 */
+  get aliveCount() {
+    return host?.particles?.infoOf(this.id)?.alive ?? 0;
+  }
+  /** 发射设置快照（收敛后的完整对象；未绑定返回 null） */
+  get settings() {
+    return host?.particles?.settingsOf(this.id) ?? null;
+  }
+  /** 批量合并发射设置（子集；maxParticles/blending 变化会重建发射器） */
+  setSettings(patch) {
+    host?.particles?.updateSettings(this.id, patch);
+  }
+}
+
+// 发射参数逐字段读写（与 tve.d.ts 的 ParticleSystemNode 属性表一致）
+for (const key of [
+  "duration",
+  "looping",
+  "prewarm",
+  "startDelay",
+  "startLifetime",
+  "startSpeed",
+  "startSize",
+  "startColor",
+  "endColor",
+  "gravityModifier",
+  "emissionRate",
+  "maxParticles",
+  "shape",
+  "shapeRadius",
+  "shapeAngle",
+  "simulationSpace",
+  "colorOverLifetime",
+  "sizeOverLifetime",
+  "blending",
+]) {
+  Object.defineProperty(ParticleSystemNode.prototype, key, {
+    configurable: true,
+    enumerable: false,
+    get() {
+      const s = host?.particles?.settingsOf(this.id);
+      return s ? s[key] : undefined;
+    },
+    set(v) {
+      host?.particles?.updateSettings(this.id, { [key]: v });
+    },
+  });
+}
+
 // 编辑器 type 键 → 类型类（供 getEntity 按 userData.nodeKind 构建实例）
 const KIND_CLASSES = {
   node: Transform,
@@ -1372,6 +1456,7 @@ const KIND_CLASSES = {
   cameraNode: CameraNode,
   skyboxNode: SkyboxNode,
   audioNode: Transform,
+  particleSystemNode: ParticleSystemNode,
   lightNode: LightNode,
   pointLightNode: LightNode,
   directionalLightNode: LightNode,
@@ -1392,6 +1477,7 @@ LightNode.__nodeKinds = [
 ];
 CameraNode.__nodeKinds = ["cameraNode"];
 SkyboxNode.__nodeKinds = ["skyboxNode"];
+ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
 
 /** @property({ type: 节点类 }) 是否节点引用选项（运行时标识） */
 function isNodeRefType(v) {
@@ -1941,6 +2027,33 @@ const audioApi = {
   },
 };
 
+/** 粒子系统控制（按实体寻址；仅粒子系统节点有效，脚本经 engine.particles 调用） */
+const particlesApi = {
+  play(entity) {
+    host?.particles?.play(entity?.id);
+  },
+  pause(entity) {
+    host?.particles?.pause(entity?.id);
+  },
+  stop(entity) {
+    host?.particles?.stop(entity?.id);
+  },
+  restart(entity) {
+    host?.particles?.restart(entity?.id);
+  },
+  clear(entity) {
+    host?.particles?.clear(entity?.id);
+  },
+  /** 运行态（playing/paused/finished/alive/time；非粒子节点 null） */
+  stateOf(entity) {
+    return host?.particles?.infoOf(entity?.id) ?? null;
+  },
+  /** 合并发射设置（子集；运行态生效，不回写场景文件） */
+  setSettings(entity, patch) {
+    host?.particles?.updateSettings(entity?.id, patch);
+  },
+};
+
 /** 物理控制（按实体寻址；仅挂刚体组件的节点有效，脚本经 engine.physics 调用） */
 const physicsApi = {
   applyImpulse(entity, x, y, z) {
@@ -2203,6 +2316,7 @@ const engine = {
   scene: sceneApi,
   animation: animationApi,
   audio: audioApi,
+  particles: particlesApi,
   physics: physicsApi,
   log(...args) {
     postLog("info", formatArgs(args));
@@ -2228,11 +2342,13 @@ export {
   LightNode,
   CameraNode,
   SkyboxNode,
+  ParticleSystemNode,
   Transform as transform,
   MeshNode as meshNode,
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
+  ParticleSystemNode as particleSystemNode,
   // 脚本通用系统（委托/对象池/数据中心）
   Delegate,
   Pool,

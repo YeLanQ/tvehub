@@ -22,6 +22,8 @@
     "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js",
     "smoke:layers": "vite build --ssr scripts/smoke-layers.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-layers.js",
     "smoke:layers-runtime": "node scripts/smoke-layers-runtime.mjs",
+    "smoke:particles": "vite build --ssr scripts/smoke-particles.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-particles.js",
+    "smoke:particles-runtime": "node scripts/smoke-particles-runtime.mjs",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs"
   },
   "dependencies": {

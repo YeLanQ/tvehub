@@ -56,6 +56,20 @@ engine.audio.resume(entity);
 engine.audio.setVolume(entity, 0.5);  // 运行时音量 0~1（不落盘）
 ```
 
+## 粒子：engine.particles
+
+按实体寻址；仅粒子系统节点有效。拿到 `ParticleSystemNode` 实体时也可直接调用其同名方法/属性（见 entity.md）。
+
+```ts
+engine.particles.play(entity);       // 暂停态续播；停止/播完态从头开始
+engine.particles.pause(entity);
+engine.particles.stop(entity);       // 停止发射，存活粒子自然消亡
+engine.particles.restart(entity);    // 清空并从头开始
+engine.particles.clear(entity);      // 立即清空
+engine.particles.stateOf(entity);    // { playing, paused, finished, alive, time } | null
+engine.particles.setSettings(entity, { emissionRate: 50, startColor: 0x66ccff }); // 运行态合并（不落盘）
+```
+
 ## 物理：engine.physics
 
 按实体寻址；仅挂了「刚体」组件的节点有效。

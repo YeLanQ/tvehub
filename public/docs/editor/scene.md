@@ -25,10 +25,23 @@
 | 相机 | Camera |
 | 空组 | Group |
 | 音频 | Audio Source |
+| 粒子 | Particle System（粒子发射器，见下文） |
 | 天空盒 | Procedural Skybox（程序化天空）/ Cube Skybox（立方体贴图） |
 | 脚本节点 | 由脚本 `@nodeType` 声明的类型（有声明时出现） |
 
 模型资产经资产面板「添加到场景」或拖入创建为模型网格节点。
+
+## 粒子系统
+
+Particle System 节点是场景中的粒子发射器（Unity ParticleSystem 语义子集），入图即在视口中实时模拟，参数改动实时生效：
+
+- **发射方向**：Cone / Box 沿节点**本地 -Z** 发射（与灯光、相机的前向一致），旋转节点即改变喷射方向；Sphere / Hemisphere 由球心向外；
+- **模拟空间**：`Local` 粒子跟随节点移动（火把/引擎尾焰），`World` 粒子留在世界空间（烟迹/拖尾）；
+- **循环与预热**：循环系统持续发射；非循环系统发射 `Duration` 秒后停止，粒子全部消亡即播完（检查器 ▶ 可重播）；`Prewarm` 让循环系统入图/重启时快进一个周期，粒子瞬间就位；
+- **随寿命变化**：`Color over Lifetime`（Start Color → End Color 渐变并在末段淡出）与 `Size over Lifetime`（线性缩到 0）可独立开关；
+- **渲染**：程序化软圆点 billboard，`Additive`（叠加，火焰/魔法）或 `Normal`（透明混合，烟雾/雨雪）；粒子跟随节点的渲染层，相机 Culling Mask 排除该层时一同排除；
+- **上限**：`Max Particles` 为同时存活上限（缓冲容量），到上限后新粒子等待旧粒子消亡；
+- 视口中以火花图标标示发射器位置（预览/构建不显示图标，只回放粒子）；播放/暂停/停止/重启为运行时控制，不写入场景文件；脚本可经 SDK `ParticleSystemNode` / `engine.particles` 控制。
 
 ## 阴影（投影）
 

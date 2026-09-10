@@ -18,6 +18,7 @@ import {
   CameraNode,
   LightNode,
   MeshNode,
+  ParticleSystemNode,
   SkyboxNode,
   type GeometryKind,
   type SkyboxKind,
@@ -47,6 +48,7 @@ import { tickShaderTime } from "../material/customShader";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
+import { ParticleSystem } from "../particles";
 import { PhysicsSystem } from "../physics";
 
 /**
@@ -64,6 +66,7 @@ const SCRIPT_NODE_BASE: Record<
   cameraNode: (e, p) => e.addCamera(p),
   skyboxNode: (e, p) => e.addSkybox("procedural", p),
   audioNode: (e, p) => e.addAudio(p),
+  particleSystemNode: (e, p) => e.addParticleSystem(p),
 };
 
 export interface EditorEvents extends Record<string, unknown> {
@@ -84,6 +87,8 @@ export interface EditorEvents extends Record<string, unknown> {
   "audio:changed": { nodeId: string };
   /** 物理运行时变化（绑定/世界就绪/模拟启停/数据写入） */
   "physics:changed": { nodeId: string };
+  /** 粒子系统运行时变化（播放/暂停/停止/重启控制后广播） */
+  "particles:changed": { nodeId: string };
 }
 
 export class EditorEngine {
@@ -109,6 +114,8 @@ export class EditorEngine {
   private audioCompBindings = new Map<string, Set<string>>();
   /** 物理系统（刚体/碰撞体节点模拟；固定步长推进，动力学体回写渲染变换） */
   readonly physics = new PhysicsSystem();
+  /** 粒子系统（粒子节点的 CPU 模拟 + Points 渲染；渲染循环推进） */
+  readonly particles = new ParticleSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
   private clock = new THREE.Clock();
   /** 自定义着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
@@ -256,6 +263,8 @@ export class EditorEngine {
     });
     // 物理运行时变化（绑定/世界就绪/模拟启停）→ 广播给面板与工具栏刷新
     this.physics.onChange((nodeId) => this.events.emit("physics:changed", { nodeId }));
+    // 粒子运行时变化（播放控制）→ 广播给检查器刷新状态文案
+    this.particles.onChange((nodeId) => this.events.emit("particles:changed", { nodeId }));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
       getAspect: () => this.renderer.aspect,
       getDesignSize: () => this.designResolution,
@@ -379,6 +388,8 @@ export class EditorEngine {
       // 物理紧随其后：运动学体跟随动画后的位姿推开动力学体
       this.animation.update(dt);
       this.physics.update(dt);
+      // 粒子模拟推进（发射/积分/回收并写渲染缓冲）；world 空间粒子按节点世界矩阵回本地
+      this.particles.update(dt);
       // 自定义着色器时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
       this.shaderTime += dt;
       tickShaderTime(this.shaderTime);
@@ -433,6 +444,7 @@ export class EditorEngine {
     this.animation?.dispose();
     this.audio?.dispose();
     this.physics?.dispose();
+    this.particles?.dispose();
     this.materials?.clear();
     this.shaders?.clear();
     this.models?.clear();
@@ -563,6 +575,19 @@ export class EditorEngine {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createLight(kind, { parentId: parent?.id ?? null });
     applyLightSpawn(node);
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加粒子系统节点（默认循环发射的叠加混合圆锥火花；入图即开始模拟，
+   * 参数经检查器调整实时生效）。
+   */
+  addParticleSystem(parentId?: string): ParticleSystemNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createParticleSystem({ parentId: parent?.id ?? null });
+    applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -961,6 +986,17 @@ export class EditorEngine {
       const n = this.graph.get(c.nodeId);
       if (n) this.syncPhysicsNode(n);
     }
+    // 粒子系统节点：入图/属性变更 → 按最新设置同步发射器（结构参数变化重建，
+    // 其余原地更新不打断已存活粒子）；移除 → 解绑释放
+    if (c.kind === "remove") {
+      this.particles.unbind(c.nodeId);
+    } else if (c.kind === "add" || c.kind === "properties") {
+      const n = this.graph.get(c.nodeId);
+      if (n instanceof ParticleSystemNode) {
+        const obj = this.synchronizer.getObjectMap().get(n.id);
+        if (obj) this.particles.syncNode(n, obj);
+      }
+    }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -1003,6 +1039,8 @@ export class EditorEngine {
     this.audioCompBindings.clear();
     // 物理绑定指向旧场景对象：模拟中一并停止（世界里的体按旧位姿建出）
     this.physics.unbindAll();
+    // 粒子发射器挂在旧场景对象下：整体重建后按新对象重建
+    this.particles.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
@@ -1011,6 +1049,10 @@ export class EditorEngine {
       if (node instanceof AudioNode) {
         const obj = this.synchronizer.getObjectMap().get(node.id);
         if (obj) this.audio.syncNode(node, obj);
+      }
+      if (node instanceof ParticleSystemNode) {
+        const obj = this.synchronizer.getObjectMap().get(node.id);
+        if (obj) this.particles.syncNode(node, obj);
       }
       this.syncAudioComponents(node);
       this.syncPhysicsNode(node);
@@ -1627,7 +1669,8 @@ export class EditorEngine {
         o.name === "__grid" ||
         o.name === "__camBody" ||
         o.name === "__camIcon" ||
-        o.name === "__audioIcon"
+        o.name === "__audioIcon" ||
+        o.name === "__particleIcon"
       ) {
         o.visible = vis;
         return;

@@ -39,8 +39,36 @@ entity.find(nameOrPath: string);// 子树内查找："父/子/孙" 名称路径�
 | `LightNode` | 灯光节点（point/directional/ambient/spot 各类） |
 | `CameraNode` | 相机节点 |
 | `SkyboxNode` | 天空盒节点 |
+| `ParticleSystemNode` | 粒子系统节点（额外提供播放控制与发射参数读写，见下） |
 
-小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` 同样导出。
+小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` / `particleSystemNode` 同样导出。
+
+### ParticleSystemNode
+
+粒子系统实体在通用节点能力之外提供运行时控制与发射参数读写（运行态生效，不回写场景文件）：
+
+```ts
+import { Component, property, ParticleSystemNode } from "tve";
+
+export default class Explode extends Component {
+  @property({ type: ParticleSystemNode, label: "爆炸特效" })
+  fx: ParticleSystemNode | null = null;
+
+  onStart() {
+    if (!this.fx) return;
+    this.fx.startColor = 0xffcc33;   // 发射参数逐字段读写（同检查器字段集）
+    this.fx.emissionRate = 200;
+    this.fx.setSettings({ startLifetime: 0.8, gravityModifier: 1 }); // 批量合并
+    this.fx.restart();               // 清空并从头开始
+  }
+
+  onUpdate() {
+    if (this.fx?.finished) engine.log("特效播完，存活", this.fx.aliveCount);
+  }
+}
+```
+
+方法：`play()`（暂停态续播 / 停止、播完态从头开始）、`pause()`、`stop()`（停止发射，粒子自然消亡）、`restart()`、`clear()`、`setSettings(patch)`；只读：`playing` / `paused` / `finished` / `aliveCount` / `settings`。可写字段：`duration` `looping` `prewarm` `startDelay` `startLifetime` `startSpeed` `startSize` `startColor` `endColor` `gravityModifier` `emissionRate` `maxParticles` `shape` `shapeRadius` `shapeAngle` `simulationSpace` `colorOverLifetime` `sizeOverLifetime` `blending`。改 `maxParticles` / `blending` 会重建发射器（粒子从头开始）。
 
 ## 场景查询：engine.scene
 

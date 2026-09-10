@@ -102,5 +102,5 @@ export default class Enemy extends Component {
 }
 ```
 
-- `kind`：基础节点类型，`"node" | "meshNode" | "cameraNode" | "lightNode" | "skyboxNode"`，缺省 `"node"`（空组）；
+- `kind`：基础节点类型，`"node" | "meshNode" | "cameraNode" | "lightNode" | "skyboxNode" | "particleSystemNode"`，缺省 `"node"`（空组）；
 - `label`：菜单显示名，缺省取类名。

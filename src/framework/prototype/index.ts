@@ -15,6 +15,7 @@ export {
   SpotLightNode,
   CameraNode,
   AudioNode,
+  ParticleSystemNode,
 } from "./derived/Primitives";
 export { PrototypeRegistry, createDefaultRegistry };
 export type { PrototypeCtor };
@@ -25,6 +26,7 @@ export type {
   LightNodeInit,
   CameraNodeInit,
   AudioNodeInit,
+  ParticleSystemNodeInit,
   LightKind,
 } from "./derived/Primitives";
 export type { TransformInit } from "./Transform";
@@ -67,6 +69,7 @@ export type { ISpotLightNode } from "./nodes/SpotLightNode";
 export type { ICameraNode } from "./nodes/CameraNode";
 export type { ISkyboxNode } from "./nodes/SkyboxNode";
 export type { IAudioNode } from "./nodes/AudioNode";
+export type { IParticleSystemNode } from "./nodes/ParticleSystemNode";
 export type {
   ScenePrototypeDoc,
   NodePrototypeDoc,

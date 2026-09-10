@@ -5,6 +5,7 @@ import {
   DirectionalLightNode,
   LightNode,
   MeshNode,
+  ParticleSystemNode,
   PointLightNode,
   SkyboxNode,
   SpotLightNode,
@@ -71,5 +72,6 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(CameraNode.kType, () => new CameraNode());
   registry.register(SkyboxNode.kType, () => new SkyboxNode());
   registry.register(AudioNode.kType, () => new AudioNode());
+  registry.register(ParticleSystemNode.kType, () => new ParticleSystemNode());
   return registry;
 }

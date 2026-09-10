@@ -3,6 +3,8 @@
 // - 灯光节点 → Group + 真实 Light（方向光/聚光灯附加本地 -Z 目标点；
 //   点光/平行光/聚光灯可自带阴影参数组，见 applyLightShadow）；
 // - cameraNode → Group（记录世界位姿供渲染相机选用）；
+// - particleSystemNode → Group + 粒子 Points 子对象（发射器见 core/particles.mjs，
+//   与编辑器 ParticleEmitter 同语义；每帧推进由 runtime/particles.mjs 驱动）；
 // - 其余 → Group；
 // - 组件模式：任意节点 components 中的 light / audioSource 组件同样生效——
 //   灯光组件重建灯光子对象（与灯光节点同一光照语义），音源组件并入音频绑定
@@ -10,6 +12,7 @@
 import * as THREE from "../core/three.module.min.js";
 import { num, vec, D2R } from "../core/utils.mjs";
 import { buildComponentLight } from "../core/lights.mjs";
+import { createParticleEmitter } from "../core/particles.mjs";
 import { createMesh } from "./mesh.mjs";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
@@ -36,6 +39,9 @@ const LIGHT_NODE_TYPES = new Set([
  * - meshes：meshNode 列表（{ json, obj }，供贴图回填/动画绑定遍历）；
  * - audios：音源列表（{ json, obj }，json.id 为音源节点 id 或音源组件 id，
  *   供音频绑定遍历；音源组件条目另带 nodeId 供按实体寻址回填）；
+ * - clips：关键帧动画剪辑组件列表；
+ * - particles：粒子系统节点列表（{ json, obj, emitter }，供 runtime/particles.mjs
+ *   每帧推进与按节点 id 寻址控制）；
  * - nodes：全部节点列表（{ json, obj }，供脚本宿主/tve SDK 寻址；
  *   节点对象打 userData.nodeId/nodeTag 标记，灯光实例等内部子对象不带标记）。
  * ctx = { materialParams, models }：.mat 参数表 + 模型实例化缓存。
@@ -45,6 +51,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
   const meshes = [];
   const audios = [];
   const clips = [];
+  const particles = [];
   const nodes = [];
 
   function buildOwn(type, json) {
@@ -59,9 +66,20 @@ export function buildSceneTree(rootJson, scene, ctx) {
         return wrapLight(json, "spot");
       case "ambientLightNode":
         return wrapLight(json, "ambient");
+      case "particleSystemNode":
+        return wrapParticles(json);
       default:
         return new THREE.Group();
     }
+  }
+
+  /** 粒子系统节点：Group 承载节点变换，粒子 Points 挂其下（与编辑器同结构） */
+  function wrapParticles(json) {
+    const group = new THREE.Group();
+    const emitter = createParticleEmitter(json.particles);
+    group.add(emitter.object);
+    particles.push({ json, obj: group, emitter });
+    return group;
   }
 
   function buildNode(json, parent) {
@@ -232,5 +250,5 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   buildNode(rootJson, null);
-  return { cameras, meshes, audios, clips, nodes };
+  return { cameras, meshes, audios, clips, particles, nodes };
 }

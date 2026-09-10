@@ -70,4 +70,6 @@ export const NODE_REF_TYPE_KINDS: Record<string, string[] | null> = {
   cameraNode: ["cameraNode"],
   SkyboxNode: ["skyboxNode"],
   skyboxNode: ["skyboxNode"],
+  ParticleSystemNode: ["particleSystemNode"],
+  particleSystemNode: ["particleSystemNode"],
 };

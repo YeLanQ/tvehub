@@ -19,6 +19,7 @@ import { loadMaterialParams } from "../engine/runtime/material.mjs";
 import { loadModels } from "../engine/runtime/model.mjs";
 import { createAnimations } from "../engine/runtime/animation.mjs";
 import { createAudios } from "../engine/runtime/audio.mjs";
+import { createParticles } from "../engine/runtime/particles.mjs";
 import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
@@ -214,7 +215,7 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes, audios, clips, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
+  const { cameras, meshes, audios, clips, particles, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
@@ -418,6 +419,10 @@ async function main() {
   // autoplay 绑定在用户首次交互解锁 AudioContext 后自动起播）
   const audiosApi = createAudios(audios, cam);
 
+  // 粒子系统（粒子节点 CPU 模拟 + Points 渲染；每帧渲染前推进，
+  // 脚本经 engine.particles / ParticleSystemNode 控制播放）
+  const particlesApi = createParticles(particles);
+
   // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
   // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。
   // physicsEnabled 为 true 时自动开始模拟，后端 rapier|jolt|ammo 惰性加载。
@@ -445,6 +450,7 @@ async function main() {
       audios: audiosApi,
       physics: physicsApi,
       clipAnims,
+      particles: particlesApi,
       canvas: renderer.domElement,
     });
   } catch (e) {
@@ -467,6 +473,8 @@ async function main() {
     physicsApi?.update(dt);
     clipAnims.update(dt);
     audiosApi.update();
+    // 粒子推进（脚本/物理已更新节点位姿后再发射，world 空间粒子出生点跟上）
+    particlesApi.update(dt);
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
     applyClearFlags();

@@ -10,6 +10,7 @@ import {
   GROUP_ICON_PATHS,
   SKYBOX_ICON_PATHS,
   AUDIO_ICON_PATHS,
+  PARTICLE_ICON_PATHS,
   LIGHT_POINT_ICON_PATHS,
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
@@ -48,6 +49,7 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   spotLightNode: { d: LIGHT_SPOT_ICON_PATHS, color: "#ff9f43" },
   skyboxNode: { d: SKYBOX_ICON_PATHS, color: "#8ecae6" },
   audioNode: { d: AUDIO_ICON_PATHS, color: "#7ed49a" },
+  particleSystemNode: { d: PARTICLE_ICON_PATHS, color: "#e0a0ff" },
 };
 
 const FALLBACK_BADGE: Record<string, string> = {
@@ -61,6 +63,7 @@ const FALLBACK_BADGE: Record<string, string> = {
   cameraNode: "C",
   skyboxNode: "SK",
   audioNode: "AU",
+  particleSystemNode: "FX",
 };
 
 /** 预制体实例：图标统一绿色（与其他对象区分；仅实例根节点带 prefab 来源引用） */

@@ -48,6 +48,7 @@ const BARE_FIELD_DENYLIST = new Set([
   "LightNode",
   "CameraNode",
   "SkyboxNode",
+  "ParticleSystemNode",
   "Entity",
   "Component",
   "Vec3",

@@ -3,6 +3,7 @@
 export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/core/lights.mjs",
   "engine/core/log.mjs",
+  "engine/core/particles.mjs",
   "engine/core/scripts.mjs",
   "engine/core/three.core.min.js",
   "engine/core/three.module.min.js",
@@ -26,6 +27,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/model.mjs",
   "engine/runtime/nodes.mjs",
   "engine/runtime/pak.mjs",
+  "engine/runtime/particles.mjs",
   "engine/runtime/physics.mjs",
   "engine/runtime/shaderlab.mjs",
   "engine/runtime/sky.mjs",

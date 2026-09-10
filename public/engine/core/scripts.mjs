@@ -120,10 +120,11 @@ function callLifecycle(record, method, ...args) {
  * @param {{play,stop,pause,resume,setVolume,...}|null} opts.audios 音频控制（engine.audio 转发）
  * @param {object|null} opts.physics 物理控制（engine.physics 转发）
  * @param {object|null} opts.clipAnims 关键帧动画剪辑控制（组件字段/门面用）
+ * @param {{play,pause,stop,restart,clear,infoOf,settingsOf,updateSettings}|null} opts.particles 粒子系统控制（engine.particles / ParticleSystemNode 转发）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, canvas }) {
   const noop = { update() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -134,6 +135,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     audios: audios ?? null,
     physics: physics ?? null,
     clipAnims: clipAnims ?? null,
+    particles: particles ?? null,
     scripts: { spawn },
   });
 
