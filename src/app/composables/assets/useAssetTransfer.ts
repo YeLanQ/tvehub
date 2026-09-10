@@ -5,9 +5,9 @@
 
 import { onMounted, onUnmounted, ref, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { logStore } from "../stores/log";
-import { isProtectedAsset } from "../lib/asset-guards";
-import type { ChildEntry } from "../lib/asset-browser";
+import { logStore } from "../../stores/log";
+import { isProtectedAsset } from "../../lib/asset-guards";
+import type { ChildEntry } from "../../lib/asset-browser";
 
 interface DragStart {
   x: number;

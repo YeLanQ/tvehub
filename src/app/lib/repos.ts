@@ -90,10 +90,18 @@ function repoLabel(id: string): string {
   return id.length > 0 ? id[0].toUpperCase() + id.slice(1) : id;
 }
 
+/** 最近一次分类扫描结果（模块级缓存：分区重挂载时先出内容再后台刷新，避免闪一下「读取中」） */
+let cachedCategories: RepoCategory[] | null = null;
+
+/** 缓存的分类清单（未扫描过返回 null） */
+export function cachedRepoCategories(): RepoCategory[] | null {
+  return cachedCategories;
+}
+
 /** 扫描仓库全部分类（元信息；文件内容按需 loadRepoCategoryTexts） */
 export async function listRepoCategories(): Promise<RepoCategory[]> {
   const cats = await api.listRepoCategories().catch(() => []);
-  return cats.map((c) => ({
+  const mapped = cats.map((c) => ({
     id: c.id,
     dir: c.dir,
     // 标签名 = 子目录名首字母大写（不维护映射表，目录即分类）
@@ -102,6 +110,8 @@ export async function listRepoCategories(): Promise<RepoCategory[]> {
     prototypeExt: repoPrototypeExt(c.id),
     files: c.files.map((f) => toRepoFile(f)),
   }));
+  cachedCategories = mapped;
+  return mapped;
 }
 
 function toRepoFile(f: RepoFileEntry, code = ""): RepoFile {

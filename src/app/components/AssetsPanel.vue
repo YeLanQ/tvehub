@@ -10,14 +10,7 @@
 import { computed, provide, onMounted, ref, watch } from "vue";
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
-import { assetService } from "../services/assetService";
-import { logStore } from "../stores/log";
 import { openContextMenu } from "../../lib/editor/context-menu";
-import { prompt } from "../lib/prompt";
-import { type ScriptPrototype } from "../lib/script-prototypes";
-import { listRepoCategories, readRepoFile } from "../lib/repos";
-import { confirm } from "../lib/confirm";
-import { instantiatePrefabAsset } from "../lib/prefabs";
 import { setAssetSelection } from "../lib/active-panel";
 import {
   listDirectoryChildren,
@@ -29,8 +22,6 @@ import {
   buildBlankMenu,
   buildRefreshOnlyMenu,
   type AssetMenuApi,
-  type MenuWorkshopCategory,
-  type MenuWorkshopItem,
 } from "../lib/asset-menu";
 import AssetTreeNode, {
   ASSET_DRAG_KEY,
@@ -39,16 +30,13 @@ import AssetTreeNode, {
 } from "./AssetTreeNode.vue";
 import AssetEntryCell from "./AssetEntryCell.vue";
 import AssetToolbar from "./AssetToolbar.vue";
-import { useAssetTransfer } from "./useAssetTransfer";
-import { api } from "../../lib/api";
+import { useAssetTransfer } from "../composables/assets/useAssetTransfer";
+import { useWorkshopMenu } from "../composables/assets/useWorkshopMenu";
+import { useAssetActions } from "../composables/assets/useAssetActions";
+import { useAssetItemActions } from "../composables/assets/useAssetItemActions";
 import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { materialTypeRegistry, shaderKindLabel } from "../../framework/material";
-import { isModelAssetRel } from "../../framework/mesh";
-import { isAudioAssetRel } from "../../framework/audio";
-import { getEditorStore } from "../stores/editor";
-import { getScriptsStore } from "../stores/scripts";
-import { dispatchCommand } from "../commands";
 import "../../styles/components/assets-panel.scss";
 
 const assetsStore = getAssetsStore();
@@ -96,7 +84,7 @@ function navigate(dir: string) {
   fwdStack.value = [];
   currentDir.value = dir;
   selectedPaths.value = [];
-  lastAnchor = null;
+  lastAnchor.value = null;
   setAssetSelection(null);
 }
 function goBack() {
@@ -151,7 +139,7 @@ const children = computed<ChildEntry[]>(() =>
 
 /** 选中项（支持单选/多选，文件同时写入 store.selectedAsset 作为活跃资产） */
 const selectedPaths = ref<string[]>([]);
-let lastAnchor: string | null = null;
+const lastAnchor = ref<string | null>(null);
 const selectedName = computed(() => {
   if (selectedPaths.value.length === 0) return null;
   if (selectedPaths.value.length === 1) {
@@ -160,29 +148,18 @@ const selectedName = computed(() => {
   return `${selectedPaths.value.length} 项`;
 });
 
-// ---------------------------------------------------------------------------
-// 资产操作（右键菜单）
-// ---------------------------------------------------------------------------
-/** 把内置资源（internal/…）复制到项目资产目录（业务与命名下沉 assetService） */
-async function copyInternalToProject(item: ChildEntry): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root || item.kind === "dir") return;
-  const rel = await assetService.copyInternalToProject(
-    root,
-    item.name,
-    item.path,
-    assetsStore.assets,
-  );
-  if (rel) await assetsStore.load(root);
-}
+// —— 资产操作（右键菜单）：动作下沉 composables/assets，面板只保留状态与接线 ——
+const { workshopMenuCats, refreshWorkshopMenu } = useWorkshopMenu();
+const itemActions = useAssetItemActions({ currentDir, selectedPaths, lastAnchor, children, navigate });
+const assetActions = useAssetActions({ currentDir, isSrcDir, importAllowedDir });
 
 function onItemClick(e: MouseEvent, item: ChildEntry) {
   const idx = selectedPaths.value.indexOf(item.path);
   if (e.ctrlKey || e.metaKey) {
     if (idx >= 0) selectedPaths.value.splice(idx, 1);
     else selectedPaths.value.push(item.path);
-  } else if (e.shiftKey && lastAnchor) {
-    const anchorIdx = children.value.findIndex((c) => c.path === lastAnchor);
+  } else if (e.shiftKey && lastAnchor.value) {
+    const anchorIdx = children.value.findIndex((c) => c.path === lastAnchor.value);
     const itemIdx = children.value.findIndex((c) => c.path === item.path);
     if (anchorIdx >= 0 && itemIdx >= 0) {
       const a = Math.min(anchorIdx, itemIdx);
@@ -190,87 +167,15 @@ function onItemClick(e: MouseEvent, item: ChildEntry) {
       selectedPaths.value = children.value.slice(a, b + 1).map((c) => c.path);
     } else {
       selectedPaths.value = [item.path];
-      lastAnchor = item.path;
+      lastAnchor.value = item.path;
     }
   } else {
     selectedPaths.value = [item.path];
-    lastAnchor = item.path;
+    lastAnchor.value = item.path;
   }
   if (item.kind !== "dir") assetsStore.select(item.path);
   // 主选中项（文件或目录）供 F2 上下文重命名；多选时无单一主项
   setAssetSelection(selectedPaths.value.length === 1 ? selectedPaths.value[0] : null);
-}
-
-function onItemDblClick(item: ChildEntry) {
-  selectedPaths.value = [item.path];
-  lastAnchor = item.path;
-  if (item.kind === "dir") {
-    navigate(item.path);
-    return;
-  }
-  // 双击 .scene 资产：切换当前打开场景（重载引擎场景，层级/视口随之更新）
-  if (item.kind === "scene") {
-    if (isInternalAsset(item.path)) {
-      logStore.log("warn", "内置目录不存在可打开的工程场景");
-      return;
-    }
-    void projectStore.openScene(item.path).then((ok) => {
-      if (!ok) logStore.log("error", `打开场景失败: ${item.path}`, "engine");
-    });
-    return;
-  }
-  // 双击模型资产：作为模型网格加入当前场景
-  if (isModelAssetRel(item.path)) {
-    addModelToScene(item);
-    return;
-  }
-  // 双击音频资产：作为音源节点加入当前场景（绑定该资产）
-  if (isAudioAssetRel(item.path)) {
-    addAudioToScene(item);
-    return;
-  }
-  // 双击 .ts 脚本：切到脚本工作台打开编辑
-  if (item.kind === "ts") {
-    openScriptAsset(item);
-    return;
-  }
-  // 其余资产：双击仅选中并记录日志
-  assetsStore.select(item.path);
-  logStore.log("info", `${item.name} (${item.kind})`);
-}
-
-/** 打开脚本到脚本工作台（双击 / 右键菜单共用） */
-function openScriptAsset(item: ChildEntry): void {
-  getEditorStore().setViewMode("script");
-  void getScriptsStore().openScript(item.path);
-}
-
-/** 把模型资产作为网格节点加入当前场景（source=model；动画自动绑定） */
-function addModelToScene(item: ChildEntry): void {
-  const store = getEditorStore();
-  if (!store.state.mounted) {
-    logStore.log("warn", "编辑器未就绪，无法添加模型");
-    return;
-  }
-  void dispatchCommand("node.add", { kind: "model", path: item.path }).then((r) => {
-    if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
-      logStore.log("success", `已添加模型节点 ${(r.value as { name: string }).name}`, "engine");
-    }
-  });
-}
-
-/** 把音频资产作为音源节点加入当前场景（audioNode 并绑定该资产） */
-function addAudioToScene(item: ChildEntry): void {
-  const store = getEditorStore();
-  if (!store.state.mounted) {
-    logStore.log("warn", "编辑器未就绪，无法添加音源");
-    return;
-  }
-  void dispatchCommand("node.add", { kind: "audio", path: item.path }).then((r) => {
-    if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
-      logStore.log("success", `已添加音源节点 ${(r.value as { name: string }).name}`, "engine");
-    }
-  });
 }
 
 async function onItemContext(e: MouseEvent, item: ChildEntry) {
@@ -284,7 +189,7 @@ function onContentClick(e: MouseEvent) {
   const t = e.target as HTMLElement | null;
   if (t?.closest(".am-item, input, select, button")) return;
   selectedPaths.value = [];
-  lastAnchor = null;
+  lastAnchor.value = null;
   setAssetSelection(null);
 }
 
@@ -319,300 +224,30 @@ const menuApi: AssetMenuApi = {
   shaderTypes: () =>
     materialTypeRegistry.list().map((d) => ({ key: d.key, label: shaderKindLabel(d.key) })),
   onOpenDir: (dir) => navigate(dir),
-  onAddModelToScene: (item) => addModelToScene(item),
-  onAddAudioToScene: (item) => addAudioToScene(item),
-  onInstantiatePrefab: (item) => void instantiatePrefab(item),
-  onOpenScript: (item) => openScriptAsset(item),
-  onCopyInternal: (item) => void copyInternalToProject(item),
-  onCopy: (item) => void doCopy(item),
-  onRename: (item) => void doRename(item),
-  onDelete: (item) => void doDelete(item),
-  onNewScene: (dir) => void doNewScene(dir),
-  onNewScript: (dir) => void doNewScript(dir),
+  onAddModelToScene: (item) => itemActions.addModelToScene(item),
+  onAddAudioToScene: (item) => itemActions.addAudioToScene(item),
+  onInstantiatePrefab: (item) => void itemActions.instantiatePrefab(item),
+  onOpenScript: (item) => itemActions.openScriptAsset(item),
+  onCopyInternal: (item) => void itemActions.copyInternalToProject(item),
+  onCopy: (item) => void itemActions.doCopy(item),
+  onRename: (item) => void itemActions.doRename(item),
+  onDelete: (item) => void itemActions.doDelete(item),
+  onNewScene: (dir) => void assetActions.doNewScene(dir),
+  onNewScript: (dir) => void assetActions.doNewScript(dir),
   workshops: () => workshopMenuCats.value,
-  onNewFromWorkshop: (dir, item) => void doNewFromWorkshop(dir, item),
-  onNewFolder: (dir) => void doNewFolder(dir),
-  onNewMaterial: (dir) => void doNewMaterial(dir),
-  onNewShader: (dir, kind) => void doNewShader(dir, kind),
-  onNewSkybox: (dir, kind) => void doNewSkybox(dir, kind),
-  onNewTextureCube: (dir) => void doNewTextureCube(dir),
-  onNewPrefab: (dir) => void doNewPrefab(dir),
-  onNewAnim: (dir) => void doNewAnim(dir),
-  onImport: (dir) => void doImport(dir),
-  onImportFolder: (dir) => void doImportFolder(dir),
-  onCopyPath: (p) => void copyPath(p),
+  onNewFromWorkshop: (dir, item) => void assetActions.doNewFromWorkshop(dir, item),
+  onNewFolder: (dir) => void assetActions.doNewFolder(dir),
+  onNewMaterial: (dir) => void assetActions.doNewMaterial(dir),
+  onNewShader: (dir, kind) => void assetActions.doNewShader(dir, kind),
+  onNewSkybox: (dir, kind) => void assetActions.doNewSkybox(dir, kind),
+  onNewTextureCube: (dir) => void assetActions.doNewTextureCube(dir),
+  onNewPrefab: (dir) => void assetActions.doNewPrefab(dir),
+  onNewAnim: (dir) => void assetActions.doNewAnim(dir),
+  onImport: (dir) => void assetActions.doImport(dir),
+  onImportFolder: (dir) => void assetActions.doImportFolder(dir),
+  onCopyPath: (p) => void itemActions.copyPath(p),
   onRefresh: () => void assetsStore.refresh(),
 };
-
-async function doNewFolder(dir: string) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  const name = await prompt({
-    title: "新建目录",
-    label: dir,
-    initial: "NewFolder",
-    confirmText: "创建",
-  });
-  if (!name) return;
-  const rel = `${dir}/${name}`;
-  await assetsStore.createFolder(root, rel);
-}
-
-/** 新建 3D 场景资产（到 dir；src/内置目录不允许） */
-async function doNewScene(dir: string) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许新建场景"
-      : "内置目录只读，不允许新建场景");
-    return;
-  }
-  const name = await prompt({
-    title: "新建场景",
-    label: dir || "项目根",
-    initial: "NewScene",
-    confirmText: "创建",
-  });
-  if (!name) return;
-  await assetsStore.createSceneAsset(root, dir, name);
-}
-
-// —— 创意工坊菜单数据（右键菜单「创意工坊 ▸ 标签 ▸ 内容」；右键时刷新）——
-// 标签名与首页工坊一致（repos 子目录名首字母大写），数据来自 lib/repos。
-/** 可新建的项目资产类型：脚本（.ts）与着色器（.shader） */
-const WORKSHOP_ITEM_KINDS: Record<string, MenuWorkshopItem["kind"]> = {
-  ts: "script",
-  shader: "shader",
-};
-const workshopMenuCats = ref<MenuWorkshopCategory[]>([]);
-
-/** 刷新创意工坊分类缓存（仅保留「有可新建项」的分类） */
-async function refreshWorkshopMenu(): Promise<void> {
-  const cats = await listRepoCategories();
-  workshopMenuCats.value = cats
-    .map((c) => {
-      const ext = c.prototypeExt;
-      const kind = ext ? WORKSHOP_ITEM_KINDS[ext] : undefined;
-      if (!kind) return null;
-      const items = c.files
-        .filter((f) => f.ext === ext)
-        .map((f) => ({ category: c.id, file: f.file, name: f.name, kind }));
-      return items.length ? ({ id: c.id, label: c.label, items } as MenuWorkshopCategory) : null;
-    })
-    .filter((c): c is MenuWorkshopCategory => c !== null);
-}
-
-/** 新建 TS 脚本（内置基础模板；工坊原型走右键菜单「创意工坊」子菜单） */
-async function doNewScript(dir: string) {
-  if (!isSrcDir(dir)) {
-    logStore.log("warn", "脚本只能创建在 src 目录内");
-    return;
-  }
-  const name = await prompt({
-    title: "新建脚本",
-    label: `${dir}/（脚本名）`,
-    placeholder: "MyScript",
-    confirmText: "创建",
-  });
-  if (!name?.trim()) return;
-  await getScriptsStore().createScript(name.trim());
-}
-
-/**
- * 按创意工坊内容新建项目资产（右键菜单「创意工坊 ▸ 标签 ▸ 内容」）：
- * - 脚本（code 分类的 .ts）：固定创建在 src/（脚本系统只编译 src/ 下的 .ts），
- *   故从任意目录调起都落到 src/，提示里显示真实目标而不随右键位置变化；
- * - 效果（effect 分类的 .shader）：把原型源码写成当前目录下的着色器资产
- *   （指令名随路径自动同步，随后可在材质卡片「着色器」下拉中挂载）。
- */
-async function doNewFromWorkshop(dir: string, item: MenuWorkshopItem) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (item.kind === "shader" && !importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建着色器" : "内置目录只读，不允许新建着色器");
-    return;
-  }
-  const isScript = item.kind === "script";
-  const name = await prompt({
-    title: isScript ? "新建脚本" : "新建着色器",
-    label: isScript
-      ? `src/（脚本名）· 原型：${item.name}`
-      : `${dir}/（着色器名）· 效果原型：${item.name}`,
-    placeholder: item.name,
-    confirmText: "创建",
-  });
-  if (!name?.trim()) return;
-  const source = await readRepoFile(item.category, item.file);
-  if (!source.trim()) {
-    logStore.log("warn", `创意工坊内容读取失败: ${item.category}/${item.file}`);
-    return;
-  }
-  if (isScript) {
-    const proto: ScriptPrototype = {
-      id: item.file,
-      name: item.name,
-      description: "",
-      code: source,
-    };
-    const rel = await getScriptsStore().createScript(name.trim(), proto);
-    if (rel) logStore.log("success", `已按创意工坊原型「${item.name}」创建脚本: ${rel}`);
-    return;
-  }
-  const rel = await assetsStore.createShaderFromSource(root, dir, name.trim(), source);
-  if (rel) logStore.log("success", `已按创意工坊效果「${item.name}」创建着色器: ${rel}`);
-}
-
-/** 新建空白预制体（assets/prefabs 语义上的目录均可；模板创建） */
-async function doNewPrefab(dir: string): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir) || isSrcDir(dir)) {
-    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建预制体" : "内置目录只读，不允许新建预制体");
-    return;
-  }
-  const name = await prompt({
-    title: "新建预制体",
-    label: dir || "项目根",
-    initial: "NewPrefab",
-    confirmText: "创建",
-  });
-  if (!name?.trim()) return;
-  await assetsStore.createPrefabAsset(root, dir, name.trim());
-}
-
-/** 新建关键帧动画剪辑（.anim；模板创建） */
-async function doNewAnim(dir: string): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir) || isSrcDir(dir)) {
-    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建动画" : "内置目录只读，不允许新建动画");
-    return;
-  }
-  const name = await prompt({
-    title: "新建动画",
-    label: dir || "项目根",
-    initial: "NewAnimation",
-    confirmText: "创建",
-  });
-  if (!name?.trim()) return;
-  await assetsStore.createAnimAsset(root, dir, name.trim());
-}
-/** 实例化预制体资产到当前场景（挂到选中节点/根下；一次撤销） */
-async function instantiatePrefab(item: { path: string }): Promise<void> {
-  await instantiatePrefabAsset(item.path);
-}
-
-/** 新建材质资产（到 dir；材质与着色器分离，默认挂内置 PBR 着色器；按名去重，无需弹窗） */
-async function doNewMaterial(dir: string): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许新建材质"
-      : "内置目录只读，不允许新建材质");
-    return;
-  }
-  await assetsStore.createMaterialAsset(root, dir);
-}
-
-/** 新建着色器资产（.shader；PBR/Unlit/卡通三种渲染程序；按种类基名去重，无需弹窗） */
-async function doNewShader(dir: string, kind: string): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许新建着色器"
-      : "内置目录只读，不允许新建着色器");
-    return;
-  }
-  await assetsStore.createShaderAsset(root, dir, kind);
-}
-
-/** 新建天空盒材质资产（.mat；程序化/立方体两种；按类型基名去重，无需弹窗） */
-async function doNewSkybox(dir: string, kind: "procedural" | "cube"): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许新建天空盒"
-      : "内置目录只读，不允许新建天空盒");
-    return;
-  }
-  await assetsStore.createSkyboxAsset(root, dir, kind);
-}
-
-/** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；按名去重无需弹窗） */
-async function doNewTextureCube(dir: string): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许新建 TextureCube"
-      : "内置目录只读，不允许新建 TextureCube");
-    return;
-  }
-  await assetsStore.createTextureCubeAsset(root, dir);
-}
-
-async function doCopy(item: ChildEntry) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  await assetsStore.duplicate(root, item.path);
-}
-
-async function doRename(item: ChildEntry) {
-  // 重命名语义（补扩展名/脚本引用随动）统一在 asset.renameSelected 命令（资产面板右键 / F2 共用）
-  await dispatchCommand("asset.renameSelected", { rel: item.path });
-}
-
-async function doDelete(item: ChildEntry) {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  const multi = selectedPaths.value.length > 1 && selectedPaths.value.includes(item.path);
-  const targets = multi ? [...selectedPaths.value] : [item.path];
-  const hasDir = targets.some((p) => {
-    const c = children.value.find((x) => x.path === p);
-    return c?.kind === "dir";
-  });
-  const ok = await confirm({
-    title: multi ? "删除多个资产" : "删除资产",
-    message: hasDir
-      ? `确定删除${multi ? `这 ${targets.length} 项` : "该资产"}及其目录内容吗？此操作不可恢复。`
-      : `确定删除${multi ? `这 ${targets.length} 项` : "该资产"}吗？此操作不可恢复。`,
-    confirmText: multi ? `删除 ${targets.length} 项` : "删除",
-    danger: true,
-  });
-  if (!ok) return;
-  for (const p of targets) {
-    // 脚本删除走 scripts store：同步移除场景内组件引用与编辑器标签页
-    if (p.endsWith(".ts") && p.startsWith("src/")) {
-      await getScriptsStore().deleteScript(p);
-      continue;
-    }
-    await assetsStore.remove(root, p);
-  }
-  if (multi) {
-    selectedPaths.value = [];
-    lastAnchor = null;
-    if (
-      currentDir.value === "assets" ||
-      currentDir.value === "" ||
-      targets.some((t) => currentDir.value === t || currentDir.value.startsWith(t + "/"))
-    ) {
-      navigate("assets");
-    }
-  }
-}
-
-async function copyPath(path: string) {
-  try {
-    await navigator.clipboard.writeText(path);
-    logStore.log("success", `已复制路径: ${path}`);
-  } catch {
-    logStore.log("warn", `复制失败: ${path}（剪贴板不可用）`);
-  }
-}
 
 /** 是否允许把外部资产导入到该目录（src=脚本目录、internal=内置只读 不允许） */
 function isSrcDir(dir: string): boolean {
@@ -620,36 +255,6 @@ function isSrcDir(dir: string): boolean {
 }
 function importAllowedDir(dir: string): boolean {
   return !isSrcDir(dir) && !isInternalAsset(dir);
-}
-
-/** 导入按钮：打开多文件选择对话框，导入到目标目录 */
-async function doImport(dir: string = currentDir.value): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许导入资产（脚本目录，用「新建脚本」创建）"
-      : "内置目录只读，不允许导入资产");
-    return;
-  }
-  const picked = await api.pickImportFiles(`导入资产到 ${dir || "项目根"}`);
-  if (!picked || picked.length === 0) return;
-  await assetsStore.importPaths(root, dir, picked);
-}
-
-/** 导入目录按钮：多选文件夹后整体复制到目标目录 */
-async function doImportFolder(dir: string = currentDir.value): Promise<void> {
-  const root = projectStore.currentPath;
-  if (!root) return;
-  if (!importAllowedDir(dir)) {
-    logStore.log("warn", isSrcDir(dir)
-      ? "src 目录不允许导入文件夹（脚本目录，用「新建脚本」创建）"
-      : "内置目录只读，不允许导入文件夹");
-    return;
-  }
-  const picked = await api.pickImportFolders(`导入文件夹到 ${dir || "项目根"}`);
-  if (!picked || picked.length === 0) return;
-  await assetsStore.importPaths(root, dir, picked);
 }
 
 const {
@@ -712,8 +317,8 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
       @update:type-filter="typeFilter = $event"
       @update:sort-by="sortBy = $event"
       @update:view-mode="viewMode = $event"
-      @import="doImport()"
-      @import-folder="doImportFolder()"
+      @import="assetActions.doImport()"
+      @import-folder="assetActions.doImportFolder()"
       @refresh="assetsStore.refresh"
     />
 
@@ -748,7 +353,7 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
           :selected="selectedPaths.includes(item.path)"
           :drop-over="item.kind === 'dir' && item.path === hoverPath"
           @click="onItemClickGuard($event, item)"
-          @dblclick="onItemDblClick(item)"
+          @dblclick="itemActions.onItemDblClick(item)"
           @context="onItemContext($event, item)"
           @mousedown="onItemMouseDown($event, item)"
         />

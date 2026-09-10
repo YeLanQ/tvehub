@@ -11,6 +11,8 @@
  * - 模型（glb/gltf/fbx/obj）：模型实例预览 + 动画/内嵌材质/骨骼信息；
  * - 场景/脚本/其它：基础信息与操作提示。
  * 内置资产只读，提供「复制到项目」。
+ * 展示层按资产类型拆到 ./asset/ 子组件（纯展示 + 上抛编辑动作），本组件持有全部
+ * 状态、资产文档加载与写盘（防抖落盘 / 引擎缓存刷新），并负责按 kind 组合子组件。
  */
 import { computed, reactive, ref, watch } from "vue";
 import {
@@ -22,13 +24,10 @@ import {
   materialFileStem,
   materialTypeRegistry,
   shaderFileStem,
-  shaderKindLabel,
   type MaterialParamGroup,
   type ShaderDoc,
-  type ShaderPropertyKind,
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
-import { assetUrl } from "../../../lib/asset-url";
 import { getAssetsStore, type AssetsStore } from "../../stores/assets";
 import { getProjectStore } from "../../stores/project";
 import { getEditorStore } from "../../stores/editor";
@@ -36,24 +35,29 @@ import { logStore } from "../../stores/log";
 import { assetService } from "../../services/assetService";
 import { saveMaterialParams } from "../../lib/materials";
 import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
-import { fmtSize } from "../../lib/format";
 import { api } from "../../../lib/api";
 import { instantiatePrefabAsset } from "../../lib/prefabs";
 import {
   loadTexCubeDoc,
   saveTexCubeDoc,
-  TEXCUBE_FACE_KEYS,
-  TEXCUBE_FACE_LABELS,
   type TexCubeAssetDoc,
-  type TexCubeFaceKey,
 } from "../../lib/texcube";
 import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat";
 import { isAudioAssetRel } from "../../../framework/audio";
 import type { MaterialParams } from "../../../framework/material";
-import MaterialParamsEditor from "./MaterialParamsEditor.vue";
-import ShaderEditorDialog from "./ShaderEditorDialog.vue";
 import AssetPreview3D from "./AssetPreview3D.vue";
-import NumberField from "../NumberField.vue";
+import ShaderEditorDialog from "./ShaderEditorDialog.vue";
+import AssetBasicInfo from "./asset/AssetBasicInfo.vue";
+import ImagePreview from "./asset/ImagePreview.vue";
+import AudioPreview from "./asset/AudioPreview.vue";
+import TexCubeFields from "./asset/TexCubeFields.vue";
+import MaterialAssetFields from "./asset/MaterialAssetFields.vue";
+import SkyMatFields from "./asset/SkyMatFields.vue";
+import ShaderAssetFields from "./asset/ShaderAssetFields.vue";
+import ModelAssetInfo from "./asset/ModelAssetInfo.vue";
+import PrefabAssetInfo from "./asset/PrefabAssetInfo.vue";
+import AnimClipInfo from "./asset/AnimClipInfo.vue";
+import PlainAssetHints from "./asset/PlainAssetHints.vue";
 
 const props = defineProps<{ rel: string }>();
 
@@ -146,46 +150,8 @@ function syncCustomProps(): void {
   replaceAll(customProps, { ...customPropDefaults(matShaderProps.value), ...stored });
 }
 
-/** 着色器属性类型显示名（属性表列表用） */
-function propKindLabel(kind: ShaderPropertyKind): string {
-  switch (kind) {
-    case "color":
-      return "颜色";
-    case "range":
-      return "范围";
-    case "float":
-      return "浮点";
-    case "int":
-      return "整数";
-    case "vector":
-      return "向量";
-    default:
-      return "贴图";
-  }
-}
-
-/** 渲染状态摘要（自定义着色器 Tags/ZWrite/Cull 声明） */
-const shaderStateText = computed(() => {
-  const program = shaderDoc.value?.program;
-  if (!program) return "—";
-  const parts = [program.state.transparent ? "半透明" : "不透明"];
-  parts.push(program.state.depthWrite ? "写深度" : "不写深度");
-  parts.push(
-    program.state.side === "double"
-      ? "双面"
-      : program.state.side === "back"
-        ? "只渲染背面"
-        : "剔除背面",
-  );
-  return parts.join(" · ");
-});
-
 // —— 着色器源码编辑器（自定义着色器；弹层 Monaco GLSL）——
 const shaderEditorOpen = ref(false);
-
-function openShaderEditor(): void {
-  shaderEditorOpen.value = true;
-}
 
 /** 源码保存完成：写引擎缓存（视口刷新 + 面板取新属性）并刷新本卡片文档 */
 function onShaderSaved(doc: ShaderDoc): void {
@@ -264,28 +230,6 @@ function editTexcube(mutate: (doc: TexCubeAssetDoc) => void): void {
       logStore.log("error", `保存 TextureCube ${props.rel} 失败: ${e}`);
     }
   })();
-}
-
-function onTexcubeSourceChange(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value === "faces" ? "faces" : "equirect";
-  editTexcube((doc) => {
-    doc.source = v;
-  });
-}
-
-function onTexcubeMapChange(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  editTexcube((doc) => {
-    doc.map = v;
-  });
-}
-
-function onTexcubeFaceChange(key: TexCubeFaceKey, e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  editTexcube((doc) => {
-    if (v) doc.faces[key] = v;
-    else delete doc.faces[key];
-  });
 }
 
 // —— 模型信息（metaFor 就绪后填充）——
@@ -431,8 +375,8 @@ function onEditParam(key: string, value: number | boolean | string | number[]): 
 }
 
 /** 改挂材质引用的着色器：解析新着色器的渲染分支 → 切参数分组 → 写盘 */
-async function onMatShaderChange(e: Event): Promise<void> {
-  const v = (e.target as HTMLSelectElement).value || DEFAULT_SHADER_REL;
+async function onMatShaderChange(value: string): Promise<void> {
+  const v = value || DEFAULT_SHADER_REL;
   matShader.value = v;
   matType.value = await loadShaderKind(root.value, v);
   // 自定义着色器：程序预取后再写盘（面板立即按新属性表渲染）
@@ -467,8 +411,6 @@ function persistMaterial(): void {
   }, 300);
 }
 
-// —— 着色器资产：类型在创建时固定（不可切换），卡片只展示类型与源码 ——
-
 // —— 天空材质编辑：整卡 JSON 写回（防抖）；写盘后通知引擎重载天空 ——
 function updateSky(mutate: (doc: SkyMatDoc) => void): void {
   const doc = skyDoc.value;
@@ -489,40 +431,6 @@ function updateSky(mutate: (doc: SkyMatDoc) => void): void {
   }, 300);
 }
 
-function onSkyCubeMapChange(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  updateSky((d) => {
-    d.cubeMap = v;
-  });
-}
-
-type SkyParamKey =
-  | "rotation"
-  | "strength"
-  | "worldOpacity"
-  | "blur"
-  | "sunSize"
-  | "sunStrength"
-  | "sunElevation"
-  | "sunRotation"
-  | "altitude"
-  | "air"
-  | "dust"
-  | "ozone";
-
-function onSkyParam(key: SkyParamKey, v: number): void {
-  updateSky((d) => {
-    d[key] = v;
-  });
-}
-
-function onSkyCheckbox(key: "sunDisc" | "ms", e: Event): void {
-  const v = (e.target as HTMLInputElement).checked;
-  updateSky((d) => {
-    d[key] = v;
-  });
-}
-
 // —— 内置资产：复制到项目（按扩展名路由目录；成功后选中新资产）——
 const copying = ref(false);
 async function onCopyToProject(): Promise<void> {
@@ -541,59 +449,35 @@ async function onCopyToProject(): Promise<void> {
   }
 }
 
-function onImgLoad(e: Event): void {
-  const img = e.target as HTMLImageElement;
-  imgSize.value = { w: img.naturalWidth, h: img.naturalHeight };
+function onImgLoad(w: number, h: number): void {
+  imgSize.value = { w, h };
 }
 </script>
 
 <template>
   <div class="asset-inspector" :data-rel="rel">
     <!-- 基本信息 -->
-    <div class="field">
-      <label>名称</label>
-      <span class="type-tag">{{ name }}</span>
-    </div>
-    <div class="field">
-      <label>路径</label>
-      <span class="muted mono asset-rel">{{ rel }}</span>
-    </div>
-    <div class="field">
-      <label>类型</label>
-      <span class="type-tag">{{ kind }}</span>
-      <span v-if="entry" class="muted">{{ fmtSize(entry.size) }}</span>
-      <span class="asset-badge" :class="{ internal: isInternal }">
-        {{ isInternal ? "内置 · 只读" : "项目资产" }}
-      </span>
-      <button
-        v-if="isInternal"
-        class="asset-btn"
-        :disabled="copying"
-        title="复制为项目资产（可编辑）"
-        @click="onCopyToProject"
-      >
-        复制到项目
-      </button>
-    </div>
+    <AssetBasicInfo
+      :rel="rel"
+      :name="name"
+      :kind="kind"
+      :size="entry?.size"
+      :is-internal="isInternal"
+      :copying="copying"
+      @copyToProject="onCopyToProject"
+    />
 
     <!-- 纹理：原图预览 -->
-    <template v-if="IMAGE_KINDS.has(kind)">
-      <div class="asset-img-wrap">
-        <img :src="assetUrl(rel)" :alt="name" @load="onImgLoad" />
-      </div>
-      <div v-if="imgSize" class="field">
-        <label>尺寸</label>
-        <span class="muted">{{ imgSize.w }} × {{ imgSize.h }}</span>
-      </div>
-    </template>
+    <ImagePreview
+      v-if="IMAGE_KINDS.has(kind)"
+      :rel="rel"
+      :name="name"
+      :size="imgSize"
+      @loaded="onImgLoad"
+    />
 
     <!-- 音频：原生播放器预览（mp3/wav/ogg/m4a/aac/flac） -->
-    <template v-if="isAudioAssetRel(rel)">
-      <div class="asset-audio-wrap">
-        <audio controls preload="metadata" :src="assetUrl(rel)" />
-      </div>
-      <div class="hint">音频资产：添加「Audio Source」音源节点后在此绑定播放；2D 全局 / 3D 位置衰减。</div>
-    </template>
+    <AudioPreview v-if="isAudioAssetRel(rel)" :rel="rel" />
 
     <!-- hdr / TextureCube / 材质 / 模型：3D 预览 -->
     <AssetPreview3D
@@ -615,433 +499,75 @@ function onImgLoad(e: Event): void {
     </template>
 
     <!-- TextureCube：来源 + 贴图引用（项目资产可编辑；内置只读，可复制到项目） -->
-    <template v-if="kind === 'texcube'">
-      <div class="field">
-        <label>来源</label>
-        <select
-          :value="texcubeDoc?.source ?? 'equirect'"
-          :disabled="isInternal"
-          :title="isInternal ? '内置 TextureCube 只读；请先复制到项目' : '切换贴图来源模式'"
-          @change="onTexcubeSourceChange"
-        >
-          <option value="equirect">等距柱状全景图</option>
-          <option value="faces">六面贴图（±X ±Y ±Z）</option>
-        </select>
-      </div>
-      <template v-if="texcubeDoc && texcubeDoc.source === 'faces'">
-        <div
-          v-for="k in TEXCUBE_FACE_KEYS"
-          :key="k"
-          class="field"
-        >
-          <label>{{ TEXCUBE_FACE_LABELS[k] }}</label>
-          <select
-            :value="texcubeDoc.faces[k] ?? ''"
-            :disabled="isInternal"
-            @change="onTexcubeFaceChange(k, $event)"
-          >
-            <option value="">（无）</option>
-            <optgroup label="内置图片">
-              <option v-for="o in imageOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-            <optgroup label="项目图片">
-              <option v-if="imageOptions.project.length === 0" value="" disabled>
-                （项目中暂无图片资产）
-              </option>
-              <option v-for="o in imageOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-          </select>
-        </div>
-      </template>
-      <div v-else class="field">
-        <label>全景图</label>
-        <select
-          :value="texcubeDoc?.map ?? ''"
-          :disabled="isInternal"
-          @change="onTexcubeMapChange"
-        >
-          <option value="">（无）</option>
-          <optgroup label="内置图片">
-            <option v-for="o in imageOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
-              {{ o.name }}
-            </option>
-          </optgroup>
-          <optgroup label="项目图片">
-            <option v-if="imageOptions.project.length === 0" value="" disabled>
-              （项目中暂无图片资产）
-            </option>
-            <option v-for="o in imageOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
-              {{ o.name }}
-            </option>
-          </optgroup>
-        </select>
-      </div>
-      <div class="hint">
-        {{ isInternal ? "内置 TextureCube 只读；复制到项目后可更换贴图。" : "写入 .texcube 资产；被天空盒节点绑定时背景即时刷新。" }}
-      </div>
-    </template>
+    <TexCubeFields
+      v-if="kind === 'texcube'"
+      :doc="texcubeDoc"
+      :disabled="isInternal"
+      :image-options="imageOptions"
+      @source="(v) => editTexcube((doc) => { doc.source = v; })"
+      @map="(v) => editTexcube((doc) => { doc.map = v; })"
+      @face="(key, v) => editTexcube((doc) => { if (v) doc.faces[key] = v; else delete doc.faces[key]; })"
+    />
 
     <!-- 材质：类型 + 全部参数（天空类型创建时固定，不可切换） -->
     <template v-if="kind === 'mat'">
-      <template v-if="isSkyMat && skyDoc">
-        <div class="field">
-          <label>天空类型</label>
-          <span class="type-tag">
-            {{ skyDoc.kind === "cube" ? "立方体天空盒（创建时固定）" : "程序化天空（创建时固定）" }}
-          </span>
-        </div>
-        <div class="field">
-          <label>挂载着色器</label>
-          <span class="muted mono asset-rel">{{ skyShaderRef }}</span>
-        </div>
-
-        <!-- 立方体：TextureCube 纹理 + 旋转/强度/世界不透明度/模糊 -->
-        <template v-if="skyDoc.kind === 'cube'">
-          <div class="field">
-            <label>TextureCube</label>
-            <select
-              :value="skyDoc.cubeMap"
-              :disabled="isInternal"
-              title="立方体天空的贴图来源（.texcube 资产）"
-              @change="onSkyCubeMapChange"
-            >
-              <optgroup label="内置 TextureCube">
-                <option v-for="o in cubeOptions.internal" :key="o.rel" :value="o.rel">
-                  {{ o.name }}
-                </option>
-              </optgroup>
-              <optgroup label="项目 TextureCube">
-                <option v-if="cubeOptions.project.length === 0" value="" disabled>
-                  （项目内暂无 .texcube，可在资产面板「新建 TextureCube」）
-                </option>
-                <option v-for="o in cubeOptions.project" :key="o.rel" :value="o.rel">
-                  {{ o.name }}
-                </option>
-              </optgroup>
-            </select>
-          </div>
-          <div class="field">
-            <label>旋转</label>
-            <NumberField
-              :model-value="skyDoc.rotation"
-              :step="1"
-              :min="0"
-              :max="360"
-              :disabled="isInternal"
-              title="绕世界 Y 轴旋转（度）"
-              @commit="(v) => onSkyParam('rotation', v)"
-            />
-          </div>
-          <div class="field">
-            <label>强度</label>
-            <NumberField
-              :model-value="skyDoc.strength"
-              :step="0.01"
-              :min="0"
-              :max="16"
-              :disabled="isInternal"
-              title="背景亮度倍率"
-              @commit="(v) => onSkyParam('strength', v)"
-            />
-          </div>
-          <div class="field">
-            <label>世界不透明度</label>
-            <NumberField
-              :model-value="skyDoc.worldOpacity"
-              :step="0.01"
-              :min="0"
-              :max="1"
-              :disabled="isInternal"
-              title="世界不透明度（保留参数）"
-              @commit="(v) => onSkyParam('worldOpacity', v)"
-            />
-          </div>
-          <div class="field">
-            <label>模糊</label>
-            <NumberField
-              :model-value="skyDoc.blur"
-              :step="0.01"
-              :min="0"
-              :max="1"
-              :disabled="isInternal"
-              title="背景模糊（0~1）"
-              @commit="(v) => onSkyParam('blur', v)"
-            />
-          </div>
-          <div class="hint">
-            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "写入 .mat 资产；被天空盒节点绑定时背景与参数即时生效。" }}
-          </div>
-        </template>
-
-        <!-- 程序化：Blender 天空纹理参数（Nishita 大气散射） -->
-        <template v-else>
-          <label class="sky-checkbox">
-            <input
-              type="checkbox"
-              :checked="skyDoc.ms"
-              :disabled="isInternal"
-              @change="onSkyCheckbox('ms', $event)"
-            />
-            <span>多重散射</span>
-          </label>
-          <label class="sky-checkbox">
-            <input
-              type="checkbox"
-              :checked="skyDoc.sunDisc"
-              :disabled="isInternal"
-              @change="onSkyCheckbox('sunDisc', $event)"
-            />
-            <span>日轮</span>
-          </label>
-          <div class="field">
-            <label>太阳尺寸</label>
-            <NumberField
-              :model-value="skyDoc.sunSize"
-              :step="0.1"
-              :min="0.1"
-              :max="30"
-              :disabled="isInternal"
-              title="太阳圆盘全角尺寸（度）"
-              @commit="(v) => onSkyParam('sunSize', v)"
-            />
-          </div>
-          <div class="field">
-            <label>太阳强度</label>
-            <NumberField
-              :model-value="skyDoc.sunStrength"
-              :step="0.1"
-              :min="0"
-              :max="20"
-              :disabled="isInternal"
-              title="太阳圆盘亮度倍率"
-              @commit="(v) => onSkyParam('sunStrength', v)"
-            />
-          </div>
-          <div class="field">
-            <label>太阳高度</label>
-            <NumberField
-              :model-value="skyDoc.sunElevation"
-              :step="0.5"
-              :min="-90"
-              :max="90"
-              :disabled="isInternal"
-              title="太阳高度角（度，0=地平线）"
-              @commit="(v) => onSkyParam('sunElevation', v)"
-            />
-          </div>
-          <div class="field">
-            <label>太阳旋转</label>
-            <NumberField
-              :model-value="skyDoc.sunRotation"
-              :step="1"
-              :min="0"
-              :max="360"
-              :disabled="isInternal"
-              title="太阳方位角（度）"
-              @commit="(v) => onSkyParam('sunRotation', v)"
-            />
-          </div>
-          <div class="field">
-            <label>海拔</label>
-            <NumberField
-              :model-value="skyDoc.altitude"
-              :step="10"
-              :min="0"
-              :max="20000"
-              :disabled="isInternal"
-              title="观察点海拔（米）"
-              @commit="(v) => onSkyParam('altitude', v)"
-            />
-          </div>
-          <div class="field">
-            <label>空气</label>
-            <NumberField
-              :model-value="skyDoc.air"
-              :step="0.01"
-              :min="0"
-              :max="10"
-              :disabled="isInternal"
-              title="空气密度（瑞利散射倍率）"
-              @commit="(v) => onSkyParam('air', v)"
-            />
-          </div>
-          <div class="field">
-            <label>气溶胶</label>
-            <NumberField
-              :model-value="skyDoc.dust"
-              :step="0.01"
-              :min="0"
-              :max="10"
-              :disabled="isInternal"
-              title="气溶胶密度（米氏散射倍率）"
-              @commit="(v) => onSkyParam('dust', v)"
-            />
-          </div>
-          <div class="field">
-            <label>臭氧</label>
-            <NumberField
-              :model-value="skyDoc.ozone"
-              :step="0.01"
-              :min="0"
-              :max="10"
-              :disabled="isInternal"
-              title="臭氧密度（吸收倍率）"
-              @commit="(v) => onSkyParam('ozone', v)"
-            />
-          </div>
-          <div class="hint">
-            {{ isInternal ? "内置天空材质只读；复制到项目后可编辑。" : "Nishita 大气散射（Blender 天空纹理风格）；写入 .mat 资产，被天空盒节点绑定时背景即时刷新。" }}
-          </div>
-        </template>
-      </template>
-      <template v-else-if="matReady">
-        <div class="field">
-          <label>着色器</label>
-          <select :value="matShader" :disabled="isInternal" @change="onMatShaderChange">
-            <option v-if="!matShader" value="" disabled>（未挂载，默认 PBR）</option>
-            <option v-if="matShaderMissing" :value="matShader" disabled>
-              {{ matShader }}（缺失）
-            </option>
-            <optgroup label="内置着色器">
-              <option v-for="o in shaderOptions.internal" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-            <optgroup label="项目着色器">
-              <option v-if="shaderOptions.project.length === 0" value="" disabled>
-                （项目内暂无 .shader，可在资产面板「新建着色器」）
-              </option>
-              <option v-for="o in shaderOptions.project" :key="o.rel" :value="o.rel" :title="o.rel">
-                {{ o.name }}
-              </option>
-            </optgroup>
-          </select>
-        </div>
-        <div class="field">
-          <label>渲染分支</label>
-          <span class="type-tag">{{ shaderKindLabel(matType) }}</span>
-        </div>
-        <div v-if="isCustomMat && matShaderError" class="hint hint-error">
-          着色器组装失败，视口显示占位材质：{{ matShaderError }}
-        </div>
-        <div v-else-if="isCustomMat" class="hint">
-          参数来自挂载着色器的 Properties（{{ matShaderProps.length }} 项）；值写入本 .mat 的 props 字段。
-        </div>
-        <MaterialParamsEditor
-          :local="isCustomMat ? customProps : local"
-          :groups="groups"
-          :disabled="isInternal"
-          @editParam="onEditParam"
-        />
-      </template>
+      <SkyMatFields
+        v-if="isSkyMat && skyDoc"
+        :doc="skyDoc"
+        :shader-ref="skyShaderRef"
+        :disabled="isInternal"
+        :cube-options="cubeOptions"
+        @cubeMap="(v) => updateSky((doc) => { doc.cubeMap = v; })"
+        @param="(key, v) => updateSky((doc) => { doc[key] = v; })"
+        @checkbox="(key, v) => updateSky((doc) => { doc[key] = v; })"
+      />
+      <MaterialAssetFields
+        v-else-if="matReady"
+        :local="isCustomMat ? customProps : local"
+        :groups="groups"
+        :disabled="isInternal"
+        :shader="matShader"
+        :shader-options="shaderOptions"
+        :shader-missing="matShaderMissing"
+        :mat-type="matType"
+        :custom="isCustomMat"
+        :shader-error="matShaderError"
+        :shader-prop-count="matShaderProps.length"
+        @shaderChange="onMatShaderChange"
+        @editParam="onEditParam"
+      />
       <div v-else class="hint">材质读取中…</div>
     </template>
 
     <!-- 着色器资产：渲染程序源码 + 自定义着色器的属性/渲染状态（可编辑源码） -->
     <template v-if="kind === 'shader'">
-      <template v-if="shaderReady && shaderDoc">
-        <div class="field">
-          <label>着色器类型</label>
-          <span class="type-tag">{{ shaderKindLabel(shaderDoc.kind) }}</span>
-        </div>
-        <template v-if="shaderDoc.kind === 'custom'">
-          <div class="field">
-            <label>渲染状态</label>
-            <span class="muted">{{ shaderStateText }}</span>
-          </div>
-          <div v-if="shaderDoc.error" class="hint hint-error">
-            组装失败，引用它的材质显示占位材质：{{ shaderDoc.error }}
-          </div>
-          <div class="field">
-            <label>暴露属性</label>
-            <span class="muted">{{ shaderDoc.properties.length }} 项</span>
-          </div>
-          <div
-            v-for="p in shaderDoc.properties"
-            :key="p.key"
-            class="field shader-prop-row"
-          >
-            <span class="mono shader-prop-key">{{ p.key }}</span>
-            <span class="muted">{{ p.label }} · {{ propKindLabel(p.kind) }}</span>
-          </div>
-          <button
-            v-if="!isInternal"
-            class="shader-edit-btn"
-            title="打开源码编辑器（Monaco GLSL；Ctrl+S 保存并重新组装程序）"
-            @click="openShaderEditor"
-          >编辑源码</button>
-        </template>
-        <pre class="shader-source mono">{{ shaderDoc.source }}</pre>
-        <div class="hint">
-          {{ isInternal
-            ? "内置着色器只读；可「复制到项目」生成项目内副本，或由材质挂载引用。"
-            : shaderDoc.kind === "custom"
-              ? "自定义着色器：源码编译为 GLSL 程序渲染；Properties 即材质面板暴露的参数（值存 .mat）。"
-              : "类型在创建时固定，不可切换；材质在「着色器」下拉中挂载此程序，按该渲染分支渲染。" }}
-        </div>
-      </template>
+      <ShaderAssetFields
+        v-if="shaderReady && shaderDoc"
+        :doc="shaderDoc"
+        :is-internal="isInternal"
+        @editSource="shaderEditorOpen = true"
+      />
       <div v-else class="hint">着色器读取中…</div>
     </template>
 
     <!-- 模型信息 -->
     <template v-if="MODEL_KINDS.has(kind)">
-      <template v-if="modelInfo">
-        <div class="field">
-          <label>动画剪辑</label>
-          <span class="muted">{{ modelInfo.clips }} 个</span>
-        </div>
-        <div class="field">
-          <label>内嵌材质</label>
-          <span class="muted">{{ modelInfo.materials }} 个</span>
-        </div>
-        <div class="field">
-          <label>骨骼</label>
-          <span class="muted">{{ modelInfo.hasSkeleton ? "有" : "无" }}</span>
-        </div>
-      </template>
+      <ModelAssetInfo v-if="modelInfo" :info="modelInfo" />
       <div v-else class="hint">模型信息读取中…</div>
     </template>
 
     <!-- 场景 / 脚本 / 其它 -->
-    <template v-if="kind === 'scene'">
-      <div class="hint">双击资产打开场景（层级/视口随之切换）。</div>
-    </template>
-    <template v-else-if="kind === 'ts'">
-      <div class="hint">双击资产或右键「打开脚本」进入脚本工作台编辑。</div>
-    </template>
+    <PlainAssetHints v-if="kind === 'scene'" kind="scene" />
+    <PlainAssetHints v-else-if="kind === 'ts'" kind="ts" />
     <!-- 预制体：概览 + 实例化到场景（嵌套子树一次入图，一次撤销） -->
-    <template v-else-if="kind === 'prefab'">
-      <div class="field">
-        <label>节点数</label>
-        <span>{{ prefabInfo ? prefabInfo.nodes : "读取中…" }}</span>
-      </div>
-      <button
-        class="prefab-instantiate"
-        :disabled="!prefabInfo || !root"
-        title="实例化到当前场景（挂到选中节点/根下）"
-        @click="instantiatePrefabAsset(props.rel)"
-      >实例化到场景</button>
-      <div class="hint">右键资产也可「实例化到场景」；层级面板选中实例可「更新预制体」回写资产。</div>
-    </template>
+    <PrefabAssetInfo
+      v-else-if="kind === 'prefab'"
+      :info="prefabInfo"
+      :root="root"
+      @instantiate="instantiatePrefabAsset(props.rel)"
+    />
     <!-- 动画剪辑：概览 -->
-    <template v-else-if="kind === 'anim'">
-      <template v-if="animInfo">
-        <div class="field">
-          <label>时长</label>
-          <span>{{ animInfo.duration.toFixed(2) }}s {{ animInfo.loops ? "（循环）" : "（单次）" }}</span>
-        </div>
-        <div class="field">
-          <label>通道数</label>
-          <span>{{ animInfo.curves }}</span>
-        </div>
-      </template>
-      <div v-else class="hint">读取中…</div>
-      <div class="hint">给节点添加「动画剪辑」组件并绑定本剪辑，预览/发布即自动播放。</div>
-    </template>
+    <AnimClipInfo v-else-if="kind === 'anim'" :info="animInfo" />
 
     <!-- 着色器源码编辑器（自定义着色器；弹层 Monaco GLSL） -->
     <ShaderEditorDialog
@@ -1059,140 +585,5 @@ function onImgLoad(e: Event): void {
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-.shader-prop-row {
-  gap: 6px;
-}
-.shader-prop-key {
-  flex: none;
-  font-size: 11px;
-  color: var(--text, #ddd);
-}
-.shader-edit-btn {
-  align-self: flex-start;
-  margin: 4px 0 2px;
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 3px;
-  border: 1px solid var(--accent, #4a9eff);
-  background: transparent;
-  color: var(--accent, #4a9eff);
-  cursor: pointer;
-}
-.shader-edit-btn:hover {
-  background: rgba(74, 158, 255, 0.12);
-}
-.shader-source {  margin: 2px 0 4px;
-  padding: 8px 10px;
-  max-height: 280px;
-  overflow: auto;
-  font-size: 11px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text, #ddd);
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
-  user-select: text;
-  cursor: text;
-}
-.prefab-instantiate {
-  width: 100%;
-  height: 26px;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text, #ddd);
-  background: transparent;
-  border: 1px solid var(--border, #444);
-  border-radius: 4px;
-  cursor: pointer;
-}
-.prefab-instantiate:hover:not(:disabled) {
-  color: var(--accent, #4a9eff);
-  border-color: var(--accent, #4a9eff);
-}
-.prefab-instantiate:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.sky-checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text, #ddd);
-  cursor: pointer;
-  padding: 2px 0;
-}
-.sky-checkbox input {
-  margin: 0;
-}
-.sky-checkbox input:disabled + span {
-  color: var(--text-dim, #999);
-}
-.asset-rel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.asset-badge {
-  flex: none;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 6px;
-  border-radius: 3px;
-  border: 1px solid var(--accent, #4a9eff);
-  color: var(--accent, #4a9eff);
-}
-.asset-badge.internal {
-  border-color: var(--text-dim, #888);
-  color: var(--text-dim, #888);
-}
-.asset-btn {
-  flex: none;
-  font-size: 11px;
-  line-height: 1.2;
-  padding: 3px 8px;
-  border-radius: 3px;
-  border: 1px solid var(--text-dim, #666);
-  background: transparent;
-  color: var(--text, #ddd);
-  cursor: pointer;
-}
-.asset-btn:hover {
-  border-color: var(--accent, #4a9eff);
-  color: var(--accent, #4a9eff);
-}
-.asset-img-wrap {
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
-  overflow: hidden;
-  background:
-    repeating-conic-gradient(#242428 0% 25%, #2e2e33 0% 50%) 0 0 / 16px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 120px;
-  margin-bottom: 2px;
-}
-.asset-img-wrap img {
-  max-width: 100%;
-  max-height: 220px;
-  object-fit: contain;
-  display: block;
-}
-.asset-audio-wrap {
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
-  padding: 8px;
-  display: flex;
-  align-items: center;
-  margin-bottom: 2px;
-}
-.asset-audio-wrap audio {
-  width: 100%;
-  height: 36px;
 }
 </style>
