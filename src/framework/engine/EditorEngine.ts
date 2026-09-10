@@ -1,7 +1,7 @@
 import { logger } from "../../platform_abstraction/logger";
 import { EventBus } from "../../platform_abstraction/eventBus";
 import * as THREE from "three";
-import { createNodeFactory, NodeFactory } from "../factory/NodeFactory";
+import { createNodeFactory, NodeFactory, type EditorNodeType } from "../factory/NodeFactory";
 import { createDefaultRegistry } from "../prototype/PrototypeRegistry";
 import {
   SceneClient,
@@ -47,6 +47,23 @@ import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
 import { PhysicsSystem } from "../physics";
+
+/**
+ * 脚本节点类型声明（脚本类 `@nodeType({ kind })`）→ 基础节点创建。
+ * 用 Record<EditorNodeType,…> 声明：新增可创建节点类型时**漏登记会直接编译报错**——
+ * 此前是字符串 switch，未登记的 kind 会落到 default 被静默建成空组。
+ */
+const SCRIPT_NODE_BASE: Record<
+  EditorNodeType,
+  (engine: EditorEngine, parentId?: string) => Node
+> = {
+  node: (e, p) => e.addEmptyGroup(p),
+  meshNode: (e, p) => e.addMesh("box", p),
+  lightNode: (e, p) => e.addLight("point", p),
+  cameraNode: (e, p) => e.addCamera(p),
+  skyboxNode: (e, p) => e.addSkybox("procedural", p),
+  audioNode: (e, p) => e.addAudio(p),
+};
 
 export interface EditorEvents extends Record<string, unknown> {
   "graph:changed": SceneChange;
@@ -364,6 +381,8 @@ export class EditorEngine {
       this.audio.update();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
+      // 阴影相机贴合场景包围盒（按节拍惰性重算，场景增删/移动后投影范围自动跟上）
+      this.synchronizer.refitShadowCameras();
       // 正交预览的天空背景面跟随（渲染前更新 uniforms）
       this.updateOrthoSkyQuad();
     });
@@ -582,23 +601,12 @@ export class EditorEngine {
    */
   addScriptNode(scriptRel: string, nodeType: { kind: string; label?: string }, parentId?: string): Node {
     const parent = this.resolveParent(parentId);
-    let base: Node;
-    switch (nodeType.kind) {
-      case "meshNode":
-        base = this.addMesh("box", parent?.id ?? undefined);
-        break;
-      case "cameraNode":
-        base = this.addCamera(parent?.id ?? undefined);
-        break;
-      case "lightNode":
-        base = this.addLight("point", parent?.id ?? undefined);
-        break;
-      case "skyboxNode":
-        base = this.addSkybox("procedural", parent?.id ?? undefined);
-        break;
-      default:
-        base = this.addEmptyGroup(parent?.id ?? undefined);
-    }
+    // 基础节点按声明 kind 查表创建；表用 Record<ScriptNodeKind,…> 声明 ——
+    // 新增节点类型漏登记会直接编译报错（字符串 switch 的 default 会静默退化成空组）
+    const base: Node = (SCRIPT_NODE_BASE[nodeType.kind as EditorNodeType] ?? SCRIPT_NODE_BASE.node)(
+      this,
+      parent?.id ?? undefined,
+    );
     // 命名：优先节点类型 label，其次脚本类名
     base.name = nodeType.label?.trim() || scriptRel.replace(/\.ts$/, "").split("/").pop() || "Node";
     // 自动挂脚本组件（随节点写入；一步 undo）

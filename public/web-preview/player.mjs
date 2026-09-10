@@ -31,6 +31,112 @@ import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine
 
 const app = document.getElementById("app");
 
+/** 法线偏移自动档（单位为阴影贴图纹素；与编辑器 SceneSynchronizer 同一取值） */
+const SHADOW_NORMAL_BIAS_TEXELS = 1.2;
+
+/**
+ * 阴影相机贴合场景包围盒（启动时一次；three 只在首次渲染前按 mapSize 分配阴影贴图）。
+ * 只处理开了投射阴影的灯光（点光/平行光/聚光灯，各灯自带阴影参数组）：
+ * - 平行光：正交范围铺到能容下整场景（相机沿视轴后推保证场景在前方），near 合成用户近裁剪面；
+ * - 聚光灯：远平面推够远，near = 用户近裁剪面；
+ * - 点光：远平面取「灯到场景最远角落」（distance>0 时光照在该距离截止）；
+ * 法线偏移在用户未设（≤0）时按阴影范围的纹素尺寸自动给，避免麻点/飘影。
+ */
+function configureShadows(scene) {
+  scene.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const tmpBox = new THREE.Box3();
+  scene.traverse((o) => {
+    if (o.isMesh !== true || !o.geometry) return;
+    const pos = typeof o.geometry.getAttribute === "function" ? o.geometry.getAttribute("position") : null;
+    if (!pos || pos.count === 0) return; // 空几何容器（模型容器等）
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    if (!o.geometry.boundingBox) return;
+    tmpBox.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+    box.union(tmpBox);
+  });
+  if (box.isEmpty()) return;
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
+  scene.traverse((o) => {
+    if (o.isLight !== true || o.castShadow !== true) return;
+    const isDir = o.isDirectionalLight === true;
+    const isSpot = o.isSpotLight === true;
+    const isPoint = o.isPointLight === true;
+    if (!isDir && !isSpot && !isPoint) return;
+    // 灯光建出时已按节点/组件参数置位 mapSize/浓度/偏移/近裁剪面（nodes.mjs /
+    // lights.mjs 的 applyLightShadow），这里只做范围贴合与自动法线偏移
+    const cfg = o.userData && typeof o.userData.shadowCfg === "object" ? o.userData.shadowCfg : {};
+    const userNear = typeof cfg.near === "number" && cfg.near > 0 ? cfg.near : 0.1;
+    const mapSize = o.shadow.mapSize.width || 2048;
+    let autoBiasExtent;
+    if (isPoint) {
+      // 点光：立方体相机挂在灯位置；远平面 = 灯到场景最远角落（distance 截止取小）
+      const origin = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+      const corner = new THREE.Vector3();
+      let farthest = 1;
+      for (const c of [
+        [box.min.x, box.min.y, box.min.z],
+        [box.max.x, box.min.y, box.min.z],
+        [box.min.x, box.max.y, box.min.z],
+        [box.max.x, box.max.y, box.min.z],
+        [box.min.x, box.min.y, box.max.z],
+        [box.max.x, box.min.y, box.max.z],
+        [box.min.x, box.max.y, box.max.z],
+        [box.max.x, box.max.y, box.max.z],
+      ]) {
+        const d = corner.set(c[0], c[1], c[2]).distanceTo(origin);
+        if (d > farthest) farthest = d;
+      }
+      const far = o.distance > 0 ? Math.min(o.distance, farthest) : farthest;
+      o.shadow.camera.near = userNear;
+      o.shadow.camera.far = far;
+      o.shadow.camera.updateProjectionMatrix();
+      autoBiasExtent = far; // 90° 面在深度 d 处的世界宽度 ≈ 2d
+    } else {
+      const origin = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+      const target = new THREE.Vector3().setFromMatrixPosition(o.target.matrixWorld);
+      const axis = target.sub(origin);
+      if (axis.lengthSq() < 1e-8) axis.set(0, -1, 0);
+      axis.normalize();
+      const toCenter = center.clone().sub(origin);
+      const along = toCenter.dot(axis);
+      const reach = radius + Math.sqrt(Math.max(toCenter.lengthSq() - along * along, 0));
+      if (isSpot) {
+        const fitFar = Math.max(along + reach, 1);
+        o.shadow.camera.near = userNear;
+        o.shadow.camera.far = o.distance > 0 ? Math.min(o.distance, fitFar) : fitFar;
+        o.shadow.camera.updateProjectionMatrix();
+        autoBiasExtent = 2 * Math.tan(Math.max(o.angle, 0.01)) * o.shadow.camera.far;
+      } else {
+        // 平行光：把阴影相机沿视轴后推，保证整个场景都在相机前方
+        // （定向光位置只影响阴影相机，着色只用方向，后推安全；增量补缺口，幂等）
+        const deficit = reach + 0.05 - along;
+        if (deficit > 1e-4) {
+          o.position.z += deficit;
+          o.updateWorldMatrix(true, false);
+        }
+        const alongFinal = deficit > 1e-4 ? reach + 0.05 : along;
+        const cam = o.shadow.camera;
+        cam.near = Math.max(alongFinal - reach + userNear, 0.01);
+        cam.far = Math.max(alongFinal + reach, cam.near + 0.1);
+        cam.left = -reach;
+        cam.right = reach;
+        cam.top = reach;
+        cam.bottom = -reach;
+        cam.updateProjectionMatrix();
+        autoBiasExtent = reach * 2;
+      }
+    }
+    if (!(typeof cfg.normalBias === "number" && cfg.normalBias > 0)) {
+      o.shadow.normalBias = Math.min(
+        Math.max(((autoBiasExtent / mapSize) * SHADOW_NORMAL_BIAS_TEXELS), 0.0005),
+        Math.max(radius * 0.1, 0.001),
+      );
+    }
+  });
+}
+
 async function main() {
   // 构建产物可把 config/场景/资产内联进 index.html（window.__TVE_BUILD_DATA，
   // 单页模式），否则按文件读取（多文件产物与编辑器内嵌预览一致）
@@ -293,13 +399,12 @@ async function main() {
     }
   }
 
-  // 平行光/聚光阴影范围兜底（相机朝 -Z 时 target 世界矩阵由场景更新）
-  scene.traverse((o) => {
-    if (o.isLight && o.castShadow) {
-      o.shadow.mapSize.set(1024, 1024);
-      o.shadow.bias = -0.0005;
-    }
-  });
+  // 阴影相机贴合场景包围盒（相机朝 -Z 时 target 世界矩阵由场景更新）。
+  // three 的平行光阴影相机默认为正交 ±5：场景稍大阴影就会整块消失/被裁掉，
+  // 聚光灯远平面也默认按 distance（0 时 500）。这里按**整场景包围盒**贴合一次，
+  // 贴图分辨率与深度偏移一并置位（three 只在首次渲染前按 mapSize 分配阴影贴图，
+  // 所以必须在渲染循环启动前置位）。
+  configureShadows(scene);
 
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
   const animations = createAnimations(meshes, models);

@@ -648,7 +648,7 @@ class Light extends BuiltinComponent {
     s.penumbra = Math.min(1, Math.max(0, n));
     if (light && light.isSpotLight) light.penumbra = s.penumbra;
   }
-  /** 平行光/聚光灯：投射阴影 */
+  /** 点光/平行光/聚光灯：投射阴影 */
   get castShadow() {
     return this.__settings()?.castShadow === true;
   }
@@ -657,7 +657,89 @@ class Light extends BuiltinComponent {
     if (!s) return;
     s.castShadow = v === true;
     const light = this.__lightObj();
-    if (light && (light.isDirectionalLight || light.isSpotLight)) light.castShadow = s.castShadow;
+    if (
+      light &&
+      (light.isDirectionalLight || light.isSpotLight || light.isPointLight)
+    ) {
+      light.castShadow = s.castShadow;
+    }
+  }
+  /** 阴影浓度 0~1（1 = 纯黑阴影；Unity Strength） */
+  get shadowStrength() {
+    return numOr(this.__settings()?.shadowStrength, 1);
+  }
+  set shadowStrength(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowStrength = Math.min(1, Math.max(0, n));
+    const light = this.__lightObj();
+    if (light && light.shadow) light.shadow.intensity = s.shadowStrength;
+  }
+  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  get shadowBias() {
+    return numOr(this.__settings()?.shadowBias, -0.0005);
+  }
+  set shadowBias(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowBias = Math.min(0, Math.max(-0.05, n));
+    const light = this.__lightObj();
+    if (light && light.shadow) light.shadow.bias = s.shadowBias;
+  }
+  /** 阴影法线偏移（≤0 = 自动按纹素相对化；Unity Normal Bias） */
+  get shadowNormalBias() {
+    return numOr(this.__settings()?.shadowNormalBias, 0);
+  }
+  set shadowNormalBias(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowNormalBias = Math.max(0, n);
+    const light = this.__lightObj();
+    if (light && light.shadow && s.shadowNormalBias > 0) light.shadow.normalBias = s.shadowNormalBias;
+  }
+  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  get shadowNear() {
+    return numOr(this.__settings()?.shadowNear, 0.1);
+  }
+  set shadowNear(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    const light = this.__lightObj();
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowNear = Math.max(0.01, n);
+    if (light && light.shadow && !light.isDirectionalLight) {
+      // 平行光的阴影相机按场景包围盒自动贴合（near 由运行时合成），不直接写
+      light.shadow.camera.near = s.shadowNear;
+      light.shadow.camera.updateProjectionMatrix();
+    }
+  }
+  /** 阴影软化半径（PCF 采样核；1 = 硬阴影） */
+  get shadowRadius() {
+    return numOr(this.__settings()?.shadowRadius, 4);
+  }
+  set shadowRadius(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowRadius = Math.min(5, Math.max(1, n));
+    const light = this.__lightObj();
+    if (light && light.shadow) light.shadow.radius = s.shadowRadius;
+  }
+  /** Shadow 类型档位（"off" | "hard" | "soft"；Unity Shadow Type 语义，读写投射开关 + 软化半径） */
+  get shadowType() {
+    if (!this.castShadow) return "off";
+    return this.shadowRadius >= 2 ? "soft" : "hard";
+  }
+  set shadowType(v) {
+    if (v === "off") {
+      this.castShadow = false;
+    } else if (v === "hard" || v === "soft") {
+      this.castShadow = true;
+      this.shadowRadius = v === "hard" ? 1 : 4;
+    }
   }
 }
 
@@ -1081,6 +1163,12 @@ function lightSettingsFrom(s) {
   out.angle = num(s.angle, out.angle, 1, 89);
   out.penumbra = num(s.penumbra, out.penumbra, 0, 1);
   if (typeof s.castShadow === "boolean") out.castShadow = s.castShadow;
+  // 阴影参数组（点光/平行光/聚光灯；Unity Shadows 语义）
+  out.shadowStrength = num(s.shadowStrength, 1, 0, 1);
+  out.shadowBias = num(s.shadowBias, -0.0005, -0.05, 0);
+  out.shadowNormalBias = num(s.shadowNormalBias, 0, 0);
+  out.shadowNear = num(s.shadowNear, 0.1, 0.01);
+  out.shadowRadius = num(s.shadowRadius, 4, 1, 5);
   return out;
 }
 

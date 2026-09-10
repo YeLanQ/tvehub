@@ -11,6 +11,13 @@ import {
   SpotLightNode,
   CameraNode,
 } from "../../prototype/derived/Primitives";
+import {
+  SHADOW_MAP_SIZE_PLANE,
+  SHADOW_MAP_SIZE_CUBE,
+  parseLightShadow,
+  type LightShadowConfig,
+} from "../../lighting/shadow";
+import type { LightComponentSettings } from "../../lighting/types";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
@@ -49,6 +56,17 @@ export interface MaterialParamsLookup {
 const defaultLookup: MaterialParamsLookup = {
   paramsFor: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
 };
+
+/** 灯光组件设置（扁平字段）→ 阴影配置（组件模式与灯光节点同一阴影语义） */
+function componentShadowConfig(s: LightComponentSettings): LightShadowConfig {
+  return {
+    strength: s.shadowStrength,
+    bias: s.shadowBias,
+    normalBias: s.shadowNormalBias,
+    near: s.shadowNear,
+    radius: s.shadowRadius ?? 4,
+  };
+}
 
 /** 网格轮廓体子网格名（同步器按名查找/回收；不进入 objectMap） */
 const OUTLINE_CHILD_NAME = "__matOutline";
@@ -141,10 +159,32 @@ function outlineGeometryFrom(
   return out;
 }
 
+// —— 阴影（点光/平行光/聚光灯，Unity Shadows 语义）——
+/** 法线偏移自动档（单位为阴影贴图纹素）：范围越大纹素越粗，固定偏移会变麻点/飘影 */
+const SHADOW_NORMAL_BIAS_TEXELS = 1.2;
+/** 阴影相机重算节拍（帧）：场景随时在变，写死的范围会把阴影裁掉，按节拍惰性贴合 */
+const SHADOW_REFIT_INTERVAL = 20;
+/** 有阴影能力的 three 灯光（点光=立方体贴图 / 平行光=正交 / 聚光灯=透视） */
+type ShadowCastingLight = THREE.PointLight | THREE.DirectionalLight | THREE.SpotLight;
+// 阴影相机重算的复用临时对象（帧循环调用，避免每帧分配）
+const _shadowBox = new THREE.Box3();
+const _shadowTmpBox = new THREE.Box3();
+const _shadowCenter = new THREE.Vector3();
+const _shadowSize = new THREE.Vector3();
+const _shadowOrigin = new THREE.Vector3();
+const _shadowTarget = new THREE.Vector3();
+const _shadowAxis = new THREE.Vector3();
+const _shadowToCenter = new THREE.Vector3();
+const _shadowCorner = new THREE.Vector3();
+
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
   private scene: THREE.Scene;
   private lookup: MaterialParamsLookup;
+  /** 阴影相机待重算（灯光刷新、场景增删后置位；帧循环消费） */
+  private shadowCamerasDirty = true;
+  /** 阴影相机重算的帧节拍计数 */
+  private shadowCameraFrame = 0;
 
   constructor(scene: THREE.Scene, lookup: MaterialParamsLookup = defaultLookup) {
     this.scene = scene;
@@ -164,6 +204,7 @@ export class SceneSynchronizer {
     graph.all().forEach((n: Node) => this.createObjectOnly(n));
     graph.all().forEach((n: Node) => this.attachParent(n));
     graph.all().forEach((n: Node) => this.refreshNode(n));
+    this.shadowCamerasDirty = true;
   }
 
   onGraphChange(c: SceneChange, graph: GraphLike): void {
@@ -228,6 +269,8 @@ export class SceneSynchronizer {
   private disposeMapped(id: string, _graph: GraphLike): void {
     const rootObj = this.objectMap.get(id);
     if (!rootObj) return;
+    // 物体被删除同样改变投影范围
+    this.shadowCamerasDirty = true;
     // 不依赖 graph 遍历：SceneGraph.remove 在 emit "remove" 前已把节点从图中删除，
     // 若按 graph 找子树会拿到空集合，导致 Three 对象残留。改为按 objectMap 中的
     // Three 子树收集映射到的场景节点 id，逐一摘除并释放。
@@ -305,6 +348,11 @@ export class SceneSynchronizer {
       s.angle,
       s.penumbra,
       s.castShadow,
+      s.shadowStrength,
+      s.shadowBias,
+      s.shadowNormalBias,
+      s.shadowNear,
+      s.shadowRadius,
     ].join("|");
     if (wrapper && (wrapper.userData as { lightSig?: string }).lightSig === sig) return;
     if (wrapper) {
@@ -326,7 +374,10 @@ export class SceneSynchronizer {
     switch (s.kind) {
       case "directional": {
         const dl = new THREE.DirectionalLight(s.lightColor, s.intensity);
+        // 平行光位置归零（three 默认 (0,1,0)），与灯光节点同一方向语义（本地 -Z）
+        dl.position.set(0, 0, 0);
         dl.castShadow = s.castShadow;
+        this.configureShadowLight(dl, componentShadowConfig(s));
         if (dirTarget) dl.target = dirTarget;
         light = dl;
         break;
@@ -341,6 +392,7 @@ export class SceneSynchronizer {
           s.decay,
         );
         sl.castShadow = s.castShadow;
+        this.configureShadowLight(sl, componentShadowConfig(s));
         if (dirTarget) sl.target = dirTarget;
         light = sl;
         break;
@@ -348,9 +400,13 @@ export class SceneSynchronizer {
       case "ambient":
         light = new THREE.AmbientLight(s.lightColor, s.intensity);
         break;
-      default:
-        light = new THREE.PointLight(s.lightColor, s.intensity, s.distance, s.decay);
+      default: {
+        const pl = new THREE.PointLight(s.lightColor, s.intensity, s.distance, s.decay);
+        pl.castShadow = s.castShadow;
+        this.configureShadowLight(pl, componentShadowConfig(s));
+        light = pl;
         break;
+      }
     }
     wrapper.add(light);
     const icon = createIconSprite(compLightIconKind(s.kind), s.lightColor, 0.8);
@@ -361,6 +417,10 @@ export class SceneSynchronizer {
 
   /** 网格刷新入口：按来源分派（基元 = 几何工厂 + 材质资产；模型 = 实例化克隆） */
   private refreshMesh(mesh: MeshNode, obj: THREE.Mesh): void {
+    // 网格默认参与阴影：投射（被平行光/聚光灯照到时投影）与接收（接住其它物体的投影）。
+    // 模型实例的子网格由 ModelManager 自行置位（同样为 true），此处只管基元容器。
+    obj.castShadow = true;
+    obj.receiveShadow = true;
     if (mesh.source === "model") {
       this.refreshModelMesh(mesh, obj);
       return;
@@ -372,6 +432,8 @@ export class SceneSynchronizer {
     obj.geometry.dispose();
     obj.geometry = geom;
     this.updateMeshMaterial(mesh, obj);
+    // 物体尺寸/位置变化都会改变投影范围 → 让阴影相机重算一次
+    this.shadowCamerasDirty = true;
   }
 
   /**
@@ -533,6 +595,210 @@ export class SceneSynchronizer {
     (outline.material as THREE.MeshBasicMaterial).color.setHex(want.color & 0xffffff);
   }
 
+  // ---------------------------------------------------------------------------
+  // 阴影（点光/平行光/聚光灯，各灯自带 Unity Shadows 语义的参数组）
+  //
+  // three 的灯光阴影相机默认范围很小（平行光为正交 ±5、聚光灯/点光远平面 500 或
+  // 取 distance）：场景一旦超出这个盒子，阴影就会"整块消失"或只留下半边 —— 这正是
+  // "开了投射阴影却看不到影子"的常见成因。这里不写死范围，把阴影相机贴合到**场景
+  // 实时包围盒**；用户的 near/bias/normalBias/ strength 参数经 configureShadowLight
+  // 写到灯光对象上（userData.shadowCfg 留档供贴合时读取），场景在编辑中随时变化，
+  // 所以按帧节拍惰性重算。
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 灯光建出时置位阴影基础参数（贴图分辨率/浓度/偏移/近裁剪面）。
+   * 必须在**灯光对象刚建出来**时调用 —— three 仅在首次渲染（shadow.map === null）
+   * 前按 mapSize 分配阴影贴图，之后再改 mapSize 不会重新分配；本文件每次刷新都
+   * 重建灯光对象，因此这里置位即生效。
+   */
+  private configureShadowLight(
+    light: ShadowCastingLight,
+    raw?: Partial<LightShadowConfig>,
+  ): void {
+    // 入口统一 parse 兜底（缺字段回默认），调用方传部分配置也不会把 undefined 写进 three
+    const cfg = parseLightShadow(raw);
+    light.userData.shadowCfg = { ...cfg };
+    if (!light.castShadow) return;
+    const isPoint = (light as THREE.PointLight).isPointLight === true;
+    light.shadow.mapSize.set(
+      isPoint ? SHADOW_MAP_SIZE_CUBE : SHADOW_MAP_SIZE_PLANE,
+      isPoint ? SHADOW_MAP_SIZE_CUBE : SHADOW_MAP_SIZE_PLANE,
+    );
+    light.shadow.intensity = cfg.strength;
+    light.shadow.bias = cfg.bias;
+    light.shadow.radius = cfg.radius;
+    // normalBias ≤ 0 = 自动：留给 refitShadowCameras 按纹素相对化（需要贴合后的范围）
+    if (cfg.normalBias > 0) light.shadow.normalBias = cfg.normalBias;
+    // 点光/聚光灯的阴影相机放在灯光位置上，near 就是用户的近裁剪面
+    // （平行光的相机要按场景包围盒后推，near 在贴合时合成）
+    if (!isPoint && (light as THREE.DirectionalLight).isDirectionalLight === true) return;
+    light.shadow.camera.near = cfg.near;
+    light.shadow.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * 帧循环调用：把启用阴影的灯光阴影相机贴合到场景包围盒。
+   * @param force 忽略节拍立即重算（加载完成等需要立刻正确的时机）
+   */
+  refitShadowCameras(force = false): void {
+    if (!force && !this.shadowCamerasDirty) {
+      if (++this.shadowCameraFrame < SHADOW_REFIT_INTERVAL) return;
+      this.shadowCameraFrame = 0;
+    }
+    this.shadowCamerasDirty = false;
+    const lights: ShadowCastingLight[] = [];
+    this.objectMap.forEach((obj) => {
+      obj.traverse((o) => {
+        const l = o as THREE.Light;
+        // three 的类型里 isXxxLight 各只在自身类型上声明，按具体类型取标记
+        const isDir = (l as THREE.DirectionalLight).isDirectionalLight === true;
+        const isSpot = (l as THREE.SpotLight).isSpotLight === true;
+        const isPoint = (l as THREE.PointLight).isPointLight === true;
+        if ((isDir || isSpot || isPoint) && l.castShadow) lights.push(l as ShadowCastingLight);
+      });
+    });
+    if (lights.length === 0) return;
+    // 世界矩阵先推进到当前编辑状态：包围盒与灯光视轴都按它取值
+    // （本函数可能在任何时刻被调用，不能依赖渲染帧刚写完矩阵）
+    this.scene.updateMatrixWorld(true);
+    const bounds = this.sceneShadowBounds(_shadowBox);
+    if (!bounds) return;
+    for (const l of lights) this.fitShadowCamera(l, bounds);
+  }
+
+  /** 阴影相机贴合单个灯光（bounds 为所有投影光共用的场景包围盒） */
+  private fitShadowCamera(light: ShadowCastingLight, bounds: THREE.Box3): void {
+    const cfg = parseLightShadow((light.userData as { shadowCfg?: unknown }).shadowCfg);
+    const center = bounds.getCenter(_shadowCenter);
+    const radius = Math.max(bounds.getSize(_shadowSize).length() / 2, 0.05);
+    const isDir = (light as THREE.DirectionalLight).isDirectionalLight === true;
+    const isPoint = (light as THREE.PointLight).isPointLight === true;
+    const shadow = light.shadow;
+    let autoBiasExtent: number;
+
+    if (isPoint) {
+      // 点光：立方体阴影相机挂在灯光位置（六个 90° 面），near = 用户近裁剪面；
+      // 远平面取「灯光到场景包围盒最远角落」（distance>0 时光照在该距离截止，直接用）。
+      _shadowOrigin.setFromMatrixPosition(light.matrixWorld);
+      const far =
+        (light as THREE.PointLight).distance > 0
+          ? (light as THREE.PointLight).distance
+          : Math.max(
+              ...[
+                [bounds.min.x, bounds.min.y, bounds.min.z],
+                [bounds.max.x, bounds.min.y, bounds.min.z],
+                [bounds.min.x, bounds.max.y, bounds.min.z],
+                [bounds.max.x, bounds.max.y, bounds.min.z],
+                [bounds.min.x, bounds.min.y, bounds.max.z],
+                [bounds.max.x, bounds.min.y, bounds.max.z],
+                [bounds.min.x, bounds.max.y, bounds.max.z],
+                [bounds.max.x, bounds.max.y, bounds.max.z],
+              ].map((c) =>
+                _shadowCorner.set(c[0], c[1], c[2]).distanceTo(_shadowOrigin),
+              ),
+              1,
+            );
+      shadow.camera.near = cfg.near;
+      shadow.camera.far = far;
+      shadow.camera.updateProjectionMatrix();
+      autoBiasExtent = far; // 90° 面在深度 d 处的世界宽度 ≈ 2d
+    } else if (!isDir) {
+      // 聚光灯：视锥由 angle 决定，只需 near = 用户近裁剪面 + 远平面推够远
+      // （distance>0 时 three 以 distance 截止光照，阴影相机 far 取两者中较小即可）
+      _shadowOrigin.setFromMatrixPosition(light.matrixWorld);
+      _shadowTarget.setFromMatrixPosition((light as THREE.SpotLight).target.matrixWorld);
+      _shadowAxis.copy(_shadowTarget).sub(_shadowOrigin);
+      if (_shadowAxis.lengthSq() < 1e-8) _shadowAxis.set(0, -1, 0);
+      _shadowAxis.normalize();
+      const along = _shadowToCenter.copy(center).sub(_shadowOrigin).dot(_shadowAxis);
+      const perpSq = Math.max(_shadowToCenter.lengthSq() - along * along, 0);
+      const reach = radius + Math.sqrt(perpSq);
+      const fitFar = Math.max(along + reach, 1);
+      const dist = (light as THREE.SpotLight).distance;
+      shadow.camera.near = cfg.near;
+      shadow.camera.far = dist > 0 ? Math.min(dist, fitFar) : fitFar;
+      shadow.camera.updateProjectionMatrix();
+      // 视锥在远平面处的世界宽度（tan(halfAngle)×far×2）决定纹素粗细
+      const halfAngle = Math.max((light as THREE.SpotLight).angle, 0.01);
+      autoBiasExtent = 2 * Math.tan(halfAngle) * shadow.camera.far;
+    } else {
+      // 平行光：把阴影相机沿视轴后推，保证**整个场景都在相机前方**。
+      // three 把阴影相机放在灯光世界位置上，而定向光的"位置"只影响阴影相机
+      // （着色只用方向，即 position − target），所以在节点本地沿 +Z 后退是安全的：
+      // 灯本身"站"在场景里时（很常见），近平面会把近侧物体的阴影整片裁掉。
+      _shadowOrigin.setFromMatrixPosition(light.matrixWorld);
+      _shadowTarget.setFromMatrixPosition(
+        (light as THREE.DirectionalLight).target.matrixWorld,
+      );
+      _shadowAxis.copy(_shadowTarget).sub(_shadowOrigin);
+      if (_shadowAxis.lengthSq() < 1e-8) _shadowAxis.set(0, -1, 0);
+      _shadowAxis.normalize();
+      const along = _shadowToCenter.copy(center).sub(_shadowOrigin).dot(_shadowAxis);
+      const perpSq = Math.max(_shadowToCenter.lengthSq() - along * along, 0);
+      const reach = radius + Math.sqrt(perpSq);
+      // 平行光：把阴影相机沿视轴后推，保证**整个场景都在相机前方**。
+      // three 把阴影相机放在灯光世界位置上，而定向光的"位置"只影响阴影相机
+      // （着色只用方向，即 position − target），所以在节点本地沿 +Z 后退是安全的：
+      // 灯本身"站"在场景里时（很常见），近平面会把近侧物体的阴影整片裁掉。
+      // 只补缺口（增量单调）：重复 refit 不来回挪灯，也不破坏已经推好的位置
+      const deficit = reach + 0.05 - along;
+      if (deficit > 1e-4) {
+        light.position.z += deficit;
+        light.updateWorldMatrix(true, false);
+      }
+      // 后退后的最终 along（移动精确落在光照轴上：along_after = along + deficit）
+      const alongFinal = deficit > 1e-4 ? reach + 0.05 : along;
+      const cam = shadow.camera as THREE.OrthographicCamera;
+      // near = 场景起点（alongFinal − reach）+ 用户近裁剪面（Near Plane：比这更近的物体不参与投影）
+      cam.near = Math.max(alongFinal - reach + cfg.near, 0.01);
+      cam.far = Math.max(alongFinal + reach, cam.near + 0.1);
+      cam.left = -reach;
+      cam.right = reach;
+      cam.top = reach;
+      cam.bottom = -reach;
+      // three 的平行光阴影矩阵不会自动重建投影矩阵（参数变了必须显式更新）
+      cam.updateProjectionMatrix();
+      autoBiasExtent = reach * 2;
+    }
+
+    // 法线偏移自动档（用户未设时）：按阴影贴图纹素相对化 —— 范围越大纹素越粗，
+    // 固定偏移会变成麻点或飘影（peter-panning）
+    if (cfg.normalBias <= 0) {
+      const mapSize = shadow.mapSize.width || SHADOW_MAP_SIZE_PLANE;
+      const texel = autoBiasExtent / mapSize;
+      shadow.normalBias = Math.min(
+        Math.max(texel * SHADOW_NORMAL_BIAS_TEXELS, 0.0005),
+        Math.max(radius * 0.1, 0.001),
+      );
+    }
+  }
+
+  /**
+   * 场景投影包围盒（渲染类节点的世界包围盒并集）：
+   * 只统计 objectMap 里的场景节点，编辑器辅助物（网格/图标/gizmo）不参与，
+   * 空几何容器（模型节点容器、灯光/相机的空组）与隐藏子树跳过。
+   * 世界矩阵取渲染帧写入的值（最多滞后一帧，对阴影范围无影响）。
+   */
+  private sceneShadowBounds(out: THREE.Box3): THREE.Box3 | null {
+    out.makeEmpty();
+    this.objectMap.forEach((obj) => {
+      if (!obj.visible) return;
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh !== true || !mesh.geometry) return;
+        const pos = (mesh.geometry as THREE.BufferGeometry).getAttribute?.("position");
+        if (!pos || pos.count === 0) return;
+        const geom = mesh.geometry as THREE.BufferGeometry;
+        if (!geom.boundingBox) geom.computeBoundingBox();
+        if (!geom.boundingBox) return;
+        _shadowTmpBox.copy(geom.boundingBox).applyMatrix4(mesh.matrixWorld);
+        out.union(_shadowTmpBox);
+      });
+    });
+    return out.isEmpty() ? null : out;
+  }
+
   private refreshLight(light: LightNode, obj: THREE.Object3D): void {
     obj.children
       .slice()
@@ -562,11 +828,19 @@ export class SceneSynchronizer {
     lamp.userData.lamp = true;
     let iconKind: SpriteIconKind = "light-point";
     if (light instanceof PointLightNode) {
-      lamp.add(new THREE.PointLight(light.lightColor, light.intensity, light.distance, light.decay));
+      const pl = new THREE.PointLight(light.lightColor, light.intensity, light.distance, light.decay);
+      pl.castShadow = light.castShadow;
+      this.configureShadowLight(pl, light.shadow);
+      lamp.add(pl);
       iconKind = "light-point";
     } else if (light instanceof DirectionalLightNode) {
       const dl = new THREE.DirectionalLight(light.lightColor, light.intensity);
+      // three 的平行光默认位置 (0,1,0)（DEFAULT_UP）会让实际光照方向偏离"节点本地 -Z"
+      // 的项目语义，也让阴影相机沿轴后推的位移不精确 —— 归零到本地原点（目标点在 -Z，
+      // 方向恰为 -Z），后推阴影相机时位移即精确落在光照轴上
+      dl.position.set(0, 0, 0);
       dl.castShadow = light.castShadow;
+      this.configureShadowLight(dl, light.shadow);
       if (dirTarget) dl.target = dirTarget;
       lamp.add(dl);
       iconKind = "light-directional";
@@ -581,6 +855,7 @@ export class SceneSynchronizer {
         light.decay,
       );
       sl.castShadow = light.castShadow;
+      this.configureShadowLight(sl, light.shadow);
       if (dirTarget) sl.target = dirTarget;
       lamp.add(sl);
       iconKind = "light-spot";
@@ -595,6 +870,10 @@ export class SceneSynchronizer {
     icon.name = "__lightIcon";
     lamp.add(icon);
     obj.add(lamp);
+    // 投射阴影的灯光：阴影相机随场景包围盒重算（新增/移动物体后范围自动跟上）
+    if (light instanceof PointLightNode || light instanceof DirectionalLightNode || light instanceof SpotLightNode) {
+      if (light.castShadow) this.shadowCamerasDirty = true;
+    }
   }
 
   private refreshCamera(node: CameraNode, obj: THREE.Object3D): void {

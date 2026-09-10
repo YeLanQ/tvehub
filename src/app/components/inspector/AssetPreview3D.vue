@@ -5,10 +5,12 @@
  * - 取景：容器尺寸自适应（ResizeObserver + DPR 钳制，拖分隔条不会失真），
  *   模型按包围盒自动取景，材质球/全景按模式预设机位，重置回到该机位;
  * - 光照：PMREM 程序化室内环境（PBR 的金属度/粗糙度/清漆/透射正确呈现）
- *   + 半球光与主光做柔和补光；模型模式另加地面网格与投影，便于判断比例与朝向;
+ *   + 半球光与主光做柔和补光；材质球与模型都配承影地面（PCF 软阴影，主光投影），
+ *   模型另加地面网格，便于判断比例、朝向与接触关系;
  * - 模式：material 材质球（参数/贴图实时应用）、model 模型实例（带动画剪辑播放）、
  *   sky 程序化天空（Nishita 大气散射）、hdr RGBE 全景、texcube 立方体天空盒;
- * - 工具条：重置视角 / 播放暂停（模型带剪辑时）/ 剪辑选择 / 自动旋转 / 网格（模型）/ 线框（材质·模型）。
+ * - 工具条：重置视角 / 播放暂停（模型带剪辑时）/ 剪辑选择 / 自动旋转 / 光照模式 /
+ *   网格（模型）/ 线框（材质·模型）。
  *
  * 每个预览实例独立 WebGL 上下文（与引擎上下文隔离），卸载时全部释放：
  * 渲染器（连同本上下文内的环境贴图与投影纹理）、控制器、动画 mixer、
@@ -110,6 +112,10 @@ function ensureRenderer(): void {
   if (!el || renderer) return;
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // 阴影：WebGLRenderer 默认关闭阴影贴图（不打开的话承影地面完全画不出东西），
+  // PCF 采样 + 主光 radius 4（柔和档，与场景灯光的 Shadow 类型 Soft 一致）
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.domElement.style.cssText = "display:block;width:100%;height:100%";
   el.appendChild(renderer.domElement);
   scene = new THREE.Scene();
@@ -135,6 +141,7 @@ function ensureRenderer(): void {
   keyLight.castShadow = true;
   keyLight.shadow.mapSize.set(1024, 1024);
   keyLight.shadow.bias = -0.0005;
+  keyLight.shadow.radius = 4; // 柔和档（Shadow 类型 Soft 同款）
   scene.add(hemiLight, keyLight);
   // 控制器：左键旋转 / 滚轮缩放 / 右键平移；双击回到预设机位
   controls = new OrbitControls(camera, renderer.domElement);
@@ -356,8 +363,14 @@ function buildMaterialPreview(): void {
   liveMaterial = mat;
   applyWireframe();
   subject = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), mat);
+  // three 的网格默认不投影也不受影：材质球同样要显式置位，否则承影地面收不到任何影子
+  subject.castShadow = true;
+  subject.receiveShadow = true;
   scene.add(subject);
-  setHomeView(new THREE.Vector3(0, 0.35, 3.1), new THREE.Vector3(0, 0, 0), 38);
+  // 承影地面：材质球也让"投影"看得见（仅灯光模式下能看到球与地面的接触阴影）
+  setupGroundAndShadow(1, -1);
+  // 机位略微拉开并下俯：给球下方的承影面留出余量（否则阴影落在画面外看不见）
+  setHomeView(new THREE.Vector3(0, 1.0, 4.4), new THREE.Vector3(0, -0.15, 0), 38);
   applyLightMode();
 }
 
@@ -464,27 +477,8 @@ async function buildModelPreview(): Promise<void> {
   grid = new THREE.GridHelper(radius * 6, 24, 0x4a4a52, 0x33333a);
   grid.position.y = -size.y / 2;
   scene.add(grid);
-  ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(radius * 12, radius * 12),
-    new THREE.ShadowMaterial({ opacity: 0.28 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -size.y / 2 + 0.0005;
-  ground.receiveShadow = true;
-  scene.add(ground);
+  setupGroundAndShadow(radius, -size.y / 2);
   applyWireframe();
-  if (keyLight) {
-    const d = radius * 3;
-    keyLight.position.set(d, d * 1.4, d);
-    keyLight.castShadow = true;
-    keyLight.shadow.camera.near = radius / 10;
-    keyLight.shadow.camera.far = d * 6;
-    keyLight.shadow.camera.left = -radius * 2;
-    keyLight.shadow.camera.right = radius * 2;
-    keyLight.shadow.camera.top = radius * 2;
-    keyLight.shadow.camera.bottom = -radius * 2;
-    keyLight.shadow.camera.updateProjectionMatrix();
-  }
   applyLightMode();
   // 取景留一点余量（球包围所需距离 ≈ 2.9r，fov 38 时）
   setHomeView(
@@ -492,6 +486,38 @@ async function buildModelPreview(): Promise<void> {
     new THREE.Vector3(0, 0, 0),
     38,
   );
+}
+
+/**
+ * 承影地面 + 主光阴影范围（材质球与模型共用，尺寸按取景半径相对化）：
+ * - 地面用 ShadowMaterial：除被遮挡处画阴影外全透明，只做"接影"，不挡住主体；
+ * - 主光阴影相机按半径定正交范围与远近平面，法线偏移按阴影贴图纹素相对化
+ *   （半径大的模型纹素粗，固定偏移会变成麻点/飘影）。
+ */
+function setupGroundAndShadow(radius: number, floorY: number): void {
+  if (!scene) return;
+  ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(radius * 12, radius * 12),
+    new THREE.ShadowMaterial({ opacity: 0.28 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = floorY + radius * 0.0005;
+  ground.receiveShadow = true;
+  scene.add(ground);
+  if (!keyLight) return;
+  const d = radius * 3;
+  keyLight.position.set(d, d * 1.4, d);
+  keyLight.castShadow = true;
+  const cam = keyLight.shadow.camera;
+  cam.near = radius / 10;
+  cam.far = d * 6;
+  cam.left = -radius * 2;
+  cam.right = radius * 2;
+  cam.top = radius * 2;
+  cam.bottom = -radius * 2;
+  cam.updateProjectionMatrix();
+  const mapSize = keyLight.shadow.mapSize.width || 1024;
+  keyLight.shadow.normalBias = Math.max(((radius * 4) / mapSize) * 1.2, 0.0005);
 }
 
 /** 播放指定剪辑（其余停止；循环播放，时间归零） */

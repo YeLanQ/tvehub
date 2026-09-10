@@ -23,7 +23,24 @@ import {
   type AudioSourceComponentRef,
   type LightComponentRef,
 } from "../../../framework/prototype/Node";
+import type { LightShadowConfig } from "../../../framework/lighting/shadow";
+import {
+  LIGHT_SHADOW_TYPE_HARD_RADIUS,
+  LIGHT_SHADOW_TYPE_SOFT_RADIUS,
+} from "../../../framework/lighting/shadow";
 import type { InspectorNodeApi } from "./useInspectorNode";
+
+/** 可投影灯光节点（点光/平行光/聚光灯）的阴影配置；环境光返回 null */
+function shadowConfigOf(light: LightNode): LightShadowConfig | null {
+  if (
+    light instanceof PointLightNode ||
+    light instanceof DirectionalLightNode ||
+    light instanceof SpotLightNode
+  ) {
+    return light.shadow;
+  }
+  return null;
+}
 
 export interface InspectorLightAudioApi {
   onLightComponentUpdate: (compId: string, label: string, value: unknown) => void;
@@ -58,6 +75,16 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
         case "Toggle Shadow":
           s.castShadow = value === true;
           break;
+        case "Set Shadow Type": {
+          // Shadow 类型下拉（Off/Hard/Soft）：Off 关投影，Hard/Soft 以软化半径区分
+          if (value === "off") {
+            s.castShadow = false;
+          } else {
+            s.castShadow = true;
+            s.shadowRadius = value === "hard" ? LIGHT_SHADOW_TYPE_HARD_RADIUS : LIGHT_SHADOW_TYPE_SOFT_RADIUS;
+          }
+          break;
+        }
         case "Set Distance":
           s.distance = Math.max(0, typeof value === "number" ? value : 0);
           break;
@@ -69,6 +96,19 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           break;
         case "Set Penumbra":
           s.penumbra = Math.max(0, Math.min(1, typeof value === "number" ? value : 0.2));
+          break;
+        // 阴影参数组（点光/平行光/聚光灯；Unity Shadows 语义）
+        case "Set Shadow Strength":
+          s.shadowStrength = Math.max(0, Math.min(1, typeof value === "number" ? value : 1));
+          break;
+        case "Set Shadow Bias":
+          s.shadowBias = Math.max(-0.05, Math.min(0, typeof value === "number" ? value : -0.0005));
+          break;
+        case "Set Shadow NormalBias":
+          s.shadowNormalBias = Math.max(0, typeof value === "number" ? value : 0);
+          break;
+        case "Set Shadow Near":
+          s.shadowNear = Math.max(0.01, typeof value === "number" ? value : 0.1);
           break;
       }
     }, label);
@@ -143,10 +183,49 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           if (light instanceof SpotLightNode) light.penumbra = value as number;
           break;
         case "Toggle Shadow":
-          if (light instanceof DirectionalLightNode || light instanceof SpotLightNode) {
+          // 点光（立方体阴影贴图）/平行光/聚光灯都可投射阴影
+          if (
+            light instanceof PointLightNode ||
+            light instanceof DirectionalLightNode ||
+            light instanceof SpotLightNode
+          ) {
             light.castShadow = value as boolean;
           }
           break;
+        case "Set Shadow Type": {
+          // Shadow 类型下拉（Off/Hard/Soft）：Off 关投影，Hard/Soft 以软化半径区分
+          const sc = shadowConfigOf(light);
+          if (!sc) break;
+          const shadowable = light as PointLightNode | DirectionalLightNode | SpotLightNode;
+          if (value === "off") {
+            shadowable.castShadow = false;
+          } else {
+            shadowable.castShadow = true;
+            sc.radius = value === "hard" ? LIGHT_SHADOW_TYPE_HARD_RADIUS : LIGHT_SHADOW_TYPE_SOFT_RADIUS;
+          }
+          break;
+        }
+        // 阴影参数组（点光/平行光/聚光灯都有 shadow 配置；Unity Shadows 语义）
+        case "Set Shadow Strength": {
+          const sc = shadowConfigOf(light);
+          if (sc) sc.strength = Math.max(0, Math.min(1, value as number));
+          break;
+        }
+        case "Set Shadow Bias": {
+          const sc = shadowConfigOf(light);
+          if (sc) sc.bias = Math.max(-0.05, Math.min(0, value as number));
+          break;
+        }
+        case "Set Shadow NormalBias": {
+          const sc = shadowConfigOf(light);
+          if (sc) sc.normalBias = Math.max(0, value as number);
+          break;
+        }
+        case "Set Shadow Near": {
+          const sc = shadowConfigOf(light);
+          if (sc) sc.near = Math.max(0.01, value as number);
+          break;
+        }
       }
     }, label);
   }

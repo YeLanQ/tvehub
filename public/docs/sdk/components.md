@@ -42,7 +42,11 @@ light.distance;       // 点光/聚光：照射距离（0 = 无限远）
 light.decay;          // 点光/聚光：物理衰减指数
 light.angle;          // 聚光：光束半角（度）
 light.penumbra;       // 聚光：边缘柔和度 0~1
-light.castShadow;     // 平行光/聚光：投射阴影
+light.castShadow;     // 点光/平行光/聚光：投射阴影
+light.shadowStrength; // 阴影浓度 0~1（Unity Strength）
+light.shadowBias;     // 阴影深度偏移（Unity Bias）
+light.shadowNormalBias; // 阴影法线偏移（0 = 自动；Unity Normal Bias）
+light.shadowNear;     // 阴影近裁剪面（Unity Near Plane）
 ```
 
 ## AudioSource 音源

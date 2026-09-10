@@ -1,6 +1,7 @@
 // 场景树构建：按导出的 scene.json 递归生成 three 对象并挂到场景。
 // - meshNode → createMesh（mesh.mjs）；
-// - 灯光节点 → Group + 真实 Light（方向光/聚光灯附加本地 -Z 目标点）；
+// - 灯光节点 → Group + 真实 Light（方向光/聚光灯附加本地 -Z 目标点；
+//   点光/平行光/聚光灯可自带阴影参数组，见 applyLightShadow）；
 // - cameraNode → Group（记录世界位姿供渲染相机选用）；
 // - 其余 → Group；
 // - 组件模式：任意节点 components 中的 light / audioSource 组件同样生效——
@@ -101,6 +102,40 @@ export function buildSceneTree(rootJson, scene, ctx) {
     return obj;
   }
 
+  /**
+   * 灯光阴影参数置位（与编辑器 SceneSynchronizer 同一语义，Unity Shadows 参数组）：
+   * 贴图分辨率（点光 1024 / 其余 2048；three 只在首次渲染前按 mapSize 分配贴图）、
+   * 浓度（shadow.intensity）、深度偏移、法线偏移（≤0 = 自动，交给 player 的贴合逻辑）、
+   * 近裁剪面（平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）。
+   * 配置留档在 light.userData.shadowCfg 供 player 贴合时读取。
+   */
+  function applyLightShadow(light, json) {
+    const raw = json && typeof json.shadow === "object" ? json.shadow : {};
+    const n = (v, fb) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
+    const cfg = {
+      strength: Math.min(1, Math.max(0, num(raw.strength, 1))),
+      bias: Math.min(0, Math.max(-0.05, num(raw.bias, -0.0005))),
+      normalBias: Math.max(0, num(raw.normalBias, 0)),
+      near: Math.max(0.01, num(raw.near, 0.1)),
+      radius: Math.min(5, Math.max(1, num(raw.radius, 4))),
+    };
+    light.userData.shadowCfg = cfg;
+    if (light.castShadow !== true) return;
+    const isPoint = light.isPointLight === true;
+    const size = isPoint ? 1024 : 2048;
+    light.shadow.mapSize.set(size, size);
+    light.shadow.intensity = cfg.strength;
+    light.shadow.bias = cfg.bias;
+    light.shadow.radius = cfg.radius;
+    if (cfg.normalBias > 0) light.shadow.normalBias = cfg.normalBias;
+    if (light.isDirectionalLight !== true) {
+      // 点光/聚光灯的阴影相机就在灯光位置上，near = 用户近裁剪面
+      // （平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）
+      light.shadow.camera.near = cfg.near;
+      light.shadow.camera.updateProjectionMatrix();
+    }
+  }
+
   function wrapLight(json, kind) {
     const group = new THREE.Group();
     const color = num(json.lightColor, 0xffffff) & 0xffffff;
@@ -110,7 +145,10 @@ export function buildSceneTree(rootJson, scene, ctx) {
       light = new THREE.AmbientLight(color, intensity);
     } else if (kind === "directional") {
       const dl = new THREE.DirectionalLight(color, intensity);
+      // 平行光位置归零（three 默认 (0,1,0)）：方向 = 节点本地 -Z（与编辑器同语义）
+      dl.position.set(0, 0, 0);
       dl.castShadow = json.castShadow === true;
+      applyLightShadow(dl, json);
       light = dl;
     } else if (kind === "spot") {
       const sl = new THREE.SpotLight(
@@ -122,14 +160,19 @@ export function buildSceneTree(rootJson, scene, ctx) {
         num(json.decay, 2),
       );
       sl.castShadow = json.castShadow === true;
+      applyLightShadow(sl, json);
       light = sl;
     } else {
-      light = new THREE.PointLight(
+      const pl = new THREE.PointLight(
         color,
         intensity,
         num(json.distance, 0),
         num(json.decay, 2),
       );
+      // 点光阴影：立方体阴影贴图（六个 90° 面），开销高于平面阴影，默认关
+      pl.castShadow = json.castShadow === true;
+      applyLightShadow(pl, json);
+      light = pl;
     }
     group.add(light);
     // 方向光/聚光灯：光照方向 = 节点本地 -Z（目标点随组旋转）

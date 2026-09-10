@@ -27,8 +27,18 @@ export interface LightComponentSettings {
   angle: number;
   /** 聚光灯：边缘柔和度 0~1 */
   penumbra: number;
-  /** 平行光/聚光灯：投射阴影 */
+  /** 点光/平行光/聚光灯：投射阴影 */
   castShadow: boolean;
+  /** 阴影浓度 0~1（点光/平行光/聚光灯生效；Unity Strength） */
+  shadowStrength: number;
+  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  shadowBias: number;
+  /** 阴影法线偏移（≤0 = 自动按阴影贴图纹素相对化；Unity Normal Bias） */
+  shadowNormalBias: number;
+  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  shadowNear: number;
+  /** 阴影软化半径（PCF 采样核，1 = 硬阴影；检查器 Shadow 类型下拉的 Soft = 4） */
+  shadowRadius: number;
 }
 
 export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
@@ -40,6 +50,11 @@ export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
   angle: 45,
   penumbra: 0.2,
   castShadow: false,
+  shadowStrength: 1,
+  shadowBias: -0.0005,
+  shadowNormalBias: 0,
+  shadowNear: 0.1,
+  shadowRadius: 4,
 };
 
 function str(v: unknown, fb: string): string {
@@ -70,6 +85,11 @@ export function parseLightComponentSettings(v: unknown): LightComponentSettings 
     angle: clamp(num(o.angle, d.angle), 0.1, 89.9),
     penumbra: clamp(num(o.penumbra, d.penumbra), 0, 1),
     castShadow: o.castShadow === true,
+    shadowStrength: clamp(num(o.shadowStrength, d.shadowStrength), 0, 1),
+    shadowBias: Math.max(-0.05, Math.min(0, num(o.shadowBias, d.shadowBias))),
+    shadowNormalBias: Math.max(0, num(o.shadowNormalBias, d.shadowNormalBias)),
+    shadowNear: Math.max(0.01, num(o.shadowNear, d.shadowNear)),
+    shadowRadius: clamp(num(o.shadowRadius, d.shadowRadius), 1, 5),
   };
 }
 

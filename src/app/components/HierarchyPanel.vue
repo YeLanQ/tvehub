@@ -21,6 +21,11 @@ import {
   type CtxMenuItem,
 } from "../../lib/editor/context-menu";
 import { dispatchCommand } from "../commands";
+import {
+  addNodeArgs,
+  addNodeMenuItems,
+  type AddMenuItem,
+} from "../lib/node-menu";
 import { prompt } from "../lib/prompt";
 import { saveNodeAsPrefab, updatePrefabFromNode } from "../lib/prefabs";
 import { getScriptsStore } from "../stores/scripts";
@@ -206,74 +211,33 @@ function onRowClick(id: string, ev: MouseEvent): void {
 }
 
 // ---------- 添加 / 删除 ----------
-/** 把上下文菜单的节点类型串（mesh:box / light:point / script:rel …）映射为 node.add 参数 */
-function addNodeArgs(type: string, parentId: string, name?: string): Record<string, unknown> {
-  const args: Record<string, unknown> = { kind: "group", parentId };
-  if (type.startsWith("mesh:")) {
-    args.kind = "mesh";
-    args.subtype = type.slice(5);
-  } else if (type.startsWith("light:")) {
-    args.kind = "light";
-    args.subtype = type.slice(6);
-  } else if (type.startsWith("skybox:")) {
-    args.kind = "skybox";
-    args.subtype = type.slice(7);
-  } else if (type === "audio") {
-    args.kind = "audio";
-  } else if (type === "camera") {
-    args.kind = "camera";
-  } else if (type.startsWith("script:")) {
-    args.kind = "script";
-    args.subtype = type.slice(7);
-  }
-  if (name && name.trim()) args.name = name.trim();
-  return args;
-}
-
 function addNodeTo(parentId: string, type: string, name?: string): void {
-  void dispatchCommand("node.add", addNodeArgs(type, parentId, name));
+  // 类型串 → node.add 参数（菜单项与映射表由 lib/node-menu 统一定义，未知类型串提示而不是静默兜底）
+  const args = addNodeArgs(type, parentId, name);
+  if (!args) {
+    console.warn(`未知节点类型: ${type}（菜单项与 node-menu 映射表不同步）`);
+    return;
+  }
+  void dispatchCommand("node.add", args);
 }
 
 function createAddItems(parentId: string): CtxMenuItem[] {
-  // 基元列表由几何工厂注册表驱动（新增基元自动出现在菜单）
-  const geometryItems: CtxMenuItem[] = geometryRegistry.list().map((g) => ({
-    label: g.label,
-    onClick: () => addNodeTo(parentId, `mesh:${g.key}`),
-  }));
-  // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点
-  const scriptNodeItems: CtxMenuItem[] = scriptsStore.scriptNodeTypes().map((s) => ({
-    label: s.name,
-    onClick: () => addNodeTo(parentId, `script:${s.rel}`),
-  }));
-  const items: CtxMenuItem[] = [];
-  items.push({ label: "网格", children: geometryItems });
-  items.push(menuSeparator());
-  items.push({
-    label: "灯光",
-    children: [
-      { label: "Point Light", onClick: () => addNodeTo(parentId, "light:point") },
-      { label: "Directional Light", onClick: () => addNodeTo(parentId, "light:directional") },
-      { label: "Spot Light", onClick: () => addNodeTo(parentId, "light:spot") },
-      { label: "Ambient", onClick: () => addNodeTo(parentId, "light:ambient") },
-    ],
+  const defs = addNodeMenuItems({
+    geometry: geometryRegistry.list().map((g) => ({ key: g.key, label: g.label })),
+    scripts: scriptsStore.scriptNodeTypes().map((s) => ({ rel: s.rel, name: s.name })),
   });
-  items.push(menuSeparator());
-  items.push({ label: "Camera", onClick: () => addNodeTo(parentId, "camera") });
-  items.push({ label: "Group", onClick: () => addNodeTo(parentId, "group") });
-  items.push({ label: "Audio Source", onClick: () => addNodeTo(parentId, "audio") });
-  items.push(menuSeparator());
-  items.push({
-    label: "天空盒",
-    children: [
-      { label: "Procedural Skybox", onClick: () => addNodeTo(parentId, "skybox:procedural") },
-      { label: "Cube Skybox", onClick: () => addNodeTo(parentId, "skybox:cube") },
-    ],
+  // 菜单项定义 → 上下文菜单项（叶子项点击即按类型串新增节点）
+  const leafItem = (def: AddMenuItem): CtxMenuItem => ({
+    label: def.label ?? "",
+    onClick: () => addNodeTo(parentId, def.type as string),
   });
-  if (scriptNodeItems.length) {
-    items.push(menuSeparator());
-    items.push({ label: "脚本节点", children: scriptNodeItems });
-  }
-  return items;
+  return defs.map((def): CtxMenuItem => {
+    if (def.separator) return menuSeparator();
+    if (def.children) {
+      return { label: def.label ?? "", children: def.children.map(leafItem) };
+    }
+    return leafItem(def);
+  });
 }
 
 function deleteNodes(targetIds: string[]): void {

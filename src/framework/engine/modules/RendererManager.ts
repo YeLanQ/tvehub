@@ -116,6 +116,9 @@ export class RendererManager {
         : THREE.NoToneMapping;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
+    // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效，
+    // PCFSoft 会忽略 radius，无法做每灯软硬差异
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const dom = this.renderer.domElement;
     dom.style.display = "block";

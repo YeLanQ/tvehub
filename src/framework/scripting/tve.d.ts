@@ -788,9 +788,27 @@ export declare class Light {
   /** 聚光灯：边缘柔和度 0~1 */
   get penumbra(): number;
   set penumbra(value: number);
-  /** 平行光/聚光灯：投射阴影 */
+  /** 点光/平行光/聚光灯：投射阴影 */
   get castShadow(): boolean;
   set castShadow(value: boolean);
+  /** 阴影浓度 0~1（1 = 纯黑阴影；Unity Strength） */
+  get shadowStrength(): number;
+  set shadowStrength(value: number);
+  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  get shadowBias(): number;
+  set shadowBias(value: number);
+  /** 阴影法线偏移（≤0 = 自动按纹素相对化；Unity Normal Bias） */
+  get shadowNormalBias(): number;
+  set shadowNormalBias(value: number);
+  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  get shadowNear(): number;
+  set shadowNear(value: number);
+  /** 阴影软化半径（PCF 采样核，1 = 硬阴影；Soft 档 = 4） */
+  get shadowRadius(): number;
+  set shadowRadius(value: number);
+  /** Shadow 类型档位（"off" | "hard" | "soft"；读写投射开关 + 软化半径） */
+  get shadowType(): "off" | "hard" | "soft";
+  set shadowType(value: "off" | "hard" | "soft");
 }
 
 /** 音源组件门面：播放控制按组件 id 寻址；设置写入经运行时合并生效 */
@@ -996,6 +1014,18 @@ export interface LightAddOptions {
   angle?: number;
   penumbra?: number;
   castShadow?: boolean;
+  /** 阴影浓度 0~1（Unity Strength） */
+  shadowStrength?: number;
+  /** 阴影深度偏移（Unity Bias） */
+  shadowBias?: number;
+  /** 阴影法线偏移（≤0 = 自动；Unity Normal Bias） */
+  shadowNormalBias?: number;
+  /** 阴影近裁剪面（Unity Near Plane） */
+  shadowNear?: number;
+  /** 阴影软化半径（1 = 硬阴影，Soft 档 = 4） */
+  shadowRadius?: number;
+  /** Shadow 类型档位（优先于 castShadow/shadowRadius；Unity Shadow Type） */
+  shadowType?: "off" | "hard" | "soft";
 }
 
 /** addComponent(AudioSource) 创建参数（缺省项回默认） */

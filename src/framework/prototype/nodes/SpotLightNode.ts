@@ -1,5 +1,10 @@
 import { cloneRecord } from "../types";
 import { LightNode, type LightNodeInit, type ILightNode } from "./LightNode";
+import {
+  cloneLightShadow,
+  parseLightShadow,
+  type LightShadowConfig,
+} from "../../lighting/shadow";
 
 /** 聚光灯能力接口：距离/衰减/角度/半影/阴影 */
 export interface ISpotLightNode extends ILightNode {
@@ -12,6 +17,8 @@ export interface ISpotLightNode extends ILightNode {
   /** 边缘柔和度 0~1 */
   penumbra: number;
   castShadow: boolean;
+  /** 阴影参数（浓度/偏移/近裁剪面，Unity Shadows 语义） */
+  shadow: LightShadowConfig;
 }
 
 /** 聚光灯光源：沿节点本地 -Z 发射的圆锥光束，可配角度/半影/距离/衰减/阴影。 */
@@ -29,6 +36,8 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
   /** 边缘柔和度 0~1 */
   penumbra = 0.2;
   castShadow = false;
+  /** 阴影参数（Unity Shadows 语义：浓度/深度偏移/法线偏移/近裁剪面） */
+  shadow: LightShadowConfig = parseLightShadow(undefined);
 
   constructor(
     init: LightNodeInit & {
@@ -37,6 +46,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
       angle?: number;
       penumbra?: number;
       castShadow?: boolean;
+      shadow?: LightShadowConfig;
     } = {},
   ) {
     super(init);
@@ -45,6 +55,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
     this.angle = init.angle ?? this.angle;
     this.penumbra = init.penumbra ?? this.penumbra;
     this.castShadow = init.castShadow ?? this.castShadow;
+    this.shadow = init.shadow ? cloneLightShadow(parseLightShadow(init.shadow)) : this.shadow;
   }
 
   override clone(): SpotLightNode {
@@ -63,6 +74,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
     node.angle = this.angle;
     node.penumbra = this.penumbra;
     node.castShadow = this.castShadow;
+    node.shadow = cloneLightShadow(this.shadow);
     return node;
   }
 
@@ -73,6 +85,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
     target.angle = this.angle;
     target.penumbra = this.penumbra;
     target.castShadow = this.castShadow;
+    target.shadow = cloneLightShadow(this.shadow);
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
@@ -82,5 +95,6 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
     this.angle = (source.angle as number) ?? this.angle;
     this.penumbra = (source.penumbra as number) ?? this.penumbra;
     this.castShadow = (source.castShadow as boolean) ?? this.castShadow;
+    this.shadow = parseLightShadow(source.shadow);
   }
 }

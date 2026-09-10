@@ -31,6 +31,8 @@ export function createStage(app, cfg, applyProjection) {
   renderer.toneMapping =
     cfg.hdrMode === "hdr" ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   renderer.shadowMap.enabled = true;
+  // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   app.appendChild(renderer.domElement);
   const canvas = renderer.domElement;
 

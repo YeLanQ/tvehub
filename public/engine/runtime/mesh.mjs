@@ -84,6 +84,19 @@ function createCustomMaterial(m) {
   return mat;
 }
 
+export function createMesh(json, ctx) {
+  const obj = buildMeshNode(json, ctx);
+  // 阴影参与：网格默认**投射 + 接收**（与编辑器 SceneSynchronizer 同一策略，
+  // 否则平行光/聚光灯开了阴影也看不到影子）。材质轮廓体（__matOutline）例外：
+  // 它是沿法线外扩的背面壳，投影会把轮廓糊进阴影里。
+  obj.traverse((o) => {
+    if (o.isMesh !== true || o.name === "__matOutline") return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+  });
+  return obj;
+}
+
 /**
  * 生成 meshNode 的 three 对象：
  * - 模型网格（source=model）：实例化已解析的模型（SkeletonUtils.clone）挂为子级
@@ -93,7 +106,7 @@ function createCustomMaterial(m) {
  * - 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退 PBR。
  *   透明/裁剪规则与编辑器一致：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪。
  */
-export function createMesh(json, ctx) {
+function buildMeshNode(json, ctx) {
   if (json.source === "model") {
     const container = new THREE.Group();
     const rel = typeof json.model === "string" ? json.model : "";
