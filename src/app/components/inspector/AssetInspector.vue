@@ -487,6 +487,7 @@ function onImgLoad(w: number, h: number): void {
       :rel="previewRel"
       :params="previewKind === 'material' && matReady ? matParams : null"
       :mat-type="previewKind === 'material' ? matType : undefined"
+      :shader-rel="previewKind === 'material' ? matShader : undefined"
       :nishita="previewKind === 'sky' && skyDoc ? skyDoc : null"
       :bg-rotation="previewKind === 'texcube' && isSkyMat && skyDoc ? skyDoc.rotation : undefined"
       :bg-intensity="(previewKind === 'texcube' || previewKind === 'sky') && isSkyMat && skyDoc ? skyDoc.strength : undefined"
