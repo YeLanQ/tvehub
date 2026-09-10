@@ -10,7 +10,7 @@
 
 import { api } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
-import { DEFAULT_SHADER_RELS } from "../../framework/material";
+import { DEFAULT_SHADER_RELS, skyKindOfShaderRef } from "../../framework/material";
 
 export type SkyMatKind = "cube" | "procedural";
 
@@ -63,12 +63,13 @@ export function parseSkyMatDoc(text: string): SkyMatDoc | null {
     if (!obj || obj.$type !== "material") return null;
     const shader = typeof obj.shader === "string" ? obj.shader : "";
     const kind = typeof obj.kind === "string" ? obj.kind : "";
-    const shaderRef = shader.endsWith(".shader");
-    const legacyProcedural = shader === "SkyProcedural" || (shaderRef && shader.includes("SkyProcedural"));
-    if (!["cube", "procedural"].includes(kind) && shader !== "SkyBox" && shader !== "SkyProcedural" && !shaderRef) {
-      return null;
-    }
-    const docKind: SkyMatKind = kind === "procedural" || legacyProcedural ? "procedural" : "cube";
+    // 天空材质的判别只看 shader 是否引用天空着色器（kind 字段优先，见 skyKindOfShaderRef）：
+    // 普通材质（PBR/Unlit/卡通/自定义等着色器引用）一律不是天空材质
+    const refKind = skyKindOfShaderRef(shader);
+    const declaredKind: SkyMatKind | null =
+      kind === "procedural" ? "procedural" : kind === "cube" ? "cube" : null;
+    if (!declaredKind && !refKind) return null;
+    const docKind: SkyMatKind = declaredKind ?? refKind!;
     return {
       kind: docKind,
       cubeMap: parseStr(obj.cubeMap, "internal/skybox/DefaultSkybox.texcube"),

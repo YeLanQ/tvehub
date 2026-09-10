@@ -15,7 +15,8 @@
     "smoke:components": "vite build --ssr scripts/smoke-components.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-components.js",
     "smoke:shader": "vite build --ssr scripts/smoke-shader.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shader.js",
     "smoke:shader-runtime": "node scripts/smoke-shader-runtime.mjs",
-    "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js"
+    "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js",
+    "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

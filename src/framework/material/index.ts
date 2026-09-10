@@ -53,6 +53,7 @@ export {
   normalizeShaderKind,
   shaderFileStem,
   shaderKindLabel,
+  skyKindOfShaderRef,
 } from "./shader";
 export type {
   CustomShaderProgram,
@@ -61,6 +62,7 @@ export type {
   ShaderKind,
   ShaderPropertyDef,
   ShaderPropertyKind,
+  SkyMaterialKind,
 } from "./shader";
 export {
   CUSTOM_PARAM_GROUP_TITLE,

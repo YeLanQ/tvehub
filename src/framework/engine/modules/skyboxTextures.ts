@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import type { SkySunDisk } from "../../prototype/nodes/SkyboxNode";
+import { skyKindOfShaderRef } from "../../material";
 
 /**
  * 天空盒背景纹理生成（编辑器视口用）。
@@ -259,12 +260,12 @@ export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | nul
     if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
     const kind = typeof doc.kind === "string" ? doc.kind : "";
     const shader = typeof doc.shader === "string" ? doc.shader : "";
-    // 天空材质 shader 字段引用天空着色器资产；旧格式为魔法串（SkyBox/SkyProcedural），
-    // kind 字段为渲染快路径判别（新老格式均写入）
-    const shaderRef = shader.endsWith(".shader");
-    const legacyProcedural =
-      shader === "SkyProcedural" || (shaderRef && shader.includes("SkyProcedural"));
-    if (kind !== "cube" && kind !== "procedural" && shader !== "SkyBox" && shader !== "SkyProcedural" && !shaderRef) {
+    // 天空材质判别：kind 字段优先，否则要求 shader **引用天空着色器**（旧格式为魔法串
+    // SkyBox/SkyProcedural）——普通材质引用（PBR/自定义…）不是天空材质，回退默认背景
+    const refKind = skyKindOfShaderRef(shader);
+    const declaredKind: "procedural" | "cube" | null =
+      kind === "procedural" ? "procedural" : kind === "cube" ? "cube" : null;
+    if (!declaredKind && !refKind) {
       return null;
     }
     const num = (v: unknown, fallback: number): number =>
@@ -274,7 +275,7 @@ export async function fetchSkyMatParams(url: string): Promise<SkyMatParams | nul
     const str = (v: unknown, fallback: string): string =>
       typeof v === "string" ? v : fallback;
     return {
-      kind: kind === "procedural" || legacyProcedural ? "procedural" : "cube",
+      kind: declaredKind ?? refKind!,
       cubeMap: str(doc.cubeMap, ""),
       rotation: num(doc.rotation, 0),
       strength: num(doc.strength, 1),

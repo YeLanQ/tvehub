@@ -143,6 +143,30 @@ export const DEFAULT_SHADER_RELS: Record<ShaderKind, string> = {
 /** 默认着色器引用（材质缺失/未知 shader 时的回退） */
 export const DEFAULT_SHADER_REL = DEFAULT_SHADER_RELS.physical;
 
+/** 天空材质种类（.mat 的 kind 字段取值；与 ShaderKind 的 skyprocedural/skycube 对应） */
+export type SkyMaterialKind = "procedural" | "cube";
+
+/**
+ * 天空着色器引用判定 → 天空材质种类（非天空着色器返回 null）。
+ * 天空材质（.mat）与网格材质的区别**只在于 shader 字段引用的是哪份着色器**，
+ * 因此这里按引用精确判定，不能用「是不是 .shader 引用」之类的宽松条件
+ * （否则任何挂 .shader 的材质都会被误判成天空材质）：
+ * - 新格式：引用天空着色器资产——按**文件名**精确匹配 SkyProcedural.shader / SkyBox.shader
+ *   （同目录/别处的 MySkyBox.shader、SkyBoxes.shader 之类不匹配）；
+ * - 旧格式：魔法串 "SkyProcedural" / "SkyBox"（早期内部实现，兼容读取）。
+ */
+export function skyKindOfShaderRef(shader: string): SkyMaterialKind | null {
+  const ref = shader.trim();
+  if (!ref) return null;
+  if (ref === "SkyProcedural" || ref === "SkyBox") {
+    return ref === "SkyProcedural" ? "procedural" : "cube";
+  }
+  const base = ref.split("/").pop() ?? ref;
+  if (base === "SkyProcedural.shader") return "procedural";
+  if (base === "SkyBox.shader") return "cube";
+  return null;
+}
+
 /** 着色器资产相对路径 → 文件名（去扩展名） */
 export function shaderFileStem(rel: string): string {
   return materialFileStem(rel);
