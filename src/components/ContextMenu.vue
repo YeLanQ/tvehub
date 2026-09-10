@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import {
+  clampMenuX,
+  clampMenuY,
   ctxMenu,
   closeContextMenu,
+  pickSubmenuX,
+  SUBMENU_LIP,
   type CtxMenuItem,
 } from "../lib/editor/context-menu";
 import "../styles/components/context-menu.scss";
@@ -12,6 +16,9 @@ interface MenuLevel {
   items: CtxMenuItem[];
   x: number;
   y: number;
+  /** 展开锚点（仅子级）：父菜单右边缘（默认展开侧）与左边缘（右溢出时翻到其左侧） */
+  anchorRight?: number;
+  parentLeft?: number;
 }
 
 // levels[0] 为根菜单，后续每层对应一个已展开的子菜单（由 hover 链驱动）
@@ -28,23 +35,37 @@ function hasChildren(item: CtxMenuItem): boolean {
   return !!item.children && item.children.length > 0;
 }
 
-function clampRect(el: HTMLElement, p: { x: number; y: number }, margin = 8) {
-  const r = el.getBoundingClientRect();
-  let x = p.x;
-  let y = p.y;
-  if (x + r.width > window.innerWidth - margin)
-    x = Math.max(margin, window.innerWidth - r.width - margin);
-  if (y + r.height > window.innerHeight - margin)
-    y = Math.max(margin, window.innerHeight - r.height - margin);
-  p.x = x;
-  p.y = y;
-}
-
-async function clampLevel(i: number) {
+/**
+ * 一层菜单定位（渲染后按实测尺寸收敛）：
+ * - 垂直：贴锚点，越出窗口下/上边则收回窗口内；
+ * - 水平：根级贴鼠标并收进窗口；子级在「贴父菜单右侧 / 翻到父菜单左侧」两个候选里优选
+ *   （几何规则见 lib/editor/context-menu.ts 的 pickSubmenuX）——子菜单不会盖住它的上一级，
+ *   也尽量避免覆盖其它已展开层级。
+ */
+async function positionLevel(i: number) {
   await nextTick();
   const lv = levels.value[i];
   const el = levelEls[i];
-  if (lv && el) clampRect(el, lv);
+  if (!lv || !el) return;
+  const r = el.getBoundingClientRect();
+  lv.y = clampMenuY(lv.y, r.height, window.innerHeight);
+  if (i === 0 || lv.parentLeft == null) {
+    lv.x = clampMenuX(lv.x, r.width, window.innerWidth);
+    return;
+  }
+  // 其它已展开层级（不含直接父级）的水平区间：避免子菜单盖住它们
+  const ancestorRanges: [number, number][] = levels.value
+    .slice(0, i - 1)
+    .map((_, idx) => levelEls[idx]?.getBoundingClientRect())
+    .filter((rect): rect is DOMRect => !!rect)
+    .map((rect) => [rect.left, rect.right] as [number, number]);
+  lv.x = pickSubmenuX({
+    anchorRight: lv.anchorRight ?? lv.x,
+    parentLeft: lv.parentLeft,
+    width: r.width,
+    windowWidth: window.innerWidth,
+    ancestorRanges,
+  });
 }
 
 watch(
@@ -55,18 +76,26 @@ watch(
       return;
     }
     levels.value = [{ items: ctxMenu.items, x: ctxMenu.x, y: ctxMenu.y }];
-    await clampLevel(0);
+    await positionLevel(0);
   },
 );
 
 function openChild(level: number, item: CtxMenuItem, el: HTMLElement) {
   const r = el.getBoundingClientRect();
+  const parentEl = levelEls[level];
+  const parentLeft = parentEl ? parentEl.getBoundingClientRect().left : r.left;
   // 展开/切换子菜单：仅保留到当前层，再追加新的下一层
   levels.value = [
     ...levels.value.slice(0, level + 1),
-    { items: item.children!, x: r.right - 2, y: r.top },
+    {
+      items: item.children!,
+      x: r.right - SUBMENU_LIP,
+      y: r.top,
+      anchorRight: r.right - SUBMENU_LIP,
+      parentLeft,
+    },
   ];
-  void clampLevel(level + 1);
+  void positionLevel(level + 1);
 }
 
 function enterItem(level: number, item: CtxMenuItem, target: EventTarget | null) {

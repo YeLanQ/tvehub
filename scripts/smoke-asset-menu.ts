@@ -14,7 +14,14 @@ import {
   type MenuWorkshopItem,
 } from "../src/app/lib/asset-menu";
 import type { ChildEntry } from "../src/app/lib/asset-browser";
-import type { CtxMenuItem } from "../src/lib/editor/context-menu";
+import {
+  MENU_EDGE_MARGIN,
+  SUBMENU_LIP,
+  clampMenuX,
+  clampMenuY,
+  pickSubmenuX,
+  type CtxMenuItem,
+} from "../src/lib/editor/context-menu";
 
 let passed = 0;
 let failed = 0;
@@ -195,6 +202,61 @@ console.log("[4] 空数据与原有菜单项");
   const srcFile = buildEntryMenu({ path: "src/Spin.ts", name: "Spin.ts", kind: "ts" }, api);
   ok(labels(srcFile).includes("打开脚本"), "脚本文件仍有「打开脚本」");
   ok(labels(internalFileMenu(api)).includes("复制到项目"), "内置文件仍有「复制到项目」");
+}
+
+// —— 5. 菜单定位：子菜单不覆盖上一级、不越出窗口 ——
+console.log("[5] 菜单定位（子菜单溢出翻转）");
+{
+  const W = 1280;
+  // 窗口中部：贴父菜单右侧（子菜单左边缘 = 锚点），不与父级内容重叠
+  ok(
+    pickSubmenuX({ anchorRight: 400, parentLeft: 200, width: 200, windowWidth: W, ancestorRanges: [] }) ===
+      400,
+    "空间充足：贴父菜单右侧展开",
+  );
+
+  // 贴右边缘：右侧放不下 → 翻到父菜单左侧，右边缘仅与父级左边缘贴合 SUBMENU_LIP
+  const flipped = pickSubmenuX({
+    anchorRight: W - 40,
+    parentLeft: W - 240,
+    width: 200,
+    windowWidth: W,
+    ancestorRanges: [],
+  });
+  ok(flipped === W - 240 - 200 + SUBMENU_LIP, "贴右边缘：翻到父菜单左侧");
+  ok(flipped + 200 <= W - MENU_EDGE_MARGIN, "翻到左侧后仍在窗口内");
+  ok(flipped + 200 <= W - 240 + SUBMENU_LIP, "右边缘只与父级边缘重叠 lip（不盖住父级）");
+
+  // 三级链贴右边缘（与实测一致）：第 1 级收拢到 [1072,1272]，第 2 级翻到其左侧 [874,1074]，
+  // 第 3 级贴父级右侧会压住第 1 级 → 应改翻到父级左侧 [676,876]，两级都不被覆盖
+  const lvl0Left = W - 200 - MENU_EDGE_MARGIN; // 1072
+  const lvl1Left = lvl0Left - 200 + SUBMENU_LIP; // 874
+  const third = pickSubmenuX({
+    anchorRight: lvl1Left + 200 - 6, // 父项右边缘（菜单内缩 6px）
+    parentLeft: lvl1Left,
+    width: 200,
+    windowWidth: W,
+    ancestorRanges: [[lvl0Left, W - MENU_EDGE_MARGIN]],
+  });
+  ok(third === lvl1Left - 200 + SUBMENU_LIP, "三级链：改翻到父级左侧");
+  ok(third + 200 <= lvl1Left + SUBMENU_LIP, "三级链：不覆盖直接父级（只贴合 lip）");
+  ok(third + 200 <= lvl0Left + SUBMENU_LIP, "三级链：不覆盖第 1 级");
+
+  // 两侧都放不下（窗口极窄）：收拢到窗口内，不越界
+  const narrow = pickSubmenuX({
+    anchorRight: 300,
+    parentLeft: 100,
+    width: 260,
+    windowWidth: 400,
+    ancestorRanges: [[0, 100]],
+  });
+  ok(narrow >= MENU_EDGE_MARGIN && narrow + 260 <= 400 - MENU_EDGE_MARGIN, "空间不足：收拢进窗口");
+
+  // 根级水平收拢 + 垂直收拢（贴右下角右键）
+  ok(clampMenuX(1270, 200, W) === W - 200 - MENU_EDGE_MARGIN, "根级贴右边缘：水平收拢");
+  ok(clampMenuX(10, 200, W) === 10, "根级空间充足：保持鼠标位置");
+  ok(clampMenuY(710, 120, 720) === 720 - 120 - MENU_EDGE_MARGIN, "贴下边缘：垂直收拢");
+  ok(clampMenuY(20, 120, 720) === 20, "上方空间充足：保持鼠标位置");
 }
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);
