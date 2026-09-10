@@ -118,11 +118,13 @@ export function buildSceneTree(rootJson, scene, ctx) {
       normalBias: Math.max(0, num(raw.normalBias, 0)),
       near: Math.max(0.01, num(raw.near, 0.1)),
       radius: Math.min(5, Math.max(1, num(raw.radius, 4))),
+      resolution: [512, 1024, 2048, 4096].includes(num(raw.resolution, 0)) ? num(raw.resolution, 0) : 0,
     };
     light.userData.shadowCfg = cfg;
     if (light.castShadow !== true) return;
     const isPoint = light.isPointLight === true;
-    const size = isPoint ? 1024 : 2048;
+    // 显式分辨率档位优先；0 = 自动（平面 2048 / 点光 1024，立方体贴图 ×6 开销降档）
+    const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 2048;
     light.shadow.mapSize.set(size, size);
     light.shadow.intensity = cfg.strength;
     light.shadow.bias = cfg.bias;

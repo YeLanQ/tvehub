@@ -728,6 +728,21 @@ class Light extends BuiltinComponent {
     const light = this.__lightObj();
     if (light && light.shadow) light.shadow.radius = s.shadowRadius;
   }
+  /** 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；写入会重建灯光对象以重新分配贴图） */
+  get shadowResolution() {
+    return numOr(this.__settings()?.shadowResolution, 0);
+  }
+  set shadowResolution(v) {
+    const s = this.__settings();
+    const n = Number(v);
+    if (!s || !Number.isFinite(n)) return;
+    s.shadowResolution = [512, 1024, 2048, 4096].includes(n) ? n : 0;
+    // three 只在灯光对象首次渲染前按 mapSize 分配阴影贴图：重建灯光对象使其生效
+    const obj = this.entity.__obj;
+    const old = obj.getObjectByName("__compLight");
+    if (old) obj.remove(old);
+    buildComponentLight(s, obj);
+  }
   /** Shadow 类型档位（"off" | "hard" | "soft"；Unity Shadow Type 语义，读写投射开关 + 软化半径） */
   get shadowType() {
     if (!this.castShadow) return "off";
@@ -1169,6 +1184,9 @@ function lightSettingsFrom(s) {
   out.shadowNormalBias = num(s.shadowNormalBias, 0, 0);
   out.shadowNear = num(s.shadowNear, 0.1, 0.01);
   out.shadowRadius = num(s.shadowRadius, 4, 1, 5);
+  out.shadowResolution = [512, 1024, 2048, 4096].includes(num(s.shadowResolution, 0))
+    ? num(s.shadowResolution, 0)
+    : 0;
   return out;
 }
 

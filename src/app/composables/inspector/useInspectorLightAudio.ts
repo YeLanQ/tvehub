@@ -27,6 +27,7 @@ import type { LightShadowConfig } from "../../../framework/lighting/shadow";
 import {
   LIGHT_SHADOW_TYPE_HARD_RADIUS,
   LIGHT_SHADOW_TYPE_SOFT_RADIUS,
+  SHADOW_RESOLUTIONS,
 } from "../../../framework/lighting/shadow";
 import type { InspectorNodeApi } from "./useInspectorNode";
 
@@ -109,6 +110,12 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           break;
         case "Set Shadow Near":
           s.shadowNear = Math.max(0.01, typeof value === "number" ? value : 0.1);
+          break;
+        case "Set Shadow Resolution":
+          // 分辨率质量档：0 = 自动（平面 2048 / 点光 1024），显式档位 512~4096
+          s.shadowResolution = (SHADOW_RESOLUTIONS as readonly number[]).includes(value as number)
+            ? (value as number)
+            : 0;
           break;
       }
     }, label);
@@ -224,6 +231,13 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
         case "Set Shadow Near": {
           const sc = shadowConfigOf(light);
           if (sc) sc.near = Math.max(0.01, value as number);
+          break;
+        }
+        case "Set Shadow Resolution": {
+          const sc = shadowConfigOf(light);
+          if (sc) sc.resolution = (SHADOW_RESOLUTIONS as readonly number[]).includes(value as number)
+            ? (value as number)
+            : 0;
           break;
         }
       }

@@ -44,6 +44,20 @@ function onColorHex(hex: string): void {
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
+
+/** 分辨率下拉选项（Auto = 按灯型：平面 2048 / 点光 1024） */
+const RESOLUTION_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: "Auto（自动）" },
+  { value: 512, label: "Low（512）" },
+  { value: 1024, label: "Medium（1024）" },
+  { value: 2048, label: "High（2048）" },
+  { value: 4096, label: "Ultra（4096）" },
+];
+
+function onResolutionSelect(e: Event): void {
+  const v = parseInt((e.target as HTMLSelectElement).value, 10);
+  if (Number.isFinite(v)) emit("update", "Set Shadow Resolution", v);
+}
 </script>
 
 <template>
@@ -180,6 +194,23 @@ function clamp(v: number, min: number, max: number): number {
         title="阴影近裁剪面（世界单位）"
         @commit="(v) => emit('update', 'Set Shadow Near', Math.max(0.01, v))"
       />
+    </div>
+    <div class="field">
+      <label title="阴影贴图分辨率：越高边缘越细腻，显存与渲染开销越大（Auto = 平行光/聚光灯 2048、点光 1024）">
+        Resolution
+      </label>
+      <select
+        :value="comp.light.shadowResolution"
+        :disabled="shadowType === 'off'"
+        title="阴影贴图分辨率"
+        @change="onResolutionSelect"
+      >
+        <option
+          v-if="!RESOLUTION_OPTIONS.some((o) => o.value === comp.light.shadowResolution)"
+          :value="comp.light.shadowResolution"
+        >{{ comp.light.shadowResolution }}（未登记档位）</option>
+        <option v-for="o in RESOLUTION_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+      </select>
     </div>
   </template>
 

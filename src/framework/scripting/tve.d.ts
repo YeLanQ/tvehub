@@ -806,6 +806,9 @@ export declare class Light {
   /** 阴影软化半径（PCF 采样核，1 = 硬阴影；Soft 档 = 4） */
   get shadowRadius(): number;
   set shadowRadius(value: number);
+  /** 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；512~4096 显式档位，写入重建灯光对象） */
+  get shadowResolution(): number;
+  set shadowResolution(value: number);
   /** Shadow 类型档位（"off" | "hard" | "soft"；读写投射开关 + 软化半径） */
   get shadowType(): "off" | "hard" | "soft";
   set shadowType(value: "off" | "hard" | "soft");
@@ -1024,6 +1027,8 @@ export interface LightAddOptions {
   shadowNear?: number;
   /** 阴影软化半径（1 = 硬阴影，Soft 档 = 4） */
   shadowRadius?: number;
+  /** 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；512~4096 显式档位） */
+  shadowResolution?: number;
   /** Shadow 类型档位（优先于 castShadow/shadowRadius；Unity Shadow Type） */
   shadowType?: "off" | "hard" | "soft";
 }

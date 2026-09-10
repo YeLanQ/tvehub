@@ -47,6 +47,9 @@ light.shadowStrength; // 阴影浓度 0~1（Unity Strength）
 light.shadowBias;     // 阴影深度偏移（Unity Bias）
 light.shadowNormalBias; // 阴影法线偏移（0 = 自动；Unity Normal Bias）
 light.shadowNear;     // 阴影近裁剪面（Unity Near Plane）
+light.shadowRadius;   // 阴影软化半径（1 = 硬阴影；Soft = 4）
+light.shadowResolution; // 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；512~4096）
+light.shadowType;     // Shadow 类型 "off" | "hard" | "soft"（读写投射开关 + 软化半径）
 ```
 
 ## AudioSource 音源

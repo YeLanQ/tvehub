@@ -39,6 +39,8 @@ export interface LightComponentSettings {
   shadowNear: number;
   /** 阴影软化半径（PCF 采样核，1 = 硬阴影；检查器 Shadow 类型下拉的 Soft = 4） */
   shadowRadius: number;
+  /** 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；显式档位 512/1024/2048/4096） */
+  shadowResolution: number;
 }
 
 export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
@@ -55,6 +57,7 @@ export const DEFAULT_LIGHT_COMPONENT_SETTINGS: LightComponentSettings = {
   shadowNormalBias: 0,
   shadowNear: 0.1,
   shadowRadius: 4,
+  shadowResolution: 0,
 };
 
 function str(v: unknown, fb: string): string {
@@ -90,6 +93,9 @@ export function parseLightComponentSettings(v: unknown): LightComponentSettings 
     shadowNormalBias: Math.max(0, num(o.shadowNormalBias, d.shadowNormalBias)),
     shadowNear: Math.max(0.01, num(o.shadowNear, d.shadowNear)),
     shadowRadius: clamp(num(o.shadowRadius, d.shadowRadius), 1, 5),
+    shadowResolution: [0, 512, 1024, 2048, 4096].includes(num(o.shadowResolution, d.shadowResolution))
+      ? num(o.shadowResolution, d.shadowResolution)
+      : 0,
   };
 }
 

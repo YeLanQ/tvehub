@@ -29,6 +29,7 @@ import {
   applyLightShadowType,
   lightShadowTypeOf,
   parseLightShadow,
+  shadowMapSizeOf,
 } from "../src/framework/lighting/shadow";
 import { SceneSynchronizer } from "../src/framework/engine/modules/SceneSynchronizer";
 import type { GraphLike, SceneChange } from "../src/framework/scene/SceneClient";
@@ -89,6 +90,18 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
       parseLightShadow({ near: -3 }).near === 0.01 &&
       parseLightShadow({ radius: 99 }).radius === 5 &&
       parseLightShadow({ radius: 0 }).radius === 1,
+  );
+  check(
+    "分辨率收敛：合法档位保留、非法归自动（0）、缺省 = 自动",
+    parseLightShadow({ resolution: 4096 }).resolution === 4096 &&
+      parseLightShadow({ resolution: 777 }).resolution === 0 &&
+      parseLightShadow({}).resolution === 0,
+  );
+  check(
+    "shadowMapSizeOf：显式档位优先 / 自动按灯型（平面 2048、点光 1024）",
+    shadowMapSizeOf(4096, true) === 4096 &&
+      shadowMapSizeOf(0, false) === SHADOW_MAP_SIZE_PLANE &&
+      shadowMapSizeOf(0, true) === SHADOW_MAP_SIZE_CUBE,
   );
   check(
     "Shadow 类型推导：关→off / radius≥2→soft / radius<2→hard",
@@ -187,6 +200,18 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
 
   const boxObj = objOf(sync, box) as THREE.Mesh;
   check("基元网格默认投射 + 接收阴影", boxObj.castShadow === true && boxObj.receiveShadow === true);
+
+  // 显式分辨率档位覆盖自动档（平行光默认 auto 2048 → 显式 512）
+  const low = new DirectionalLightNode({ castShadow: true });
+  low.shadow = { ...low.shadow, resolution: 512 };
+  sync.onGraphChange({ kind: "add", nodeId: low.id } as SceneChange, fakeGraph([low]));
+  sync.rebuildAll(fakeGraph([low]));
+  const dlLow = findLight<THREE.DirectionalLight>(objOf(sync, low), (l) => l.isDirectionalLight === true);
+  check(
+    "显式分辨率档位生效（512 覆盖 auto 2048）",
+    !!dlLow && dlLow.shadow.mapSize.width === 512,
+    dlLow ? String(dlLow.shadow.mapSize.width) : "",
+  );
 }
 
 // ---------- ③ 阴影相机贴合 ----------
@@ -350,6 +375,7 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
         shadowNormalBias: 0.12,
         shadowNear: 0.5,
         shadowRadius: 1,
+        shadowResolution: 4096,
       },
     },
   ];
@@ -358,20 +384,22 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
   const pl = findLight<THREE.PointLight>(objOf(sync, host), (l) => l.isPointLight === true);
   check("组件模式点光建出且 castShadow=true", !!pl && pl.castShadow === true);
   check(
-    "组件阴影参数落到 three 灯光（浓度/偏移/法线偏移/near/软化半径）",
+    "组件阴影参数落到 three 灯光（浓度/偏移/法线偏移/near/软化半径/分辨率）",
     !!pl &&
       approx(pl.shadow.intensity, 0.4) &&
       approx(pl.shadow.bias, -0.003) &&
       approx(pl.shadow.normalBias, 0.12) &&
       approx(pl.shadow.camera.near, 0.5) &&
-      pl.shadow.radius === 1,
+      pl.shadow.radius === 1 &&
+      pl.shadow.mapSize.width === 4096,
     pl
-      ? JSON.stringify({ i: pl.shadow.intensity, b: pl.shadow.bias, nb: pl.shadow.normalBias, n: pl.shadow.camera.near, r: pl.shadow.radius })
+      ? JSON.stringify({ i: pl.shadow.intensity, b: pl.shadow.bias, nb: pl.shadow.normalBias, n: pl.shadow.camera.near, r: pl.shadow.radius, m: pl.shadow.mapSize.width })
       : "",
   );
   check(
-    "组件点光贴图降档 1024",
-    !!pl && pl.shadow.mapSize.width === SHADOW_MAP_SIZE_CUBE,
+    "组件显式分辨率覆盖自动档（4096 > 点光 auto 1024）",
+    !!pl && pl.shadow.mapSize.width === 4096,
+    pl ? String(pl.shadow.mapSize.width) : "",
   );
 }
 

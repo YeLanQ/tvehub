@@ -11,11 +11,13 @@ export {
   LIGHT_SHADOW_TYPE_SOFT_RADIUS,
   SHADOW_MAP_SIZE_PLANE,
   SHADOW_MAP_SIZE_CUBE,
+  SHADOW_RESOLUTIONS,
   applyLightShadowType,
   cloneLightShadow,
   lightShadowSignature,
   lightShadowTypeOf,
   parseLightShadow,
+  shadowMapSizeOf,
   type LightShadowConfig,
   type LightShadowType,
 } from "./shadow";

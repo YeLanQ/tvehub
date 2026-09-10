@@ -13,7 +13,7 @@ import {
 } from "../../prototype/derived/Primitives";
 import {
   SHADOW_MAP_SIZE_PLANE,
-  SHADOW_MAP_SIZE_CUBE,
+  shadowMapSizeOf,
   parseLightShadow,
   type LightShadowConfig,
 } from "../../lighting/shadow";
@@ -65,6 +65,7 @@ function componentShadowConfig(s: LightComponentSettings): LightShadowConfig {
     normalBias: s.shadowNormalBias,
     near: s.shadowNear,
     radius: s.shadowRadius ?? 4,
+    resolution: s.shadowResolution ?? 0,
   };
 }
 
@@ -353,6 +354,7 @@ export class SceneSynchronizer {
       s.shadowNormalBias,
       s.shadowNear,
       s.shadowRadius,
+      s.shadowResolution,
     ].join("|");
     if (wrapper && (wrapper.userData as { lightSig?: string }).lightSig === sig) return;
     if (wrapper) {
@@ -621,10 +623,8 @@ export class SceneSynchronizer {
     light.userData.shadowCfg = { ...cfg };
     if (!light.castShadow) return;
     const isPoint = (light as THREE.PointLight).isPointLight === true;
-    light.shadow.mapSize.set(
-      isPoint ? SHADOW_MAP_SIZE_CUBE : SHADOW_MAP_SIZE_PLANE,
-      isPoint ? SHADOW_MAP_SIZE_CUBE : SHADOW_MAP_SIZE_PLANE,
-    );
+    const size = shadowMapSizeOf(cfg.resolution, isPoint);
+    light.shadow.mapSize.set(size, size);
     light.shadow.intensity = cfg.strength;
     light.shadow.bias = cfg.bias;
     light.shadow.radius = cfg.radius;
