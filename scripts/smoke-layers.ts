@@ -152,12 +152,13 @@ function findLight(root: THREE.Object3D): THREE.Light | null {
     })(),
   );
   check(
-    "掩码摘要：Everything / Nothing / 层名串 / 含未定义层计数",
+    "掩码摘要：勾满已定义层 → Everything / 全不勾 → Nothing / 层名串（未定义层位不参与显示）",
     cullingMaskLabel(parseLayerTable(undefined), ALL_LAYERS_MASK) === "Everything" &&
       cullingMaskLabel(parseLayerTable(undefined), 0) === "Nothing" &&
       cullingMaskLabel(parseLayerTable(["Default", null, "Enemy"]), 1 | (1 << 2)) ===
-        "Default, Enemy" &&
-      cullingMaskLabel(parseLayerTable(["Default"]), 1 | (1 << 5)) === "Default, +1",
+        "Everything" &&
+      cullingMaskLabel(parseLayerTable(["Default", "A", "B"]), 1 | 4) === "Default, B" &&
+      cullingMaskLabel(parseLayerTable(["Default"]), 1 | (1 << 5)) === "Everything",
   );
   check(
     "标签收敛：trim/去空/去重保序",

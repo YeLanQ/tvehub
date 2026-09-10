@@ -176,7 +176,7 @@ const visibleUniform = computed<boolean | null>(() => {
       >
         <option v-if="layerUniform === null" :value="-1" disabled>（混合）</option>
         <option v-for="o in layerOptions" :key="o.index" :value="o.index">
-          {{ o.name }}（{{ o.index }}）
+          {{ o.name }}
         </option>
       </select>
     </div>

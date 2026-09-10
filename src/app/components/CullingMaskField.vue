@@ -2,12 +2,13 @@
 /**
  * Culling Mask 控件（Unity 同名语义，相机/灯光共用）：
  * - 折叠态：按钮回显掩码摘要（Everything / Nothing / 逗号分隔层名）；
- * - 展开：Everything / Nothing 快捷档 + 按项目层表逐层勾选（含掩码里有但项目
- *   已删层的 "Layer N" 兜底行，可取消勾选）；
- * - 变更即 emit change(新掩码)，提交/撤销由父级事件链路负责。
- * 层表来自项目设置（project.config.json 的 layers；检查器随 store 响应刷新）。
+ * - 点击弹出下拉菜单：菜单 Teleport 到 body 用 fixed 定位——检查器卡片是
+ *   overflow:hidden 的滚动容器，内嵌浮层会被裁剪；按钮下方空间不足时自动
+ *   上翻；滚动/缩放/点击外部关闭；
+ * - 菜单内容：Everything / Nothing 快捷档 + 项目层表中已定义的层逐行勾选
+ *   （单行不换行；未定义的层不显示）；变更即 emit change(新掩码)。
  */
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { getProjectStore } from "../stores/project";
 import {
   ALL_LAYERS_MASK,
@@ -25,7 +26,15 @@ const props = defineProps<{ mask: number; rev?: number }>();
 const emit = defineEmits<{ change: [mask: number] }>();
 
 const projectStore = getProjectStore();
+const btn = ref<HTMLButtonElement | null>(null);
+const menu = ref<HTMLElement | null>(null);
 const open = ref(false);
+/** 菜单浮层样式（打开时按按钮屏幕位置计算；fixed 定位不受卡片裁剪） */
+const popStyle = ref<{ left: string; top: string; width: string }>({
+  left: "0px",
+  top: "0px",
+  width: "180px",
+});
 
 /** 当前掩码（以 rev 为失效信号：撤销/重做/属性补丁后重算） */
 const current = computed(() => {
@@ -35,23 +44,83 @@ const current = computed(() => {
 
 const summary = computed(() => cullingMaskLabel(projectStore.layers, current.value));
 
-/** 勾选行：项目已定义层 + 掩码里的未定义层兜底（升序去重） */
-const rows = computed(() => {
-  void props.rev;
-  const indices = new Set<number>(definedLayerIndices(projectStore.layers));
-  for (let i = 0; i < 32; i++) {
-    if (maskHasLayer(current.value, i)) indices.add(i);
-  }
-  return [...indices].sort((a, b) => a - b).map((i) => ({
+/** 勾选行：仅项目层表中已定义的层（未定义层位不显示，Everything 语义照常覆盖） */
+const rows = computed(() =>
+  definedLayerIndices(projectStore.layers).map((i) => ({
     index: i,
     name: layerNameAt(projectStore.layers, i),
-    defined: maskHasLayer(current.value, i) && !!projectStore.layers[i],
     on: maskHasLayer(current.value, i),
-  }));
+  })),
+);
+
+/** 勾选后归一化：已定义层全部覆盖 → 存 -1（Everything）；一个都不覆盖 → 存 0
+ * （Nothing）。这样「勾满所有层」的回显就是 Everything，存储值也干净。 */
+function normalize(mask: number): number {
+  const defined = definedLayerIndices(projectStore.layers);
+  const covered = defined.filter((i) => maskHasLayer(mask, i)).length;
+  if (defined.length > 0 && covered === defined.length) return ALL_LAYERS_MASK;
+  if (covered === 0) return 0;
+  return mask;
+}
+
+const MENU_GAP = 2;
+const MENU_MAX_H = 220;
+
+function openMenu(): void {
+  const r = btn.value?.getBoundingClientRect();
+  if (!r) return;
+  const width = Math.max(r.width, 180);
+  const left = Math.min(r.left, window.innerWidth - width - 4);
+  // 下方放不下且上方充裕 → 上翻（菜单高度按 8 行估；实际可滚动）
+  const below = window.innerHeight - r.bottom;
+  const top =
+    below < MENU_MAX_H && r.top > MENU_MAX_H
+      ? Math.max(4, r.top - MENU_MAX_H - MENU_GAP)
+      : r.bottom + MENU_GAP;
+  popStyle.value = { left: `${Math.max(4, left)}px`, top: `${top}px`, width: `${width}px` };
+  open.value = true;
+}
+
+function toggleMenu(): void {
+  if (open.value) close();
+  else openMenu();
+}
+
+function close(): void {
+  open.value = false;
+}
+
+function onDocMouseDown(e: MouseEvent): void {
+  const t = e.target as Node;
+  if (btn.value?.contains(t) || menu.value?.contains(t)) return;
+  close();
+}
+
+function onReflow(): void {
+  if (open.value) close();
+}
+
+watch(open, (v) => {
+  if (v) {
+    document.addEventListener("mousedown", onDocMouseDown);
+    window.addEventListener("resize", onReflow);
+    // 检查器/卡片滚动时关闭（fixed 菜单不随文档滚动，保持对齐最简单）
+    window.addEventListener("scroll", onReflow, true);
+  } else {
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("resize", onReflow);
+    window.removeEventListener("scroll", onReflow, true);
+  }
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMouseDown);
+  window.removeEventListener("resize", onReflow);
+  window.removeEventListener("scroll", onReflow, true);
 });
 
 function toggle(index: number, on: boolean): void {
-  emit("change", maskWithLayer(current.value, index, on));
+  emit("change", normalize(maskWithLayer(current.value, index, on)));
 }
 
 function setAll(): void {
@@ -64,31 +133,28 @@ function setNone(): void {
 </script>
 
 <template>
-  <div class="culling-mask">
-    <button
-      type="button"
-      class="culling-mask-btn"
-      :title="`Culling Mask：${summary}`"
-      @click="open = !open"
-    >
+  <div class="culling-mask" :data-rev="rev">
+    <button ref="btn" type="button" class="culling-mask-btn" :title="`Culling Mask：${summary}`" @click="toggleMenu">
       <span class="culling-mask-summary">{{ summary }}</span>
       <span class="culling-mask-caret">{{ open ? "▾" : "▸" }}</span>
     </button>
-    <div v-if="open" class="culling-mask-pop">
-      <div class="culling-mask-quick">
-        <button type="button" @click="setAll">{{ MASK_EVERYTHING_LABEL }}</button>
-        <button type="button" @click="setNone">{{ MASK_NOTHING_LABEL }}</button>
+    <Teleport to="body">
+      <div v-if="open" ref="menu" class="culling-mask-pop" :style="popStyle">
+        <div class="culling-mask-quick">
+          <button type="button" @click="setAll">{{ MASK_EVERYTHING_LABEL }}</button>
+          <button type="button" @click="setNone">{{ MASK_NOTHING_LABEL }}</button>
+        </div>
+        <label v-for="r in rows" :key="r.index" class="culling-mask-row">
+          <input
+            type="checkbox"
+            :checked="r.on"
+            @change="toggle(r.index, ($event.target as HTMLInputElement).checked)"
+          />
+          <span class="culling-mask-index">{{ r.index }}</span>
+          <span class="culling-mask-name">{{ r.name }}</span>
+        </label>
       </div>
-      <label v-for="r in rows" :key="r.index" class="culling-mask-row" :title="r.defined ? '' : '项目层表中已删除的层（掩码位保留）'">
-        <input
-          type="checkbox"
-          :checked="r.on"
-          @change="toggle(r.index, ($event.target as HTMLInputElement).checked)"
-        />
-        <span class="culling-mask-index">{{ r.index }}</span>
-        <span :class="{ dim: !r.defined }">{{ r.name }}</span>
-      </label>
-    </div>
+    </Teleport>
   </div>
 </template>
 
@@ -123,22 +189,26 @@ function setNone(): void {
   color: var(--text-dim, #888);
   font-size: 10px;
 }
+/* 浮层 Teleport 到 body（fixed 定位），不受检查器卡片 overflow:hidden 裁剪 */
 .culling-mask-pop {
-  margin-top: 4px;
+  position: fixed;
+  z-index: 1000;
   padding: 6px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-height: 180px;
+  gap: 2px;
+  max-height: 220px;
   overflow-y: auto;
   background: var(--bg, #222);
   border: 1px solid var(--border, #444);
   border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 .culling-mask-quick {
   display: flex;
   gap: 6px;
   padding-bottom: 4px;
+  margin-bottom: 2px;
   border-bottom: 1px solid var(--border, #444);
 }
 .culling-mask-quick button {
@@ -157,6 +227,7 @@ function setNone(): void {
   gap: 6px;
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .culling-mask-index {
   flex: 0 0 16px;
@@ -164,7 +235,9 @@ function setNone(): void {
   color: var(--text-dim, #888);
   text-align: center;
 }
-.culling-mask-row .dim {
-  color: var(--text-dim, #888);
+.culling-mask-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

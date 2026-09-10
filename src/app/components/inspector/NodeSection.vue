@@ -65,15 +65,8 @@ function commitTag(v: string): void {
   }
 }
 
-/** 选中「添加标签…」→ 打开项目设置（在「标签与层」页维护标签列表）；其余选项提交标签 */
 function onTagSelect(e: Event): void {
-  const v = (e.target as HTMLSelectElement).value;
-  if (v === "__add__") {
-    localTag.value = props.node.tag;
-    projectStore.openSettings();
-    return;
-  }
-  commitTag(v);
+  commitTag((e.target as HTMLSelectElement).value);
 }
 
 // —— 标签下拉（内置 Untagged + 项目标签列表；节点上不在列表中的旧值原样保留） ——
@@ -121,7 +114,7 @@ function onLayerSelect(e: Event): void {
     <label title="渲染层级（Unity Layer 语义；相机/灯光的 Culling Mask 按层筛选渲染与光照）">层</label>
     <select :value="currentLayer" @change="onLayerSelect">
       <option v-for="o in layerOptions" :key="o.index" :value="o.index">
-        {{ o.name }}（{{ o.index }}）
+        {{ o.name }}
       </option>
     </select>
   </div>
@@ -130,7 +123,6 @@ function onLayerSelect(e: Event): void {
     <select :value="localTag" @focus="editingTag = true" @change="onTagSelect">
       <option value="">{{ UNTAGGED_LABEL }}</option>
       <option v-for="t in tagOptions" :key="t" :value="t">{{ t }}</option>
-      <option value="__add__">添加标签…</option>
     </select>
   </div>
   <div v-if="node.prefab" class="field">

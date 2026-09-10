@@ -130,20 +130,19 @@ export const MASK_EVERYTHING_LABEL = "Everything";
 /** 掩码快捷档：全不选 */
 export const MASK_NOTHING_LABEL = "Nothing";
 
-/** 掩码摘要文本（检查器 Culling Mask 控件回显）：Everything / Nothing / 逗号分隔层名 */
+/** 掩码摘要文本（检查器 Culling Mask 控件回显）：
+ * 覆盖全部已定义层 → Everything（无论原始掩码是否恰为 -1，UI 以项目层为准）；
+ * 一个已定义层都没有 → Nothing；其余为逗号分隔层名（升序）。 */
 export function cullingMaskLabel(table: LayerTable, mask: number): string {
-  if (mask === ALL_LAYERS_MASK) return MASK_EVERYTHING_LABEL;
-  if (mask === 0) return MASK_NOTHING_LABEL;
-  const names = definedLayerIndices(table)
-    .filter((i) => maskHasLayer(mask, i))
-    .map((i) => layerNameAt(table, i));
-  // 含未定义层位的掩码：逐个补 "Layer N" 兜底显示
-  let extra = 0;
-  for (let i = 0; i < MAX_LAYERS; i++) {
-    if (maskHasLayer(mask, i) && !isLayerDefined(table, i)) extra++;
+  const defined = definedLayerIndices(table);
+  const covered = defined.filter((i) => maskHasLayer(mask, i));
+  if (defined.length > 0 && covered.length === defined.length) {
+    return MASK_EVERYTHING_LABEL;
   }
-  if (extra > 0) names.push(`+${extra}`);
-  return names.length ? names.join(", ") : MASK_NOTHING_LABEL;
+  if (covered.length === 0) {
+    return MASK_NOTHING_LABEL;
+  }
+  return covered.map((i) => layerNameAt(table, i)).join(", ");
 }
 
 /** 任意来源 → 收敛的项目标签列表（trim / 去空 / 去重，保持顺序；不含内置 Untagged） */
