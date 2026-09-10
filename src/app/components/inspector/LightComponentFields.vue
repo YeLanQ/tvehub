@@ -57,6 +57,39 @@ function clamp(v: number, min: number, max: number): number {
     </select>
   </div>
 
+  <!-- Range：照射半径（点光/聚光，Unity 光源参数首项；0 = 无限远） -->
+  <div v-if="isPointOrSpot" class="field">
+    <label title="Range：照射距离/作用半径（0 = 无限远）">Range</label>
+    <NumberField
+      :model-value="comp.light.distance"
+      :step="0.5"
+      title="照射距离（0 = 无限远）"
+      @commit="(v) => emit('update', 'Set Distance', clamp(v, 0, 10000))"
+    />
+  </div>
+
+  <!-- 聚光灯：光束角度与边缘柔和度 -->
+  <template v-if="isSpot">
+    <div class="field">
+      <label title="Spot Angle：光束半角（度）；Unity 面板显示全角，此处为半角">Spot Angle</label>
+      <NumberField
+        :model-value="comp.light.angle"
+        :step="1"
+        title="光束半角（度，0.1~89.9）"
+        @commit="(v) => emit('update', 'Set Angle', clamp(v, 0.1, 89.9))"
+      />
+    </div>
+    <div class="field">
+      <label title="Penumbra：光束边缘柔和度 0~1">Penumbra</label>
+      <NumberField
+        :model-value="comp.light.penumbra"
+        :step="0.05"
+        title="边缘柔和度 0~1"
+        @commit="(v) => emit('update', 'Set Penumbra', clamp(v, 0, 1))"
+      />
+    </div>
+  </template>
+
   <div class="field">
     <label>Color</label>
     <input
@@ -74,6 +107,17 @@ function clamp(v: number, min: number, max: number): number {
       :step="0.1"
       title="Intensity"
       @commit="(v) => emit('update', 'Set Intensity', Math.max(0, v))"
+    />
+  </div>
+
+  <!-- 点光/聚光：物理衰减指数 -->
+  <div v-if="isPointOrSpot" class="field">
+    <label title="Decay：物理衰减指数">Decay</label>
+    <NumberField
+      :model-value="comp.light.decay"
+      :step="0.1"
+      title="物理衰减指数"
+      @commit="(v) => emit('update', 'Set Decay', clamp(v, 0, 10))"
     />
   </div>
 
@@ -135,50 +179,6 @@ function clamp(v: number, min: number, max: number): number {
         :disabled="shadowType === 'off'"
         title="阴影近裁剪面（世界单位）"
         @commit="(v) => emit('update', 'Set Shadow Near', Math.max(0.01, v))"
-      />
-    </div>
-  </template>
-
-  <!-- 点光源 / 聚光灯：距离与衰减 -->
-  <template v-if="isPointOrSpot">
-    <div class="field">
-      <label>Distance</label>
-      <NumberField
-        :model-value="comp.light.distance"
-        :step="0.5"
-        title="Distance（0 = 无限远）"
-        @commit="(v) => emit('update', 'Set Distance', clamp(v, 0, 10000))"
-      />
-    </div>
-    <div class="field">
-      <label>Decay</label>
-      <NumberField
-        :model-value="comp.light.decay"
-        :step="0.1"
-        title="Decay（物理衰减指数）"
-        @commit="(v) => emit('update', 'Set Decay', clamp(v, 0, 10))"
-      />
-    </div>
-  </template>
-
-  <!-- 聚光灯专属：角度与半影 -->
-  <template v-if="isSpot">
-    <div class="field">
-      <label>Angle</label>
-      <NumberField
-        :model-value="comp.light.angle"
-        :step="1"
-        title="Angle（光束半角，度）"
-        @commit="(v) => emit('update', 'Set Angle', clamp(v, 0.1, 89.9))"
-      />
-    </div>
-    <div class="field">
-      <label>Penumbra</label>
-      <NumberField
-        :model-value="comp.light.penumbra"
-        :step="0.05"
-        title="Penumbra（边缘柔和度 0~1）"
-        @commit="(v) => emit('update', 'Set Penumbra', clamp(v, 0, 1))"
       />
     </div>
   </template>
