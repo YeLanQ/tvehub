@@ -83,7 +83,7 @@ const previewStyle = computed(() => {
 /** 订阅 Rust 原生菜单/快捷键事件（撤销/保存/关闭 → 前端执行） */
 let unlistenNative: UnlistenFn | null = null;
 
-/** 窗口级快捷键：F2 重命名选中节点 / Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
+/** 窗口级快捷键：F2 重命名选中节点 / W-E-R 切换变换工具 / Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
 function onWindowKeyDown(e: KeyboardEvent): void {
   const key = e.key.toLowerCase();
   // F2：按最近交互的面板上下文重命名——资产面板内重命名选中资产；
@@ -97,6 +97,16 @@ function onWindowKeyDown(e: KeyboardEvent): void {
     } else {
       void dispatchCommand("node.renameSelected");
     }
+    return;
+  }
+  // W/E/R：切换视口变换工具（移动/旋转/缩放）。任一修饰键按下或文本焦点（输入框/Monaco）
+  // 时让位；场景视图与 gizmo 拖拽守卫在 editor.gizmoMode 命令内（脚本/预览页签静默不响应）
+  if (
+    !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !isEditingText() &&
+    (key === "w" || key === "e" || key === "r")
+  ) {
+    const mode = key === "w" ? "translate" : key === "e" ? "rotate" : "scale";
+    void dispatchCommand("editor.gizmoMode", { mode });
     return;
   }
   if (!e.ctrlKey || e.shiftKey || e.altKey) return;

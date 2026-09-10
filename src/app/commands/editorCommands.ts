@@ -46,6 +46,24 @@ registerCommand({
 });
 
 registerCommand({
+  id: "editor.gizmoMode",
+  label: "切换变换工具",
+  group: "编辑器",
+  canRun: (ctx) => ctx.view === "editor",
+  description: "切换视口变换工具（mode: translate/rotate/scale；场景视图且非拖拽期间生效，快捷键 W/E/R）",
+  run: (_ctx, args: any) => {
+    const mode = String(args?.mode ?? "");
+    if (mode !== "translate" && mode !== "rotate" && mode !== "scale") return { set: false };
+    const store = getEditorStore();
+    // 静默守卫：脚本/预览工作台不劫持键位；gizmo 拖拽中切换会打断进行中的变换
+    if (store.state.viewMode !== "scene") return { set: false };
+    if (!store.state.mounted || store.engine.gizmo?.isDragging()) return { set: false };
+    store.engine.setGizmoMode(mode);
+    return { set: true, mode };
+  },
+});
+
+registerCommand({
   id: "editor.close",
   label: "关闭项目",
   group: "编辑器",
