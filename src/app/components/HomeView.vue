@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { version as vueVersion } from "vue";
-import { REVISION as threeRevision } from "three";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import "../../styles/components/home-view.scss";
 import { emit } from "@tauri-apps/api/event";
-import { getVersion } from "@tauri-apps/api/app";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { confirm } from "../lib/confirm";
 import { isTauri } from "../../lib/tauri-env";
@@ -127,22 +124,11 @@ async function removeProto(p: ScriptPrototype): Promise<void> {
   await refreshProtos();
 }
 
-/** 运行环境信息（开发者服务页展示） */
+/** 运行环境标记（开发者服务页控制服务器等功能开关用） */
 const inTauri = isTauri();
-const tauriVersion = ref("");
 
 /** 开发文档外链（开发者服务页展示） */
 const DOC_LINKS = [
-  {
-    name: "three.js 文档",
-    desc: "场景、材质、相机等底层渲染 API 参考",
-    url: "https://threejs.org/docs/",
-  },
-  {
-    name: "Tauri v2 文档",
-    desc: "桌面端窗口、文件系统与插件能力",
-    url: "https://tauri.app/start/",
-  },
   {
     name: "TypeScript 手册",
     desc: "脚本与插件开发的语言参考",
@@ -157,9 +143,6 @@ onMounted(() => {
     defaultProjectDir.value = dir;
   });
   if (inTauri) {
-    getVersion()
-      .then((v) => (tauriVersion.value = v))
-      .catch(() => (tauriVersion.value = ""));
     // 开发者服务·控制服务器：仅同步展示状态（命令监听器只在编辑器窗口安装）
     void syncDevToolsStatus();
     // 工具权限：Rust 为权威存储，启动时同步一次（同时回写 localStorage 镜像）
@@ -303,7 +286,7 @@ function closeMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// 开发者服务：运行环境信息、控制服务器与开发文档入口
+// 开发者服务：控制服务器与开发文档入口
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -674,30 +657,7 @@ watch(showNewProject, (val) => {
           <div class="page-head">
             <div>
               <h2>开发者服务</h2>
-              <p class="sub">调试工具、运行信息与开发文档</p>
-            </div>
-          </div>
-
-          <!-- 运行环境 -->
-          <div class="settings-card">
-            <h3>运行环境</h3>
-            <div class="about-row">
-              <span>应用版本</span>
-              <span class="dim">v0.1.0</span>
-            </div>
-            <div class="about-row">
-              <span>运行环境</span>
-              <span class="dim">
-                {{ inTauri ? `Tauri${tauriVersion ? ` · ${tauriVersion}` : ""}` : "浏览器（无桌面后端）" }}
-              </span>
-            </div>
-            <div class="about-row">
-              <span>渲染引擎</span>
-              <span class="dim">three.js r{{ threeRevision }}</span>
-            </div>
-            <div class="about-row">
-              <span>界面框架</span>
-              <span class="dim">Vue {{ vueVersion }}</span>
+              <p class="sub">调试工具与开发文档</p>
             </div>
           </div>
 
