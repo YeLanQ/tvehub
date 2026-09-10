@@ -383,6 +383,14 @@ async function loadJolt() {
         // 回调入参（本 wasm 构建传裸指针）：Added/Persisted = (Body 指针,
         // Body 指针, Manifold, Settings)；Removed = 一个 SubShapeIDPair 对象。
         // Body 指针经 wrapPointer 还原后取 GetID().GetIndex() 映射节点。
+        // 持续接触不弹：脚本逐帧把速度压向碰撞体时，存续的接触不能逐帧按
+        // 弹性反弹——Added（首次撞击）保留弹性系数，Persisted（持续接触）清零
+        const zeroRestitutionOf = (settings) => {
+          if (settings && typeof settings === "object") settings.mCombinedRestitution = 0;
+          else if (typeof settings === "number" && settings) {
+            Jolt.wrapPointer(settings, Jolt.ContactSettings).mCombinedRestitution = 0;
+          }
+        };
         const bodyIdOf = (b) => {
           if (b && typeof b === "object") {
             return typeof b.GetID === "function" ? b.GetID() : b;
@@ -395,7 +403,7 @@ async function loadJolt() {
         const listener = new Jolt.ContactListenerJS();
         listener.OnContactValidate = () => 1; // 1 = AcceptAllContactsForContact
         listener.OnContactAdded = (b1, b2) => pushCollision(bodyIdOf(b1), bodyIdOf(b2), true);
-        listener.OnContactPersisted = () => {};
+        listener.OnContactPersisted = (b1, b2, manifold, settings) => zeroRestitutionOf(settings);
         listener.OnContactRemoved = (pair) => {
           if (pair && typeof pair === "object") {
             pushCollision(pair.GetBody1ID(), pair.GetBody2ID(), false);
@@ -636,6 +644,9 @@ async function loadAmmo() {
       const solver = new Ammo.btSequentialImpulseConstraintSolver();
       const world = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, cfg);
       world.setGravity(new Ammo.btVector3(gravity.x, gravity.y, gravity.z));
+      const seenManifolds = new Set();
+      // 持续接触中被临时清零弹性的碰撞对象（ptr → { obj, value }），接触结束后恢复
+      const zeroedRestitution = new Map();
       const bodies = [];
       const buildShape = (col, out) => {
         let s;
@@ -833,6 +844,39 @@ async function loadAmmo() {
         },
         step(dt) {
           world.stepSimulation(Math.max(0.0001, dt), 1, Math.max(0.0001, dt));
+          // 持续接触不弹：存活超过一步的接触流形取消弹性——速度持续压向碰撞体
+          // 时不再逐帧反弹（新流形保留弹性，首次撞击仍会弹起）
+          const dispatcher = world.getDispatcher();
+          const count = dispatcher.getNumManifolds();
+          const current = new Set();
+          const activeBodies = new Set();
+          for (let i = 0; i < count; i++) {
+            const manifold = dispatcher.getManifoldByIndexInternal(i);
+            if (manifold.getNumContacts() <= 0) continue;
+            const key = Ammo.getPointer(manifold);
+            current.add(key);
+            if (seenManifolds.has(key)) {
+              // 持续接触：双方弹性临时置零（速度持续压向碰撞体时不再逐帧反弹）；
+              // 原值记录在 zeroedRestitution，接触结束后恢复
+              for (const b of [manifold.getBody0(), manifold.getBody1()]) {
+                const ptr = Ammo.getPointer(b);
+                activeBodies.add(ptr);
+                if (!zeroedRestitution.has(ptr)) {
+                  zeroedRestitution.set(ptr, { obj: b, value: b.getRestitution() });
+                  b.setRestitution(0);
+                }
+              }
+            }
+          }
+          seenManifolds.clear();
+          for (const key of current) seenManifolds.add(key);
+          // 接触结束：恢复被清零弹性的碰撞对象原值
+          for (const [ptr, rec] of [...zeroedRestitution]) {
+            if (!activeBodies.has(ptr)) {
+              rec.obj.setRestitution(rec.value);
+              zeroedRestitution.delete(ptr);
+            }
+          }
           // 流形差分：接触对出现 = enter，消失 = exit
           const num = dispatcher.getNumManifolds();
           const cur = new Set();

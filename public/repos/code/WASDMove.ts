@@ -4,6 +4,10 @@ import { Component, property, engine } from "tve";
 // WASD 移动组件（onStart 自动探测刚体形态，选择移动方案）：
 // - 动力学（dynamic）刚体 → 物理速度驱动：碰撞由引擎解算，撞到障碍物会被挡住；
 // - 无刚体 / 运动学（kinematic）/ 静态 → 位移驱动：直接平移节点（不被阻挡）。
+//
+// 建议配置：速度驱动角色把自身碰撞体的「摩擦系数」设为 0——滑行时地面摩擦力
+// 作用在偏心接触面上会产生力矩导致自转（ammo 后端尤其明显）；本组件松键即清零
+// 速度，停止不依赖摩擦，摩擦 0 无副作用。
 
 export default class WASDMove extends Component {
   @property({ label: "移动速度（米/秒）", min: 0 })
