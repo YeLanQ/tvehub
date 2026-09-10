@@ -605,6 +605,103 @@ export class Pool<T> {
 }
 
 // ---------------------------------------------------------------------------
+// 数据中心：跨组件共享的命名数据仓库，内置热/冷分解——热数据（活动工作集）
+// 即时读写，闲置/超量的数据自动"降温"为冻结快照（冷区），再次访问自动"回温"。
+// ---------------------------------------------------------------------------
+
+/** 数据中心配置项（configure 增量合并） */
+export interface DataCenterOptions {
+  /** 热容量上限：热数据条数超过该值时，清扫按最久未访问（LRU）降冷（缺省 64） */
+  hotLimit?: number;
+  /** 冷却时长（毫秒）：热数据闲置超过该时长，清扫时降冷（缺省 30000） */
+  coldTtl?: number;
+  /** 惰性自动清扫开关（set/get/has 访问时按 sweepInterval 触发；缺省 true） */
+  autoSweep?: boolean;
+  /** 自动清扫最小间隔（毫秒；缺省 10000） */
+  sweepInterval?: number;
+}
+
+/** 统计快照（观测热/冷分布与命中情况） */
+export interface DataCenterStats {
+  /** 热数据条数 */
+  hot: number;
+  /** 冷数据条数 */
+  cold: number;
+  /** 累计清扫次数 */
+  sweeps: number;
+  /** 累计回温次数（冷数据被访问后转热） */
+  promotions: number;
+  /** 累计命中次数 */
+  hits: number;
+  /** 累计未命中次数 */
+  misses: number;
+}
+
+/**
+ * 数据中心：跨组件共享的命名数据仓库，内置热/冷分解。
+ *
+ * ```ts
+ * import { dataCenter, Component } from "tve";
+ *
+ * export default class Game extends Component {
+ *   onStart() {
+ *     dataCenter.set("score", 0);            // 写即热
+ *   }
+ *   onEnemyKilled() {
+ *     const score = dataCenter.get<number>("score", 0);
+ *     dataCenter.set("score", score + 10);   // 其他组件可随时读取
+ *   }
+ *   onDestroy() {
+ *     dataCenter.delete("score");            // 用完清理，避免悬挂数据
+ *   }
+ * }
+ * ```
+ *
+ * 热/冷语义：
+ * - 写入（set）即进入热区，即时生效；
+ * - 长期未访问或超出热容量（hotLimit）的数据在清扫时**降冷**为冻结快照
+ *   （深拷贝隔离——冷数据不受后续改动影响）；
+ * - 读取冷数据自动**回温**为热数据并返回快照值；
+ * - 清扫默认按 sweepInterval 惰性自动触发，也可手动 `sweep()`；
+ * - 冷数据建议存纯数据（普通对象/数组/原始值）；含函数等不可克隆对象按
+ *   结构化克隆 → JSON → 原引用逐级兜底。
+ */
+export class DataCenter {
+  /** @internal 可 new 出隔离实例（不影响全局单例 dataCenter） */
+  constructor(options?: DataCenterOptions);
+  /** 调整容量/冷却策略（增量合并） */
+  configure(options: DataCenterOptions): void;
+  /** 写入数据（写即热；同名冷数据快照被覆盖） */
+  set<T>(key: string, value: T): void;
+  /**
+   * 读取数据：热数据返回活动引用（改动实时生效）；冷数据自动回温后返回快照值；
+   * 未命中返回 defaultValue。
+   */
+  get<T>(key: string, defaultValue?: T): T | undefined;
+  /** 是否存在该键（热或冷） */
+  has(key: string): boolean;
+  /** 删除数据（热/冷一并移除）。返回是否存在 */
+  delete(key: string): boolean;
+  /** 全部键名（热 + 冷） */
+  keys(): string[];
+  /** 热数据键名（当前活动工作集） */
+  hotKeys(): string[];
+  /** 冷数据键名（已降冷的冻结快照） */
+  coldKeys(): string[];
+  /** 手动回温指定键。返回是否存在 */
+  warm(key: string): boolean;
+  /** 手动降冷指定键（值以冻结快照形式进入冷区）。返回是否降冷 */
+  cool(key: string): boolean;
+  /** 手动清扫（闲置 ≥ coldTtl 降冷 + 超出 hotLimit 按 LRU 降冷）。返回降冷条数 */
+  sweep(): number;
+  /** 统计快照 */
+  stats(): DataCenterStats;
+}
+
+/** 全局数据中心单例（跨组件共享游戏数据；需要隔离时 new DataCenter()） */
+export const dataCenter: DataCenter;
+
+// ---------------------------------------------------------------------------
 // 内置组件门面（getComponent / addComponent / 组件字段声明的对象）。
 // 门面 = 组件设置 + 运行时后端的实时视图：属性写入即时生效（预览运行态，
 // 不回写场景文件）；@internal 构造器由运行时创建，脚本不要 new。
