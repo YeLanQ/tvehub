@@ -81,6 +81,7 @@ export function getEditorStore(): EditorStore {
   engine.events.on("select:changed", bump);
   engine.events.on("gizmo:state", bump);
   engine.events.on("material:changed", bump);
+  engine.events.on("shader:changed", bump);
   engine.events.on("model:changed", bump);
   engine.events.on("animation:changed", bump);
   engine.events.on("audio:changed", bump);
@@ -93,6 +94,14 @@ export function getEditorStore(): EditorStore {
   });
   engine.events.on("material:changed", () => {
     if (state.mounted) state.dirty = true;
+  });
+  // 着色器源码保存 → 材质外观随之变化，同样计入未保存改动
+  engine.events.on("shader:changed", () => {
+    if (state.mounted) state.dirty = true;
+  });
+  // 着色器编译失败（three 的程序报错）→ 编辑器控制台（只接摘要，避免刷屏）
+  engine.events.on("shader:error", ({ message }) => {
+    logStore.log("error", `着色器编译失败: ${message}`, "engine");
   });
   engine.history.events.on("changed", () => {
     if (state.mounted) state.dirty = true;

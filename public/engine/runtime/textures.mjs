@@ -33,7 +33,8 @@ function loadImageTex(texCache, rel, srgb) {
 }
 
 /** 逐网格按材质声明回填贴图（贴图文件已在导出产物内，按相对路径 fetch）。
- * unlit 只支持基础色贴图 map；toon 无金属/粗糙通道。 */
+ * unlit 只支持基础色贴图 map；toon 无金属/粗糙通道；
+ * 自定义着色器（ShaderMaterial）：按属性表把贴图属性写入同名 uniform（2D → sRGB）。 */
 export async function applyMeshTextures(meshes, materialParams) {
   const texCache = new Map();
   for (const entry of meshes) {
@@ -41,6 +42,21 @@ export async function applyMeshTextures(meshes, materialParams) {
     if (!mat) continue;
     const m = materialParams.get(entry.json.material);
     if (!m) continue;
+    if (mat.isShaderMaterial && Array.isArray(mat.userData.customProperties)) {
+      const props = m.props || {};
+      for (const prop of mat.userData.customProperties) {
+        if (prop.kind !== "texture") continue;
+        const uniform = mat.uniforms ? mat.uniforms[prop.key] : null;
+        if (!uniform) continue;
+        const rel = typeof props[prop.key] === "string" ? props[prop.key] : "";
+        if (!rel) {
+          uniform.value = null;
+          continue;
+        }
+        uniform.value = await loadImageTex(texCache, rel, true);
+      }
+      continue;
+    }
     const basicOnly = mat.type === "MeshBasicMaterial"; // unlit：只支持基础色贴图 map
     const isToon = mat.type === "MeshToonMaterial"; // toon：无金属/粗糙通道
     for (const [field, srgb] of TEXTURE_CHANNELS) {

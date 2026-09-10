@@ -3,16 +3,21 @@
 // 并映射到 three MeshPhysicalMaterial 的属性（见 types.ts）。
 import type { MaterialEnableKey, MaterialParamKey } from "./types";
 
-export type MaterialParamKind = "number" | "color" | "bool" | "texture";
+export type MaterialParamKind = "number" | "color" | "bool" | "texture" | "vector";
 
 export interface MaterialParamDef {
-  key: MaterialParamKey;
-  /** 中文显示名（对应 Blender 属性中文/习惯名） */
+  /** 参数字段名：内置分支为 MaterialParamKey，自定义着色器为属性名（任意 _ 前缀标识符） */
+  key: string;
+  /** 中文显示名（对应 Blender 属性中文/习惯名；自定义着色器取 Properties 文案） */
   label: string;
-  /** Blender 英文属性名（提示） */
+  /** 英文属性名/属性键（提示） */
   en: string;
   kind: MaterialParamKind;
   step?: number;
+  /** 面板下界（缺省用材质参数默认收敛规则；自定义着色器取属性声明） */
+  min?: number;
+  /** 面板上界（同上） */
+  max?: number;
 }
 
 export interface MaterialParamGroup {
@@ -147,13 +152,15 @@ export const MATERIAL_PARAM_GROUPS: MaterialParamGroup[] = [
   },
 ];
 
-const FLAT: Record<MaterialParamKey, MaterialParamDef> = MATERIAL_PARAM_GROUPS.flatMap(
-  (g) => g.defs,
-).reduce((acc, d) => {
-  acc[d.key] = d;
-  return acc;
-}, {} as Record<MaterialParamKey, MaterialParamDef>);
+const FLAT = MATERIAL_PARAM_GROUPS.flatMap((g) => g.defs).reduce(
+  (acc, d) => {
+    acc[d.key] = d;
+    return acc;
+  },
+  {} as Record<string, MaterialParamDef>,
+);
 
+/** 内置参数定义（自定义着色器属性无静态定义，由后端 shader_read 的属性表动态构造） */
 export function materialParamDef(key: MaterialParamKey): MaterialParamDef {
   return FLAT[key];
 }

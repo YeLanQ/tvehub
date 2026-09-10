@@ -1,11 +1,88 @@
 // 网格（meshNode）构建：基元几何 + 按材质类型分派 three 材质
-// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / 其余 → MeshPhysicalMaterial），
+// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / custom → ShaderMaterial
+//  （自定义着色器，程序由 shaderlab.mjs 组装）/ 其余 → MeshPhysicalMaterial），
 // 以及模型网格（source=model）的实例化挂载。
 // 与编辑器 framework/mesh、framework/material/factory 的规则保持同步。
 import * as THREE from "../core/three.module.min.js";
 import { num, vec } from "../core/utils.mjs";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material.mjs";
 import { instantiateModel } from "./model.mjs";
+
+/** 自定义着色器占位程序（程序缺失/组装失败时渲染洋红棋盘，避免无源码报错） */
+const PLACEHOLDER_VERTEX = `varying vec2 vPlaceholderUv;
+void main() {
+  vPlaceholderUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+const PLACEHOLDER_FRAGMENT = `varying vec2 vPlaceholderUv;
+void main() {
+  float s = floor(vPlaceholderUv.x * 8.0) + floor(vPlaceholderUv.y * 8.0);
+  gl_FragColor = vec4(mix(vec3(1.0, 0.0, 1.0), vec3(0.12, 0.12, 0.12), mod(s, 2.0)), 1.0);
+}
+`;
+
+/** 在册自定义材质（每帧推进 _Time；材质释放时自动出册） */
+const timeMaterials = new Set();
+
+/** 渲染循环推进：设置全部在册自定义材质的 _Time（秒） */
+export function tickShaderTime(seconds) {
+  if (timeMaterials.size === 0) return;
+  for (const mat of timeMaterials) {
+    const uniform = mat.uniforms?._Time;
+    if (uniform) uniform.value = seconds;
+  }
+}
+
+/** 属性值 → three uniform 初值（与编辑器 customShader.ts 同规则：
+ * 颜色 sRGB hex → 线性 vec4；向量 → vec4；数值 → float；贴图 → 纹理，异步回填） */
+function customUniformValue(prop, props) {
+  const raw = props[prop.key];
+  const value = raw === undefined ? prop.default : raw;
+  switch (prop.kind) {
+    case "color": {
+      const hex = typeof value === "number" ? value : parseInt(String(value).replace("#", ""), 16);
+      const c = new THREE.Color().setHex(Number.isFinite(hex) ? hex & 0xffffff : 0xffffff);
+      return { value: [c.r, c.g, c.b, 1] };
+    }
+    case "vector":
+      return { value: (Array.isArray(value) ? value : [0, 0, 0, 0]).slice(0, 4) };
+    case "texture":
+      return { value: null };
+    case "int":
+      return { value: Math.round(typeof value === "number" ? value : 0) };
+    default:
+      return { value: typeof value === "number" ? value : 0 };
+  }
+}
+
+/** 自定义着色器 → ShaderMaterial（uniforms = 属性 + _Time；渲染状态取自 Tags 声明） */
+function createCustomMaterial(m) {
+  const program = m.program ?? null;
+  const properties = m.properties ?? [];
+  const uniforms = {};
+  for (const prop of properties) uniforms[prop.key] = customUniformValue(prop, m.props || {});
+  uniforms._Time = { value: 0 };
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: program ? program.vertex : PLACEHOLDER_VERTEX,
+    fragmentShader: program ? program.fragment : PLACEHOLDER_FRAGMENT,
+    transparent: program ? program.transparent === true : false,
+    depthWrite: program ? program.depthWrite !== false : true,
+    side: !program
+      ? THREE.FrontSide
+      : program.side === "double"
+        ? THREE.DoubleSide
+        : program.side === "back"
+          ? THREE.BackSide
+          : THREE.FrontSide,
+  });
+  // 贴图属性回填用（textures.mjs 按属性表加载并写 uniform）
+  mat.userData.customProperties = properties;
+  mat.addEventListener("dispose", () => timeMaterials.delete(mat));
+  timeMaterials.add(mat);
+  return mat;
+}
 
 /**
  * 生成 meshNode 的 three 对象：
@@ -46,6 +123,10 @@ export function createMesh(json, ctx) {
     alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
     wireframe: m.wireframe === true,
   };
+  if (m.type === "custom") {
+    // Custom → ShaderMaterial（GLSL 顶点/片元程序 + 属性 uniform；贴图由 textures.mjs 回填）
+    return new THREE.Mesh(geom, createCustomMaterial(m));
+  }
   if (m.type === "toon") {
     // Toon → MeshToonMaterial（cel shading；color/map/emissive/法线 + 灰阶渐变条分档）
     const on = m.emissionEnabled === true;

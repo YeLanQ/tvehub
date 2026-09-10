@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// 脚本原型（代码工坊）：主页「代码工坊」维护、资产面板「新建脚本」选用。
-// 存储为独立文件：public/repos/code/<原型名>.ts（一个原型一个文件）；
-// - 描述写在文件首行注释 // @desc: xxx（可缺省）；
+// 脚本原型（创意工坊 code 分类）类型与注入工具：
+// 原型是 public/repos/code/<原型名>.ts 下的独立文件（一个原型一个文件）；
+// - 描述写在文件首部注释 // @desc: xxx（可缺省）；
 // - 代码支持 {{CLASS_NAME}} 占位符（创建脚本时注入类名）；
 // - 目录首次初始化时自动播种「基础脚本.ts」（内置模板，之后与普通原型无异）。
+// 原型的扫描/读写与分类遍历统一走 lib/repos.ts（资产面板右键菜单与首页工坊共用）；
+// 本文件只保留「创建脚本」链路需要的类型与占位符注入。
 // ---------------------------------------------------------------------------
-
-import { api, type CodeProtoEntry } from "../../lib/api";
 
 export interface ScriptPrototype {
   /** 文件名（含 .ts，如 "Spin.ts"） */
@@ -16,36 +16,6 @@ export interface ScriptPrototype {
   description: string;
   /** 模板代码；支持 {{CLASS_NAME}} 占位符（创建脚本时替换为脚本类名） */
   code: string;
-}
-
-/** 全量原型 = repos/code 目录下的 *.ts 文件（逐个读取内容） */
-export async function listScriptPrototypes(): Promise<ScriptPrototype[]> {
-  const files = await api.listCodeProtos().catch(() => [] as CodeProtoEntry[]);
-  return Promise.all(
-    files.map(async (f) => ({
-      id: f.file,
-      name: f.name,
-      description: f.description,
-      code: await api.readCodeProto(f.file).catch(() => ""),
-    })),
-  );
-}
-
-/** 写入原型文件（新建/覆盖；描述以首行 // @desc: 注释形式保存，旧描述行自动剥离防重复堆积） */
-export async function writeScriptPrototype(
-  name: string,
-  description: string,
-  code: string,
-): Promise<void> {
-  const lines = code.replace(/\r\n/g, "\n").split("\n");
-  while (lines.length && /^\s*\/\/\s*@desc[:：]/.test(lines[0])) lines.shift();
-  const head = description.trim() ? `// @desc: ${description.trim()}\n` : "";
-  await api.writeCodeProto(`${name}.ts`, head + lines.join("\n"));
-}
-
-/** 删除原型文件（file 含 .ts） */
-export async function deleteScriptPrototype(file: string): Promise<void> {
-  await api.deleteCodeProto(file);
 }
 
 /** 模板代码注入：{{CLASS_NAME}} → 脚本类名（PascalCase，由调用方给出） */

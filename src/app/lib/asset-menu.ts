@@ -7,12 +7,34 @@ import type { ChildEntry } from "./asset-browser";
 import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
-import type { ScriptPrototype } from "./script-prototypes";
 
 /** 着色器种类注册表项（菜单「新建着色器」子项需要 key + label） */
 export interface MenuShaderType {
   key: string;
   label: string;
+}
+
+/**
+ * 创意工坊菜单项（仓库文件 → 新建项目资产）：
+ * kind = "script"（.ts 脚本，固定落盘 src/）| "shader"（.shader 资产，落盘右键目录）
+ */
+export interface MenuWorkshopItem {
+  /** 来源分类（repos 子目录名，如 "code" / "effect"） */
+  category: string;
+  /** 来源文件名（含扩展名） */
+  file: string;
+  /** 显示名（文件名去扩展名） */
+  name: string;
+  kind: "script" | "shader";
+}
+
+/** 创意工坊分类（菜单里的一层「标签」，与首页工坊标签名一致） */
+export interface MenuWorkshopCategory {
+  /** 分类 id（= repos 子目录名） */
+  id: string;
+  /** 标签名（= 目录名首字母大写） */
+  label: string;
+  items: MenuWorkshopItem[];
 }
 
 /** 面板注入的菜单动作集合（参数均为纯数据，由面板闭包执行） */
@@ -34,10 +56,10 @@ export interface AssetMenuApi {
   onNewScene: (dir: string) => void;
   /** 新建脚本（内置基础模板） */
   onNewScript: (dir: string) => void;
-  /** 代码工坊原型清单（面板在右键时刷新缓存后提供） */
-  codeProtos: () => ScriptPrototype[];
-  /** 按代码工坊原型新建脚本（点击子菜单项） */
-  onNewScriptFromProto: (dir: string, proto: ScriptPrototype) => void;
+  /** 创意工坊分类清单（标签 + 内容；面板在右键时刷新缓存后提供） */
+  workshops: () => MenuWorkshopCategory[];
+  /** 按创意工坊文件新建项目资产（脚本 → src/；效果 → 当前目录 .shader） */
+  onNewFromWorkshop: (dir: string, item: MenuWorkshopItem) => void;
   onNewFolder: (dir: string) => void;
   onNewMaterial: (dir: string) => void;
   onNewShader: (dir: string, kind: string) => void;
@@ -91,15 +113,34 @@ function importMenuItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
   ];
 }
 
-/** 「代码工坊」子菜单：列出 repos/code 下的脚本原型（一个原型一个独立文件） */
-function workshopMenuItem(dir: string, api: AssetMenuApi): CtxMenuItem {
-  return {
-    label: "代码工坊",
-    children: api.codeProtos().map((p) => ({
-      label: p.name,
-      onClick: () => api.onNewScriptFromProto(dir, p),
-    })),
-  };
+/**
+ * 「创意工坊」子菜单：结构与首页工坊一致 —— 创意工坊 ▸ 标签（仓库分类）▸ 该标签内容。
+ * - 脚本项（code 分类）任意可编辑目录都可调起（脚本固定落盘 src/）；
+ * - 效果项（effect 分类）仅在可写资产目录出现（着色器资产落盘该目录）；
+ * - 分类无可用项时跳过；全空时返回 null（不显示空子菜单）。
+ */
+function workshopMenuItem(dir: string, api: AssetMenuApi): CtxMenuItem | null {
+  const allowShader = api.importAllowed(dir);
+  const children: CtxMenuItem[] = [];
+  for (const cat of api.workshops()) {
+    const usable = cat.items.filter((it) => (it.kind === "shader" ? allowShader : true));
+    if (usable.length === 0) continue;
+    children.push({
+      label: cat.label,
+      children: usable.map((it) => ({
+        label: it.name,
+        onClick: () => api.onNewFromWorkshop(dir, it),
+      })),
+    });
+  }
+  if (children.length === 0) return null;
+  return { label: "创意工坊", children };
+}
+
+/** 追加创意工坊子菜单（无原型时不追加） */
+function pushWorkshopMenu(items: CtxMenuItem[], dir: string, api: AssetMenuApi): void {
+  const item = workshopMenuItem(dir, api);
+  if (item) items.push(item);
 }
 
 /** 资产条目右键菜单（网格/列表中的文件、目录、内置资源） */
@@ -131,12 +172,13 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
     if (!isInternal && item.kind === "dir" && item.path === "assets") {
       // assets 固定根目录内仍可新建资产/子目录（assets/materials 等）
       items.push(...newAssetItems(item.path, api));
+      pushWorkshopMenu(items, item.path, api);
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
       items.push(menuSeparator(), ...importMenuItems(item.path, api));
     } else if (!isInternal && item.kind === "dir" && item.path === "src") {
-      // src 固定脚本目录：代码工坊原型/新建子目录（脚本经工坊原型创建）
+      // src 固定脚本目录：创意工坊原型/新建子目录（脚本经工坊原型创建）
       items.push({ label: "新建脚本", onClick: () => api.onNewScript(item.path) });
-      items.push(workshopMenuItem(item.path, api));
+      pushWorkshopMenu(items, item.path, api);
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(item.path) });
     } else if (isInternal && item.kind !== "dir") {
       // 内置文件可「复制到项目」生成项目内可编辑副本
@@ -152,9 +194,11 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
     if (dir != null) {
       if (api.isSrcDir(dir)) {
         items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
-        items.push(workshopMenuItem(dir, api));
+        pushWorkshopMenu(items, dir, api);
       } else {
         items.push(...newAssetItems(dir, api));
+        // 创意工坊不局限在 src：任一可编辑目录都可按原型新建脚本（落盘 src/）
+        pushWorkshopMenu(items, dir, api);
       }
       items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
       if (!api.isSrcDir(dir)) {
@@ -167,15 +211,17 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   return items;
 }
 
-/** 内容区空白处右键（dir = 当前目录）：新建 + 导入 + 刷新（内置目录只读时无新建项） */
+/** 内容区空白处右键（dir = 当前目录）：新建 + 创意工坊 + 导入 + 刷新（内置目录只读时无新建项） */
 export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] {
   const items: CtxMenuItem[] = [];
   if (!api.isInternal(dir)) {
     if (api.isSrcDir(dir)) {
       items.push({ label: "新建脚本", onClick: () => api.onNewScript(dir) });
-      items.push(workshopMenuItem(dir, api));
+      pushWorkshopMenu(items, dir, api);
     } else {
       items.push(...newAssetItems(dir, api));
+      // 创意工坊不局限在 src：任一可编辑目录都可按原型新建脚本（落盘 src/）
+      pushWorkshopMenu(items, dir, api);
     }
     items.push({ label: "新建目录", onClick: () => api.onNewFolder(dir) });
     if (!api.isSrcDir(dir)) {

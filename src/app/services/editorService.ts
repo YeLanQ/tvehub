@@ -9,6 +9,7 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
 import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
 import { loadMaterialDoc } from "../lib/materials";
+import { loadShaderDoc } from "../lib/shaders";
 import { logStore } from "../stores/log";
 import { getProjectStore } from "../stores/project";
 import { getEditorStore, resetEditorEngine } from "../stores/editor";
@@ -51,6 +52,9 @@ function applyProjectAccess(engine: EditorEngine, root: string | null): void {
   engine.materials.setFetcher(root ? (rel) => loadMaterialDoc(root, rel) : null);
   // 项目切换后旧缓存不可跨项目复用（同 rel 指向不同文件）
   engine.materials.clear();
+  // 着色器程序来源：后端 shader_read（自定义着色器的属性表与顶点/片元程序在 Rust 组装）
+  engine.shaders.setFetcher(root ? (rel) => loadShaderDoc(root, rel) : null);
+  engine.shaders.clear();
   // 贴图来源：asset:// 协议直读（internal/… 与项目资产统一走协议 URL；
   // setTextureResolver 内部会清贴图/TextureCube 缓存并重算天空背景）
   engine.setTextureResolver(root ? (rel) => (rel ? assetUrl(rel) : null) : null);
@@ -150,8 +154,9 @@ async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResul
   const doc = result.doc as { root?: JsonRecord | null; settings?: JsonRecord };
   const rootJson = doc.root ?? null;
   if (!rootJson || (rootJson as { type?: string }).type === "empty") return false;
-  // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）
-  if (result.materialRefs.length) await engine.materials.preload(result.materialRefs);
+  // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）；
+  // 材质引用的着色器程序（自定义着色器）随材质一并预取
+  if (result.materialRefs.length) await engine.preloadMaterials(result.materialRefs);
   if (result.modelRefs.length) await engine.models.preload(result.modelRefs);
   engine.applySceneDocRoot(rootJson);
   engine.graph.history.update(result.history);

@@ -149,3 +149,86 @@ export function ensureScriptModel(
   }
   return model;
 }
+
+// ---------------------------------------------------------------------------
+// GLSL（着色器源码编辑器专用）：Monaco 无内置 GLSL，这里注册一份 Monarch 语法
+// （类型/限定符/内置函数着色 + #pragma 指令高亮），足够源码可读性；
+// 语言 id 为 "tve-glsl"，token 名走通用关键字/类型，复用 tve-dark 主题配色。
+// ---------------------------------------------------------------------------
+
+export const GLSL_LANGUAGE_ID = "tve-glsl";
+
+/** 幂等注册 GLSL 语言（首次打开着色器编辑器时调用） */
+export function registerGlslLanguage(monaco: MonacoNamespace): void {
+  if (monaco.languages.getLanguages().some((l) => l.id === GLSL_LANGUAGE_ID)) return;
+  monaco.languages.register({ id: GLSL_LANGUAGE_ID, extensions: [".shader", ".glsl"] });
+  monaco.languages.setMonarchTokensProvider(GLSL_LANGUAGE_ID, {
+    defaultToken: "",
+    tokenizer: {
+      root: [
+        [/^\s*#\s*\w+/, "keyword.directive"],
+        [
+          /\b(if|else|for|while|do|break|continue|return|discard|switch|case|default)\b/,
+          "keyword.flow",
+        ],
+        [
+          /\b(uniform|varying|attribute|in|out|inout|const|struct|precision|lowp|mediump|highp|flat|smooth)\b/,
+          "keyword",
+        ],
+        [
+          /\b(void|bool|int|uint|float|double|vec2|vec3|vec4|ivec2|ivec3|ivec4|bvec2|bvec3|bvec4|mat2|mat3|mat4|sampler2D|samplerCube|sampler3D|fixed|fixed2|fixed3|fixed4|half|half2|half3|half4)\b/,
+          "type",
+        ],
+        [
+          /\b(gl_Position|gl_FragColor|gl_FragCoord|gl_PointSize|gl_FrontFacing)\b/,
+          "variable.predefined",
+        ],
+        [
+          /\b(abs|acos|all|any|asin|atan|ceil|clamp|cos|cross|degrees|distance|dot|equal|exp|exp2|faceforward|floor|fract|inversesqrt|length|log|log2|max|min|mix|mod|normalize|pow|radians|reflect|refract|sign|sin|smoothstep|sqrt|step|tan|texture2D|textureCube|tex2D|mul)\b(?=\s*\()/,
+          "type.identifier",
+        ],
+        [/\b\d+\.\d*([eE][-+]?\d+)?\b/, "number.float"],
+        [/\b\d+\b/, "number"],
+        [/[a-zA-Z_]\w*/, "identifier"],
+        [/[{}()[\]]/, "@brackets"],
+        [/[=!<>+\-*/%&|^~?:]+/, "operator"],
+        [/,/, "delimiter"],
+        [/\/\/.*$/, "comment"],
+        [/\/\*/, "comment", "@comment"],
+      ],
+      comment: [
+        [/[^/*]+/, "comment"],
+        [/\*\//, "comment", "@pop"],
+        [/[/*]/, "comment"],
+      ],
+    },
+  });
+  monaco.languages.setLanguageConfiguration(GLSL_LANGUAGE_ID, {
+    comments: { lineComment: "//", blockComment: ["/*", "*/"] },
+    brackets: [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"],
+    ],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: '"', close: '"' },
+    ],
+  });
+}
+
+/** 取或建着色器模型（同一资产恒返回同一模型；语言为注册的 GLSL） */
+export function ensureShaderModel(
+  monaco: MonacoNamespace,
+  rel: string,
+  source: string,
+): MonacoApi.editor.ITextModel {
+  const uri = monaco.Uri.parse("file:///" + rel);
+  let model = monaco.editor.getModel(uri);
+  if (!model) {
+    model = monaco.editor.createModel(source, GLSL_LANGUAGE_ID, uri);
+  }
+  return model;
+}

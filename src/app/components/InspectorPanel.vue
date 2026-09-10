@@ -308,6 +308,8 @@ async function onSetMaterial(rel: string): Promise<void> {
   if (materialDirty) flushMaterialPersist(); // 切换前把正在编辑的材质落盘
   if (root && !engine.materials.has(rel)) {
     await engine.materials.preload([rel]);
+    // 自定义着色器：程序与参数一并预取（先取到再入图，避免占位材质跳变）
+    await engine.shaders.preload([engine.materials.shaderFor(rel)].filter((s) => s.length > 0));
   }
   commit((m) => { (m as MeshNode).material = rel; }, "Set Material");
   if (root) engine.refreshMaterialNodes(rel);
@@ -354,6 +356,32 @@ async function onMaterialEdit(
     );
   }
   // 先同步进缓存并广播（引用该材质的所有网格外观同步刷新），文件落盘走防抖
+  engine.materials.cachePut(rel, params);
+  scheduleMaterialPersist(rel, params);
+}
+
+/**
+ * 自定义着色器参数编辑（.mat 的 props 字段；键 = 着色器 Properties 属性名）：
+ * 与内置参数同一链路——即时写引擎缓存（视口同步刷新）+ 防抖写盘。
+ */
+async function onMaterialPropEdit(
+  key: string,
+  value: number | string | number[],
+): Promise<void> {
+  const n = node.value;
+  if (!n || !(n instanceof MeshNode)) return;
+  const root = projectStore.currentPath;
+  if (!root) {
+    logStore.log("error", "未打开项目，无法保存材质修改", "engine");
+    return;
+  }
+  const rel = n.material;
+  if (isInternalAsset(rel)) return; // 内置材质只读（UI 已禁用，这里兜底）
+  const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
+  params.props = {
+    ...params.props,
+    [key]: Array.isArray(value) ? [...value] : value,
+  };
   engine.materials.cachePut(rel, params);
   scheduleMaterialPersist(rel, params);
 }
@@ -1242,6 +1270,7 @@ const materialOpen = ref(true);
             :rev="revision"
             @setMaterial="onSetMaterial"
             @editParam="onMaterialEdit"
+            @editProp="onMaterialPropEdit"
             @changeShader="onMaterialChangeShader"
             @copyToProject="onMaterialCopyToProject"
           />

@@ -12,7 +12,10 @@
     "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
     "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js",
     "smoke:collider": "vite build --ssr scripts/smoke-collider-helper.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-collider-helper.js",
-    "smoke:components": "vite build --ssr scripts/smoke-components.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-components.js"
+    "smoke:components": "vite build --ssr scripts/smoke-components.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-components.js",
+    "smoke:shader": "vite build --ssr scripts/smoke-shader.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shader.js",
+    "smoke:shader-runtime": "node scripts/smoke-shader-runtime.mjs",
+    "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

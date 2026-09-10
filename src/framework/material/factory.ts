@@ -21,6 +21,14 @@ import {
   materialParamDef,
   type MaterialParamGroup,
 } from "./defs";
+import {
+  CUSTOM_SHADER_KIND,
+  applyCustomProgram,
+  applyCustomTextures,
+  buildCustomUniforms,
+  registerCustomMaterial,
+} from "./customShader";
+import type { CustomShaderProgram, ShaderPropertyDef } from "./shader";
 
 /** 默认材质类型 key（.mat 缺失/未知 materialType 时的回退） */
 export const DEFAULT_MATERIAL_TYPE = "physical";
@@ -28,6 +36,17 @@ export const DEFAULT_MATERIAL_TYPE = "physical";
 /** 贴图异步装载器（应用层注入，同引擎 loadTexture） */
 export interface MaterialTextureLoader {
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
+}
+
+/** 材质应用上下文（非内置分支需要额外数据时使用） */
+export interface MaterialApplyContext {
+  /**
+   * 自定义着色器程序（由应用层按 .mat 的 shader 引用提供；后端已解析组装）。
+   * null = 着色器缺失/组装失败 → 渲染占位材质（洋红），面板显示错误原因。
+   */
+  program?: CustomShaderProgram | null;
+  /** 自定义着色器属性表（与 program 同源；面板参数分组/默认值用） */
+  properties?: ShaderPropertyDef[];
 }
 
 /** 单个材质类型的完整定义（工厂产物 = three 材质实例 + 参数应用规则） */
@@ -40,12 +59,17 @@ export interface MaterialTypeDef {
   create(): THREE.Material;
   /** 缓存复用判断：现有 three 材质是否已是该类型（instanceof） */
   matches(mat: THREE.Material): boolean;
-  /** 该类型在属性面板暴露的参数分组（数据驱动 UI） */
+  /** 该类型在属性面板暴露的参数分组（数据驱动 UI；自定义着色器由属性表动态构造） */
   paramGroups: MaterialParamGroup[];
   /** 该类型的默认参数（新建材质/回退用；返回超集 MaterialParams 的一份拷贝） */
   defaultParams(): MaterialParams;
-  /** 把参数应用到 three 材质实例（含贴图通道异步回填） */
-  apply(mat: THREE.Material, params: MaterialParams, loader?: MaterialTextureLoader): void;
+  /** 把参数应用到 three 材质实例（含贴图通道异步回填与自定义着色器程序装配） */
+  apply(
+    mat: THREE.Material,
+    params: MaterialParams,
+    loader?: MaterialTextureLoader,
+    ctx?: MaterialApplyContext,
+  ): void;
   /**
    * 可选“轮廓体”能力（法线外扩描边，由同步器为网格挂子渲染体）：
    * 返回 null 表示该类型无轮廓或未启用；否则给出轮廓颜色与外扩宽度
@@ -397,12 +421,41 @@ const TOON_DEF: MaterialTypeDef = {
       : null,
 };
 
-/** 默认材质类型注册表（physical + unlit + toon；新类型在此追加一行 register） */
+// ---------------------------------------------------------------------------
+// Custom（custom）：自定义着色器（GLSL 顶点/片元真正编译）。
+// 源码由后端解析并组装（scene/shader.rs），此处只做装配：
+// - uniforms 来自 shader Properties（颜色/数值/向量/贴图）+ 引擎注入的 _Time；
+// - props 缺失项回退着色器声明的默认值；
+// - 程序缺失/组装失败 → 占位程序（洋红棋盘），面板显示错误原因，渲染不中断；
+// - 材质登记进时间表（tickShaderTime 每帧推进 _Time；dispose 时自动出册）。
+// 面板参数分组由属性表动态构造（customParamGroups），故 paramGroups 为空表。
+// ---------------------------------------------------------------------------
+
+const CUSTOM_DEF: MaterialTypeDef = {
+  key: CUSTOM_SHADER_KIND,
+  label: "Custom",
+  create: () => new THREE.ShaderMaterial({ uniforms: {} }),
+  matches: (mat) => mat instanceof THREE.ShaderMaterial,
+  paramGroups: [],
+  defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS, props: {} }),
+  apply: (mat, params, loader, ctx) => {
+    const m = mat as THREE.ShaderMaterial;
+    const program = ctx?.program ?? null;
+    const properties = ctx?.properties ?? [];
+    m.uniforms = buildCustomUniforms(properties, params, m.uniforms);
+    applyCustomProgram(m, program);
+    applyCustomTextures(properties, params, m.uniforms, loader);
+    registerCustomMaterial(m);
+  },
+};
+
+/** 默认材质类型注册表（physical + unlit + toon + custom；新类型在此追加一行 register） */
 export function createDefaultMaterialTypeRegistry(): MaterialTypeRegistry {
   const registry = new MaterialTypeRegistry();
   registry.register(PHYSICAL_DEF);
   registry.register(UNLIT_DEF);
   registry.register(TOON_DEF);
+  registry.register(CUSTOM_DEF);
   return registry;
 }
 

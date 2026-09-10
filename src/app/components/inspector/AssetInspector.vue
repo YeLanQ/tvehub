@@ -14,16 +14,18 @@
  */
 import { computed, reactive, ref, watch } from "vue";
 import {
+  CUSTOM_SHADER_KIND,
   DEFAULT_MATERIAL_TYPE,
   DEFAULT_SHADER_REL,
+  customParamGroups,
+  customPropDefaults,
   materialFileStem,
   materialTypeRegistry,
   shaderFileStem,
   shaderKindLabel,
-  type MaterialEnableKey,
   type MaterialParamGroup,
-  type MaterialParamKey,
   type ShaderDoc,
+  type ShaderPropertyKind,
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { assetUrl } from "../../../lib/asset-url";
@@ -49,6 +51,7 @@ import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat"
 import { isAudioAssetRel } from "../../../framework/audio";
 import type { MaterialParams } from "../../../framework/material";
 import MaterialParamsEditor from "./MaterialParamsEditor.vue";
+import ShaderEditorDialog from "./ShaderEditorDialog.vue";
 import AssetPreview3D from "./AssetPreview3D.vue";
 import NumberField from "../NumberField.vue";
 
@@ -106,13 +109,91 @@ const cubeOptions = computed(() => {
 // ---------------------------------------------------------------------------
 const matReady = ref(false);
 const local = reactive<Record<string, unknown>>({});
+/** 自定义着色器参数镜像（props；面板按键名编辑，改动写回 local.props） */
+const customProps = reactive<Record<string, unknown>>({});
 /** 渲染分支 key（引用的着色器种类；由后端按 .mat 的 shader 引用解析） */
 const matType = ref<string>(DEFAULT_MATERIAL_TYPE);
 /** 引用的着色器资产相对路径（空串 = 旧格式，按 materialType 渲染） */
 const matShader = ref<string>("");
-const groups = computed<MaterialParamGroup[]>(
-  () => materialTypeRegistry.getOrDefault(matType.value).paramGroups,
+
+/** 是否自定义着色器（参数来自着色器 Properties，值存 .mat 的 props） */
+const isCustomMat = computed(() => matType.value === CUSTOM_SHADER_KIND);
+/** 当前着色器的属性表（引擎着色器缓存；未解析为空表） */
+const matShaderProps = computed(() =>
+  matShader.value ? editorStore.engine.shaders.propertiesFor(matShader.value) : [],
 );
+/** 当前着色器的组装错误（自定义着色器；null = 无错误） */
+const matShaderError = computed(() =>
+  isCustomMat.value && matShader.value ? editorStore.engine.shaders.errorFor(matShader.value) : null,
+);
+
+/** 参数分组：自定义着色器由属性表动态构造，其余取类型定义 */
+const groups = computed<MaterialParamGroup[]>(() =>
+  isCustomMat.value
+    ? customParamGroups(matShaderProps.value)
+    : materialTypeRegistry.getOrDefault(matType.value).paramGroups,
+);
+
+/** 就地替换对象内容（切换材质/着色器时属性集合变化，避免残留旧字段） */
+function replaceAll(target: Record<string, unknown>, next: Record<string, unknown>): void {
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, next);
+}
+
+/** 自定义参数镜像 ← 属性默认值 + .mat 已存 props */
+function syncCustomProps(): void {
+  const stored = (local.props ?? {}) as Record<string, unknown>;
+  replaceAll(customProps, { ...customPropDefaults(matShaderProps.value), ...stored });
+}
+
+/** 着色器属性类型显示名（属性表列表用） */
+function propKindLabel(kind: ShaderPropertyKind): string {
+  switch (kind) {
+    case "color":
+      return "颜色";
+    case "range":
+      return "范围";
+    case "float":
+      return "浮点";
+    case "int":
+      return "整数";
+    case "vector":
+      return "向量";
+    default:
+      return "贴图";
+  }
+}
+
+/** 渲染状态摘要（自定义着色器 Tags/ZWrite/Cull 声明） */
+const shaderStateText = computed(() => {
+  const program = shaderDoc.value?.program;
+  if (!program) return "—";
+  const parts = [program.state.transparent ? "半透明" : "不透明"];
+  parts.push(program.state.depthWrite ? "写深度" : "不写深度");
+  parts.push(
+    program.state.side === "double"
+      ? "双面"
+      : program.state.side === "back"
+        ? "只渲染背面"
+        : "剔除背面",
+  );
+  return parts.join(" · ");
+});
+
+// —— 着色器源码编辑器（自定义着色器；弹层 Monaco GLSL）——
+const shaderEditorOpen = ref(false);
+
+function openShaderEditor(): void {
+  shaderEditorOpen.value = true;
+}
+
+/** 源码保存完成：写引擎缓存（视口刷新 + 面板取新属性）并刷新本卡片文档 */
+function onShaderSaved(doc: ShaderDoc): void {
+  shaderDoc.value = doc;
+  editorStore.engine.shaders.cachePut(props.rel, doc);
+  // 属性集合可能变化：重建自定义参数镜像（.mat 已存值保留）
+  if (isCustomMat.value) syncCustomProps();
+}
 
 /** 引用的着色器是否不在可选项中（空串 = 旧格式未挂载；有值但缺失 = 文件被删） */
 const matShaderMissing = computed(
@@ -260,11 +341,15 @@ async function reload(): Promise<void> {
       return;
     }
     // 普通材质：预取进引擎缓存（paramsFor/typeFor/shaderFor 读取；编辑写缓存即时刷新网格）
+    // 自定义着色器：程序一并预取（面板按属性表渲染参数分组）
     await editorStore.engine.materials.preload([rel]);
+    const shaderRel = editorStore.engine.materials.shaderFor(rel);
+    if (shaderRel) await editorStore.engine.shaders.preload([shaderRel]);
     if (token !== loadToken) return;
-    Object.assign(local, editorStore.engine.materials.paramsFor(rel));
+    replaceAll(local, editorStore.engine.materials.paramsFor(rel) as unknown as Record<string, unknown>);
     matType.value = editorStore.engine.materials.typeFor(rel);
     matShader.value = editorStore.engine.materials.shaderFor(rel);
+    syncCustomProps();
     matReady.value = true;
     return;
   }
@@ -276,6 +361,8 @@ async function reload(): Promise<void> {
     if (token !== loadToken) return;
     shaderDoc.value = doc;
     shaderReady.value = true;
+    // 自定义着色器：程序入引擎缓存（引用它的网格按程序渲染，非占位）
+    if (doc) editorStore.engine.shaders.cachePut(rel, doc);
     return;
   }
   shaderDoc.value = null;
@@ -330,8 +417,16 @@ watch(() => props.rel, () => void reload(), { immediate: true });
 // —— 普通材质编辑：写引擎缓存（视口即时刷新）+ 防抖落盘 ——
 const matParams = computed(() => local as unknown as MaterialParams);
 
-function onEditParam(key: MaterialParamKey | MaterialEnableKey, value: number | boolean | string): void {
-  local[key as string] = value;
+function onEditParam(key: string, value: number | boolean | string | number[]): void {
+  // 自定义着色器：键 = 着色器属性名 → 写 .mat 的 props（面板镜像同步就地更新）
+  if (isCustomMat.value) {
+    if (typeof value === "boolean") return;
+    customProps[key] = Array.isArray(value) ? [...value] : value;
+    local.props = { ...customProps };
+    persistMaterial();
+    return;
+  }
+  local[key] = value;
   persistMaterial();
 }
 
@@ -340,6 +435,11 @@ async function onMatShaderChange(e: Event): Promise<void> {
   const v = (e.target as HTMLSelectElement).value || DEFAULT_SHADER_REL;
   matShader.value = v;
   matType.value = await loadShaderKind(root.value, v);
+  // 自定义着色器：程序预取后再写盘（面板立即按新属性表渲染）
+  if (matType.value === CUSTOM_SHADER_KIND) {
+    await editorStore.engine.shaders.preload([v]);
+  }
+  syncCustomProps();
   persistMaterial();
 }
 
@@ -825,8 +925,14 @@ function onImgLoad(e: Event): void {
           <label>渲染分支</label>
           <span class="type-tag">{{ shaderKindLabel(matType) }}</span>
         </div>
+        <div v-if="isCustomMat && matShaderError" class="hint hint-error">
+          着色器组装失败，视口显示占位材质：{{ matShaderError }}
+        </div>
+        <div v-else-if="isCustomMat" class="hint">
+          参数来自挂载着色器的 Properties（{{ matShaderProps.length }} 项）；值写入本 .mat 的 props 字段。
+        </div>
         <MaterialParamsEditor
-          :local="local"
+          :local="isCustomMat ? customProps : local"
           :groups="groups"
           :disabled="isInternal"
           @editParam="onEditParam"
@@ -835,18 +941,47 @@ function onImgLoad(e: Event): void {
       <div v-else class="hint">材质读取中…</div>
     </template>
 
-    <!-- 着色器资产：渲染程序（类型创建时固定）+ 源码内容（Unity ShaderLab 风格源文件） -->
+    <!-- 着色器资产：渲染程序源码 + 自定义着色器的属性/渲染状态（可编辑源码） -->
     <template v-if="kind === 'shader'">
       <template v-if="shaderReady && shaderDoc">
         <div class="field">
           <label>着色器类型</label>
-          <span class="type-tag">{{ shaderKindLabel(shaderDoc.kind) }}（创建时固定）</span>
+          <span class="type-tag">{{ shaderKindLabel(shaderDoc.kind) }}</span>
         </div>
+        <template v-if="shaderDoc.kind === 'custom'">
+          <div class="field">
+            <label>渲染状态</label>
+            <span class="muted">{{ shaderStateText }}</span>
+          </div>
+          <div v-if="shaderDoc.error" class="hint hint-error">
+            组装失败，引用它的材质显示占位材质：{{ shaderDoc.error }}
+          </div>
+          <div class="field">
+            <label>暴露属性</label>
+            <span class="muted">{{ shaderDoc.properties.length }} 项</span>
+          </div>
+          <div
+            v-for="p in shaderDoc.properties"
+            :key="p.key"
+            class="field shader-prop-row"
+          >
+            <span class="mono shader-prop-key">{{ p.key }}</span>
+            <span class="muted">{{ p.label }} · {{ propKindLabel(p.kind) }}</span>
+          </div>
+          <button
+            v-if="!isInternal"
+            class="shader-edit-btn"
+            title="打开源码编辑器（Monaco GLSL；Ctrl+S 保存并重新组装程序）"
+            @click="openShaderEditor"
+          >编辑源码</button>
+        </template>
         <pre class="shader-source mono">{{ shaderDoc.source }}</pre>
         <div class="hint">
           {{ isInternal
             ? "内置着色器只读；可「复制到项目」生成项目内副本，或由材质挂载引用。"
-            : "类型在创建时固定，不可切换；材质在「着色器」下拉中挂载此程序，按该渲染分支渲染。" }}
+            : shaderDoc.kind === "custom"
+              ? "自定义着色器：源码编译为 GLSL 程序渲染；Properties 即材质面板暴露的参数（值存 .mat）。"
+              : "类型在创建时固定，不可切换；材质在「着色器」下拉中挂载此程序，按该渲染分支渲染。" }}
         </div>
       </template>
       <div v-else class="hint">着色器读取中…</div>
@@ -907,6 +1042,15 @@ function onImgLoad(e: Event): void {
       <div v-else class="hint">读取中…</div>
       <div class="hint">给节点添加「动画剪辑」组件并绑定本剪辑，预览/发布即自动播放。</div>
     </template>
+
+    <!-- 着色器源码编辑器（自定义着色器；弹层 Monaco GLSL） -->
+    <ShaderEditorDialog
+      v-if="shaderEditorOpen && shaderDoc"
+      :rel="props.rel"
+      :source="shaderDoc.source"
+      @close="shaderEditorOpen = false"
+      @saved="onShaderSaved"
+    />
   </div>
 </template>
 
@@ -916,8 +1060,29 @@ function onImgLoad(e: Event): void {
   flex-direction: column;
   gap: 2px;
 }
-.shader-source {
-  margin: 2px 0 4px;
+.shader-prop-row {
+  gap: 6px;
+}
+.shader-prop-key {
+  flex: none;
+  font-size: 11px;
+  color: var(--text, #ddd);
+}
+.shader-edit-btn {
+  align-self: flex-start;
+  margin: 4px 0 2px;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--accent, #4a9eff);
+  background: transparent;
+  color: var(--accent, #4a9eff);
+  cursor: pointer;
+}
+.shader-edit-btn:hover {
+  background: rgba(74, 158, 255, 0.12);
+}
+.shader-source {  margin: 2px 0 4px;
   padding: 8px 10px;
   max-height: 280px;
   overflow: auto;

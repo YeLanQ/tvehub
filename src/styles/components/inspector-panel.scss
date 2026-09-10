@@ -444,6 +444,11 @@ select:disabled {
   padding: 4px 0;
 }
 
+/* 错误提示（着色器组装/编译失败等；比普通 hint 更醒目） */
+.inspector .hint-error {
+  color: #e08080;
+}
+
 .inspector .empty {
   padding: 10px;
   font-size: 12px;

@@ -26,6 +26,13 @@ export type TextureParamKey =
   | "normalMap"
   | "emissiveMap";
 
+/**
+ * 自定义着色器参数值（.mat 的 props 字段；键 = 着色器 Properties 属性名）：
+ * - color → RGB hex 数字；range/float/int → 数字；vector → [x,y,z,w]；texture → 资产相对路径
+ * 参数含义由挂载的 .shader 属性声明决定（见 framework/material/customShader.ts）。
+ */
+export type MaterialPropValue = number | string | number[];
+
 /** 需显式勾选启用才生效的效果分组开关（自发光/清漆/光泽/透射/轮廓） */
 export type MaterialEnableKey =
   | "emissionEnabled"
@@ -162,6 +169,12 @@ export interface MaterialParams {
   normalMap: string;
   /** 自发光贴图（Emission） */
   emissiveMap: string;
+  /**
+   * 自定义着色器参数（.mat 的 props 字段；仅 shader 为 kind=custom 时使用）：
+   * 键 = 着色器 Properties 的属性名，值按属性类型存储（颜色 hex / 数字 / 向量数组 / 贴图路径）。
+   * 内置渲染分支（physical/unlit/toon）忽略此字段。
+   */
+  props: Record<string, MaterialPropValue>;
 }
 
 /** 材质资产文件扩展名 */
@@ -219,6 +232,8 @@ export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
   roughnessMap: "",
   normalMap: "",
   emissiveMap: "",
+  // 自定义着色器参数默认空（缺省值由所挂着色器的 Properties 声明提供）
+  props: {},
 };
 
 /** 判断材质引用是否位于内置目录（internal/…；只读，编辑前需复制到项目） */
@@ -318,11 +333,31 @@ export function materialParamsFrom(v: unknown): MaterialParams {
     roughnessMap: typeof o.roughnessMap === "string" ? o.roughnessMap : "",
     normalMap: typeof o.normalMap === "string" ? o.normalMap : "",
     emissiveMap: typeof o.emissiveMap === "string" ? o.emissiveMap : "",
+    props: materialPropsFrom(o.props),
   };
 }
 
+/** 自定义着色器参数收敛：只保留可序列化的值（数字/字符串/数字数组），其余丢弃 */
+export function materialPropsFrom(v: unknown): Record<string, MaterialPropValue> {
+  const out: Record<string, MaterialPropValue> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    else if (typeof value === "string") out[key] = value;
+    else if (Array.isArray(value) && value.every((n) => typeof n === "number" && Number.isFinite(n))) {
+      out[key] = value as number[];
+    }
+  }
+  return out;
+}
+
+/** 材质参数深拷贝（props 为对象、向量值为数组，必须逐层复制，避免缓存被就地改写） */
 export function cloneMaterialParams(p: MaterialParams): MaterialParams {
-  return { ...p };
+  const props: Record<string, MaterialPropValue> = {};
+  for (const [key, value] of Object.entries(p.props ?? {})) {
+    props[key] = Array.isArray(value) ? [...value] : value;
+  }
+  return { ...p, props };
 }
 
 /** 单参数收敛（属性面板编辑后统一入口；颜色已按 hex 截断） */

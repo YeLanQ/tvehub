@@ -44,14 +44,28 @@ export interface DevToolPermInfo {
   enabled: boolean;
 }
 
-/** 代码工坊脚本原型（public/repos/code/*.ts，一个原型一个独立文件） */
-export interface CodeProtoEntry {
-  /** 文件名（含 .ts，如 "Spin.ts"） */
+/** 创意工坊仓库文件（public/repos/<分类>/<文件>，一个文件一个条目） */
+export interface RepoFileEntry {
+  /** 文件名（含扩展名，如 "Spin.ts"） */
   file: string;
-  /** 原型名（文件名去 .ts） */
+  /** 显示名（文件名去扩展名） */
   name: string;
-  /** 首行 // @desc: 注释的描述（缺省空） */
+  /** 小写扩展名（无扩展名为空串） */
+  ext: string;
+  /** 首部 // @desc: 注释的描述（缺省空） */
   description: string;
+  /** 文件字节数 */
+  size: number;
+}
+
+/** 创意工坊仓库分类（public/repos 下的子目录：code / effect / …） */
+export interface RepoCategoryEntry {
+  /** 分类 id（= 目录名） */
+  id: string;
+  /** 分类目录绝对路径（「在文件夹中打开」用） */
+  dir: string;
+  /** 分类下的文件（按文件名排序） */
+  files: RepoFileEntry[];
 }
 
 /** Tauri 资产命令封装 */
@@ -106,13 +120,59 @@ export const api = {
     params: Record<string, unknown>,
   ) => invoke<void>("material_write", { root, rel, name, shader, params }),
   /** 读取并解析 .shader 着色器资产（Unity ShaderLab 风格源码，name/kind 从源码解析；
-   *  source 为源码全文；缺失/非着色器文档返回 null） */
+   *  source 为源码全文；自定义着色器（kind=custom）随文档返回 properties（属性表）、
+   *  program（组装后的顶点/片元源码 + 渲染状态）与 error（组装失败原因）；
+   *  缺失/非着色器文档返回 null） */
   shaderRead: (root: string, rel: string) =>
-    invoke<{ name: string; kind: string; source: string } | null>("shader_read", { root, rel }),
+    invoke<{
+      name: string;
+      kind: string;
+      source: string;
+      properties: {
+        key: string;
+        label: string;
+        kind: string;
+        min?: number | null;
+        max?: number | null;
+        default: number | number[] | string;
+      }[];
+      program: {
+        vertex: string;
+        fragment: string;
+        transparent: boolean;
+        depthWrite: boolean;
+        side: string;
+      } | null;
+      error: string | null;
+    } | null>("shader_read", { root, rel }),
   /** 序列化并写着色器资产（后端持有 .shader 格式；Shader 指令名取 rel 去扩展名，
    *  与资产路径一致；自动补 .meta） */
   shaderWrite: (root: string, rel: string, kind: string) =>
     invoke<void>("shader_write", { root, rel, kind }),
+  /** 保存着色器源码（仅项目内 .shader；指令跟随路径 + 解析校验 + 自动补 .meta），
+   *  返回重新解析后的文档（含自定义着色器的属性/程序/组装错误） */
+  shaderWriteSource: (root: string, rel: string, source: string) =>
+    invoke<{
+      name: string;
+      kind: string;
+      source: string;
+      properties: {
+        key: string;
+        label: string;
+        kind: string;
+        min?: number | null;
+        max?: number | null;
+        default: number | number[] | string;
+      }[];
+      program: {
+        vertex: string;
+        fragment: string;
+        transparent: boolean;
+        depthWrite: boolean;
+        side: string;
+      } | null;
+      error: string | null;
+    }>("shader_write_source", { root, rel, source }),
   /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */
   materialDuplicate: (root: string, srcRel: string, preferName: string) =>
     invoke<string>("material_duplicate", { root, srcRel, preferName }),
@@ -201,8 +261,19 @@ export const api = {
   getDefaultProjectDir: () => invoke<string | null>("get_default_project_dir"),
   /** 设置默认项目位置（空值 = 清除） */
   setDefaultProjectDir: (dir: string) => invoke<void>("set_default_project_dir", { dir }),
-  /** 扫描代码工坊原型目录（*.ts 清单，按文件名排序） */
-  listCodeProtos: () => invoke<CodeProtoEntry[]>("list_code_protos"),
+  /** 扫描创意工坊仓库全部分类（public/repos/*，含各分类文件清单与目录路径） */
+  listRepoCategories: () => invoke<RepoCategoryEntry[]>("list_repo_categories"),
+  /** 读取仓库文件内容（category 分类目录下的 file；仅文本文件） */
+  readRepoFile: (category: string, file: string) =>
+    invoke<string>("read_repo_file", { category, file }),
+  /** 写入仓库文件（新建/覆盖；目录不存在自动创建） */
+  writeRepoFile: (category: string, file: string, code: string) =>
+    invoke<void>("write_repo_file", { category, file, code }),
+  /** 删除仓库文件 */
+  deleteRepoFile: (category: string, file: string) =>
+    invoke<void>("delete_repo_file", { category, file }),
+  /** 扫描脚本原型目录（repos/code/*.ts 清单，按文件名排序） */
+  listCodeProtos: () => invoke<RepoFileEntry[]>("list_code_protos"),
   /** 读取原型文件内容 */
   readCodeProto: (file: string) => invoke<string>("read_code_proto", { file }),
   /** 写入原型文件（新建/覆盖） */

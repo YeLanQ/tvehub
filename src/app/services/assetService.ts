@@ -366,6 +366,38 @@ export const assetService = {
   },
 
   /**
+   * 按给定源码新建着色器资产（.shader；创意工坊效果原型 → 项目资产）：
+   * 源码经后端 shader_write_source 落盘（Shader 指令名自动同步为资产路径、
+   * 解析校验、自动补 .meta），失败返回 null。
+   */
+  async createShaderFromSource(
+    root: string,
+    destDir: string,
+    stem: string,
+    source: string,
+    assets: AssetEntry[],
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建着色器");
+      return null;
+    }
+    const clean = sanitizeAssetStem(stem);
+    if (!clean) {
+      logStore.log("warn", "无效的着色器名（不能含 / \\ : ..）");
+      return null;
+    }
+    const rel = uniqueRel(assets, destDir, clean, SHADER_EXT);
+    try {
+      await api.shaderWriteSource(root, rel, source);
+      logStore.log("success", `已新建着色器: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建着色器失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
    * 新建 TextureCube（.texcube）资产：默认等距柱状模式并引用内置默认全景图
    * （创建即可用）；序列化/落盘由后端 texcube_write 完成（自动补 .meta）。
    */
@@ -431,7 +463,7 @@ export const assetService = {
     destDir: string,
     stem: string,
     assets: AssetEntry[],
-    /** 代码工坊原型（缺省/内置原型走内置模板 internal/templates/Script.ts） */
+    /** 创意工坊原型（缺省/内置原型走内置模板 internal/templates/Script.ts） */
     proto?: ScriptPrototype,
   ): Promise<string | null> {
     const clean = validateAssetName(stem);

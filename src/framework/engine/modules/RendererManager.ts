@@ -60,6 +60,8 @@ export class RendererManager {
   private renderCb?: () => void;
   /** 清除状态提供方（引擎按活动相机节点的清除标志给出；缺省全清 + 全局背景） */
   private clearProvider: ((cam: THREE.Camera) => CameraClearState | null) | null = null;
+  /** 着色器编译失败回调（three 的 program 报错 → 引擎事件 → 编辑器控制台） */
+  private shaderErrorCb: ((message: string) => void) | null = null;
 
   /** 所有需要随视口比例更新的相机（编辑器相机 + 预览相机等，透视/正交） */
   private cameras = new Set<THREE.Camera>();
@@ -93,6 +95,19 @@ export class RendererManager {
     });
     if (this.activeBackend !== "webgl") {
       console.info("[renderer] 渲染后端: WebGPU（WebGPU 不可用时 three 自动回退 WebGL2）");
+    }
+    // 着色器编译失败（自定义着色器源码有误等）：转到引擎事件 → 编辑器控制台。
+    // three 默认只在浏览器控制台打印，编辑器面板看不到，这里显式接出摘要信息。
+    const gl = this.renderer as unknown as THREE.WebGLRenderer;
+    if (this.activeBackend === "webgl" && gl.debug) {
+      gl.debug.onShaderError = (context, _program, vertexShader, fragmentShader) => {
+        const log =
+          context.getShaderInfoLog(fragmentShader) ||
+          context.getShaderInfoLog(vertexShader) ||
+          "";
+        const summary = String(log).trim().split("\n").slice(0, 4).join(" / ");
+        this.shaderErrorCb?.(summary || "着色器编译失败（无详细信息）");
+      };
     }
     // HDR/LDR 渲染合成：HDR 用 ACES 电影级色调映射，LDR 常规输出（不映射）
     this.renderer.toneMapping =
@@ -151,6 +166,11 @@ export class RendererManager {
 
   setRenderCb(cb: () => void): void {
     this.renderCb = cb;
+  }
+
+  /** 注入着色器编译失败回调（引擎接 "shader:error" 事件 → 编辑器控制台） */
+  setShaderErrorCb(cb: ((message: string) => void) | null): void {
+    this.shaderErrorCb = cb;
   }
 
   /** 注入清除状态提供方（每帧渲染前按活动相机调用；null 配置 = 保持默认全清与全局背景） */

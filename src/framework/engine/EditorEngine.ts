@@ -41,6 +41,8 @@ import {
 } from "./modules/skyboxTextures";
 import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { MaterialManager } from "../material/MaterialManager";
+import { ShaderManager } from "../material/ShaderManager";
+import { tickShaderTime } from "../material/customShader";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
@@ -52,6 +54,10 @@ export interface EditorEvents extends Record<string, unknown> {
   "gizmo:state": { mode: GizmoMode; space: "local" | "world" };
   /** 材质资产参数变更（保存/刷新后广播；rel 为空串表示全部） */
   "material:changed": { rel: string };
+  /** 着色器程序变更（首次加载/源码保存后广播；rel 为空串表示全部） */
+  "shader:changed": { rel: string };
+  /** 着色器编译失败（three 的程序编译报错；message 为可读摘要） */
+  "shader:error": { message: string };
   /** 模型资产解析状态变更（加载完成/失败/失效后广播；rel 为空串表示全部） */
   "model:changed": { rel: string };
   /** 节点动画运行时变化（播放/暂停/图状态切换/参数写入） */
@@ -73,6 +79,8 @@ export class EditorEngine {
   readonly helperSystem: HelperSystem;
   /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
   readonly materials = new MaterialManager();
+  /** 着色器程序缓存（自定义着色器按引用取程序；应用层注入文件读取器） */
+  readonly shaders = new ShaderManager();
   /** 模型资产缓存/实例化（模型网格按引用克隆渲染；应用层注入文件读取器） */
   readonly models = new ModelManager();
   /** 动画系统（模型网格的剪辑播放/骨骼动画/动画图状态机；渲染循环推进） */
@@ -85,6 +93,8 @@ export class EditorEngine {
   readonly physics = new PhysicsSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
   private clock = new THREE.Clock();
+  /** 自定义着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
+  private shaderTime = 0;
   /** 贴图 URL 解析器（相对路径 → asset:// 协议 URL；应用层注入） */
   private textureUrlResolver: ((rel: string) => string | null) | null = null;
   /** 贴图加载缓存（key = "srgb?c|n|rel" → Texture 或 null） */
@@ -198,6 +208,9 @@ export class EditorEngine {
     this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
       paramsFor: (rel) => this.materials.paramsFor(rel),
       typeFor: (rel) => this.materials.typeFor(rel),
+      shaderFor: (rel) => this.materials.shaderFor(rel),
+      shaderProgramFor: (shaderRel) => this.shaders.programFor(shaderRel),
+      shaderPropertiesFor: (shaderRel) => this.shaders.propertiesFor(shaderRel),
       loadTexture: (rel, srgb) => this.loadTexture(rel, srgb),
       instantiateModel: (rel) => this.models.instantiate(rel),
       modelReady: (rel) => this.models.has(rel),
@@ -206,6 +219,11 @@ export class EditorEngine {
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
     this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
+    // 着色器程序更新（首次加载/源码保存）→ 刷新引用该着色器的材质所挂网格
+    this.shaders.onChanged((rel) => {
+      this.refreshShaderNodes(rel);
+      this.events.emit("shader:changed", { rel });
+    });
     // 模型库缓存更新（加载完成/失效）→ 刷新引用该模型的所有网格
     this.models.onChanged((rel) => {
       this.refreshModelNodes(rel);
@@ -328,6 +346,8 @@ export class EditorEngine {
     // 此时渲染器已释放，直接终止后续初始化，避免在已销毁的引擎上补建 gizmo/监听。
     if (this.disposed) return;
     this.initGizmo();
+    // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
+    this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
     this.renderer.setRenderCb(() => {
       // 帧间隔（动画推进与物理步进共用一次取值）
       const dt = this.clock.getDelta();
@@ -335,6 +355,9 @@ export class EditorEngine {
       // 物理紧随其后：运动学体跟随动画后的位姿推开动力学体
       this.animation.update(dt);
       this.physics.update(dt);
+      // 自定义着色器时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
+      this.shaderTime += dt;
+      tickShaderTime(this.shaderTime);
       // 音频：监听器随活动渲染相机 + 可见性自动暂停（Web Audio 自走时钟）
       const activeCam = this.renderer.getActiveCamera();
       if (activeCam) this.audio.attachListener(activeCam);
@@ -385,6 +408,7 @@ export class EditorEngine {
     this.audio?.dispose();
     this.physics?.dispose();
     this.materials?.clear();
+    this.shaders?.clear();
     this.models?.clear();
     this.removeViewportClickHandler();
   }
@@ -748,6 +772,42 @@ export class EditorEngine {
   }
 
   /**
+   * 着色器程序（重新）解析后：刷新引用该着色器的全部材质所挂网格（自定义着色器
+   * 程序变更即时生效：源码保存、首次加载完成、撤销/重做切回引用）。
+   * rel 为空时刷新全部网格材质。
+   */
+  refreshShaderNodes(shaderRel?: string | null): void {
+    for (const node of this.graph.all()) {
+      if (!(node instanceof MeshNode)) continue;
+      if (shaderRel == null || this.materials.shaderFor(node.material) === shaderRel) {
+        this.synchronizer.refreshMeshMaterial(node);
+      }
+    }
+  }
+
+  /**
+   * 预取材质引用及其挂载的着色器程序：节点入图即按正确外观渲染
+   * （自定义着色器先取到程序再刷新，避免先占位后跳变）。
+   */
+  async preloadMaterials(rels: string[]): Promise<void> {
+    if (rels.length === 0) return;
+    await this.materials.preload(rels);
+    if (this.isDisposed()) return;
+    const shaderRels = [
+      ...new Set(
+        rels
+          .map((rel) => this.materials.shaderFor(rel))
+          .filter((rel) => rel.length > 0),
+      ),
+    ];
+    if (shaderRels.length > 0) {
+      await this.shaders.preload(shaderRels);
+      if (this.isDisposed()) return;
+    }
+    this.refreshMaterialNodes(null);
+  }
+
+  /**
    * 模型资产解析完成后：刷新引用该模型的所有网格（实例替换 + 动画重绑）
    * 并广播 model:changed。rel 为空时刷新全部模型网格。
    */
@@ -903,7 +963,10 @@ export class EditorEngine {
     const n = this.graph.get(c.nodeId);
     if (n instanceof MeshNode && !this.materials.has(n.material)) {
       const rel = n.material;
-      void this.materials.preload([rel]).then(() => this.refreshMaterialNodes(rel));
+      void this.materials.preload([rel]).then(async () => {
+        await this.shaders.preload([this.materials.shaderFor(rel)].filter((s) => s.length > 0));
+        this.refreshMaterialNodes(rel);
+      });
     }
     // 同理：尚未解析的模型资产 → 预取后经 models.onChanged 自动刷新网格与动画
     if (

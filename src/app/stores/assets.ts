@@ -46,11 +46,18 @@ export interface AssetsStore {
     /** 显式指定名称；缺省按种类用 "PBR"/"Unlit"/"Toon"（资产面板「新建着色器」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
+  /** 按给定源码新建着色器资产（创意工坊效果原型 → 项目 .shader） */
+  createShaderFromSource: (
+    root: string,
+    destDir: string,
+    stem: string,
+    source: string,
+  ) => Promise<string | null>;
   createScriptAsset: (
     root: string,
     destDir: string,
     stem: string,
-    /** 代码工坊原型（缺省走内置模板） */
+    /** 创意工坊原型（缺省走内置模板） */
     proto?: ScriptPrototype,
   ) => Promise<string | null>;
   createTextureCubeAsset: (
@@ -222,6 +229,11 @@ export function getAssetsStore(): AssetsStore {
     },
     async createShaderAsset(root, destDir, kind, preferStem = null) {
       const r = await assetService.createShaderAsset(root, destDir, kind, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createShaderFromSource(root, destDir, stem, source) {
+      const r = await assetService.createShaderFromSource(root, destDir, stem, source, state.assets);
       if (r) await reload(root);
       return r;
     },

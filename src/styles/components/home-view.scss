@@ -713,6 +713,135 @@
 }
 
 // ---------------------------------------------------------------------------
+// 创意工坊：两栏（左标签栏 = 仓库分类；右内容栏 = 选中分类的文件）
+// ---------------------------------------------------------------------------
+
+.workshop-layout {
+  display: flex;
+  gap: 16px;
+  // 标签栏高度固定（不随分类数/内容栏高度变化），故按顶对齐而非拉伸
+  align-items: flex-start;
+}
+
+.workshop-tabs {
+  // 固定高度：吃满当前视口可用高度（窗口高 - 顶部导航留白与页头），并夹在
+  // 260~720px 之间；分类多时在栏内滚动，不撑高整页、也不随内容栏高度跳动
+  flex: 0 0 170px;
+  height: clamp(260px, calc(100vh - 132px), 720px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.workshop-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workshop-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.workshop-tab.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ws-tab-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-tab-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 1px 7px;
+}
+
+.ws-tabs-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.workshop-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workshop-content-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workshop-content-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.workshop-content-head .sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.workshop-empty {
+  padding: 26px 18px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.workshop-empty p {
+  margin: 0 0 6px;
+}
+
+.workshop-empty .mono {
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text);
+}
+
+.proto-binary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+// ---------------------------------------------------------------------------
 // 内嵌文档查看器（public/docs 静态页；文档与资源「打开」弹层）
 // ---------------------------------------------------------------------------
 

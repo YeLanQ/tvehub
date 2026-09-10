@@ -24,6 +24,7 @@ import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures } from "../engine/runtime/textures.mjs";
+import { tickShaderTime } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createStage } from "../engine/runtime/stage.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
@@ -343,10 +344,14 @@ async function main() {
   window.addEventListener("pagehide", () => scripts.dispose(), { once: true, capture: true });
 
   const clock = new THREE.Clock();
+  // 自定义着色器时间（_Time；按帧间隔累加，与 clock 的 getDelta 取值互不干扰）
+  let shaderTime = 0;
 
   function frame() {
     requestAnimationFrame(frame);
     const dt = clock.getDelta();
+    shaderTime += dt;
+    tickShaderTime(shaderTime);
     scripts.update(dt);
     animations.update(dt);
     physicsApi?.update(dt);

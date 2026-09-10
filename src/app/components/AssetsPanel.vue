@@ -14,10 +14,8 @@ import { assetService } from "../services/assetService";
 import { logStore } from "../stores/log";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { prompt } from "../lib/prompt";
-import {
-  listScriptPrototypes,
-  type ScriptPrototype,
-} from "../lib/script-prototypes";
+import { type ScriptPrototype } from "../lib/script-prototypes";
+import { listRepoCategories, readRepoFile } from "../lib/repos";
 import { confirm } from "../lib/confirm";
 import { instantiatePrefabAsset } from "../lib/prefabs";
 import { setAssetSelection } from "../lib/active-panel";
@@ -31,6 +29,8 @@ import {
   buildBlankMenu,
   buildRefreshOnlyMenu,
   type AssetMenuApi,
+  type MenuWorkshopCategory,
+  type MenuWorkshopItem,
 } from "../lib/asset-menu";
 import AssetTreeNode, {
   ASSET_DRAG_KEY,
@@ -276,7 +276,7 @@ function addAudioToScene(item: ChildEntry): void {
 async function onItemContext(e: MouseEvent, item: ChildEntry) {
   e.preventDefault();
   e.stopPropagation();
-  await refreshCodeProtos();
+  await refreshWorkshopMenu();
   openContextMenu(e, buildEntryMenu(item, menuApi));
 }
 
@@ -294,7 +294,7 @@ async function onContentContext(e: MouseEvent) {
   if (t?.closest(".am-item, input, select, button")) return;
   e.preventDefault();
   e.stopPropagation();
-  await refreshCodeProtos();
+  await refreshWorkshopMenu();
   openContextMenu(e, buildContentMenu(currentDir.value, menuApi));
 }
 
@@ -303,7 +303,7 @@ async function onBlankContext(e: MouseEvent) {
   if (t?.closest(".asset-row, input, select, button, textarea")) return;
   e.preventDefault();
   e.stopPropagation();
-  await refreshCodeProtos();
+  await refreshWorkshopMenu();
   const items = isInternalAsset(currentDir.value)
     ? buildRefreshOnlyMenu(menuApi)
     : buildBlankMenu(menuApi);
@@ -329,8 +329,8 @@ const menuApi: AssetMenuApi = {
   onDelete: (item) => void doDelete(item),
   onNewScene: (dir) => void doNewScene(dir),
   onNewScript: (dir) => void doNewScript(dir),
-  codeProtos: () => codeProtoList.value,
-  onNewScriptFromProto: (dir, proto) => void doNewScriptFromProto(dir, proto),
+  workshops: () => workshopMenuCats.value,
+  onNewFromWorkshop: (dir, item) => void doNewFromWorkshop(dir, item),
   onNewFolder: (dir) => void doNewFolder(dir),
   onNewMaterial: (dir) => void doNewMaterial(dir),
   onNewShader: (dir, kind) => void doNewShader(dir, kind),
@@ -378,13 +378,32 @@ async function doNewScene(dir: string) {
   await assetsStore.createSceneAsset(root, dir, name);
 }
 
-// —— 代码工坊原型清单（右键菜单「代码工坊」子菜单展示用；右键时刷新）——
-const codeProtoList = ref<ScriptPrototype[]>([]);
-async function refreshCodeProtos(): Promise<void> {
-  codeProtoList.value = await listScriptPrototypes();
+// —— 创意工坊菜单数据（右键菜单「创意工坊 ▸ 标签 ▸ 内容」；右键时刷新）——
+// 标签名与首页工坊一致（repos 子目录名首字母大写），数据来自 lib/repos。
+/** 可新建的项目资产类型：脚本（.ts）与着色器（.shader） */
+const WORKSHOP_ITEM_KINDS: Record<string, MenuWorkshopItem["kind"]> = {
+  ts: "script",
+  shader: "shader",
+};
+const workshopMenuCats = ref<MenuWorkshopCategory[]>([]);
+
+/** 刷新创意工坊分类缓存（仅保留「有可新建项」的分类） */
+async function refreshWorkshopMenu(): Promise<void> {
+  const cats = await listRepoCategories();
+  workshopMenuCats.value = cats
+    .map((c) => {
+      const ext = c.prototypeExt;
+      const kind = ext ? WORKSHOP_ITEM_KINDS[ext] : undefined;
+      if (!kind) return null;
+      const items = c.files
+        .filter((f) => f.ext === ext)
+        .map((f) => ({ category: c.id, file: f.file, name: f.name, kind }));
+      return items.length ? ({ id: c.id, label: c.label, items } as MenuWorkshopCategory) : null;
+    })
+    .filter((c): c is MenuWorkshopCategory => c !== null);
 }
 
-/** 新建 TS 脚本（内置基础模板；工坊原型走右键菜单「代码工坊」子菜单） */
+/** 新建 TS 脚本（内置基础模板；工坊原型走右键菜单「创意工坊」子菜单） */
 async function doNewScript(dir: string) {
   if (!isSrcDir(dir)) {
     logStore.log("warn", "脚本只能创建在 src 目录内");
@@ -400,20 +419,48 @@ async function doNewScript(dir: string) {
   await getScriptsStore().createScript(name.trim());
 }
 
-/** 按代码工坊原型新建脚本（右键菜单「代码工坊」子项；输入名称后在 src/ 下创建并打开） */
-async function doNewScriptFromProto(dir: string, proto: ScriptPrototype) {
-  if (!isSrcDir(dir)) {
-    logStore.log("warn", "脚本只能创建在 src 目录内");
+/**
+ * 按创意工坊内容新建项目资产（右键菜单「创意工坊 ▸ 标签 ▸ 内容」）：
+ * - 脚本（code 分类的 .ts）：固定创建在 src/（脚本系统只编译 src/ 下的 .ts），
+ *   故从任意目录调起都落到 src/，提示里显示真实目标而不随右键位置变化；
+ * - 效果（effect 分类的 .shader）：把原型源码写成当前目录下的着色器资产
+ *   （指令名随路径自动同步，随后可在材质卡片「着色器」下拉中挂载）。
+ */
+async function doNewFromWorkshop(dir: string, item: MenuWorkshopItem) {
+  const root = projectStore.currentPath;
+  if (!root) return;
+  if (item.kind === "shader" && !importAllowedDir(dir)) {
+    logStore.log("warn", isSrcDir(dir) ? "src 目录不允许新建着色器" : "内置目录只读，不允许新建着色器");
     return;
   }
+  const isScript = item.kind === "script";
   const name = await prompt({
-    title: "新建脚本",
-    label: `${dir}/（脚本名）· 原型：${proto.name}`,
-    placeholder: proto.name,
+    title: isScript ? "新建脚本" : "新建着色器",
+    label: isScript
+      ? `src/（脚本名）· 原型：${item.name}`
+      : `${dir}/（着色器名）· 效果原型：${item.name}`,
+    placeholder: item.name,
     confirmText: "创建",
   });
   if (!name?.trim()) return;
-  await getScriptsStore().createScript(name.trim(), proto);
+  const source = await readRepoFile(item.category, item.file);
+  if (!source.trim()) {
+    logStore.log("warn", `创意工坊内容读取失败: ${item.category}/${item.file}`);
+    return;
+  }
+  if (isScript) {
+    const proto: ScriptPrototype = {
+      id: item.file,
+      name: item.name,
+      description: "",
+      code: source,
+    };
+    const rel = await getScriptsStore().createScript(name.trim(), proto);
+    if (rel) logStore.log("success", `已按创意工坊原型「${item.name}」创建脚本: ${rel}`);
+    return;
+  }
+  const rel = await assetsStore.createShaderFromSource(root, dir, name.trim(), source);
+  if (rel) logStore.log("success", `已按创意工坊效果「${item.name}」创建着色器: ${rel}`);
 }
 
 /** 新建空白预制体（assets/prefabs 语义上的目录均可；模板创建） */
@@ -625,7 +672,7 @@ const {
 });
 
 onMounted(() => {
-  void refreshCodeProtos();
+  void refreshWorkshopMenu();
   if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
 });
 

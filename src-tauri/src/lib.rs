@@ -4,13 +4,13 @@
 
 mod asset_protocol;
 mod build;
-mod code_repo;
 mod devtools;
 mod internal;
 mod js_minify;
 mod model_bin;
 mod preview;
 mod project;
+mod repos;
 mod scene;
 mod store;
 mod trash;
@@ -476,9 +476,10 @@ fn builtin_root(kind: &str) -> PathBuf {
 pub(crate) fn internal_root() -> PathBuf {
     builtin_root("internal")
 }
-/// 代码工坊脚本原型目录（repos/code；与内置资源同源：开发=仓库 public，生产=exe 旁 public）
-pub(crate) fn code_repo_root() -> PathBuf {
-    builtin_root("repos/code")
+/// 创意工坊资源仓库根目录（public/repos；与内置资源同源：开发=仓库 public，
+/// 生产=exe 旁 public）。分类 = 子目录（code/effect/…），见 repos.rs。
+pub(crate) fn repos_root() -> PathBuf {
+    builtin_root("repos")
 }
 
 /// build.rs 生成的归档：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]
@@ -594,10 +595,14 @@ pub fn run() {
             pick_import_files,
             pick_import_folders,
             get_default_project_dir,
-             code_repo::list_code_protos,
-            code_repo::read_code_proto,
-            code_repo::write_code_proto,
-            code_repo::delete_code_proto,
+            repos::list_repo_categories,
+            repos::read_repo_file,
+            repos::write_repo_file,
+            repos::delete_repo_file,
+            repos::list_code_protos,
+            repos::read_code_proto,
+            repos::write_code_proto,
+            repos::delete_code_proto,
            set_default_project_dir,
             scan_assets,
             scan_asset_db,
@@ -642,6 +647,7 @@ pub fn run() {
             scene::material::skymat_write,
             scene::material::shader_read,
             scene::material::shader_write,
+            scene::material::shader_write_source,
             scene::texcube::texcube_write,
             devtools::devtools_start,
             devtools::devtools_stop,

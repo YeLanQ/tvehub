@@ -18,6 +18,7 @@ export const WEB_PREVIEW_RUNTIME_FILES = [
   "engine/runtime/sky.mjs",
   "engine/runtime/material.mjs",
   "engine/runtime/mesh.mjs",
+  "engine/runtime/shaderlab.mjs",
   "engine/runtime/animclip.mjs",
   "engine/runtime/nodes.mjs",
   "engine/runtime/textures.mjs",
