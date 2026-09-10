@@ -136,6 +136,37 @@ const DOC_LINKS = [
   },
 ];
 
+/**
+ * 内嵌文档（静态 docs 网页，public/docs）：点击打开在应用内弹层中查看。
+ * hash 为文档路径（public/docs 相对路径，去 .md 扩展名）。
+ */
+const DOC_PAGES = [
+  {
+    name: "编辑器文档",
+    desc: "场景编辑、资产、动画、脚本、预览与构建等使用手册",
+    hash: "editor/overview",
+  },
+  {
+    name: "SDK 文档",
+    desc: "tve 脚本 API：组件生命周期、装饰器、engine 接口",
+    hash: "sdk/overview",
+  },
+];
+
+/** 内嵌文档查看器（弹层 iframe 加载 public/docs 静态页） */
+const showDocsViewer = ref(false);
+const docsViewerSrc = ref("/docs/index.html");
+
+function openDocsViewer(hash: string): void {
+  docsViewerSrc.value = `/docs/index.html#${hash}`;
+  showDocsViewer.value = true;
+}
+
+function closeDocsViewer(): void {
+  showDocsViewer.value = false;
+  docsViewerSrc.value = "";
+}
+
 onMounted(() => {
   projectStore.refreshRecent();
   void refreshProtos();
@@ -775,6 +806,13 @@ watch(showNewProject, (val) => {
           <!-- 文档与资源 -->
           <div class="settings-card">
             <h3>文档与资源</h3>
+            <div v-for="d in DOC_PAGES" :key="d.hash" class="tpl-row">
+              <div class="tpl-info">
+                <div class="tpl-name">{{ d.name }}</div>
+                <div class="tpl-desc">{{ d.desc }}</div>
+              </div>
+              <button title="在应用内打开文档" @click="openDocsViewer(d.hash)">打开</button>
+            </div>
             <div v-for="d in DOC_LINKS" :key="d.url" class="tpl-row">
               <div class="tpl-info">
                 <div class="tpl-name">{{ d.name }}</div>
@@ -790,6 +828,23 @@ watch(showNewProject, (val) => {
     <!-- 复制成功提示（开发者服务·端点/配置复制） -->
     <Transition name="fade">
       <div v-if="showCopyToast" class="copy-toast">已复制到剪贴板</div>
+    </Transition>
+
+    <!-- 内嵌文档查看器（public/docs 静态页） -->
+    <Transition name="fade">
+      <div v-if="showDocsViewer" class="docs-viewer-backdrop" @click.self="closeDocsViewer">
+        <div class="docs-viewer">
+          <div class="docs-viewer-head">
+            <span class="docs-viewer-title">tve 文档</span>
+            <button class="docs-viewer-close" title="关闭文档" @click="closeDocsViewer">✕</button>
+          </div>
+          <iframe
+            class="docs-viewer-frame"
+            :src="docsViewerSrc"
+            title="tve 文档"
+          ></iframe>
+        </div>
+      </div>
     </Transition>
 
     <!-- 全局确认弹窗（首页窗口独立挂载：垃圾篓/移除等 confirm 依赖它） -->

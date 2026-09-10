@@ -711,3 +711,66 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+// ---------------------------------------------------------------------------
+// 内嵌文档查看器（public/docs 静态页；文档与资源「打开」弹层）
+// ---------------------------------------------------------------------------
+
+.docs-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.docs-viewer {
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 92vw);
+  height: min(760px, 88vh);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.docs-viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel-2);
+
+  .docs-viewer-title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .docs-viewer-close {
+    background: none;
+    border: 0;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+
+    &:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+  }
+}
+
+.docs-viewer-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: #141414;
+}

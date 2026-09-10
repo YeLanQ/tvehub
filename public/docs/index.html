@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tve 文档</title>
+    <script src="./marked.min.js"></script>
+    <style>
+      :root {
+        --bg: #141414;
+        --bg-panel: #1c1c1c;
+        --bg-panel-2: #212121;
+        --bg-hover: #292929;
+        --bg-active: #303030;
+        --border: #3f3f3f;
+        --text: #d2d2d2;
+        --text-dim: #949494;
+        --code-bg: #1a1a1a;
+        --ok: #5fb05f;
+        font-family: "Segoe UI", "Microsoft YaHei", Inter, Avenir, Helvetica, Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; }
+      body { display: flex; flex-direction: column; }
+
+      /* ---------- 顶栏 ---------- */
+      .docs-head {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 14px;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
+        flex: 0 0 auto;
+      }
+      .docs-head .title { font-weight: 600; }
+      .docs-head .crumb { color: var(--text-dim); }
+
+      /* ---------- 主体 ---------- */
+      .docs-body { display: flex; flex: 1 1 auto; min-height: 0; }
+      nav.docs-nav {
+        flex: 0 0 230px;
+        overflow-y: auto;
+        background: var(--bg-panel);
+        border-right: 1px solid var(--border);
+        padding: 10px 0 20px;
+      }
+      .nav-group { margin: 14px 0 4px; padding: 0 12px; font-size: 11px; color: var(--text-dim); letter-spacing: 0.4px; }
+      .nav-item {
+        display: block; width: 100%; text-align: left;
+        padding: 5px 12px 5px 20px;
+        background: none; border: 0; border-left: 2px solid transparent;
+        color: var(--text); font: inherit; cursor: pointer;
+      }
+      .nav-item:hover { background: var(--bg-hover); }
+      .nav-item.active { background: var(--bg-active); border-left-color: var(--ok); }
+
+      main.docs-content { flex: 1 1 auto; overflow-y: auto; padding: 24px 36px 80px; }
+      .docs-content .md { max-width: 860px; }
+
+      /* ---------- Markdown 渲染 ---------- */
+      .md h1, .md h2, .md h3, .md h4 { line-height: 1.3; margin: 1.4em 0 0.6em; color: #e8e8e8; }
+      .md h1 { font-size: 22px; margin-top: 0.2em; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+      .md h2 { font-size: 17px; }
+      .md h3 { font-size: 14.5px; }
+      .md p { margin: 0.6em 0; }
+      .md a { color: #8ab4f8; text-decoration: none; }
+      .md a:hover { text-decoration: underline; }
+      .md code {
+        font-family: Consolas, "Courier New", monospace; font-size: 12px;
+        background: var(--code-bg); border: 1px solid var(--border);
+        border-radius: 3px; padding: 1px 5px;
+      }
+      .md pre {
+        background: var(--code-bg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 12px 14px; overflow-x: auto;
+      }
+      .md pre code { background: none; border: 0; padding: 0; font-size: 12px; line-height: 1.55; }
+      .md ul, .md ol { padding-left: 1.6em; margin: 0.5em 0; }
+      .md li { margin: 2px 0; }
+      .md table { border-collapse: collapse; margin: 0.8em 0; max-width: 100%; display: block; overflow-x: auto; }
+      .md th, .md td { border: 1px solid var(--border); padding: 5px 12px; text-align: left; }
+      .md th { background: var(--bg-panel-2); }
+      .md tr:nth-child(2n) td { background: rgba(255, 255, 255, 0.02); }
+      .md blockquote { margin: 0.8em 0; padding: 2px 14px; border-left: 3px solid var(--border); color: var(--text-dim); }
+      .md hr { border: 0; border-top: 1px solid var(--border); margin: 1.6em 0; }
+
+      /* ---------- 滚动条 / 加载 ---------- */
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: #565656; border-radius: 5px; }
+      ::-webkit-scrollbar-thumb:hover { background: #6a6a6a; }
+      .docs-content.loading { color: var(--text-dim); }
+    </style>
+  </head>
+  <body>
+    <header class="docs-head">
+      <span class="title">tve 文档</span>
+      <span class="crumb" id="crumb"></span>
+    </header>
+    <div class="docs-body">
+      <nav class="docs-nav" id="nav"></nav>
+      <main class="docs-content" id="content">
+        <div class="md" id="md">加载中…</div>
+      </main>
+    </div>
+
+    <script>
+      "use strict";
+      // 文档清单（与 docs 目录同步维护）
+      var DOCS = [
+        {
+          group: "文档",
+          base: "",
+          items: [["README", "文档首页"]],
+        },
+        {
+          group: "编辑器文档",
+          base: "editor/",
+          items: [
+            ["overview", "编辑器总览"],
+            ["projects", "项目管理"],
+            ["scene", "场景编辑"],
+            ["inspector", "检查器与组件"],
+            ["assets", "资产系统"],
+            ["animation", "动画编辑器"],
+            ["scripting", "脚本工作台"],
+            ["preview-build", "预览与构建"],
+          ],
+        },
+        {
+          group: "SDK 文档",
+          base: "sdk/",
+          items: [
+            ["overview", "SDK 总览"],
+            ["decorators", "装饰器"],
+            ["entity", "实体与查询"],
+            ["engine", "engine 入口"],
+            ["components", "内置组件门面"],
+            ["math", "数学库 math"],
+            ["utils", "通用设施"],
+          ],
+        },
+      ];
+
+      var nav = document.getElementById("nav");
+      var mdEl = document.getElementById("md");
+      var crumbEl = document.getElementById("crumb");
+      var currentPath = "";
+
+      // ---------- 侧边栏 ----------
+      DOCS.forEach(function (g) {
+        var head = document.createElement("div");
+        head.className = "nav-group";
+        head.textContent = g.group;
+        nav.appendChild(head);
+        g.items.forEach(function (it) {
+          var btn = document.createElement("button");
+          btn.className = "nav-item";
+          btn.dataset.path = g.base + it[0];
+          btn.textContent = it[1];
+          btn.addEventListener("click", function () {
+            location.hash = "#" + g.base + it[0];
+          });
+          nav.appendChild(btn);
+        });
+      });
+
+      function setActive(path) {
+        nav.querySelectorAll(".nav-item").forEach(function (el) {
+          el.classList.toggle("active", el.dataset.path === path);
+        });
+      }
+
+      // ---------- 渲染 ----------
+      // 站内 .md 相对链接 → hash 导航（渲染后改写）
+      function rewriteLinks() {
+        mdEl.querySelectorAll("a[href]").forEach(function (a) {
+          var href = a.getAttribute("href") || "";
+          if (/^(https?:|#|\/)/.test(href)) return;
+          if (!href.endsWith(".md")) return;
+          // 以当前文档目录解析相对路径 → 去扩展名的文档路径
+          var dir = currentPath.includes("/") ? currentPath.slice(0, currentPath.lastIndexOf("/") + 1) : "";
+          var target = (dir + href).replace(/\.md$/, "");
+          var parts = [];
+          target.split("/").forEach(function (seg) {
+            if (seg === "..") parts.pop();
+            else if (seg !== ".") parts.push(seg);
+          });
+          a.href = "#" + parts.join("/");
+        });
+      }
+
+      function render(path) {
+        currentPath = path;
+        setActive(path);
+        crumbEl.textContent = " / " + path.replace(/\//, " / ");
+        mdEl.textContent = "加载中…";
+        fetch("./" + path + ".md")
+          .then(function (res) {
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return res.text();
+          })
+          .then(function (text) {
+            mdEl.innerHTML = marked.parse(text, { gfm: true, breaks: false });
+            rewriteLinks();
+            document.getElementById("content").scrollTop = 0;
+          })
+          .catch(function (err) {
+            mdEl.textContent = "文档加载失败：" + err.message + "（" + path + ".md）";
+          });
+      }
+
+      function route() {
+        var path = decodeURIComponent(location.hash.replace(/^#/, "")).replace(/\.md$/, "");
+        if (!path) path = "README";
+        render(path);
+      }
+
+      window.addEventListener("hashchange", route);
+      route();
+    </script>
+  </body>
+</html>
