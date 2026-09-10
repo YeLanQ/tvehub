@@ -73,7 +73,7 @@ function shadowConfig():
   return null;
 }
 
-/** Shadow 类型下拉当前档（Off / Hard / Soft，Unity 语义；由投射开关 + 软化半径推导） */
+/** Shadow 类型下拉当前档（Off / Hard / Soft；由投射开关 + 软化半径推导） */
 const shadowType = computed<"off" | "hard" | "soft">(() => {
   void props.rev;
   const sc = shadowConfig();
@@ -128,7 +128,7 @@ function penumbraOf(): number {
     <span class="light-kind-tag">{{ kindLabel }}</span>
   </div>
 
-  <!-- Range：照射半径（点光/聚光，Unity 光源参数首项；0 = 无限远） -->
+  <!-- Range：照射半径（点光/聚光；0 = 无限远） -->
   <div v-if="isPointOrSpot()" class="field">
     <label title="Range：照射距离/作用半径（0 = 无限远）">Range</label>
     <NumberField
@@ -143,7 +143,7 @@ function penumbraOf(): number {
   <!-- 聚光灯：光束角度与边缘柔和度 -->
   <template v-if="props.node instanceof SpotLightNode">
     <div class="field">
-      <label title="Spot Angle：光束半角（度）；Unity 面板显示全角，此处为半角">Spot Angle</label>
+      <label title="Spot Angle：光束半角（度；此处为半角，非全角）">Spot Angle</label>
       <NumberField
         :model-value="angleOf()"
         :step="1"
@@ -194,7 +194,7 @@ function penumbraOf(): number {
     />
   </div>
 
-  <!-- Culling Mask（Unity 灯光同名字段）：只照亮掩码内层的对象 -->
+  <!-- Culling Mask：只照亮掩码内层的对象 -->
   <div class="field" :data-rev="rev">
     <label title="Culling Mask（只照亮掩码内层的对象；相机 Culling Mask 排除的层本灯也不参与）">
       Culling Mask
@@ -216,10 +216,10 @@ function penumbraOf(): number {
     </select>
   </div>
 
-  <!-- 阴影参数组（Unity Light → Shadows 语义；Off 档时禁用输入，仍回显存储值） -->
+  <!-- 阴影参数组（Off 档时禁用输入，仍回显存储值） -->
   <template v-if="hasShadow()">
     <div class="field">
-      <label title="阴影浓度：0 = 阴影不可见，1 = 纯黑阴影（Unity Strength）">Strength</label>
+      <label title="阴影浓度：0 = 阴影不可见，1 = 纯黑阴影">Strength</label>
       <NumberField
         :model-value="shadowNum('strength')"
         :step="0.05"
@@ -231,7 +231,7 @@ function penumbraOf(): number {
       />
     </div>
     <div class="field">
-      <label title="深度偏移：向远处推可压制自阴影麻点，过负会飘影（Unity Bias）">Bias</label>
+      <label title="深度偏移：向远处推可压制自阴影麻点，过负会飘影">Bias</label>
       <NumberField
         :model-value="shadowNum('bias')"
         :step="0.0005"
@@ -243,7 +243,7 @@ function penumbraOf(): number {
       />
     </div>
     <div class="field">
-      <label title="沿法线方向偏移阴影采样点；0 = 自动按阴影贴图纹素相对化（Unity Normal Bias）">
+      <label title="沿法线方向偏移阴影采样点；0 = 自动按阴影贴图纹素相对化">
         Normal Bias
       </label>
       <NumberField
@@ -256,7 +256,7 @@ function penumbraOf(): number {
       />
     </div>
     <div class="field">
-      <label title="阴影近裁剪面：比这更近的物体不参与投影（Unity Near Plane）">Near Plane</label>
+      <label title="阴影近裁剪面：比这更近的物体不参与投影">Near Plane</label>
       <NumberField
         :model-value="shadowNum('near')"
         :step="0.05"

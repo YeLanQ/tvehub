@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// 分层渲染 pass（Unity Culling Mask 多 pass 实现，运行时镜像）。
+// 分层渲染 pass（Culling Mask 多 pass 实现，运行时镜像）。
 //
 // 相机掩码全开且无部分掩码灯光、或在掩码内只占用一个层时单 pass（零额外开销）；
 // 相机节点收窄了 Culling Mask 且场景占用多个掩码内层时按层拆 pass —— 每个 pass
@@ -24,7 +24,7 @@ export function populatedLayerBits(scene) {
  * 相机本帧需要的分层 pass 位列表（升序，每项为单层位掩码）；
  * 返回 null = 无需拆分，调用方照常单 pass。
  * 相机掩码全开且无部分掩码灯光、或掩码内在用层 ≤1 → null；
- * 相机掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆（Unity 语义下灯光
+ * 相机掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆（Culling Mask 语义下灯光
  * Culling Mask 恒生效，与相机掩码无关；每层 pass 只收集掩码覆盖该层的灯）。
  */
 export function layerPassBits(scene, camera) {

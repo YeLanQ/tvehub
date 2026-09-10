@@ -95,7 +95,7 @@ const hp2 = entity.getComponent("src/hp.ts");
 const hp3 = entity.getComponent("HPBar");
 ```
 
-脚本类在加载后全局可见，脚本之间互相引用组件无需 import 运行时——严格模式下用 `import type` 只引入类型即可获得智能提示（对齐 Unity 按类型名查找）。
+脚本类在加载后全局可见，脚本之间互相引用组件无需 import 运行时——严格模式下用 `import type` 只引入类型即可获得智能提示（按类型名查找）。
 
 ## 全场景组件查找
 

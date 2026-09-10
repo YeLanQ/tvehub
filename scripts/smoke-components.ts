@@ -376,7 +376,7 @@ function check(name: string, cond: boolean, detail = ""): void {
   check("upsert 同帧覆盖不重复", curve.keys.filter((k) => Math.abs(k.t - 0.5) <= 1e-4).length === 1 && curve.keys.find((k) => Math.abs(k.t - 0.5) <= 1e-4)?.v === 44);
   check("removeKeyAt 删除", removeKeyAt(curve, 0.5) && !curve.keys.some((k) => Math.abs(k.t - 0.5) <= 1e-4));
 
-  // —— 贝塞尔切线（Unity 风格）：解析收敛 / 手动态求值 / 自动态回归 / 固化 / 对称 ——
+  // —— 贝塞尔切线：解析收敛 / 手动态求值 / 自动态回归 / 固化 / 对称 ——
   const bz = parseAnimationClip({
     duration: 1,
     loops: false,

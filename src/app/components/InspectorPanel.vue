@@ -231,7 +231,7 @@ onBeforeUnmount(flushMaterialPersist);
         <ParticleSection :node="node" :rev="revision" @update="onParticleUpdate" />
       </ComponentCard>
 
-      <!-- —— 已挂组件卡（按挂载序 = 卡片序；Unity 组件卡语义：启用勾选 + ⋮ 菜单） —— -->
+      <!-- —— 已挂组件卡（按挂载序 = 卡片序；组件卡语义：启用勾选 + ⋮ 菜单） —— -->
       <template v-for="c in mountedComponents" :key="c.id">
         <ComponentCard
           :title="compCardTitle(c)"

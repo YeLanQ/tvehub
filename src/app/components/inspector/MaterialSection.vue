@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 材质（Material）卡片 —— 参数按挂载着色器的渲染分支（工厂注册表 MaterialTypeDef）
- * 数据驱动渲染：PBR（MeshPhysicalMaterial，Blender「原理化 BSDF」分组全量暴露）、
+ * 数据驱动渲染：PBR（MeshPhysicalMaterial，「原理化 BSDF」分组全量暴露）、
  * Unlit（MeshBasicMaterial，基础色/贴图/输出子集）、Toon（MeshToonMaterial，卡通明暗）。
  * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 着色器切换；
  * - 中部：当前渲染分支的全部参数（共享 MaterialParamsEditor 渲染，资产检查器复用同一实现）；

@@ -83,7 +83,7 @@ export function customPropDefaults(
           : [0, 0, 0, 0];
         break;
       case "texture":
-        // 贴图默认值（"white"/"" 等 Unity 惯例名）不指向资产 → 无贴图
+        // 贴图默认值（"white"/"" 等惯例名）不指向资产 → 无贴图
         out[prop.key] = typeof prop.default === "string" && prop.default.includes("/")
           ? prop.default
           : "";

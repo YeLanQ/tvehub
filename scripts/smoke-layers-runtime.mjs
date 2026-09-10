@@ -184,7 +184,7 @@ ok(
   pc.layers.mask === ((1 << 2) | 1) && fakeRenderer.autoClearColor && sky.visible,
   "多 pass 后恢复相机层/清屏标志/天空面",
 );
-// 相机掩码全开 + 部分掩码灯光：灯光 Culling Mask 恒生效（Unity 语义）
+// 相机掩码全开 + 部分掩码灯光：灯光 Culling Mask 恒生效
 const maskedLight = new THREE.PointLight();
 maskedLight.layers.mask = 1;
 ps.add(maskedLight);

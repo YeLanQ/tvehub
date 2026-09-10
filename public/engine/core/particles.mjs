@@ -2,7 +2,7 @@
 // 语义——CPU 模拟（固定容量对象池）+ THREE.Points 渲染（自定义着色器逐粒子
 // 尺寸/颜色/透明度，程序化软圆点精灵）。修改任一侧须同步另一侧。
 //
-// 模拟规则（Unity ParticleSystem 子集）：
+// 模拟规则（常规粒子系统子集）：
 // - 发射：emissionRate 按帧累加取整发射；startDelay 后开始；非循环系统在
 //   duration 后停止发射，粒子全部消亡即 finished；
 // - 形状：cone（沿本地 -Z，与灯光/相机前向一致）/ sphere / hemisphere / box；

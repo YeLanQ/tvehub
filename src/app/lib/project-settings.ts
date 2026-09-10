@@ -45,7 +45,7 @@ export interface ProjectDraft {
   physicsEnabled: boolean;
   /** 重力向量（项目级） */
   physicsGravity: { x: number; y: number; z: number };
-  /** 项目标签列表（Unity Tags 语义；不含内置 Untagged，节点 tag 自由文本可不在列表） */
+  /** 项目标签列表（不含内置 Untagged，节点 tag 自由文本可不在列表） */
   tags: string[];
   /** 层表（稠密 32 项，下标即层索引，空串 = 未定义；index 0 恒为内置 Default） */
   layers: LayerTable;

@@ -27,7 +27,7 @@ export interface SkyMatDoc {
   worldOpacity: number;
   /** 模糊（0~1） */
   blur: number;
-  // —— procedural：Blender 天空纹理风格参数 ——
+  // —— procedural：Nishita 天空参数 ——
   sunDisc: boolean;
   sunSize: number;
   sunStrength: number;

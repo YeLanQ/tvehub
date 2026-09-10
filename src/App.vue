@@ -159,7 +159,7 @@ onUnmounted(() => {
       <Toolbar />
     </header>
 
-      <!-- 主体（Unity 风格停靠布局：左侧/右侧停靠区 + 中央视口） -->
+      <!-- 主体（停靠布局：左侧/右侧停靠区 + 中央视口） -->
       <div class="editor-body">
         <DockZone zone="left" />
         <div

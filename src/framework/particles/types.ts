@@ -2,7 +2,7 @@
 // 粒子系统数据类型（framework 层，不依赖 app/api 与 three）。
 //
 // 粒子系统节点（ParticleSystemNode.particles）持有可 JSON 序列化的发射设置
-// （Unity ParticleSystem 的 Main / Emission / Shape / Color & Size over Lifetime /
+// （Main / Emission / Shape / Color & Size over Lifetime /
 // Renderer 子集）。读取时经 parseParticleSystemSettings 统一收敛（缺失/越界字段
 // 回退默认），保证旧场景兼容；编辑器（ParticleEmitter）与播放器
 // （public/engine/core/particles.mjs）按同一取值域模拟渲染。

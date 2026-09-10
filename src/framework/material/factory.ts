@@ -127,7 +127,7 @@ export function attachTextureChannel(
 }
 
 // ---------------------------------------------------------------------------
-// PBR（physical）：three MeshPhysicalMaterial，Blender 原理化 BSDF 映射，
+// PBR（physical）：three MeshPhysicalMaterial，原理化 BSDF 映射，
 // 参数映射与默认值即材质资产化以来的既有行为（原 SceneSynchronizer 内联实现）。
 // ---------------------------------------------------------------------------
 

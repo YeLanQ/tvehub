@@ -187,9 +187,9 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
             Math.min(Math.min(d.duration, t1), ((x - pad) / Math.max(1, w - pad * 2)) * (t1 - t0) + t0),
           )
         : 0;
-    // —— 切线手柄（Unity 式）——
+    // —— 切线手柄 ——
     // 手动态帧常显两侧；选中帧常显两侧虚影（拖即固化——「入段暂为线性不生效」
-    // 也要显示：点插值下拉改平滑后立即有柄可拖，与 Unity 一致；出段恒有效，
+    // 也要显示：点插值下拉改平滑后立即有柄可拖；出段恒有效，
     // 末帧的 to 对应「末帧 → 右缘水平延长线」）。实线杆+圆点=手动、虚线+
     // 琥珀空心=自动；联动（tm）的 ti 侧为镜像虚影。
     // 注意：手柄纵向占位【不】进值域——否则选中任一帧都会重映射 lo/hi，
@@ -339,7 +339,7 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
       const k = g.keys[hitH.index];
       if (!k) return;
       ctx.selection.pickKey(curveProp.value, k.t);
-      // 越侧守卫（Unity 式）：指针在帧中心另一侧按下该侧手柄（联动侧手柄
+      // 越侧守卫：指针在帧中心另一侧按下该侧手柄（联动侧手柄
       // 跨过帧中心时常见）→ 本次按下不作用于手柄，落到关键帧命中（选中拖动）
       if ((hitH.side === "to" && localX <= g.xOf(k.t)) || (hitH.side === "ti" && localX >= g.xOf(k.t))) {
         curveDrag = { kind: "key", index: hitH.index, startX: localX, startY: localY, live: false };
@@ -465,7 +465,7 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
       if (Math.hypot(localX - dragNow.startX, localY - dragNow.startY) < 3) return;
       dragNow.live = true;
     }
-    // Unity 式：自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
+    // 自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
     if (isAutoTangent(key)) ensureManualTangents(curve.keys, dragNow.index);
     key.t = ctx.timeline.snapT(g.tOf(localX), d.duration, ctx.timeline.snapEnabled.value && !e.altKey);
     // 数值钳回可视窗：缩放后拖到底/顶不会把关键帧「拖出视野失联」

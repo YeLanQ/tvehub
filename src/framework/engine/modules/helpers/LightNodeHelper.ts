@@ -20,7 +20,7 @@ const CIRCLE_SEGMENTS = 32;
  * 灯光辅助线（线框形式，不参与拾取），按灯光类型绘制，全部跟随节点参数实时变化：
  * - point       → 两个相互垂直的范围圆环（半径 = Range；Range=0 无限远时收拢隐藏）；
  * - directional → 沿灯光本地 -Z 的方向箭头；
- * - spot        → 光锥 = 底圆 + 四条斜线（Unity 样式）：长度跟随 Range（0 = 收拢隐藏），
+ * - spot        → 光锥 = 底圆 + 四条斜线：长度跟随 Range（0 = 收拢隐藏），
  *                 底圆半径 = tan(Spot Angle) × 长度。
  * 颜色跟随灯光颜色实时更新；显示时机由 HelperSystem 门控（仅选中该灯时可见）。
  */
@@ -200,7 +200,7 @@ function buildRangeRings(radius: number, segments: number): THREE.BufferGeometry
 }
 
 /**
- * 聚光光锥线框（Unity 样式）：底圆 + 四条斜线。
+ * 聚光光锥线框：底圆 + 四条斜线。
  * - 底圆：CIRCLE_SEGMENTS 段，位于本地 -Z 的 length 处，半径 = tan(半角) × length；
  * - 四条斜线：顶点（原点）连到底圆 0°/90°/180°/270° 四个点。
  */

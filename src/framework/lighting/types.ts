@@ -21,7 +21,7 @@ export interface LightComponentSettings {
   lightColor: number;
   /** 强度 */
   intensity: number;
-  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  /** 渲染层级掩码（灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
   cullingMask: number;
   /** 点光/聚光灯：照射距离（0 = 无限远） */
   distance: number;
@@ -33,13 +33,13 @@ export interface LightComponentSettings {
   penumbra: number;
   /** 点光/平行光/聚光灯：投射阴影 */
   castShadow: boolean;
-  /** 阴影浓度 0~1（点光/平行光/聚光灯生效；Unity Strength） */
+  /** 阴影浓度 0~1（点光/平行光/聚光灯生效） */
   shadowStrength: number;
-  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  /** 阴影深度偏移（压制自阴影麻点） */
   shadowBias: number;
-  /** 阴影法线偏移（≤0 = 自动按阴影贴图纹素相对化；Unity Normal Bias） */
+  /** 阴影法线偏移（≤0 = 自动按阴影贴图纹素相对化） */
   shadowNormalBias: number;
-  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  /** 阴影近裁剪面（比这更近的物体不参与投影） */
   shadowNear: number;
   /** 阴影软化半径（PCF 采样核，1 = 硬阴影；检查器 Shadow 类型下拉的 Soft = 4） */
   shadowRadius: number;

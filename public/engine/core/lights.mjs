@@ -2,7 +2,7 @@
 // 灯光对象构建（core 原语）：灯光组件/灯光节点设置 → 真实 three 灯光子对象。
 // 场景装配（runtime/nodes.mjs 组件模式）与脚本 SDK 门面（core/tve.mjs 运行时
 // 创建/切换灯光类型）共用同一套光照语义，方向光/聚光灯方向 = 节点本地 -Z。
-// 点光/平行光/聚光灯可自带阴影参数组（Unity Shadows 语义：浓度/深度偏移/
+// 点光/平行光/聚光灯可自带阴影参数组（浓度/深度偏移/
 // 法线偏移/近裁剪面，扁平字段 shadowStrength/shadowBias/shadowNormalBias/shadowNear）。
 // ---------------------------------------------------------------------------
 import * as THREE from "./three.module.min.js";
@@ -25,7 +25,7 @@ export function applyLightShadow(light, s) {
     resolution: [512, 1024, 2048, 4096].includes(num(s.shadowResolution, 0)) ? num(s.shadowResolution, 0) : 0,
   };
   light.userData.shadowCfg = cfg;
-  // 阴影相机层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+  // 阴影相机层随灯光层掩码同步（灯的 Culling Mask 同时决定哪些层
   // 的对象投影进它的阴影贴图）。three 阴影通道按 shadowCamera.layers 过滤物体，
   // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。调用方在置位灯光
   // layers.mask 之后调用本函数，这里镜像即可。
@@ -53,7 +53,7 @@ export function buildComponentLight(s, obj) {
   const kind = typeof s.kind === "string" ? s.kind : "point";
   const color = num(s.lightColor, 0xffffff) & 0xffffff;
   const intensity = num(s.intensity, 1);
-  // 灯光 Culling Mask（Unity 语义）：真实灯光对象的 layers = 掩码（缺省全部层）
+  // 灯光 Culling Mask：真实灯光对象的 layers = 掩码（缺省全部层）
   const lightMask = typeof s.cullingMask === "number" && Number.isFinite(s.cullingMask)
     ? s.cullingMask | 0
     : -1;

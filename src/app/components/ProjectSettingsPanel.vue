@@ -71,7 +71,7 @@ function close(): void {
 
 const backendOptions = physicsBackendRegistry.list();
 
-// —— 标签与层（Unity Tags and Layers 语义；保存时经 parse* 统一收敛） ——
+// —— 标签与层（保存时经 parse* 统一收敛） ——
 
 /** 已定义层的索引（升序；层 0 内置恒在） */
 const layerRows = computed(() => (draft.value ? definedLayerIndices(draft.value.layers) : []));
@@ -347,7 +347,7 @@ onMounted(async () => {
                 </div>
                 <button class="ps-add-row" @click="addTag">＋ 添加标签</button>
                 <p class="ps-note">
-                  标签是节点的字符串标识（GameObject Tag 语义）：在节点检查器中选择，
+                  标签是节点的字符串标识：在节点检查器中选择，
                   用户脚本经 entity.tag / findByTag 按标签筛选实体；引擎不附加内置语义。
                   节点上已存储但不在列表中的标签会原样保留。
                 </p>
@@ -380,7 +380,7 @@ onMounted(async () => {
                 </button>
                 <p class="ps-note">
                   最多 {{ MAX_LAYERS }} 个层（three.js 渲染管线上限）；节点在检查器中选择所属层
-                  （单选，Unity Layer 语义），相机与灯光用 Culling Mask 只渲染/照亮所选层。
+                  （单选），相机与灯光用 Culling Mask 只渲染/照亮所选层。
                   内置层 0「Default」不可删除；节点层为 0 时不写入场景文件（旧场景天然兼容）。
                 </p>
               </div>

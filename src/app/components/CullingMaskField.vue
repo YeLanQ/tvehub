@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Culling Mask 控件（Unity 同名语义，相机/灯光共用）：
+ * Culling Mask 控件（相机/灯光共用）：
  * - 折叠态：按钮回显掩码摘要（Everything / Nothing / 逗号分隔层名）；
  * - 点击弹出下拉菜单：菜单 Teleport 到 body 用 fixed 定位——检查器卡片是
  *   overflow:hidden 的滚动容器，内嵌浮层会被裁剪；按钮下方空间不足时自动

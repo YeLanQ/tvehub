@@ -1,6 +1,6 @@
 # 装饰器
 
-参考 Cocos Creator `@property` / `@ccclass` 的声明式写法。
+声明式的属性 / 节点类型装饰器。
 
 ## @property
 
@@ -69,7 +69,7 @@ export default class Punch extends Component {
 
 ### 用户脚本类字段（自动挂组件）
 
-字段声明为**用户脚本类**类型时（配合 `import type` 只引入类型，不产生运行时 import），宿主同样 get-or-create：实体已挂载该脚本组件则绑定实例，没有则动态创建并立即进入生命周期（对齐 Unity RequireComponent）：
+字段声明为**用户脚本类**类型时（配合 `import type` 只引入类型，不产生运行时 import），宿主同样 get-or-create：实体已挂载该脚本组件则绑定实例，没有则动态创建并立即进入生命周期（按需自动挂载依赖组件）：
 
 ```ts
 import type CameraFollow from "./CameraFollow"; // type-only：编译期擦除
@@ -91,7 +91,7 @@ export default class Enemy extends Component {
 
 ## @nodeType
 
-类装饰器（可选）：声明脚本类同时作为一种**可创建的节点类型**，出现在层级面板「添加节点 > 脚本节点」；创建时生成 `kind` 对应的基础节点并自动挂上本脚本组件（类似 Unity 中以脚本定义 GameObject 行为）。
+类装饰器（可选）：声明脚本类同时作为一种**可创建的节点类型**，出现在层级面板「添加节点 > 脚本节点」；创建时生成 `kind` 对应的基础节点并自动挂上本脚本组件（以脚本定义节点行为）。
 
 ```ts
 import { Component, nodeType } from "tve";

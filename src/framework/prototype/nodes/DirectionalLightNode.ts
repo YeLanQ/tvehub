@@ -9,7 +9,7 @@ import {
 /** 平行光能力接口：阴影开关 + 阴影参数 */
 export interface IDirectionalLightNode extends ILightNode {
   castShadow: boolean;
-  /** 阴影参数（浓度/偏移/近裁剪面，Unity Shadows 语义） */
+  /** 阴影参数（浓度/偏移/近裁剪面） */
   shadow: LightShadowConfig;
 }
 
@@ -20,7 +20,7 @@ export class DirectionalLightNode extends LightNode implements IDirectionalLight
   readonly lightKind = "directional" as const;
 
   castShadow = false;
-  /** 阴影参数（Unity Shadows 语义：浓度/深度偏移/法线偏移/近裁剪面） */
+  /** 阴影参数（浓度/深度偏移/法线偏移/近裁剪面） */
   shadow: LightShadowConfig = parseLightShadow(undefined);
 
   constructor(init: LightNodeInit & { castShadow?: boolean; shadow?: LightShadowConfig } = {}) {

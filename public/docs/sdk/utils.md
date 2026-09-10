@@ -4,7 +4,7 @@
 
 ## Delegate 委托
 
-多播事件容器（参考 C# Delegate / UnityEvent），组件间解耦通信的标准设施。
+多播事件容器（参考 C# 多播委托），组件间解耦通信的标准设施。
 
 ```ts
 import { Delegate, Component } from "tve";

@@ -1,6 +1,6 @@
-// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // 天空程序：PreviewType=Skybox 标签 + _SUNDISK 关键字标记程序化大气散射
-// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现，对齐 Blender 天空纹理）。
+// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现）。
 Shader "internal/shaders/SkyProcedural"
 {
     Properties
@@ -21,7 +21,7 @@ Shader "internal/shaders/SkyProcedural"
         Cull Off ZWrite Off
 
         CGPROGRAM
-        // Nishita 大气散射（Blender 天空纹理风格）：太阳方向由高度角/方位角给出，
+        // Nishita 大气散射：太阳方向由高度角/方位角给出，
         // 散射沿视线解析积分；_SUNDISK 关键字同时作为 TVE 的种类识别标记
         #pragma vertex vert
         #pragma fragment frag

@@ -7,7 +7,7 @@ export type LightKind = "point" | "directional" | "ambient" | "spot";
 export interface LightNodeInit extends NodeInit {
   intensity?: number;
   lightColor?: number;
-  /** 渲染层级掩码（Unity 灯光 Culling Mask 语义：只照亮掩码内层的对象；-1 = 全部） */
+  /** 渲染层级掩码（灯光 Culling Mask 语义：只照亮掩码内层的对象；-1 = 全部） */
   cullingMask?: number;
 }
 

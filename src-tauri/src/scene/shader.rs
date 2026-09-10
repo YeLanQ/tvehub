@@ -136,7 +136,7 @@ pub(crate) fn is_custom_shader(text: &str) -> bool {
 }
 
 /// 标签/指令行的取值：接受 `"Key"="Value"`（SubShader Tags 写法）与
-/// `Key Value`（Pass 指令写法）—— 两种在 Unity 里都常见，这里一并识别。
+/// `Key Value`（Pass 指令写法）—— 两种写法都常见，这里一并识别。
 fn state_value(line: &str, key: &str) -> Option<String> {
     let quoted = format!("\"{key}\"");
     if let Some(i) = line.find(&quoted) {

@@ -93,7 +93,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
     obj.userData.nodeTag = typeof json.tag === "string" ? json.tag : "";
     obj.visible = json.active !== false && json.visible !== false;
 
-    // 渲染层级（Unity Layer 语义）：
+    // 渲染层级：
     // - 网格/普通节点：根对象与其生成的渲染内容子树（描边壳等）同层；
     // - 灯光节点：包装组随层，内部真实灯光对象 = cullingMask（wrapLight 内置位），
     //   不能被子树覆盖。
@@ -152,7 +152,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   /**
-   * 灯光阴影参数置位（与编辑器 SceneSynchronizer 同一语义，Unity Shadows 参数组）：
+   * 灯光阴影参数置位（与编辑器 SceneSynchronizer 同一语义）：
    * 贴图分辨率（点光 1024 / 其余 2048；three 只在首次渲染前按 mapSize 分配贴图）、
    * 浓度（shadow.intensity）、深度偏移、法线偏移（≤0 = 自动，交给 player 的贴合逻辑）、
    * 近裁剪面（平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）。
@@ -170,7 +170,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
       resolution: [512, 1024, 2048, 4096].includes(num(raw.resolution, 0)) ? num(raw.resolution, 0) : 0,
     };
     light.userData.shadowCfg = cfg;
-    // 阴影相机层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+    // 阴影相机层随灯光层掩码同步（灯的 Culling Mask 同时决定哪些层
     // 的对象投影进它的阴影贴图）。three 阴影通道按 shadowCamera.layers 过滤物体，
     // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。
     light.shadow.camera.layers.mask = light.layers.mask;
@@ -195,7 +195,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const group = new THREE.Group();
     const color = num(json.lightColor, 0xffffff) & 0xffffff;
     const intensity = num(json.intensity, 1);
-    // 灯光 Culling Mask（Unity 语义）：真实灯光对象的 layers = 掩码，
+    // 灯光 Culling Mask：真实灯光对象的 layers = 掩码，
     // 渲染按"灯层 vs 相机层"收集判定 + player 分层多 pass 实现"只照亮所选层"
     const lightMask = parseCullingMask(json.cullingMask);
     let light;

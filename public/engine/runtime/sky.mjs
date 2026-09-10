@@ -224,8 +224,8 @@ export async function loadSkyMatParams(rel) {
 }
 
 // —— Nishita 程序化天空生成（与编辑器 framework/engine/modules/nishitaSky.ts 同一算法）——
-// 透射率 LUT 预计算（cosθ/海拔）+ 沿视线 Hillaire 解析积分的多重散射，对齐 Blender
-// sky_multiple_scattering：4 波长光谱解析拟合转 XYZ、平台高斯软边缘日轮（无硬边锯齿）、
+// 透射率 LUT 预计算（cosθ/海拔）+ 沿视线 Hillaire 解析积分的多重散射：
+// 4 波长光谱解析拟合转 XYZ、平台高斯软边缘日轮（无硬边锯齿）、
 // 命中地面的视线叠加 Lambert 地表辐亮度（海拔 0 时地平线以下不再全黑）。
 const NISHITA_VERT = `
   varying vec2 vUv;
@@ -239,7 +239,7 @@ const NISHITA_VERT = `
 const SKY_COMMON = `
   const float PI = 3.141592653589793;
 
-  // 地球/大气（km，Blender 约定）
+  // 地球/大气（km）
   const float EARTH_RADIUS = 6371.0;
   const float ATMOSPHERE_THICKNESS = 100.0;
   const float ATMOSPHERE_RADIUS = 6471.0;
@@ -368,7 +368,7 @@ const SKY_FRAG = `
   uniform sampler2D transmittanceLUT;
 
   // —— 输出曝光（调参入口：整体亮度/显示映射）——
-  // 物理 radiance 天顶约 1~6（Blender 交给视图变换处理），本管线 LDR 无色调映射直出，
+  // 物理 radiance 天顶约 1~6（参考实现交给视图变换处理），本管线 LDR 无色调映射直出，
   // 按旧实现的天顶线性亮度校准：0.05 → 常规蓝天观感
   const float SKY_EXPOSURE = 0.05;
 

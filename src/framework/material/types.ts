@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 材质系统基础类型与约定（framework 层，不依赖 app/api）
 //
-// 参数面 = three 的 PBR 材质（MeshPhysicalMaterial）支持的、且与 Blender
+// 参数面 = three 的 PBR 材质（MeshPhysicalMaterial）支持的、且与
 // “原理化 BSDF(Principled BSDF)” 属性对应的参数（无贴图通道）：
 //   Base Color→color, Metallic→metalness, Roughness→roughness,
 //   Specular IOR Level→specularIntensity, Specular Tint→specularColor, IOR→ior,

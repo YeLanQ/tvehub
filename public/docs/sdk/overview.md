@@ -35,7 +35,7 @@ export default class Spin extends Component {
 
 | 钩子 | 时机 |
 | --- | --- |
-| `onEnable()` | 实例创建后调用；**全部实例的 onEnable 先于全部 onStart**（对齐 Unity 批次顺序），此时可安全引用其他实体与组件 |
+| `onEnable()` | 实例创建后调用；**全部实例的 onEnable 先于全部 onStart**，此时可安全引用其他实体与组件 |
 | `onStart()` | 全部脚本实例创建后、首个 `onUpdate` 前调用一次（初始化玩法逻辑） |
 | `onUpdate(delta)` | 每帧调用，`delta` 为距上一帧的秒数 |
 | `onCollisionEnter(other)` | 本节点碰撞体与对方碰撞体开始接触；**在 onUpdate 前调用**；传感器同样触发 |

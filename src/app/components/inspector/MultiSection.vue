@@ -157,7 +157,7 @@ const visibleUniform = computed<boolean | null>(() => {
     </div>
 
     <div class="field">
-      <label title="批量设置标签（GameObject Tag 语义）">标签</label>
+      <label title="批量设置标签">标签</label>
       <input
         v-model="localTag"
         type="text"
@@ -168,7 +168,7 @@ const visibleUniform = computed<boolean | null>(() => {
     </div>
 
     <div class="field" :data-rev="rev">
-      <label title="批量设置渲染层级（Unity Layer 语义）">层</label>
+      <label title="批量设置渲染层级">层</label>
       <select
         :value="layerUniform ?? -1"
         :title="layerUniform === null ? '各节点层不同，选择将统一应用到全部' : '渲染层级'"

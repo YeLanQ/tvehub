@@ -1,5 +1,5 @@
 // 层级与标签系统冒烟测试（headless，无需 GPU）。
-// 设计：节点单选一层（Unity Layer 语义，0~31，内置层 0 = Default），
+// 设计：节点单选一层（0~31，内置层 0 = Default），
 //   相机/灯光节点与灯光组件带 cullingMask 位掩码（默认 -1 = 全部层）。
 //   渲染侧相机层裁剪是 three 原生的；灯光"只照亮所选层"经「相机掩码收窄时按
 //   在用层拆 pass」实现（light.layers vs 相机层的收集判定天然完成过滤）。
@@ -330,7 +330,7 @@ function findLight(root: THREE.Object3D): THREE.Light | null {
   );
   cam.layers.mask = 1 << 20;
   check("掩码与在用层无交集 → null（单 pass 画空场）", layerPassBits(scene, cam) === null);
-  // 相机掩码全开 + 部分掩码灯光：灯光 Culling Mask 恒生效（Unity 语义），多层占用仍拆分
+  // 相机掩码全开 + 部分掩码灯光：灯光 Culling Mask 恒生效，多层占用仍拆分
   const sceneB = new THREE.Scene();
   const l0 = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   l0.layers.set(0);

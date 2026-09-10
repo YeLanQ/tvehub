@@ -44,9 +44,9 @@ export interface InspectorNodeApi {
   setTransformAxis: (axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number) => void;
   onNodeRename: (name: string) => void;
   onNodeToggleVisible: (value: boolean) => void;
-  /** 设置节点标签（GameObject Tag 语义） */
+  /** 设置节点标签 */
   onNodeSetTag: (tag: string) => void;
-  /** 设置节点渲染层级（Unity Layer 语义；渲染侧经 SceneSynchronizer 落到 object.layers） */
+  /** 设置节点渲染层级（渲染侧经 SceneSynchronizer 落到 object.layers） */
   onNodeSetLayer: (layer: number) => void;
   onTransformChange: (axis: "position" | "rotation" | "scale", part: "x" | "y" | "z", value: number) => void;
   onMeshUpdate: (label: string, value: unknown) => void;
@@ -189,14 +189,14 @@ export function useInspectorNode(): InspectorNodeApi {
     }, "编辑动画图");
   }
 
-  /** 设置节点标签（GameObject Tag 语义） */
+  /** 设置节点标签 */
   function onNodeSetTag(tag: string): void {
     commit((n) => {
       n.tag = tag;
     }, "设置标签");
   }
 
-  /** 设置节点渲染层级（Unity Layer 语义，0~31；越界值在数据层收敛） */
+  /** 设置节点渲染层级（0~31；越界值在数据层收敛） */
   function onNodeSetLayer(layer: number): void {
     commit((n) => {
       n.layer = layer;

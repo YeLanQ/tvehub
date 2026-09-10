@@ -1,4 +1,4 @@
-// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
 // 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
 Shader "internal/shaders/PBR"
@@ -18,7 +18,7 @@ Shader "internal/shaders/PBR"
         LOD 200
 
         CGPROGRAM
-        // 原理化 BSDF（对齐 Blender Principled BSDF），完整物理光照
+        // 原理化 BSDF（Principled BSDF），完整物理光照
         #pragma surface surf Standard fullforwardshadows
         #pragma target 3.0
 

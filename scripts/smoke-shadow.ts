@@ -1,5 +1,5 @@
 // 阴影系统冒烟测试（headless，无需 GPU）。
-// 设计：阴影不设独立节点，**各灯自带阴影参数组**（Unity Shadows 语义）：
+// 设计：阴影不设独立节点，**各灯自带阴影参数组**：
 //   点光（立方体阴影贴图）/ 平行光（正交，相机按场景包围盒后推贴合）/
 //   聚光灯（透视，远平面按场景贴合）。覆盖五段：
 // ① 数据层：三种灯光节点的 castShadow / shadow 配置（默认值、收敛、序列化往返、旧场景兼容）；
@@ -436,7 +436,7 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
   // 点光：范围环跟随 Range；Range=0（无限远）→ 示意半径 3，默认选中即有可读范围
   const p = new PointLightNode();
   check(
-    "点光/聚光默认 Range = 10（新灯辅助线与光照范围天然可见，Unity 同款默认）",
+    "点光/聚光默认 Range = 10（新灯辅助线与光照范围天然可见）",
     p.distance === 10 && new SpotLightNode().distance === 10,
   );
   p.distance = 0;

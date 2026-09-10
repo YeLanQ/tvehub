@@ -75,7 +75,7 @@ export type ScriptNodeKind =
   | "particleSystemNode";
 
 // ---------------------------------------------------------------------------
-// 装饰器（参考 Cocos Creator @property / @ccclass 的声明式写法）
+// 装饰器（@property / @nodeType 声明式写法）
 // ---------------------------------------------------------------------------
 
 /**
@@ -139,7 +139,7 @@ export function property(options?: {
 /**
  * 节点类型装饰器（类装饰器，可选）：声明脚本类同时作为一种可创建的节点类型，
  * 出现在层级面板「添加节点 > 脚本节点」；创建时生成 kind 对应的基础节点并自动
- * 挂上本脚本组件（类似 Unity 中以脚本定义 GameObject 行为）。
+ * 挂上本脚本组件（以脚本定义节点行为）。
  *
  * ```ts
  * @nodeType({ kind: "meshNode", label: "敌人" })
@@ -164,13 +164,12 @@ export type ComponentProps = Record<string, unknown>;
 /**
  * 组件生命周期回调契约（Component 基类的钩子接口；全部可选，按需实现）。
  * 调度方为播放器脚本宿主（engine/core/scripts.mjs）：
- * 全部实例化后先统一 onEnable 再统一 onStart（对齐 Unity 批次顺序）；
+ * 全部实例化后先统一 onEnable 再统一 onStart；
  * 每帧先分派物理碰撞回调再调 onUpdate；停机时逐实例 onDisable → onDestroy。
  */
 export interface ComponentLifecycle {
   /**
-   * 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，
-   * 对齐 Unity 批次顺序）；此时可安全引用其他实体与组件。
+   * 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart）；此时可安全引用其他实体与组件。
    */
   onEnable?(): void;
 
@@ -232,7 +231,7 @@ export interface ComponentLifecycle {
  *
  * 字段类型为**用户脚本类**时（配合 `import type` 只引入类型，不产生运行时
  * import 依赖），宿主同样 get-or-create：实体已挂载该脚本组件则绑定实例，
- * 没有则动态创建并立即进入生命周期（对齐 Unity RequireComponent）：
+ * 没有则动态创建并立即进入生命周期（按需自动挂载依赖组件）：
  *
  * ```ts
  * import type CameraFollow from "./CameraFollow";   // type-only：编译期擦除
@@ -267,7 +266,7 @@ export class Component<P extends ComponentProps = ComponentProps> implements Com
    */
   readonly props: Readonly<P>;
 
-  /** 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart，对齐 Unity 批次顺序） */
+  /** 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart） */
   onEnable?(): void;
 
   /** 生命周期：全部脚本实例创建后、首个 onUpdate 前调用一次（初始化玩法逻辑） */
@@ -304,10 +303,10 @@ export class Entity {
   get name(): string;
   set name(value: string);
 
-  /** 节点标签（GameObject Tag 语义；检查器 Node 卡设置，空串 = 无标签） */
+  /** 节点标签（检查器 Node 卡设置，空串 = 无标签） */
   readonly tag: string;
 
-  /** 渲染层级索引（Unity Layer 语义，0~31；可写，应用到对象子树的渲染层） */
+  /** 渲染层级索引（0~31；可写，应用到对象子树的渲染层） */
   get layer(): number;
   set layer(value: number);
 
@@ -357,7 +356,7 @@ export class Entity {
    *   SkeletalAnimation/Collider）或类型键字符串（"rigidBody" 等；"animation"/
    *   "anim" 为骨骼动画别名）。多实例组件（如多个动画剪辑组件）取首个，句柄稳定；
    * - 脚本组件：传脚本类（构造器）按类匹配；或传脚本源路径 / 类名字符串
-   *   （"src/hp.ts" / "HPBar"）——对齐 Unity 按类型名查找：所有脚本类在加载后
+   *   （"src/hp.ts" / "HPBar"）——按类型名查找：所有脚本类在加载后
    *   全局可见，脚本之间互相引用组件无需 import（严格模式下用
    *   `import type` 只引入类型即可获得智能提示）。
    */
@@ -644,7 +643,7 @@ export interface MathApi {
 // ---------------------------------------------------------------------------
 
 /**
- * 委托：多播事件容器（参考 C# Delegate / UnityEvent）。
+ * 委托：多播事件容器（参考 C# 多播委托）。
  * 用于把"某件事发生"广播给多个订阅者——组件间解耦通信的标准设施：
  *
  * ```ts
@@ -912,7 +911,7 @@ export declare class Light {
   /** 强度 */
   get intensity(): number;
   set intensity(value: number);
-  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  /** 渲染层级掩码（灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
   get cullingMask(): number;
   set cullingMask(value: number);
   /** 点光/聚光灯：照射距离（0 = 无限远） */
@@ -930,16 +929,16 @@ export declare class Light {
   /** 点光/平行光/聚光灯：投射阴影 */
   get castShadow(): boolean;
   set castShadow(value: boolean);
-  /** 阴影浓度 0~1（1 = 纯黑阴影；Unity Strength） */
+  /** 阴影浓度 0~1（1 = 纯黑阴影） */
   get shadowStrength(): number;
   set shadowStrength(value: number);
-  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  /** 阴影深度偏移（压制自阴影麻点） */
   get shadowBias(): number;
   set shadowBias(value: number);
-  /** 阴影法线偏移（≤0 = 自动按纹素相对化；Unity Normal Bias） */
+  /** 阴影法线偏移（≤0 = 自动按纹素相对化） */
   get shadowNormalBias(): number;
   set shadowNormalBias(value: number);
-  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  /** 阴影近裁剪面（比这更近的物体不参与投影） */
   get shadowNear(): number;
   set shadowNear(value: number);
   /** 阴影软化半径（PCF 采样核，1 = 硬阴影；Soft 档 = 4） */
@@ -1150,7 +1149,7 @@ export interface LightAddOptions {
   color?: number;
   lightColor?: number;
   intensity?: number;
-  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  /** 渲染层级掩码（灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
   cullingMask?: number;
   distance?: number;
   decay?: number;
@@ -1158,19 +1157,19 @@ export interface LightAddOptions {
   angle?: number;
   penumbra?: number;
   castShadow?: boolean;
-  /** 阴影浓度 0~1（Unity Strength） */
+  /** 阴影浓度 0~1 */
   shadowStrength?: number;
-  /** 阴影深度偏移（Unity Bias） */
+  /** 阴影深度偏移 */
   shadowBias?: number;
-  /** 阴影法线偏移（≤0 = 自动；Unity Normal Bias） */
+  /** 阴影法线偏移（≤0 = 自动） */
   shadowNormalBias?: number;
-  /** 阴影近裁剪面（Unity Near Plane） */
+  /** 阴影近裁剪面 */
   shadowNear?: number;
   /** 阴影软化半径（1 = 硬阴影，Soft 档 = 4） */
   shadowRadius?: number;
   /** 阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024；512~4096 显式档位） */
   shadowResolution?: number;
-  /** Shadow 类型档位（优先于 castShadow/shadowRadius；Unity Shadow Type） */
+  /** Shadow 类型档位（优先于 castShadow/shadowRadius） */
   shadowType?: "off" | "hard" | "soft";
 }
 
@@ -1260,7 +1259,7 @@ export interface SceneApi {
   /** 按标签查实体（文档序全量；无命中返回空数组） */
   findAllByTag(tag: string): Entity[];
   /**
-   * 全场景按类型查组件（Unity FindObjectOfType 语义）：token = 脚本类 /
+   * 全场景按类型查组件：token = 脚本类 /
    * 脚本源路径 / 脚本类名 / 内置组件门面类 / 类型键；返回文档序第一个命中
    * （未命中 null）。
    */

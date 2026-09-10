@@ -232,7 +232,7 @@ pub const SKY_PROCEDURAL_SHADER_REL: &str = "internal/shaders/SkyProcedural.shad
 pub const SKY_CUBE_SHADER_REL: &str = "internal/shaders/SkyBox.shader";
 
 // ---------------------------------------------------------------------------
-// .shader = Unity ShaderLab 风格着色器源码（渲染程序资产，材质经 shader 字段引用）。
+// .shader = ShaderLab 风格着色器源码（渲染程序资产，材质经 shader 字段引用）。
 // 内置渲染分支（本引擎提供 three 材质管线）不编译这份源码，而是按 pragma 识别分支：
 //   `#pragma surface surf Standard` → physical（PBR）
 //   `#pragma surface surf Toon`     → toon（卡通）
@@ -243,12 +243,12 @@ pub const SKY_CUBE_SHADER_REL: &str = "internal/shaders/SkyBox.shader";
 // ---------------------------------------------------------------------------
 
 const SHADER_HEADER: &str = "\
-// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
 // 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
 ";
 
-const PBR_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+const PBR_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
 // 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
 Shader "{NAME}"
@@ -268,7 +268,7 @@ Shader "{NAME}"
         LOD 200
 
         CGPROGRAM
-        // 原理化 BSDF（对齐 Blender Principled BSDF），完整物理光照
+        // 原理化 BSDF（Principled BSDF），完整物理光照
         #pragma surface surf Standard fullforwardshadows
         #pragma target 3.0
 
@@ -299,7 +299,7 @@ Shader "{NAME}"
 }
 "##;
 
-const UNLIT_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+const UNLIT_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
 // 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
 Shader "{NAME}"
@@ -360,7 +360,7 @@ Shader "{NAME}"
 }
 "##;
 
-const TOON_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+const TOON_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
 // 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
 Shader "{NAME}"
@@ -423,12 +423,12 @@ Shader "{NAME}"
 }
 "##;
 
-// 天空程序（Unity 天空盒着色器惯例）：Tags 携带 "PreviewType"="Skybox" 标记，
+// 天空程序（天空盒着色器惯例）：Tags 携带 "PreviewType"="Skybox" 标记，
 // TVE 引擎据此与材质 .mat 的 kind 字段映射渲染（skyprocedural→大气散射 / skycube→立方体贴图）。
 
-const SKY_PROCEDURAL_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+const SKY_PROCEDURAL_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // 天空程序：PreviewType=Skybox 标签 + _SUNDISK 关键字标记程序化大气散射
-// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现，对齐 Blender 天空纹理）。
+// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现）。
 Shader "{NAME}"
 {
     Properties
@@ -449,7 +449,7 @@ Shader "{NAME}"
         Cull Off ZWrite Off
 
         CGPROGRAM
-        // Nishita 大气散射（Blender 天空纹理风格）：太阳方向由高度角/方位角给出，
+        // Nishita 大气散射：太阳方向由高度角/方位角给出，
         // 散射沿视线解析积分；_SUNDISK 关键字同时作为 TVE 的种类识别标记
         #pragma vertex vert
         #pragma fragment frag
@@ -520,7 +520,7 @@ Shader "{NAME}"
 }
 "##;
 
-const SKY_CUBE_SHADER_TEMPLATE: &str = r##"// TVE 着色器（Unity ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+const SKY_CUBE_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
 // 天空程序：PreviewType=Skybox 标签 + samplerCUBE 采样标记立方体贴图天空盒
 // （贴图引用与渲染参数存于材质 .mat 的 cubeMap/rotation/strength/blur 字段）。
 Shader "{NAME}"
@@ -587,7 +587,7 @@ Shader "{NAME}"
 }
 "##;
 
-/// 着色器文档 → .shader 源码（Unity ShaderLab 风格；kind 决定模板）。
+/// 着色器文档 → .shader 源码（ShaderLab 风格；kind 决定模板）。
 /// rel 为着色器资产相对路径：Shader 指令名 = 路径去扩展名，保证与资产位置一致。
 pub fn serialize_shader_file(rel: &str, kind: &str) -> String {
     let template = match normalize_shader_kind(kind) {
@@ -707,7 +707,7 @@ pub(crate) fn parse_shader_doc(text: &str) -> Option<(String, String)> {
         return Some((name, kind.to_string()));
     }
     let mut name: Option<String> = None;
-    // 天空程序（Unity 天空盒惯例 PreviewType=Skybox 标签）：_SUNDISK → 程序化散射 /
+    // 天空程序（天空盒惯例 PreviewType=Skybox 标签）：_SUNDISK → 程序化散射 /
     // samplerCUBE → 立方体贴图。先于 pragma 检查（天空是顶点片元着色器，否则误判 unlit）。
     // 自定义着色器（CGINCLUDE / 双 CGPROGRAM 块，源码真正编译）同理先于 pragma 判定
     // —— 它同样带 #pragma vertex/fragment，否则会被误判为 unlit。
@@ -850,7 +850,7 @@ pub fn serialize_sky_material_file(name: &str, kind: &str) -> String {
         "strength": 1,
         "worldOpacity": 0,
         "blur": 0,
-        // procedural 专属：Blender 天空纹理风格参数
+        // procedural 专属：Nishita 天空参数
         "sunDisc": true,
         "sunSize": 1.0,
         "sunStrength": 1.0,

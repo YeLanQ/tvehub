@@ -82,6 +82,6 @@
 | 项 | 说明 |
 | --- | --- |
 | 标签（Tags） | 项目级命名标签列表（内置 `Untagged` 不可删）；节点在检查器 Node 卡下拉选择，用户脚本经 `entity.tag` / `findByTag` 按标签筛选实体。节点上已存储但不在列表中的标签会原样保留 |
-| 层（Layers） | 渲染层级，最多 32 个（three.js 上限），内置层 0 `Default` 不可删。节点在检查器 Node 卡单选所属层（Unity Layer 语义）；相机与灯光用 Culling Mask 只渲染/照亮所选层 |
+| 层（Layers） | 渲染层级，最多 32 个（three.js 上限），内置层 0 `Default` 不可删。节点在检查器 Node 卡单选所属层；相机与灯光用 Culling Mask 只渲染/照亮所选层 |
 
 层与 Culling Mask 的渲染语义见「场景编辑 › 渲染层级与标签」。

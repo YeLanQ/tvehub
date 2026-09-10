@@ -238,7 +238,7 @@ export interface SkyMatParams {
   worldOpacity: number;
   /** 模糊（0~1） */
   blur: number;
-  // —— procedural（Blender 天空纹理风格）——
+  // —— procedural（Nishita 大气散射）——
   sunDisc: boolean;
   sunSize: number;
   sunStrength: number;

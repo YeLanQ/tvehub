@@ -149,7 +149,7 @@ function onCheckbox(key: "sunDisc" | "ms", e: Event): void {
     </div>
   </template>
 
-  <!-- 程序化：Blender 天空纹理参数（Nishita 大气散射） -->
+  <!-- 程序化：Nishita 大气散射参数 -->
   <template v-else>
     <label class="sky-checkbox">
       <input
@@ -266,7 +266,7 @@ function onCheckbox(key: "sunDisc" | "ms", e: Event): void {
       />
     </div>
     <div class="hint">
-      {{ disabled ? "内置天空材质只读；复制到项目后可编辑。" : "Nishita 大气散射（Blender 天空纹理风格）；写入 .mat 资产，被天空盒节点绑定时背景即时刷新。" }}
+      {{ disabled ? "内置天空材质只读；复制到项目后可编辑。" : "Nishita 大气散射；写入 .mat 资产，被天空盒节点绑定时背景即时刷新。" }}
     </div>
   </template>
 </template>

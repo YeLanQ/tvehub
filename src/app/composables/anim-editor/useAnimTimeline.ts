@@ -392,7 +392,7 @@ export function useAnimTimeline(ctx: AnimEditorCtx): TimelineApi {
     const curve = d.curves.find((c) => c.prop === dragKey.prop);
     const key = curve?.keys[dragKey.index];
     if (!key || !curve) return;
-    // Unity 式：自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
+    // 自动态帧拖动先固化当前切线（值改后自动斜率会变，不固化会跳变）
     if (isAutoTangent(key)) ensureManualTangents(curve.keys, dragKey.index);
     key.t = snapT(xToT(x, d.duration), d.duration, snapEnabled.value && !e.altKey);
     curve.keys.sort((a, b) => a.t - b.t);

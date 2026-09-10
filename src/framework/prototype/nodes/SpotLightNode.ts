@@ -17,7 +17,7 @@ export interface ISpotLightNode extends ILightNode {
   /** 边缘柔和度 0~1 */
   penumbra: number;
   castShadow: boolean;
-  /** 阴影参数（浓度/偏移/近裁剪面，Unity Shadows 语义） */
+  /** 阴影参数（浓度/偏移/近裁剪面） */
   shadow: LightShadowConfig;
 }
 
@@ -36,7 +36,7 @@ export class SpotLightNode extends LightNode implements ISpotLightNode {
   /** 边缘柔和度 0~1 */
   penumbra = 0.2;
   castShadow = false;
-  /** 阴影参数（Unity Shadows 语义：浓度/深度偏移/法线偏移/近裁剪面） */
+  /** 阴影参数（浓度/深度偏移/法线偏移/近裁剪面） */
   shadow: LightShadowConfig = parseLightShadow(undefined);
 
   constructor(

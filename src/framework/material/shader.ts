@@ -107,7 +107,7 @@ export interface CustomShaderProgram {
 export interface ShaderDoc {
   name: string;
   kind: ShaderKind;
-  /** 着色器源码全文（Unity ShaderLab 风格；检查器/源码编辑器展示用） */
+  /** 着色器源码全文（ShaderLab 风格；检查器/源码编辑器展示用） */
   source: string;
   /** 自定义着色器（kind=custom）暴露的属性（材质面板字段；其它种类为空表） */
   properties: ShaderPropertyDef[];

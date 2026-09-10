@@ -348,7 +348,7 @@ async function main() {
   // 渲染器 + 舞台缩放适配（按设计分辨率/缩放模式取景并适配 iframe）
   const renderer = createStage(app, cfg, applyProjection);
 
-  // 程序化天空材质：Nishita 大气散射（Blender 天空纹理风格）。需要渲染上下文，
+  // 程序化天空材质：Nishita 大气散射。需要渲染上下文，
   // 渲染器就绪后生成并覆盖渐变兜底；强度经背景属性与正交面 uniform 同步生效
   if (activeSkyKind === "procedural" && skyMatParams) {
     try {

@@ -703,7 +703,7 @@ export class EditorEngine {
   }
 
   /**
-   * 把相机节点对齐到当前编辑器视口（Unity Camera > Align With View 语义）：
+   * 把相机节点对齐到当前编辑器视口（Align With View）：
    * 取自由轨道相机（透视）的世界位姿，经所在父对象的世界矩阵换算为节点局部位姿
    * （旋转写度制欧拉角 XYZ，与编辑器变换语义一致）；透视相机同步 fov，
    * 正交相机按「视口竖直视场 × 轨道注视距离」折算正交半高（与当前取景范围一致）。
@@ -1186,7 +1186,7 @@ export class EditorEngine {
         });
       }
       if (sky.skyKind === "procedural" && sky.material) {
-        // 程序化材质链路：Nishita 大气散射（Blender 天空纹理风格），
+        // 程序化材质链路：Nishita 大气散射，
         // 参数来自绑定 .mat（日轮/太阳/海拔/空气/气溶胶/臭氧/多重散射）
         void (async (): Promise<THREE.Texture | null> => {
           const mat = await this.loadSkyMatParams(sky.material);
@@ -1557,7 +1557,7 @@ export class EditorEngine {
     const far = Math.max(node.far, near + 1e-4);
     cam.near = near;
     cam.far = far;
-    // 相机节点的 Culling Mask（Unity 语义）：预览即真实渲染，只画掩码内层的对象；
+    // 相机节点的 Culling Mask：预览即真实渲染，只画掩码内层的对象；
     // RendererManager 在掩码内占用多层时按层拆 pass，使灯光 Culling Mask 一并生效
     cam.layers.mask = parseCullingMask(node.cullingMask);
     if (node.cameraType === "orthographic") {

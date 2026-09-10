@@ -82,7 +82,7 @@ onBeforeUnmount(() => {
 
     <!-- 动画聚焦编辑的压暗在材质层完成（anim-edit-mode），视口无 DOM 蒙版 -->
 
-    <!-- 视口顶部悬浮工具栏（Unity 风格）：仅编辑场景模式下显示 -->
+    <!-- 视口顶部悬浮工具栏：仅编辑场景模式下显示 -->
     <div v-if="state.viewMode === 'scene'" class="overlay top">
       <div class="tool-group" title="变换工具">
         <button

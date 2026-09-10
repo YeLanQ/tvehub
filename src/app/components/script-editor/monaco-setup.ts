@@ -109,7 +109,7 @@ export function loadMonaco(): Promise<MonacoNamespace> {
         strict: true,
         allowNonTsExtensions: true,
         allowSyntheticDefaultImports: true,
-        // 装饰器（@property / @nodeType，参考 Cocos Creator 写法）
+        // 装饰器（@property / @nodeType 声明式写法）
         experimentalDecorators: true,
         noEmit: true,
         lib: ["es2020", "dom"],

@@ -282,7 +282,7 @@ export class RendererManager {
    * 相机掩码全开或在用层 ≤1 时单 pass（与旧渲染路径一致，零额外开销）；
    * 相机节点收窄了 Culling Mask 且场景占用多个掩码内层时按层拆 pass ——
    * 每个 pass 只渲染该层对象，three 的灯光收集（light.layers vs 相机层）使
-   * 每盏灯只照亮其掩码内的层（Unity 灯光 Culling Mask 语义），详见 layerPass.ts。
+   * 每盏灯只照亮其掩码内的层（灯光 Culling Mask 语义），详见 layerPass.ts。
    */
   private renderActive(): void {
     const cam = this.activeCamera ?? this.camera;

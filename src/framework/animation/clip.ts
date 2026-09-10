@@ -25,7 +25,7 @@ export type AnimKeyInterp = "linear" | "step" | "smooth";
 /** 手动切线斜率的钳制上限（dv/dt；为兼容近垂直切线放宽到 1e6，仍防除零/发散） */
 export const TANGENT_CLAMP = 1000000;
 
-/** 切线手柄权重缺省值（占相邻段跨度比例，Unity 式 1/3） */
+/** 切线手柄权重缺省值（占相邻段跨度比例，1/3） */
 export const DEFAULT_TANGENT_WEIGHT = 1 / 3;
 /** 切线手柄权重钳制（0.01 ~ 1.5：可拉过相邻段，留出视觉余量但不失控） */
 export const TANGENT_WEIGHT_MIN = 0.01;
@@ -178,7 +178,7 @@ export function ensureManualTangents(keys: AnimKey[], i: number): void {
   if (!k || !isAutoTangent(k)) return;
   k.ti = tangentOf(keys, i);
   k.to = k.ti;
-  k.tm = true; // Unity 式默认：新固化的切线两侧联动
+  k.tm = true; // 默认：新固化的切线两侧联动
 }
 
 /** 清除手动切线（恢复自动 Catmull-Rom，并去掉对称标记与手柄权重） */
@@ -229,7 +229,7 @@ function cubicBezier(p0: number, c1: number, c2: number, p3: number, u: number):
  *  与 Hermite 公式为同一条曲线（恒等变形，旧文件与自动态形状逐位不变）；
  *  控制点 = 关键帧沿切线推进「权重 × 段跨」（曲线视图手柄与之同一约定）。
  *  权重偏离后经时间坐标反解 u（步进取首交点区间 + 二分收敛）。两侧权重都
- *  >2/3 的组合会使时间坐标非单调（S 形回勾，Unity 同类模型同样如此），
+ *  >2/3 的组合会使时间坐标非单调（S 形回勾，同类贝塞尔时间模型皆如此），
  *  此时按定义取最早交点。 */
 export function sampleSmoothSegment(keys: AnimKey[], i: number, time: number): number {
   const k1 = keys[i];

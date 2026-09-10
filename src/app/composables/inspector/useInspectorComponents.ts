@@ -70,7 +70,7 @@ export function useInspectorComponents(ctx: InspectorNodeApi): InspectorComponen
   const { node, revision, commit, store, engine, projectStore, scriptsStore } = ctx;
 
   // ---------------------------------------------------------------------------
-  // 组件模式（Unity 组件卡语义）：
+  // 组件模式（组件卡语义）：
   // - 节点上每个已挂组件（脚本/刚体/碰撞体/灯光/音源）渲染为独立卡片，按挂载
   //   顺序排列；卡片头 = 启用勾选 + ⋮ 菜单（上移/下移/重置/移除）；
   // - 「添加组件」菜单由组件注册表驱动（分类 + 多实例约束）；
@@ -210,7 +210,7 @@ export function useInspectorComponents(ctx: InspectorNodeApi): InspectorComponen
     }, "重置组件");
   }
 
-  /** 组件卡 ⋮ 菜单（Unity 组件上下文菜单语义：Move Up/Down/Reset/Remove） */
+  /** 组件卡 ⋮ 菜单（组件上下文菜单：Move Up/Down/Reset/Remove） */
   function onComponentMenu(e: MouseEvent, comp: NodeComponentRef): void {
     const n = node.value;
     if (!n) return;

@@ -102,7 +102,7 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
         case "Set Penumbra":
           s.penumbra = Math.max(0, Math.min(1, typeof value === "number" ? value : 0.2));
           break;
-        // 阴影参数组（点光/平行光/聚光灯；Unity Shadows 语义）
+        // 阴影参数组（点光/平行光/聚光灯）
         case "Set Shadow Strength":
           s.shadowStrength = Math.max(0, Math.min(1, typeof value === "number" ? value : 1));
           break;
@@ -219,7 +219,7 @@ export function useInspectorLightAudio(ctx: InspectorNodeApi): InspectorLightAud
           }
           break;
         }
-        // 阴影参数组（点光/平行光/聚光灯都有 shadow 配置；Unity Shadows 语义）
+        // 阴影参数组（点光/平行光/聚光灯都有 shadow 配置）
         case "Set Shadow Strength": {
           const sc = shadowConfigOf(light);
           if (sc) sc.strength = Math.max(0, Math.min(1, value as number));

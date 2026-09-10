@@ -33,7 +33,7 @@ export const COMPONENT_CATEGORY_LABELS: Record<ComponentCategory, string> = {
   script: "脚本",
 };
 
-/** 组件元数据（Unity 组件语义：label 为卡片标题，allowMultiple 为可重复挂载） */
+/** 组件元数据（label 为卡片标题，allowMultiple 为可重复挂载） */
 export interface ComponentMeta {
   type: NodeComponentRef["type"];
   /** 卡片/菜单展示名（中英合排，如 "刚体 Rigid Body"） */

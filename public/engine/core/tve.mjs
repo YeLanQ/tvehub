@@ -43,7 +43,7 @@ const entityByObj = new Map();
 /** 节点 id → Component 实例列表（宿主注册；getComponent 用） */
 const componentsByNode = new Map();
 
-/** 脚本类注册表（对齐 Unity 单一程序集语义：脚本加载即全项目可见）。
+/** 脚本类注册表（单一程序集语义：脚本加载即全项目可见）。
  *  按源路径（src/**.ts）与类名双键注册，getComponent/addComponent/组件字段
  *  解析按 token 命中，脚本之间无需 import 即可互相引用组件类型。 */
 const scriptClassByPath = new Map();
@@ -295,13 +295,13 @@ class Entity {
     if (typeof value === "string" && value) this.__obj.name = value;
   }
 
-  /** 节点标签（GameObject Tag 语义；编辑器检查器设置，随场景序列化） */
+  /** 节点标签（编辑器检查器设置，随场景序列化） */
   get tag() {
     const t = this.__obj.userData?.nodeTag;
     return typeof t === "string" ? t : "";
   }
 
-  /** 渲染层级索引（Unity Layer 语义，0~31；写入应用到对象子树的渲染层） */
+  /** 渲染层级索引（0~31；写入应用到对象子树的渲染层） */
   get layer() {
     const l = this.__obj.userData?.nodeLayer;
     return typeof l === "number" && Number.isFinite(l) ? Math.round(l) : 0;
@@ -416,7 +416,7 @@ class Entity {
    *   SkeletalAnimation/Collider）或类型键字符串（"rigidBody" 等；"animation"/
    *   "anim" 为骨骼动画别名）。多实例组件（如多个动画剪辑组件）取首个，句柄稳定；
    * - 脚本组件：传脚本类（构造器）按类匹配；或传脚本源路径 / 类名字符串
-   *   （"src/hp.ts" / "HPBar"，对齐 Unity 按类型名查找——脚本间无需 import）。
+   *   （"src/hp.ts" / "HPBar"，按类型名查找——脚本间无需 import）。
    */
   getComponent(componentClass) {
     const typeKey = builtinTypeKeyOf(componentClass);
@@ -618,7 +618,7 @@ class Light extends BuiltinComponent {
     const light = this.__lightObj();
     if (light) light.intensity = s.intensity;
   }
-  /** 渲染层级掩码（Unity 灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
+  /** 渲染层级掩码（灯光 Culling Mask：只照亮掩码内层的对象；-1 = 全部层） */
   get cullingMask() {
     const m = this.__settings()?.cullingMask;
     return typeof m === "number" && Number.isFinite(m) ? m | 0 : -1;
@@ -699,7 +699,7 @@ class Light extends BuiltinComponent {
       light.castShadow = s.castShadow;
     }
   }
-  /** 阴影浓度 0~1（1 = 纯黑阴影；Unity Strength） */
+  /** 阴影浓度 0~1（1 = 纯黑阴影） */
   get shadowStrength() {
     return numOr(this.__settings()?.shadowStrength, 1);
   }
@@ -711,7 +711,7 @@ class Light extends BuiltinComponent {
     const light = this.__lightObj();
     if (light && light.shadow) light.shadow.intensity = s.shadowStrength;
   }
-  /** 阴影深度偏移（压制自阴影麻点；Unity Bias） */
+  /** 阴影深度偏移（压制自阴影麻点） */
   get shadowBias() {
     return numOr(this.__settings()?.shadowBias, -0.0005);
   }
@@ -723,7 +723,7 @@ class Light extends BuiltinComponent {
     const light = this.__lightObj();
     if (light && light.shadow) light.shadow.bias = s.shadowBias;
   }
-  /** 阴影法线偏移（≤0 = 自动按纹素相对化；Unity Normal Bias） */
+  /** 阴影法线偏移（≤0 = 自动按纹素相对化） */
   get shadowNormalBias() {
     return numOr(this.__settings()?.shadowNormalBias, 0);
   }
@@ -735,7 +735,7 @@ class Light extends BuiltinComponent {
     const light = this.__lightObj();
     if (light && light.shadow && s.shadowNormalBias > 0) light.shadow.normalBias = s.shadowNormalBias;
   }
-  /** 阴影近裁剪面（比这更近的物体不参与投影；Unity Near Plane） */
+  /** 阴影近裁剪面（比这更近的物体不参与投影） */
   get shadowNear() {
     return numOr(this.__settings()?.shadowNear, 0.1);
   }
@@ -778,7 +778,7 @@ class Light extends BuiltinComponent {
     if (old) obj.remove(old);
     buildComponentLight(s, obj);
   }
-  /** Shadow 类型档位（"off" | "hard" | "soft"；Unity Shadow Type 语义，读写投射开关 + 软化半径） */
+  /** Shadow 类型档位（"off" | "hard" | "soft"；读写投射开关 + 软化半径） */
   get shadowType() {
     if (!this.castShadow) return "off";
     return this.shadowRadius >= 2 ? "soft" : "hard";
@@ -1209,14 +1209,14 @@ function lightSettingsFrom(s) {
   };
   out.intensity = num(s.intensity, out.intensity, 0);
   out.distance = num(s.distance, out.distance, 0);
-  // 渲染层级掩码（Unity 灯光 Culling Mask；缺省全部层）
+  // 渲染层级掩码（灯光 Culling Mask；缺省全部层）
   out.cullingMask =
     typeof s.cullingMask === "number" && Number.isFinite(s.cullingMask) ? s.cullingMask | 0 : -1;
   out.decay = num(s.decay, out.decay, 0);
   out.angle = num(s.angle, out.angle, 1, 89);
   out.penumbra = num(s.penumbra, out.penumbra, 0, 1);
   if (typeof s.castShadow === "boolean") out.castShadow = s.castShadow;
-  // 阴影参数组（点光/平行光/聚光灯；Unity Shadows 语义）
+  // 阴影参数组（点光/平行光/聚光灯）
   out.shadowStrength = num(s.shadowStrength, 1, 0, 1);
   out.shadowBias = num(s.shadowBias, -0.0005, -0.05, 0);
   out.shadowNormalBias = num(s.shadowNormalBias, 0, 0);
@@ -1496,7 +1496,7 @@ class ComponentImpl {
 }
 
 // ---------------------------------------------------------------------------
-// 装饰器（参考 Cocos Creator @property / @nodeType 声明式写法）
+// 装饰器（@property / @nodeType 声明式写法）
 // - property：字段装饰器，登记字段为组件可编辑属性（host 据此读取字段初值作
 //   默认并注入节点配置覆盖）；类型契约见 tve.d.ts。
 // - nodeType：类装饰器，登记脚本类为可创建节点类型（编辑器创建入口用）。
@@ -1556,7 +1556,7 @@ function componentTypeKeyOfOption(v) {
 }
 
 /**
- * @property 装饰器（参考 Cocos Creator）。双形态：
+ * @property 装饰器。双形态：
  * - @property / @property() / @property({...})：字段装饰器，把字段名记入类
  *   __tvePropKeys，host 据此以字段初值为默认、按节点配置覆盖（this.字段名 读写）；
  *   options.type 传节点类型类（如 MeshNode）时，把该字段登记为场景节点引用
@@ -1610,7 +1610,7 @@ export function nodeType(options) {
 }
 
 // ---------------------------------------------------------------------------
-// 委托（Delegate）：多播事件容器（参考 C# Delegate / UnityEvent）。
+// 委托（Delegate）：多播事件容器（参考 C# 多播委托）。
 // 广播式回调的登记与触发，回调异常逐个隔离上报，不影响其余回调与其他脚本；
 // invoke 用快照迭代，回调内 add/remove 自身或他人均安全。
 // ---------------------------------------------------------------------------
@@ -2129,7 +2129,7 @@ const sceneApi = {
       .map((e) => getEntity(e.obj))
       .filter(Boolean);
   },
-  /** 全场景按类型查组件（Unity FindObjectOfType 语义）：token = 脚本类 /
+  /** 全场景按类型查组件：token = 脚本类 /
    *  脚本源路径 / 脚本类名 / 内置组件门面类 / 类型键；返回第一个命中 */
   findComponent(token) {
     for (const e of registry()) {

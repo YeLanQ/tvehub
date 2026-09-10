@@ -19,7 +19,7 @@ export interface IParticleSystemNode extends INode {
 }
 
 /**
- * 粒子系统节点：场景中的粒子发射器（Unity ParticleSystem 语义子集）。
+ * 粒子系统节点：场景中的粒子发射器（常规粒子系统语义子集）。
  * - 数据只持有发射设置；粒子本身为运行时状态，由 ParticleSystem（编辑器）/
  *   particles.mjs（播放器）按设置模拟并以 Points 渲染在节点对象下；
  * - 发射方向语义与灯光/相机一致：cone / box 沿节点本地 -Z；

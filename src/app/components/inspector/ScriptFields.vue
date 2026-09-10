@@ -145,7 +145,7 @@ function onExecutionOrder(v: number): void {
     </div>
     <div v-else class="hint mono comp-script-path">{{ comp.script }}</div>
 
-    <!-- 执行顺序：小者先跑（同序按挂载顺序；对齐 Unity Script Execution Order） -->
+    <!-- 执行顺序：小者先跑（同序按挂载顺序） -->
     <div class="field">
       <label title="执行顺序（小者先跑，同序按挂载顺序）">执行顺序</label>
       <NumberField

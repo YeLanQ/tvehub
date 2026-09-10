@@ -140,7 +140,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   });
 
   // 组件引用收集（注册表为文档序：先父后子）；executionOrder 为执行顺序
-  // （小者先跑，同序按挂载顺序——与 Unity Script Execution Order 同语义）
+  // （小者先跑，同序按挂载顺序）
   const bindings = [];
   for (const { json, obj } of nodes) {
     const comps = Array.isArray(json.components) ? json.components : [];
@@ -232,7 +232,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
    * 组件引用字段绑定（__tveComponentKeys；实例注册后调用）：
    * - 内置组件键（"animationClip" 等）→ tve resolveComponentField get-or-create；
    * - 脚本组件键（"script:类名"）→ 实体已有该脚本组件则绑定，没有则动态创建
-   *   （对齐 Unity RequireComponent 语义；创建的实例立即进入生命周期）。
+   *   （按需自动挂载依赖组件；创建的实例立即进入生命周期）。
    */
   function bindComponentFields(inst, Klass, entity) {
     const compKeys = Array.isArray(Klass.__tveComponentKeys) ? Klass.__tveComponentKeys : [];
@@ -301,7 +301,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   instances.sort((a, b) => a.order - b.order);
 
   // 生命周期：全部实例化后先统一 onEnable（组件就绪/可引用其他实体），再统一 onStart
-  // （对齐 Unity OnEnable → Start 的批次顺序）
+  // （onEnable → onStart 批次顺序）
   for (const record of instances) callLifecycle(record, "onEnable");
   for (const record of instances) callLifecycle(record, "onStart");
   postLog("info", `[脚本] 已启动 ${instances.length} 个脚本实例`);
@@ -320,7 +320,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   }
 
   /**
-   * 物理碰撞回调分发（对齐 Unity：onCollisionEnter/Exit 在 Update 前调用）。
+   * 物理碰撞回调分发（onCollisionEnter/Exit 在 Update 前调用）。
    * 事件为节点 id 对（physics.mjs 后端收集）；双方实体各自收到一次回调，
    * 参数为对方实体。同一帧内按 self|other|started 去重（复合形状多碰撞体）。
    */

@@ -273,7 +273,7 @@ function createItems(parentId: string): CtxMenuItem[] {
     },
   });
   const isRoot = engine.graph.root?.id === parentId;
-  // 相机节点：把位姿与取景参数对齐到当前编辑器视口（Unity Align With View 语义）
+  // 相机节点：把位姿与取景参数对齐到当前编辑器视口（Align With View）
   if (engine.graph.get(parentId)?.typeKey === "cameraNode") {
     items.push({
       label: "对齐到当前视口",

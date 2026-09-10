@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------------------
-// 灯光阴影配置（Unity Light → Shadows 语义）：
+// 灯光阴影配置：
 //
 // 每盏可投影灯光（点光/平行光/聚光灯）自带一组阴影参数：
-// - strength    阴影浓度 0~1（Unity "Strength"；映射 three 的 shadow.intensity）
-// - bias        深度偏移（Unity "Bias"；压制自阴影麻点，负值向远处推）
-// - normalBias  法线偏移（Unity "Normal Bias"；≤0 = 自动：按阴影贴图纹素相对化）
-// - near        近裁剪面（Unity "Near Plane"；按阴影相机语义裁掉过近的投影）
+// - strength    阴影浓度 0~1（映射 three 的 shadow.intensity）
+// - bias        深度偏移（压制自阴影麻点，负值向远处推）
+// - normalBias  法线偏移（≤0 = 自动：按阴影贴图纹素相对化）
+// - near        近裁剪面（按阴影相机语义裁掉过近的投影）
 // - radius      软化半径（Shadow 类型 Hard/Soft 的渲染差异；PCF 采样核）
-// - resolution  阴影贴图分辨率（Unity "Resolution"；0 = 自动：平面 2048 / 点光 1024）
+// - resolution  阴影贴图分辨率（0 = 自动：平面 2048 / 点光 1024）
 //
 // 数据形状可在节点 JSON 与灯光组件设置间共享；统一解析后写到 three 灯光的
 // shadow 上（渲染侧只认 three 对象，不感知配置来源）。
@@ -37,7 +37,7 @@ export const DEFAULT_LIGHT_SHADOW: LightShadowConfig = {
   resolution: 0, // 0 = 自动
 };
 
-/** Shadow 类型下拉的三档（Unity None/Hard/Soft 语义；渲染端映射见 radius） */
+/** Shadow 类型下拉的三档（None/Hard/Soft；渲染端映射见 radius） */
 export type LightShadowType = "off" | "hard" | "soft";
 export const LIGHT_SHADOW_TYPE_HARD_RADIUS = 1;
 export const LIGHT_SHADOW_TYPE_SOFT_RADIUS = 4;

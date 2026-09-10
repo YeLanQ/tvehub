@@ -165,7 +165,7 @@ function outlineGeometryFrom(
   return out;
 }
 
-// —— 阴影（点光/平行光/聚光灯，Unity Shadows 语义）——
+// —— 阴影（点光/平行光/聚光灯）——
 /** 法线偏移自动档（单位为阴影贴图纹素）：范围越大纹素越粗，固定偏移会变麻点/飘影 */
 const SHADOW_NORMAL_BIAS_TEXELS = 1.2;
 /** 阴影相机重算节拍（帧）：场景随时在变，写死的范围会把阴影裁掉，按节拍惰性贴合 */
@@ -330,7 +330,7 @@ export class SceneSynchronizer {
   }
 
   /**
-   * 节点渲染层级落位（Unity Layer 语义）：
+   * 节点渲染层级落位：
    * - 节点根对象设为节点层（three 的 object.layers）；
    * - 渲染内容子对象跟随（卡通描边壳/模型实例/占位体）——它们与根对象是同一
    *   渲染体，不跟随会在相机 Culling Mask 排除该层时只剩"半个物体"；
@@ -646,7 +646,7 @@ export class SceneSynchronizer {
   }
 
   // ---------------------------------------------------------------------------
-  // 阴影（点光/平行光/聚光灯，各灯自带 Unity Shadows 语义的参数组）
+  // 阴影（点光/平行光/聚光灯，各灯自带阴影参数组）
   //
   // three 的灯光阴影相机默认范围很小（平行光为正交 ±5、聚光灯/点光远平面 500 或
   // 取 distance）：场景一旦超出这个盒子，阴影就会"整块消失"或只留下半边 —— 这正是
@@ -669,7 +669,7 @@ export class SceneSynchronizer {
     // 入口统一 parse 兜底（缺字段回默认），调用方传部分配置也不会把 undefined 写进 three
     const cfg = parseLightShadow(raw);
     light.userData.shadowCfg = { ...cfg };
-    // 阴影相机的层随灯光层掩码同步（Unity 语义：灯的 Culling Mask 同时决定哪些层
+    // 阴影相机的层随灯光层掩码同步（灯的 Culling Mask 同时决定哪些层
     // 的对象投影进它的阴影贴图）。three 的阴影通道按 shadowCamera.layers 过滤物体，
     // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。
     light.shadow.camera.layers.mask = light.layers.mask;
@@ -878,7 +878,7 @@ export class SceneSynchronizer {
 
     const lamp = new THREE.Group();
     lamp.userData.lamp = true;
-    // 灯光 Culling Mask（Unity 语义）：写到真实 three 灯光对象的 layers 上，
+    // 灯光 Culling Mask：写到真实 three 灯光对象的 layers 上，
     // 渲染时按"灯层 vs 相机层"收集判定 + 分层多 pass 实现"只照亮所选层"
     const lightMask = parseCullingMask(light.cullingMask);
     let iconKind: SpriteIconKind = "light-point";

@@ -1,4 +1,4 @@
-// 相机参数面板定义（风格对齐 material/defs.ts，命名参照 Blender 相机属性）：
+// 相机参数面板定义（风格对齐 material/defs.ts，命名参照通用相机属性）：
 // 供 CameraSection 数据驱动渲染；公共分组（near/far）任何类型都显示，
 // 类型特有分组（透视 fov / 正交 orthoSize）由工厂类型定义各自给出。
 import type { CameraParamKey, CameraClearFlags } from "./types";
@@ -7,7 +7,7 @@ export interface CameraParamDef {
   key: CameraParamKey;
   /** 中文显示名 */
   label: string;
-  /** Blender/three 英文属性名（提示） */
+  /** three 英文属性名（提示） */
   en: string;
   /** 数值步进（拖动调节灵敏度；缺省 0.01） */
   step?: number;

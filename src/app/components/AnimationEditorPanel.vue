@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
-// 动画编辑窗口（底部停靠面板，Unity Animation 窗口的轻量版）。
+// 动画编辑窗口（底部停靠面板：轨道 + 时间轴 + 曲线的轻量实现）。
 // 本文件是组合壳：脚本逻辑按领域拆在 app/composables/anim-editor/ 下
 // （useAnimView/useAnimClip/useAnimPreview/useAnimPlayback/useAnimTracks/
 // useAnimTimeline/useAnimSelection/useAnimCurve），此处只解构暴露给模板；

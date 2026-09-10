@@ -14,7 +14,7 @@ export interface IPointLightNode extends ILightNode {
   decay: number;
   /** 投射阴影（立方体阴影贴图，六个面各一张） */
   castShadow: boolean;
-  /** 阴影参数（浓度/偏移/近裁剪面，Unity Shadows 语义） */
+  /** 阴影参数（浓度/偏移/近裁剪面） */
   shadow: LightShadowConfig;
 }
 
@@ -30,7 +30,7 @@ export class PointLightNode extends LightNode implements IPointLightNode {
   decay = 2;
   /** 投射阴影（默认关：立方阴影贴图渲染 6 个面，开销高于平面阴影） */
   castShadow = false;
-  /** 阴影参数（Unity Shadows 语义：浓度/深度偏移/法线偏移/近裁剪面） */
+  /** 阴影参数（浓度/深度偏移/法线偏移/近裁剪面） */
   shadow: LightShadowConfig = parseLightShadow(undefined);
 
   constructor(

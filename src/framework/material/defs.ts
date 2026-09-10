@@ -1,5 +1,5 @@
-// 材质参数面板定义（Blender 原理化 BSDF 分组/命名风格）：
-// 供 MaterialSection 渲染全部可调参数；名称与 Blender 节点属性一致，
+// 材质参数面板定义（原理化 BSDF 分组/命名风格）：
+// 供 MaterialSection 渲染全部可调参数；名称与原理化 BSDF 属性一致，
 // 并映射到 three MeshPhysicalMaterial 的属性（见 types.ts）。
 import type { MaterialEnableKey, MaterialParamKey } from "./types";
 
@@ -8,7 +8,7 @@ export type MaterialParamKind = "number" | "color" | "bool" | "texture" | "vecto
 export interface MaterialParamDef {
   /** 参数字段名：内置分支为 MaterialParamKey，自定义着色器为属性名（任意 _ 前缀标识符） */
   key: string;
-  /** 中文显示名（对应 Blender 属性中文/习惯名；自定义着色器取 Properties 文案） */
+  /** 中文显示名（对应属性中文/习惯名；自定义着色器取 Properties 文案） */
   label: string;
   /** 英文属性名/属性键（提示） */
   en: string;
@@ -21,7 +21,7 @@ export interface MaterialParamDef {
 }
 
 export interface MaterialParamGroup {
-  /** 分组标题（Blender 风格分组） */
+  /** 分组标题 */
   title: string;
   /** 启用开关（对应 MaterialParams 中的 boolean 字段；未勾选时该分组参数不生效） */
   enableKey?: MaterialEnableKey;

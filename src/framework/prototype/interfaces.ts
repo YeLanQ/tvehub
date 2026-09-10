@@ -53,7 +53,7 @@ export interface INode extends IPrototype {
   childIds: string[];
   active: boolean;
   visible: boolean;
-  /** GameObject 标签（Unity Tag 语义；播放器 SDK 经 entity.tag / findByTag 查询） */
+  /** 节点标签（播放器 SDK 经 entity.tag / findByTag 查询） */
   tag: string;
   /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
   prefab: string;

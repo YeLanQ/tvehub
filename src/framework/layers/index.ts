@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// 渲染层级与标签（Unity Tags and Layers 语义；framework 层，不依赖 app 与 three）。
+// 渲染层级与标签（framework 层，不依赖 app 与 three）。
 //
 // 层（Layer）：three.js 的 Object3D.layers 是 32 位掩码，项目最多 32 个命名层
-// （索引 0~31）。节点单选一层（Unity Layer 语义，默认层 0），相机/灯光节点以
-// cullingMask 位掩码筛选照亮的层。内置层 0 = "Default"，锁定不可删（Unity 同款）。
+// （索引 0~31）。节点单选一层（默认层 0），相机/灯光节点以
+// cullingMask 位掩码筛选照亮的层。内置层 0 = "Default"，锁定不可删。
 //
 // 标签（Tag）：项目级命名列表（内置 "Untagged" 即空串，不进列表），节点 tag 存
 // 自由字符串；脚本经 entity.tag / findByTag 按标签筛选，引擎不附加内置语义。
@@ -21,7 +21,7 @@ export const MAX_LAYERS = 32;
 /** 全部层的位掩码（int32 全 1；three 的 layers.mask 用同一表示） */
 export const ALL_LAYERS_MASK = -1;
 
-/** 内置层的固定索引与名称（锁定不可删不可改名，Unity Default 层同语义） */
+/** 内置层的固定索引与名称（锁定不可删不可改名） */
 export const BUILTIN_LAYER_INDEX = 0;
 export const BUILTIN_LAYER_NAME = "Default";
 

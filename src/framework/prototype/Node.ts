@@ -43,9 +43,9 @@ export interface NodeInit {
   id?: string;
   name?: string;
   parentId?: string | null;
-  /** GameObject 标签（Unity Tag 语义：脚本按标签查找实体；空串 = 无标签） */
+  /** 节点标签（脚本按标签查找实体；空串 = 无标签） */
   tag?: string;
-  /** 渲染层级索引（Unity Layer 语义，0~31；0 = 内置 Default；相机/灯光按 cullingMask 筛选） */
+  /** 渲染层级索引（0~31；0 = 内置 Default；相机/灯光按 cullingMask 筛选） */
   layer?: number;
   /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
   prefab?: string;
@@ -71,9 +71,9 @@ export class Node extends Prototype implements INode {
   childIds: string[];
   active: boolean;
   visible: boolean;
-  /** GameObject 标签（Unity Tag 语义；播放器 SDK 经 entity.tag / findByTag 查询） */
+  /** 节点标签（播放器 SDK 经 entity.tag / findByTag 查询） */
   tag: string;
-  /** 渲染层级索引（Unity Layer 语义：0~31，0 = 内置 Default；three 侧为 object.layers） */
+  /** 渲染层级索引（0~31，0 = 内置 Default；three 侧为 object.layers） */
   layer: number;
   /** 实例来源的预制体资产引用（.prefab 相对路径；空串 = 非预制体实例） */
   prefab: string;

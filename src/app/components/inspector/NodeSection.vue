@@ -56,7 +56,7 @@ function commitName(): void {
   }
 }
 
-/** 提交标签（GameObject Tag 语义；脚本经 entity.tag / engine.scene.findByTag 查询） */
+/** 提交标签（脚本经 entity.tag / engine.scene.findByTag 查询） */
 function commitTag(v: string): void {
   const t = v.trim();
   if (t !== props.node.tag) {
@@ -77,7 +77,7 @@ const tagOptions = computed(() => {
   return [...tags, ...extra];
 });
 
-// —— 层下拉（项目层表 + 已删除层的 Layer N 兜底；Unity Layer 单选语义） ——
+// —— 层下拉（项目层表 + 已删除层的 Layer N 兜底；单选层语义） ——
 const layerOptions = computed(() => {
   void props.rev;
   const layer = clampLayerIndex(props.node.layer);
@@ -111,7 +111,7 @@ function onLayerSelect(e: Event): void {
     />
   </div>
   <div class="field" :data-rev="rev">
-    <label title="渲染层级（Unity Layer 语义；相机/灯光的 Culling Mask 按层筛选渲染与光照）">层</label>
+    <label title="渲染层级（相机/灯光的 Culling Mask 按层筛选渲染与光照）">层</label>
     <select :value="currentLayer" @change="onLayerSelect">
       <option v-for="o in layerOptions" :key="o.index" :value="o.index">
         {{ o.name }}
@@ -119,7 +119,7 @@ function onLayerSelect(e: Event): void {
     </select>
   </div>
   <div class="field" :data-rev="rev">
-    <label title="标签（GameObject Tag 语义；脚本按标签查找实体）">标签</label>
+    <label title="标签（脚本按标签查找实体）">标签</label>
     <select :value="localTag" @focus="editingTag = true" @change="onTagSelect">
       <option value="">{{ UNTAGGED_LABEL }}</option>
       <option v-for="t in tagOptions" :key="t" :value="t">{{ t }}</option>

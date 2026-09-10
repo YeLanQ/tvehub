@@ -93,7 +93,7 @@ export function createDefaultSettings(): SceneSettings {
  * 场景原型结构体
  * 
  * 定义场景文件的完整数据结构，用于序列化/反序列化场景。
- * 类似 Unity `.unity` 场景文件，包含：
+ * 包含：
  * - 场景元数据（名称、版本、创建时间等）
  * - 场景设置（渲染；物理配置在项目设置中）
  * - 节点树（层级结构）

@@ -119,7 +119,7 @@ export const api = {
     shader: string,
     params: Record<string, unknown>,
   ) => invoke<void>("material_write", { root, rel, name, shader, params }),
-  /** 读取并解析 .shader 着色器资产（Unity ShaderLab 风格源码，name/kind 从源码解析；
+  /** 读取并解析 .shader 着色器资产（ShaderLab 风格源码，name/kind 从源码解析；
    *  source 为源码全文；自定义着色器（kind=custom）随文档返回 properties（属性表）、
    *  program（组装后的顶点/片元源码 + 渲染状态）与 error（组装失败原因）；
    *  缺失/非着色器文档返回 null） */

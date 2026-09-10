@@ -22,7 +22,7 @@ export interface CameraNodeInit extends NodeInit {
   clearFlags?: CameraClearFlags;
   /** 纯色清屏色（clearFlags=solidColor 生效；0xRRGGBB） */
   clearColor?: number;
-  /** 渲染层级掩码（Unity Culling Mask 语义：只渲染掩码内层的对象；-1 = 全部） */
+  /** 渲染层级掩码（Culling Mask 语义：只渲染掩码内层的对象；-1 = 全部） */
   cullingMask?: number;
   isEditorCamera?: boolean;
 }
@@ -42,7 +42,7 @@ export interface ICameraNode extends INode {
   clearFlags: CameraClearFlags;
   /** 纯色清屏色（clearFlags=solidColor 时的背景；0xRRGGBB） */
   clearColor: number;
-  /** 渲染层级掩码（Unity Culling Mask：只渲染掩码内层的对象；-1 = 全部层） */
+  /** 渲染层级掩码（Culling Mask：只渲染掩码内层的对象；-1 = 全部层） */
   cullingMask: number;
   isEditorCamera: boolean;
 }

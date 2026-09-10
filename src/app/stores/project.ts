@@ -41,7 +41,7 @@ export interface ProjectStore {
   physicsEnabled: boolean;
   /** 重力向量（项目级） */
   physicsGravity: { x: number; y: number; z: number };
-  /** 项目标签列表（Unity Tags；不含内置 Untagged。检查器 Tag 下拉用） */
+  /** 项目标签列表（不含内置 Untagged。检查器 Tag 下拉用） */
   tags: string[];
   /** 层表（稠密 32 项，空串 = 未定义；index 0 恒为内置 Default。检查器 Layer/Culling Mask 用） */
   layers: LayerTable;

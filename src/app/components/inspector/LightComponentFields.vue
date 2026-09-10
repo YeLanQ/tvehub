@@ -72,7 +72,7 @@ function onResolutionSelect(e: Event): void {
     </select>
   </div>
 
-  <!-- Range：照射半径（点光/聚光，Unity 光源参数首项；0 = 无限远） -->
+  <!-- Range：照射半径（点光/聚光；0 = 无限远） -->
   <div v-if="isPointOrSpot" class="field">
     <label title="Range：照射距离/作用半径（0 = 无限远）">Range</label>
     <NumberField
@@ -87,7 +87,7 @@ function onResolutionSelect(e: Event): void {
   <!-- 聚光灯：光束角度与边缘柔和度 -->
   <template v-if="isSpot">
     <div class="field">
-      <label title="Spot Angle：光束半角（度）；Unity 面板显示全角，此处为半角">Spot Angle</label>
+      <label title="Spot Angle：光束半角（度；此处为半角，非全角）">Spot Angle</label>
       <NumberField
         :model-value="comp.light.angle"
         :step="1"
@@ -138,7 +138,7 @@ function onResolutionSelect(e: Event): void {
     />
   </div>
 
-  <!-- Culling Mask（Unity 灯光同名字段）：只照亮掩码内层的对象 -->
+  <!-- Culling Mask：只照亮掩码内层的对象 -->
   <div class="field">
     <label title="Culling Mask（只照亮掩码内层的对象；相机 Culling Mask 排除的层本灯也不参与）">
       Culling Mask
@@ -159,10 +159,10 @@ function onResolutionSelect(e: Event): void {
     </select>
   </div>
 
-  <!-- 阴影参数组（Unity Light → Shadows 语义；Off 档时禁用输入，仍回显存储值） -->
+  <!-- 阴影参数组（Off 档时禁用输入，仍回显存储值） -->
   <template v-if="hasShadow">
     <div class="field">
-      <label title="阴影浓度：0 = 阴影不可见，1 = 纯黑阴影（Unity Strength）">Strength</label>
+      <label title="阴影浓度：0 = 阴影不可见，1 = 纯黑阴影">Strength</label>
       <NumberField
         :model-value="comp.light.shadowStrength"
         :step="0.05"
@@ -174,7 +174,7 @@ function onResolutionSelect(e: Event): void {
       />
     </div>
     <div class="field">
-      <label title="深度偏移：向远处推可压制自阴影麻点，过负会飘影（Unity Bias）">Bias</label>
+      <label title="深度偏移：向远处推可压制自阴影麻点，过负会飘影">Bias</label>
       <NumberField
         :model-value="comp.light.shadowBias"
         :step="0.0005"
@@ -186,7 +186,7 @@ function onResolutionSelect(e: Event): void {
       />
     </div>
     <div class="field">
-      <label title="沿法线方向偏移阴影采样点；0 = 自动按阴影贴图纹素相对化（Unity Normal Bias）">
+      <label title="沿法线方向偏移阴影采样点；0 = 自动按阴影贴图纹素相对化">
         Normal Bias
       </label>
       <NumberField
@@ -199,7 +199,7 @@ function onResolutionSelect(e: Event): void {
       />
     </div>
     <div class="field">
-      <label title="阴影近裁剪面：比这更近的物体不参与投影（Unity Near Plane）">Near Plane</label>
+      <label title="阴影近裁剪面：比这更近的物体不参与投影">Near Plane</label>
       <NumberField
         :model-value="comp.light.shadowNear"
         :step="0.05"

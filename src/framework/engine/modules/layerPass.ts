@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// 分层渲染 pass 计算（Unity Culling Mask 的多 pass 实现，framework 层纯函数）。
+// 分层渲染 pass 计算（Culling Mask 的多 pass 实现，framework 层纯函数）。
 //
 // three.js 的相机层裁剪是原生的（object.layers.test(camera.layers)），但灯光只有
 // "灯层 vs 相机层" 的收集判定：灯光 uniform 是整帧全局的，没有"灯只照亮所选层"
-// 的逐对象过滤。真 Unity 语义按「在用层」拆多次渲染：每个 pass 把渲染相机的
+// 的逐对象过滤。严格的 Culling Mask 语义按「在用层」拆多次渲染：每个 pass 把渲染相机的
 // layers 收窄到单个层位 —— three 收集灯光时 light.layers.test(camera.layers)
 // 恰好就完成了"这盏灯只参与其掩码内层的 pass"，无需逐灯开关；阴影相机层随灯
 // cullingMask 同步（见 SceneSynchronizer.configureShadowLight）。
@@ -39,7 +39,7 @@ export function populatedLayerBits(scene: THREE.Object3D): number {
  * - 相机掩码全开（编辑器自由视角 / 默认相机）且无部分掩码灯光 → null（零开销）；
  * - 掩码内的在用层 ≤1 → null；
  * - 相机收窄了掩码且掩码内占用多层 → 按层拆（对象裁剪 + 灯光过滤一体生效）；
- * - 掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆：Unity 语义下灯光
+ * - 掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆：Culling Mask 语义下灯光
  *   Culling Mask 恒生效（掩码全开的相机只是"看得到所有层"，灯光仍只照亮所选层），
  *   拆分后每层 pass 只收集掩码覆盖该层的灯。
  */

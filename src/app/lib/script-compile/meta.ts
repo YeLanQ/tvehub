@@ -20,7 +20,7 @@ import { literalValue, parsePropDef, vec3Value } from "./props";
 
 // ---------------------------------------------------------------------------
 // 脚本类元数据解析（节点类型/属性声明）。支持两种写法：
-// - 装饰器（推荐，参考 Cocos Creator @property / @nodeType）：字段用 @property
+// - 装饰器（推荐）：字段用 @property
 //   标注为可编辑属性（类型/默认值由字段初值与选项推断）；类用 @nodeType 声明
 //   为可创建节点类型；
 // - legacy 静态声明：`static props = {...}` 与 `static nodeType = {...}`（兼容保留）。

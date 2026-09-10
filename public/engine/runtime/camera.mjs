@@ -48,7 +48,7 @@ export function createRenderCamera(canvasCameras) {
     if (!isOrtho) cam.fov = num(j.fov, 50);
     cam.near = Math.max(0.01, num(j.near, 0.1));
     cam.far = Math.max(num(j.far, 20), cam.near + 0.001);
-    // 相机节点 Culling Mask（Unity 语义）：只渲染掩码内层的对象；
+    // 相机节点 Culling Mask：只渲染掩码内层的对象；
     // player 渲染循环在掩码内占用多层时按层拆 pass（layerpass.mjs）
     cam.layers.mask = parseCullingMask(j.cullingMask);
     syncPose();

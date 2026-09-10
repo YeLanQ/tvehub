@@ -1,12 +1,12 @@
-// nishitaSky —— Blender「天空纹理」风格程序化天空（Nishita 多重散射）：
-// 完全对齐 Blender 5.2 intern/sky/source/sky_multiple_scattering.cpp 的算法
+// nishitaSky —— 程序化天空（Nishita 多重散射）：
+// 算法沿用 Nishita 多重散射的开源实现
 // （源自 Fernando García Liñán 硕士论文 "Physically Based Sky"）：
 //   - 4 波长光谱（630/560/490/430nm）+ 解析拟合转 XYZ
 //   - 透射率 LUT 预计算（256×64）：transmittance(cosθ, altitude)，散射时查表
 //   - 多重散射为解析项：地面反照率二阶散射 + 大气多散射拟合（非迭代 pass）
 //   - 单次散射沿视线 64 步 ray march，Hillaire 能量守恒解析积分
 // 生成一张线性 HDR 等距柱状全景纹理（HalfFloat），作为 EquirectangularReflectionMapping 背景。
-// 坐标约定：shader 内部为 z-up（Blender 原约定），外部 three 为 y-up，入口处做一次轴映射。
+// 坐标约定：shader 内部为 z-up（算法原约定），外部 three 为 y-up，入口处做一次轴映射。
 import * as THREE from "three";
 
 // —— 生成器纹理尺寸（同时供 shader 插值使用：等距柱状图的像素角分辨率）——
@@ -34,7 +34,7 @@ export interface NishitaSkyParams {
   dust: number;
   /** 臭氧密度（吸收倍率） */
   ozone: number;
-  /** 多重散射（是否启用多散射项，对齐 Blender sky_model） */
+  /** 多重散射（是否启用多散射项） */
   ms: boolean;
 }
 
@@ -50,7 +50,7 @@ const VERT = /* glsl */ `
 const SKY_COMMON = /* glsl */ `
   const float PI = 3.141592653589793;
 
-  // 地球/大气（km，Blender 约定）
+  // 地球/大气（km）
   const float EARTH_RADIUS = 6371.0;
   const float ATMOSPHERE_THICKNESS = 100.0;
   const float ATMOSPHERE_RADIUS = 6471.0;
@@ -179,7 +179,7 @@ const SKY_FRAG = /* glsl */ `
   uniform sampler2D transmittanceLUT;
 
   // —— 输出曝光（调参入口：整体亮度/显示映射）——
-  // 物理 radiance 天顶约 1~6（Blender 交给视图变换处理），本管线 LDR 无色调映射直出，
+  // 物理 radiance 天顶约 1~6（参考实现交给视图变换处理），本管线 LDR 无色调映射直出，
   // 按旧实现的天顶线性亮度（~0.15-0.3）校准：0.05 → sRGB 显示约 (56,78,110)~(86,112,151) 蓝天
   const float SKY_EXPOSURE = 0.05;
 
