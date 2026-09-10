@@ -232,36 +232,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <!-- 原型表单（原型分类可增删改；表单提示按分类扩展名自适应） -->
-          <div v-if="protoForm.open && canEditActiveCategory" class="settings-card proto-form">
-            <h3>
-              {{ protoForm.editingId ? "编辑原型" : "添加原型" }}
-              <span class="dim">
-                （{{ activeCategory.id }}/{{ protoForm.name.trim() || "名称" }}.{{ activePrototypeExt }}）
-              </span>
-            </h3>
-            <div class="proto-field">
-              <label>名称</label>
-              <input v-model="protoForm.name" :placeholder="protoFormText.namePlaceholder" />
-            </div>
-            <div class="proto-field">
-              <label>描述</label>
-              <input v-model="protoForm.description" placeholder="一句话说明用途（可选）" />
-            </div>
-            <div class="proto-field">
-              <label>{{ protoFormText.codeHint }}</label>
-              <textarea
-                v-model="protoForm.code"
-                rows="12"
-                spellcheck="false"
-                :placeholder="protoFormText.codePlaceholder"
-              ></textarea>
-            </div>
-            <div class="proto-form-actions">
-              <button @click="protoForm.open = false">取消</button>
-              <button class="primary" @click="saveProtoForm">保存</button>
-            </div>
-          </div>
+          <!-- 原型表单改为居中弹窗（样式对齐文档查看器；见模板尾部 Teleport） -->
 
           <div v-if="activeFiles.length" class="proto-grid">
             <div v-for="f in activeFiles" :key="f.file" class="proto-card">
@@ -305,5 +276,51 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 原型表单弹窗（原型分类可增删改；表单提示按分类扩展名自适应）：
+         居中模态（样式对齐文档查看器），不再内嵌在工坊内容流里 -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div
+          v-if="protoForm.open && canEditActiveCategory && activeCategory"
+          class="proto-form-backdrop"
+          @click.self="protoForm.open = false"
+        >
+          <div class="proto-form-modal">
+            <div class="proto-form-head">
+              <span class="proto-form-title">
+                {{ protoForm.editingId ? "编辑原型" : "添加原型" }}
+                <span class="dim">
+                  （{{ activeCategory.id }}/{{ protoForm.name.trim() || "名称" }}.{{ activePrototypeExt }}）
+                </span>
+              </span>
+              <button class="proto-form-close" title="关闭" @click="protoForm.open = false">✕</button>
+            </div>
+            <div class="proto-form-body">
+              <div class="proto-field">
+                <label>名称</label>
+                <input v-model="protoForm.name" :placeholder="protoFormText.namePlaceholder" />
+              </div>
+              <div class="proto-field">
+                <label>描述</label>
+                <input v-model="protoForm.description" placeholder="一句话说明用途（可选）" />
+              </div>
+              <div class="proto-field proto-field-code">
+                <label>{{ protoFormText.codeHint }}</label>
+                <textarea
+                  v-model="protoForm.code"
+                  spellcheck="false"
+                  :placeholder="protoFormText.codePlaceholder"
+                ></textarea>
+              </div>
+            </div>
+            <div class="proto-form-foot">
+              <button @click="protoForm.open = false">取消</button>
+              <button class="primary" @click="saveProtoForm">保存</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </section>
 </template>
