@@ -689,8 +689,11 @@ watch(
   },
   { deep: true },
 );
+// 材质球外观的**全部输入**都列在这里：渲染分支（matType）与挂载的着色器（shaderRel，
+// 决定 Hook 注入）任一变化都必须重建——漏掉一路会让预览停在旧材质上
+// （典型：PBR → 另一个 PBR 效果着色器、或从效果着色器切回普通 PBR，分支不变但效果变了）。
 watch(
-  () => props.matType,
+  () => [props.matType, props.shaderRel],
   () => {
     if (props.kind === "material") buildMaterialPreview();
   },

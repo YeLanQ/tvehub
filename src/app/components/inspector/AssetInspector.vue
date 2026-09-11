@@ -387,6 +387,16 @@ watch(() => props.rel, () => void reload(), { immediate: true });
 // —— 普通材质编辑：写引擎缓存（视口即时刷新）+ 防抖落盘 ——
 const matParams = computed(() => local as unknown as MaterialParams);
 
+/**
+ * 预览用参数：分支参数 + 着色器 Properties 镜像（与参数面板同源）。
+ * 预览与面板必须读同一份镜像，否则换挂载的着色器（或改着色器参数）后
+ * 材质球与面板会不同步。
+ */
+const previewParams = computed<MaterialParams>(() => ({
+  ...matParams.value,
+  props: { ...(matParams.value.props ?? {}), ...shaderLocal } as MaterialParams["props"],
+}));
+
 function onEditParam(key: string, value: number | boolean | string | number[]): void {
   // 着色器 Properties 参数 → 写 .mat 的 props（面板镜像同步就地更新）
   if (matShaderProps.value.some((p) => p.key === key)) {
@@ -510,7 +520,7 @@ function onImgLoad(w: number, h: number): void {
       :key="previewRel + ':' + previewKind + ':' + texcubeRev"
       :kind="previewKind"
       :rel="previewRel"
-      :params="previewKind === 'material' && matReady ? matParams : null"
+      :params="previewKind === 'material' && matReady ? previewParams : null"
       :mat-type="previewKind === 'material' ? matType : undefined"
       :shader-rel="previewKind === 'material' ? matShader : undefined"
       :nishita="previewKind === 'sky' && skyDoc ? skyDoc : null"
