@@ -284,7 +284,15 @@ class Parser {
   parseBlock() {
     const stmts = [];
     while (!this.atEnd() && !this.isOp("}")) {
+      const before = this.pos;
       stmts.push(this.parseStatement());
+      // 防御：语句解析必须消费 token——否则这里会原地空转（主线程卡死）
+      if (this.pos === before) {
+        const t = this.peek();
+        throw new TranslateError(
+          `无法解析的语句（偏移 ${t?.pos ?? "?"}: ${t?.type ?? "EOF"}:${String(t?.value ?? "")}）`,
+        );
+      }
     }
     this.expectOp("}");
     return { kind: "block", stmts };

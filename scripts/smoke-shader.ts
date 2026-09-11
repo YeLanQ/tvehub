@@ -473,6 +473,53 @@ async function main(): Promise<void> {
     ok(insertBaseDeclaration("not a shader", "PBR") === null, "非着色器源码 → 拒绝补 Base（返回 null）");
   }
 
+  // —— 11. 切换风暴回归：反复切换分支不得"重建风暴"或反复注入 ——
+  // 背景：切换着色器/分支时若每次刷新都重建材质（matches 判 false）或反复重装注入，
+  // three 会反复编译程序 → 编辑器卡死。此处 headless 复现来回切换。
+  console.log("[11] 切换风暴（分支往返 + Hook 反复应用）");
+  {
+    const hooked = dataOf(examples.find((e) => e.file.startsWith("RimLight"))!.text);
+    const branches = ["physical", "unlit", "toon"];
+    const baseParams = materialTypeRegistry.get("physical")!.defaultParams();
+    let created = 0;
+    let rebuilt = 0;
+    const mats: Record<string, THREE.Material> = {};
+    for (const kind of branches) {
+      const def = materialTypeRegistry.getOrDefault(kind);
+      mats[kind] = def.create();
+      created++;
+      def.apply(mats[kind], baseParams, undefined, { hooks: hooked, props: { _RimPower: 2 } });
+    }
+    for (let i = 0; i < 60; i++) {
+      const kind = branches[i % branches.length];
+      const def = materialTypeRegistry.getOrDefault(kind);
+      if (!def.matches(mats[kind])) {
+        rebuilt++; // 不应发生：同分支材质必须仍然匹配
+        mats[kind] = def.create();
+        created++;
+      }
+      def.apply(mats[kind], baseParams, undefined, { hooks: hooked, props: { _RimPower: 2 } });
+    }
+    ok(rebuilt === 0, `往返切换 60 次无材质重建（重建 ${rebuilt} 次）`);
+    ok(created === branches.length, `材质总数 = 分支数（创建 ${created} 个）`);
+    const keys = branches.map((k) => mats[k].customProgramCacheKey());
+    // 同一份 Hook（同一 base）→ 同一个 key，可共享 program；不同 base 必须不同
+    ok(new Set(keys).size === 1, "同一份 Hook 在各分支材质上 key 一致（program 可复用）");
+    const toonHooked: ShaderHookData = { ...hooked, base: "Toon" };
+    const toonMat = materialTypeRegistry.getOrDefault("toon")!.create();
+    materialTypeRegistry
+      .getOrDefault("toon")!
+      .apply(toonMat, baseParams, undefined, { hooks: toonHooked, props: { _RimPower: 2 } });
+    ok(toonMat.customProgramCacheKey() !== keys[0], "不同 Base 的着色器 key 不同（分支敏感）");
+    const again = branches.map((k) => mats[k].customProgramCacheKey());
+    ok(keys.join("|") === again.join("|"), "重复读取 key 不抖动（不会引发反复重编）");
+    const plainMat = materialTypeRegistry.get("physical")!.create();
+    materialTypeRegistry
+      .get("physical")!
+      .apply(plainMat, baseParams, undefined, { hooks: hookDataOf(plainDoc()), props: {} });
+    ok(!hasShaderHooks(plainMat), "切到无 Hook 的模板 → 不注入（干净状态）");
+  }
+
   console.log(`\n结果：${passed} 通过，${failed} 失败`);
   if (failed > 0) process.exit(1);
 }

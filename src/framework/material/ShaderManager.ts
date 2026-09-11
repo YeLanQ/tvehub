@@ -16,7 +16,8 @@ export type ShaderChangeListener = (rel: string) => void;
 
 export class ShaderManager {
   private cache = new Map<string, ShaderDoc>();
-  private loading = new Set<string>();
+  /** 在途加载（rel → Promise；重复请求等待同一份加载） */
+  private loading = new Map<string, Promise<void>>();
   private fetcher: ShaderDocFetcher | null = null;
   private listeners = new Set<ShaderChangeListener>();
 
@@ -49,24 +50,35 @@ export class ShaderManager {
     this.notify(rel);
   }
 
-  /** 预取一组着色器引用（失败项静默跳过） */
+  /**
+   * 预取一组着色器引用（失败项静默跳过）。
+   * 在途加载会被**等待**而不是跳过：调用方常以「缓存里没有 → preload → 再试一次」
+   * 的模式重试，若此处跳过在途项，重试者会永远看不到缓存并被反复唤醒（自激空转）。
+   */
   async preload(rels: string[]): Promise<number> {
     if (!this.fetcher) return 0;
     let loaded = 0;
     for (const rel of rels) {
-      if (!rel || this.cache.has(rel) || this.loading.has(rel)) continue;
-      this.loading.add(rel);
-      try {
-        const doc = await this.fetcher(rel);
-        if (doc) {
-          this.cache.set(rel, doc);
-          loaded++;
-        }
-      } catch {
-        // 读取失败：保持未解析
-      } finally {
-        this.loading.delete(rel);
+      if (!rel || this.cache.has(rel)) continue;
+      const inflight = this.loading.get(rel);
+      if (inflight) {
+        await inflight;
+        if (this.cache.has(rel)) loaded++;
+        continue;
       }
+      const task = (async () => {
+        try {
+          const doc = await this.fetcher!(rel);
+          if (doc) this.cache.set(rel, doc);
+        } catch {
+          // 读取失败：保持未解析
+        } finally {
+          this.loading.delete(rel);
+        }
+      })();
+      this.loading.set(rel, task);
+      await task;
+      if (this.cache.has(rel)) loaded++;
     }
     return loaded;
   }

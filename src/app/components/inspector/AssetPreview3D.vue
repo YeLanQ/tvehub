@@ -30,6 +30,7 @@ import {
 import { buildNishitaSkyEquirect, type NishitaSkyParams } from "../../../framework/engine/modules/nishitaSky";
 import { getEditorStore } from "../../stores/editor";
 import { getProjectStore } from "../../stores/project";
+import { logStore } from "../../stores/log";
 import { assetUrl } from "../../../lib/asset-url";
 
 const props = defineProps<{
@@ -338,12 +339,39 @@ function clearSubject(): void {
 }
 
 // —— material：材质球（分支参数 + 着色器 Hook 实时应用，随注册表工厂装配） ——
+/** 已尝试过「着色器未解析 → preload → 重建」的着色器引用（每个只补一次）：
+ * 若读取失败（文件缺失/损坏），缓存永远建立不起来；无条件重试会变成
+ * 「preload → 重建 → preload」的自激空转（主线程卡死）。 */
+const shaderRetryTried = new Set<string>();
+/** 材质球重建频率闸门（防自激）：1 秒内超过上限即跳过重建并告警一次，
+ * 保证即使上游出现事件风暴，编辑器仍可响应，而不是整屏卡死。 */
+const REBUILD_LIMIT_PER_SEC = 30;
+let rebuildWindowStart = 0;
+let rebuildCount = 0;
+
 function buildMaterialPreview(): void {
   if (props.kind !== "material" || !props.params || !scene) return;
+  // 重建频率闸门：超限说明上游在自激（参数/事件风暴），跳过本轮并告警
+  const now = performance.now();
+  if (now - rebuildWindowStart > 1000) {
+    rebuildWindowStart = now;
+    rebuildCount = 0;
+  }
+  if (++rebuildCount > REBUILD_LIMIT_PER_SEC) {
+    if (rebuildCount === REBUILD_LIMIT_PER_SEC + 1) {
+      logStore.log(
+        "warn",
+        `材质预览重建过于频繁（>${REBUILD_LIMIT_PER_SEC}/秒），已暂停本轮重建以免界面卡死：${props.rel}`,
+        "engine",
+      );
+    }
+    return;
+  }
   // 着色器文档（Base 决定分支、Hook 是效果片段）：钩子数据必须随上下文一起交给
-  // 类型定义，否则预览看不到叠加效果；尚未解析时先按当前状态构建，就绪后重建
+  // 类型定义，否则预览看不到叠加效果；首次未解析时补取一次，取到后重建
   const shaderRel = props.shaderRel ?? "";
-  if (shaderRel && !editorStore.engine.shaders.has(shaderRel)) {
+  if (shaderRel && !editorStore.engine.shaders.has(shaderRel) && !shaderRetryTried.has(shaderRel)) {
+    shaderRetryTried.add(shaderRel);
     void editorStore.engine.shaders.preload([shaderRel]).then(() => {
       if (!disposed && props.kind === "material") buildMaterialPreview();
     });
@@ -601,6 +629,8 @@ async function buildPanoramaPreview(): Promise<void> {
 
 function rebuild(): void {
   ensureRenderer();
+  // 换资产/换模式：允许对新引用的着色器再补取一次
+  shaderRetryTried.clear();
   // 相机 FOV / 距离限制：各模式会改，重建时先复位预设，避免残留到其它模式
   if (camera) camera.fov = 38;
   if (controls) {
