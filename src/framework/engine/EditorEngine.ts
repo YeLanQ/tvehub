@@ -42,6 +42,7 @@ import {
   type SkyMatParams,
 } from "./modules/skyboxTextures";
 import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
+import { pickSelectableNodeId } from "./modules/picking";
 import { MaterialManager } from "../material/MaterialManager";
 import { ShaderManager } from "../material/ShaderManager";
 import { hookDataOf, tickAllHookTime } from "../material/shaderHooks";
@@ -1775,26 +1776,14 @@ export class EditorEngine {
       return;
     }
 
-    // Find the first intersection that maps to a selectable node.
-    // 场景根节点只能从层级面板选中，不允许通过视口点击选中：
-    // 命中对象的最近映射节点若解析到根节点，跳过该项（视为点击空白）。
+    // 命中解析：跳过场景根节点与「不可见/未激活」的候选（节点自身或祖先隐藏都不该被选中，
+    // 隐藏对象"穿透"——继续看它后面的命中，从而能选中被挡住的可见对象）。
     const rootId = this.graph.root?.id ?? null;
-    let pickedId: string | null = null;
-    for (const hit of intersects) {
-      let obj: THREE.Object3D | null = hit.object as THREE.Object3D;
-      while (obj) {
-        const nodeId = (obj.userData as { nodeId?: string }).nodeId ?? null;
-        if (nodeId && objectMap.has(nodeId)) {
-          if (nodeId !== rootId) {
-            pickedId = nodeId;
-          }
-          obj = null; // 已找到最近映射节点（根节点不可从视口选中 → 不采纳）
-          break;
-        }
-        obj = obj.parent;
-      }
-      if (pickedId) break;
-    }
+    const pickedId = pickSelectableNodeId(intersects, {
+      objectMap,
+      rootId,
+      isSelectable: (id) => this.isSelectableInViewport(id),
+    });
     if (!pickedId) {
       // Clicked empty space (or only resolved to the scene root) — clear selection
       // (unless shift is held for multi-select)
@@ -1808,6 +1797,16 @@ export class EditorEngine {
     } else {
       this.select(pickedId);
     }
+  }
+
+  /**
+   * 视口点选可用性：节点自身与所有祖先都必须「可见且激活」——与渲染的可见性同规则
+   * （见 Node.isEffectivelyVisibleIn 与 picking.ts 的说明）。
+   */
+  private isSelectableInViewport(nodeId: string): boolean {
+    const node = this.graph.get(nodeId);
+    if (!node) return false;
+    return node.isEffectivelyVisibleIn((id) => this.graph.get(id));
   }
 }
 

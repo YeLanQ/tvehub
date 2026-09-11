@@ -119,6 +119,22 @@ export class Node extends Prototype implements INode {
     return this.parentId === null;
   }
 
+  /**
+   * 节点在层级中是否**实际渲染**（也即是否是可被视口点选的对象）：
+   * 自身与全部祖先都必须「可见（visible）且激活（active）」。
+   * 依据：渲染时 three 侧 obj.visible = node.visible && node.active，且父级隐藏会连子级
+   * 一起隐藏 —— 所以"看不见的东西点不到"，隐藏父级下的子级同样不可选中。
+   * lookup：节点 id → 节点（编辑器传图镜像 SceneClient.get）。
+   */
+  isEffectivelyVisibleIn(lookup: (id: string) => Node | undefined): boolean {
+    let cur: Node | undefined = this;
+    while (cur) {
+      if (!cur.visible || !cur.active) return false;
+      cur = cur.parentId ? lookup(cur.parentId) : undefined;
+    }
+    return true;
+  }
+
   addChildId(id: string): void {
     if (!this.childIds.includes(id)) this.childIds.push(id);
   }
