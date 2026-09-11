@@ -11,7 +11,7 @@
 import { api } from "../../../lib/api";
 import { logStore } from "../../stores/log";
 import { loadAssetTemplate } from "../asset-templates";
-import { compileScript } from "./compile";
+import { compileScript, type CompiledScript } from "./compile";
 import { scriptJsPath } from "./paths";
 
 // ---------------------------------------------------------------------------
@@ -74,17 +74,24 @@ export async function ensureEntryScript(root: string): Promise<boolean> {
   }
 }
 
-/** 读取项目全部脚本源文件 */
-export async function loadProjectScripts(root: string): Promise<ProjectScript[]> {  const entries = await api.scanAssets(root);
+/** 读取项目全部脚本源文件（相互独立，并行读取） */
+export async function loadProjectScripts(root: string): Promise<ProjectScript[]> {
+  const entries = await api.scanAssets(root);
   const rels = entries.map((e) => e.path).filter(isScriptSource);
+  const sources = await Promise.all(
+    rels.map(async (rel) => {
+      try {
+        return await api.readText(root, rel);
+      } catch (e) {
+        logStore.log("error", `读取脚本失败 ${rel}: ${e}`, "script");
+        return null;
+      }
+    }),
+  );
   const out: ProjectScript[] = [];
-  for (const rel of rels) {
-    try {
-      const source = await api.readText(root, rel);
-      if (source != null) out.push({ rel, source });
-    } catch (e) {
-      logStore.log("error", `读取脚本失败 ${rel}: ${e}`, "script");
-    }
+  for (let i = 0; i < rels.length; i++) {
+    const source = sources[i];
+    if (source != null) out.push({ rel: rels[i], source });
   }
   return out;
 }
@@ -96,6 +103,10 @@ export interface ProjectScriptsCompileResult {
   errors: Record<string, string>;
 }
 
+/** 编译结果缓存（key = rel + 源码全文；源码未变即直接复用上次的编译产物，
+ *  预览面板刷新/连续构建不再重复做全量 TS 转译）。 */
+const compileCache = new Map<string, CompiledScript>();
+
 /** 全量编译项目脚本（单个失败跳过并记录，不阻断导出） */
 export async function compileProjectScripts(
   scripts: ProjectScript[],
@@ -103,12 +114,17 @@ export async function compileProjectScripts(
   const files: Record<string, string> = {};
   const errors: Record<string, string> = {};
   for (const s of scripts) {
-    const r = await compileScript(s.source, s.rel);
-    if (r.error || !r.js) {
-      errors[s.rel] = r.error ?? "空产物";
+    const key = `${s.rel}\u0000${s.source}`;
+    let cached = compileCache.get(key);
+    if (!cached) {
+      cached = await compileScript(s.source, s.rel);
+      compileCache.set(key, cached);
+    }
+    if (cached.error || !cached.js) {
+      errors[s.rel] = cached.error ?? "空产物";
       continue;
     }
-    files[scriptJsPath(s.rel)] = r.js;
+    files[scriptJsPath(s.rel)] = cached.js;
   }
   return { files, errors };
 }

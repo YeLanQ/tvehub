@@ -17,7 +17,6 @@ import { logStore } from "../../stores/log";
 import { debugLog } from "../../../lib/debug-log";
 import { api } from "../../../lib/api";
 import { type DevToolsInfo, devtools, isToolAllowed, methodToolId, DEVTOOLS_DEFAULT_PORT } from "./state";
-import { handleMethod } from "./handlers";
 
 export type { DevToolsInfo, DevToolPerm } from "./state";
 export {
@@ -136,6 +135,10 @@ async function execute(cmd: CmdPayload): Promise<void> {
       const name = devtools.tools.find((t) => t.id === id)?.name ?? id;
       throw new Error(`工具「${name}」未启用（可在首页 开发者服务 中开启）`);
     }
+    // handlers 惰性加载：handlers→commands→EditorEngine→three 的静态链会把
+    // 整个编辑器引擎（约 1.3MB）拖进首页窗口的首屏包。命令执行只在编辑器
+    // 窗口发生，首页仅做启停/状态展示，永远触不到这条 import。
+    const { handleMethod } = await import("./handlers");
     const result = await handleMethod(cmd.method, cmd.params);
     await api.devtoolsReply(cmd.replyToken, result, null);
   } catch (err: any) {

@@ -119,35 +119,9 @@ export function getProjectStore(): ProjectStore {
     designHeight: 720,
   });
 
-  /** 读取项目 project.config.json 中的渲染后端/抗锯齿/HDR/设计分辨率偏好（缺失/损坏回退默认） */
-  async function loadProjectRenderConfig(root: string): Promise<void> {
-    try {
-      const text = await api.readText(root, "project.config.json");
-      const cfg = JSON.parse(text) as Record<string, unknown>;
-      const r = cfg.renderer;
-      state.rendererBackend = r === "webgpu" || r === "auto" || r === "webgl" ? r : "webgl";
-      const aa = cfg.antiAliasing;
-      state.antiAliasing =
-        typeof aa === "number" ? Math.max(0, Math.min(8, Math.round(aa))) : 2;
-      state.hdrMode = cfg.hdrMode === "hdr" ? "hdr" : "ldr";
-      const pb = (cfg.physics ?? {}) as { backend?: unknown; physicsEnabled?: unknown; gravity?: Record<string, unknown> };
-      state.physicsBackend = isPhysicsBackendId(pb.backend) ? pb.backend : DEFAULT_PHYSICS_BACKEND;
-      state.physicsEnabled = pb.physicsEnabled === true;
-      const pg = (pb.gravity ?? {}) as { x?: unknown; y?: unknown; z?: unknown };
-      const pn = (v: unknown, fb: number) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
-      state.physicsGravity = {
-        x: pn(pg.x, 0),
-        y: pn(pg.y, -9.81),
-        z: pn(pg.z, 0),
-      };
-      const dr = (cfg.designResolution ?? {}) as { width?: unknown; height?: unknown };
-      const dw = typeof dr.width === "number" ? Math.round(dr.width) : 0;
-      const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
-      state.designWidth = dw > 0 ? dw : 1280;
-      state.designHeight = dh > 0 ? dh : 720;
-      state.tags = parseTagList(cfg.tags);
-      state.layers = parseLayerTable(cfg.layers);
-    } catch {
+  /** 把 project.config.json 解析结果应用到状态（渲染后端/抗锯齿/HDR/设计分辨率/物理/标签/图层） */
+  function applyProjectConfig(cfg: Record<string, unknown> | null): void {
+    if (!cfg) {
       state.rendererBackend = "webgl";
       state.antiAliasing = 2;
       state.hdrMode = "ldr";
@@ -158,26 +132,50 @@ export function getProjectStore(): ProjectStore {
       state.designHeight = 720;
       state.tags = [];
       state.layers = parseLayerTable(undefined);
+      return;
     }
+    const r = cfg.renderer;
+    state.rendererBackend = r === "webgpu" || r === "auto" || r === "webgl" ? r : "webgl";
+    const aa = cfg.antiAliasing;
+    state.antiAliasing = typeof aa === "number" ? Math.max(0, Math.min(8, Math.round(aa))) : 2;
+    state.hdrMode = cfg.hdrMode === "hdr" ? "hdr" : "ldr";
+    const pb = (cfg.physics ?? {}) as { backend?: unknown; physicsEnabled?: unknown; gravity?: Record<string, unknown> };
+    state.physicsBackend = isPhysicsBackendId(pb.backend) ? pb.backend : DEFAULT_PHYSICS_BACKEND;
+    state.physicsEnabled = pb.physicsEnabled === true;
+    const pg = (pb.gravity ?? {}) as { x?: unknown; y?: unknown; z?: unknown };
+    const pn = (v: unknown, fb: number) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
+    state.physicsGravity = {
+      x: pn(pg.x, 0),
+      y: pn(pg.y, -9.81),
+      z: pn(pg.z, 0),
+    };
+    const dr = (cfg.designResolution ?? {}) as { width?: unknown; height?: unknown };
+    const dw = typeof dr.width === "number" ? Math.round(dr.width) : 0;
+    const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
+    state.designWidth = dw > 0 ? dw : 1280;
+    state.designHeight = dh > 0 ? dh : 720;
+    state.tags = parseTagList(cfg.tags);
+    state.layers = parseLayerTable(cfg.layers);
   }
 
-  /** 读取 project.config.json 中配置的主场景（缺失/损坏/指向非法路径时返回空串） */
-  async function readConfiguredMainScene(root: string): Promise<string> {
+  /** 读取项目 project.config.json 中的渲染后端/抗锯齿/HDR/设计分辨率偏好（缺失/损坏回退默认） */
+  async function loadProjectRenderConfig(root: string): Promise<void> {
     try {
-      const cfg = JSON.parse(await api.readText(root, "project.config.json")) as Record<
-        string,
-        unknown
-      >;
-      const rel = cfg.mainScene;
-      if (typeof rel !== "string" || !rel.trim()) return "";
-      if (rel.startsWith("internal/") || rel === "src" || rel.startsWith("src/")) return "";
-      return rel.trim();
+      applyProjectConfig(JSON.parse(await api.readText(root, "project.config.json")));
     } catch {
-      return "";
+      applyProjectConfig(null);
     }
   }
 
-  /** 探测项目内文件当前是否可读（候选场景存在性检查） */
+  /** 从已解析的项目配置中取主场景路径（缺失/损坏/指向非法路径时返回空串） */
+  function mainSceneFromConfig(cfg: Record<string, unknown> | null): string {
+    const rel = cfg?.mainScene;
+    if (typeof rel !== "string" || !rel.trim()) return "";
+    if (rel.startsWith("internal/") || rel === "src" || rel.startsWith("src/")) return "";
+    return rel.trim();
+  }
+
+  /** 探测项目内文件当前是否可读（候选场景存在性检查；仅扫描不可用时兜底） */
   async function isReadable(root: string, rel: string): Promise<boolean> {
     try {
       await api.readText(root, rel);
@@ -188,16 +186,28 @@ export function getProjectStore(): ProjectStore {
   }
 
   /**
-   * 解析打开/新建项目时要加载的场景：
-   * 1. project.config.json 的 mainScene（文件仍存在时优先）；
+   * 打开/新建项目的一次性启动解析：config 只读一次（渲染偏好应用 + 主场景解析
+   * 共用），场景存在性优先走资产扫描结果（避免为检查存在性整读场景文件）。
+   * 返回要加载的场景 rel。
+   * 解析顺序：
+   * 1. project.config.json 的 mainScene（仍存在时优先）；
    * 2. 默认 assets/Main.scene；
-   * 3. 资产扫描到的第一个 .scene（主场景被移动/重命名后仍能找回，避免保存时在旧路径重建）。
+   * 3. 资产扫描到的第一个 .scene（主场景被移动/重命名后仍能找回）。
    * 全部不存在时返回默认路径：保持旧行为，首次保存时创建项目的第一个场景。
    */
-  async function resolveInitialSceneRel(root: string): Promise<string> {
-    const candidates = [await readConfiguredMainScene(root), DEFAULT_SCENE_REL];
+  async function resolveProjectBoot(root: string): Promise<string> {
+    let cfg: Record<string, unknown> | null = null;
+    try {
+      cfg = JSON.parse(await api.readText(root, "project.config.json"));
+    } catch {
+      cfg = null; // 无配置/损坏 → 默认渲染偏好 + 无主场景配置
+    }
+    applyProjectConfig(cfg);
+    const candidates = [mainSceneFromConfig(cfg), DEFAULT_SCENE_REL];
+    let knownPaths: Set<string> | null = null;
     try {
       const scenes = await api.scanAssets(root);
+      knownPaths = new Set(scenes.map((a) => a.path));
       candidates.push(
         ...scenes
           .filter(
@@ -211,10 +221,11 @@ export function getProjectStore(): ProjectStore {
           .sort(),
       );
     } catch {
-      /* 扫描失败时仅尝试已配置/默认候选 */
+      /* 扫描失败时仅尝试已配置/默认候选（逐个试读兜底） */
     }
     for (const rel of [...new Set(candidates)]) {
-      if (rel && (await isReadable(root, rel))) return rel;
+      if (!rel) continue;
+      if (knownPaths ? knownPaths.has(rel) : await isReadable(root, rel)) return rel;
     }
     return DEFAULT_SCENE_REL;
   }
@@ -364,8 +375,8 @@ export function getProjectStore(): ProjectStore {
         const info = await api.openProject(path);
         // asset:// 协议的项目根必须先于任何资产请求就位（模型/贴图直读依赖）
         await api.setCurrentProjectRoot(info.path);
-        await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
-        await loadProjectRenderConfig(info.path);
+        // config 只读一次：渲染偏好应用 + 初始场景解析共用（resolveProjectBoot 内部）
+        await store.loadScene(info.path, await resolveProjectBoot(info.path));
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);
@@ -384,8 +395,7 @@ export function getProjectStore(): ProjectStore {
       try {
         const info = await api.createProject(parent, name, templateId, files);
         await api.setCurrentProjectRoot(info.path);
-        await store.loadScene(info.path, await resolveInitialSceneRel(info.path));
-        await loadProjectRenderConfig(info.path);
+        await store.loadScene(info.path, await resolveProjectBoot(info.path));
         state.currentPath = info.path;
         store.setProjectName(info.name);
         store.addRecent(info);

@@ -23,8 +23,31 @@ export interface WebPreviewRuntimeOptions {
   includeWebgpu?: boolean;
 }
 
+/** 运行时单文件文本缓存（key = 产物内相对路径）。
+ * 运行时文件随编辑器打包、内容不可变（应用更新即整体换版本），预览面板刷新/
+ * 构建导出/开发者服务预览会反复读取同一批文件（含 three.min.js 等大文件），
+ * 按文件记忆化后每个文件整个应用生命周期内最多跨 IPC 传输一次。 */
+const runtimeTextCache = new Map<string, Promise<string>>();
+
+function fetchRuntimeText(rel: string): Promise<string> {
+  let p = runtimeTextCache.get(rel);
+  if (!p) {
+    const url = rel.startsWith("engine/") ? `/${rel}` : `/web-preview/${rel}`;
+    p = fetch(url).then((res) => {
+      if (!res.ok) {
+        runtimeTextCache.delete(rel); // 失败不缓存，下次重试
+        throw new Error(`读取网页运行时失败: ${url} (${res.status})`);
+      }
+      return res.text();
+    });
+    runtimeTextCache.set(rel, p);
+  }
+  return p;
+}
+
 /** 读取网页运行产物文本：index.html/player.mjs 相对 public/web-preview，
- *  engine/** 相对 public 根；key 为产物内相对路径 */
+ *  engine/** 相对 public 根；key 为产物内相对路径。
+ *  文件相互独立，全部并行拉取（首次后命中缓存，近似零开销）。 */
 export async function fetchWebPreviewRuntimeTexts(
   opts?: WebPreviewRuntimeOptions,
 ): Promise<Record<string, string>> {
@@ -37,13 +60,9 @@ export async function fetchWebPreviewRuntimeTexts(
       : []),
     ...(opts?.includeWebgpu ? WEB_PREVIEW_WEBGPU_FILES : []),
   ];
+  const texts = await Promise.all(list.map((rel) => fetchRuntimeText(rel)));
   const files: Record<string, string> = {};
-  for (const rel of list) {
-    const url = rel.startsWith("engine/") ? `/${rel}` : `/web-preview/${rel}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`读取网页运行时失败: ${url} (${res.status})`);
-    files[rel] = await res.text();
-  }
+  for (let i = 0; i < list.length; i++) files[list[i]] = texts[i];
   return files;
 }
 

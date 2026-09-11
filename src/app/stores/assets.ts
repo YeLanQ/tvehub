@@ -89,6 +89,10 @@ export function getAssetsStore(): AssetsStore {
     loadedPath: null as string | null,
   });
 
+  /** 在途扫描去重（load 用；完成后置空，不缓存结果） */
+  let loadInFlight: Promise<void> | null = null;
+  let loadedInFlightPath = "";
+
   /** 写操作成功后重扫列表（业务逻辑不接触状态，由本层统一刷新） */
   const reload = (root: string) => store.load(root);
 
@@ -141,20 +145,32 @@ export function getAssetsStore(): AssetsStore {
       return state.loadedPath;
     },
     async load(root) {
-      try {
-        const assets = await api.scanAssets(root);
-        // 项目资产（去掉可能与内置 internal 冲突的同名目录）+ 编辑器内置资源（后端扫描）合并展示
-        const projectAssets = assets.filter((a) => !isInternalAsset(a.path));
-        const internalAssets = await api.scanInternalAssets();
-        const metas = await api.scanAssetDb(root);
-        const map = new Map<string, string>();
-        for (const m of metas) map.set(m.uuid, m.url);
-        state.assets = [...projectAssets, ...internalAssets];
-        state.metaMap = map;
-        state.loadedPath = root;
-      } catch (e) {
-        logStore.log("error", `资产扫描失败: ${e}`);
-      }
+      // 同根飞行中去重：面板挂载/写操作后刷新/检查器等多个调用点会几乎同时
+      // 触发 load，复用同一次在途扫描即可（完成后不缓存，保证写后刷新的即时性）
+      if (loadInFlight && loadedInFlightPath === root) return loadInFlight;
+      loadedInFlightPath = root;
+      loadInFlight = (async () => {
+        try {
+          // 三路扫描相互独立，并行拉取
+          const [assets, internalAssets, metas] = await Promise.all([
+            api.scanAssets(root),
+            api.scanInternalAssets(),
+            api.scanAssetDb(root),
+          ]);
+          // 项目资产（去掉可能与内置 internal 冲突的同名目录）+ 编辑器内置资源（后端扫描）合并展示
+          const projectAssets = assets.filter((a) => !isInternalAsset(a.path));
+          const map = new Map<string, string>();
+          for (const m of metas) map.set(m.uuid, m.url);
+          state.assets = [...projectAssets, ...internalAssets];
+          state.metaMap = map;
+          state.loadedPath = root;
+        } catch (e) {
+          logStore.log("error", `资产扫描失败: ${e}`);
+        }
+      })().finally(() => {
+        if (loadedInFlightPath === root) loadInFlight = null;
+      });
+      return loadInFlight;
     },
     async refresh() {
       if (!state.loadedPath) return;

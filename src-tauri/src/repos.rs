@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -127,12 +128,21 @@ fn is_text_file(ext: &str) -> bool {
     TEXT_EXTS.contains(&ext)
 }
 
-/// 读取文件描述：文本文件按首部注释解析，二进制/读取失败返回空
+/// 读取文件描述：文本文件按首部注释解析，二进制/读取失败返回空。
+/// 描述只可能出现在文件前几行 —— 只读头部 2KB，避免为 5 行描述整读大文件。
 fn describe(path: &Path, ext: &str) -> String {
     if !is_text_file(ext) {
         return String::new();
     }
-    fs::read_to_string(path).map(|t| parse_desc(&t)).unwrap_or_default()
+    const HEAD_BYTES: u64 = 2048;
+    fs::File::open(path)
+        .and_then(|f| {
+            let mut buf = Vec::new();
+            f.take(HEAD_BYTES).read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+        .map(|buf| parse_desc(&String::from_utf8_lossy(&buf)))
+        .unwrap_or_default()
 }
 
 /// 扫描单个分类目录 → 文件清单（跳过目录与隐藏文件，按文件名排序）

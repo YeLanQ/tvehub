@@ -87,17 +87,30 @@ async fn create_project(
 /// 列出最近项目
 #[tauri::command]
 async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject>, String> {
-    let mut out = Vec::new();
-    for p in store::list_recent_paths(&app) {
-        if let Ok(info) = project::project_info(&PathBuf::from(&p)) {
-            out.push(RecentProject {
-                path: info.path,
-                name: info.name,
-                scene_count: info.scene_count,
-            });
-        }
-    }
-    Ok(out)
+    let paths = store::list_recent_paths(&app);
+    // 每个项目要递归走一遍 assets/ 树统计 .scene 数量 —— 项目数可达 20 且大
+    // 项目/网络盘下单次走树就不小，串行会明显拖慢首页首屏。各项目统计彼此
+    // 独立，用作用域线程并行（同步 fs 跑在工作线程，不占 tokio/主线程）。
+    let results: Vec<Option<RecentProject>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .iter()
+            .map(|p| {
+                let root = PathBuf::from(p);
+                scope.spawn(move || {
+                    project::project_info(&root).ok().map(|info| RecentProject {
+                        path: info.path,
+                        name: info.name,
+                        scene_count: info.scene_count,
+                    })
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().ok().flatten())
+            .collect()
+    });
+    Ok(results.into_iter().flatten().collect())
 }
 
 /// 移除最近项目（按规范化路径匹配，同一路径的多种写法一并移除）

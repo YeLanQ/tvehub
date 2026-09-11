@@ -449,8 +449,14 @@ function applyMove(ids: string[], targetId: string, mode: "before" | "after" | "
 onMounted(() => {
   window.addEventListener("mousemove", onWindowMouseMove);
   window.addEventListener("mouseup", onWindowMouseUp);
-  // 预读脚本元数据（@nodeType / @property）：让「脚本节点」创建菜单开箱可用
-  void scriptsStore.prefetchScriptMetas();
+  // 预读脚本元数据（@nodeType / @property）：让「脚本节点」创建菜单开箱可用。
+  // 首次解析会拉起 TypeScript 编译器（数 MB 懒加载 chunk + 全量 AST 解析），
+  // 推迟到浏览器空闲再跑，避免拖慢面板首帧与项目打开链路。
+  const idle = (cb: () => void) =>
+    "requestIdleCallback" in window
+      ? requestIdleCallback(() => cb(), { timeout: 3000 })
+      : setTimeout(cb, 1200);
+  idle(() => void scriptsStore.prefetchScriptMetas());
 });
 onUnmounted(() => {
   window.removeEventListener("mousemove", onWindowMouseMove);
