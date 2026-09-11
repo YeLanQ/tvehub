@@ -118,8 +118,8 @@ export class EditorEngine {
   readonly physics = new PhysicsSystem();
   /** 粒子系统（粒子节点的 CPU 模拟 + Points 渲染；渲染循环推进） */
   readonly particles = new ParticleSystem();
-  /** 动画推进时钟（渲染回调里取帧间隔） */
-  private clock = new THREE.Clock();
+  /** 帧间隔计时器（渲染回调里取帧间隔；THREE.Clock 已在 r183 弃用 → Timer） */
+  private timer = new THREE.Timer();
   /** 扩展着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
   private shaderTime = 0;
   /** 贴图 URL 解析器（相对路径 → asset:// 协议 URL；应用层注入） */
@@ -228,6 +228,9 @@ export class EditorEngine {
   private previewFallbackLogged = false;
 
   constructor() {
+    // 接入页面可见性 API：窗口隐藏期间 delta 置零、恢复时重置，避免巨大补帧间隔
+    // （浏览器外的冒烟环境无 document，跳过即可，Timer 照常工作）
+    if (typeof document !== "undefined") this.timer.connect(document);
     this.factory = createNodeFactory(createDefaultRegistry());
     this.graph = new SceneClient(this.factory);
     // 骨骼辅助线需挂在无变换的场景根下（挂在节点容器上会叠加两次节点变换）
@@ -388,8 +391,9 @@ export class EditorEngine {
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
     this.renderer.setRenderCb(() => {
-      // 帧间隔（动画推进与物理步进共用一次取值）
-      const dt = this.clock.getDelta();
+      // 帧间隔（Timer.update 每帧一次；getDelta 取值在本帧内多次调用结果一致）
+      this.timer.update();
+      const dt = this.timer.getDelta();
       // 动画推进（剪辑/骨骼/动画图状态机）与渲染同帧；
       // 物理紧随其后：运动学体跟随动画后的位姿推开动力学体
       this.animation.update(dt);

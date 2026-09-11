@@ -15,6 +15,29 @@ function resolveDesignConfig(cfg) {
     : null;
 }
 
+/** WebGL 渲染器参数：首选高性能 GPU（WebGL 的 powerPreference 各平台均被浏览器
+ * 采纳，含 Windows 双显卡）；preserveDrawingBuffer 仅在清除标志需要跨帧保留
+ * 颜色/深度缓冲时开启（默认呈现后缓冲失效，关掉可省一整块画布带宽，
+ * 对移动端 tiled GPU 影响尤其明显）。 */
+function makeWebGL(cfg, preserveDrawingBuffer) {
+  return new THREE.WebGLRenderer({
+    antialias: cfg.antiAliasing !== 0,
+    powerPreference: "high-performance",
+    preserveDrawingBuffer: preserveDrawingBuffer === true,
+  });
+}
+
+/** 双后端通用渲染器状态（像素比/色调映射/阴影） */
+function applyCommon(cfg, renderer) {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.toneMapping = cfg.hdrMode === "hdr" ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  renderer.shadowMap.enabled = true;
+  // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效。
+  // WebGPU 后端的阴影过滤表同样覆盖 PCF（Basic/PCF/PCFSoft/VSM 四种）
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  return renderer;
+}
+
 /**
  * 创建渲染器：按项目设置 `renderer`（webgl 缺省 / webgpu / auto）选择后端。
  * - webgl → three.module.min.js 的 WebGLRenderer；
@@ -28,35 +51,39 @@ function resolveDesignConfig(cfg) {
 export async function createRenderer(cfg) {
   const aa = cfg.antiAliasing !== 0;
   const want = typeof cfg.renderer === "string" ? cfg.renderer : "webgl";
-  const makeWebGL = () =>
-    new THREE.WebGLRenderer({
-      antialias: aa,
-      // 仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲（默认呈现后缓冲失效）
-      preserveDrawingBuffer: true,
-    });
-  const applyCommon = (renderer) => {
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.toneMapping = cfg.hdrMode === "hdr" ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
-    renderer.shadowMap.enabled = true;
-    // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效。
-    // WebGPU 后端的阴影过滤表同样覆盖 PCF（Basic/PCF/PCFSoft/VSM 四种）
-    renderer.shadowMap.type = THREE.PCFShadowMap;
-    return renderer;
-  };
-
-  if (want === "webgl") return { renderer: applyCommon(makeWebGL()), backend: "webgl" };
+  if (want === "webgl") return { renderer: applyCommon(cfg, makeWebGL(cfg, false)), backend: "webgl" };
   try {
     const mod = await import("../core/three.webgpu.min.js");
     const Ctor = mod.WebGPURenderer;
     if (typeof Ctor !== "function") throw new Error("WebGPURenderer not exported");
-    const renderer = new Ctor({ forceWebGL: false, antialias: aa, samples: aa ? cfg.antiAliasing : 0 });
+    const renderer = new Ctor({
+      forceWebGL: false,
+      antialias: aa,
+      samples: aa ? cfg.antiAliasing : 0,
+      // powerPreference 仅在 macOS/Linux 被采纳；Windows 上 requestAdapter 忽略
+      // 该参数（Chromium crbug.com/369219127，适配器跟随浏览器/系统首选 GPU）。
+      // 仍传递以求在支持的平台上生效；Windows 双显卡无页面侧手段，导出产物
+      // 只能靠用户的浏览器/系统 GPU 首选项，编辑器自身窗口则由 tauri.conf 的
+      // additionalBrowserArgs 在浏览器进程级强制（该级别 Windows 生效）。
+      powerPreference: "high-performance",
+    });
     // WebGPU 后端为异步初始化：必须先 await init() 再 render()（WebGL 无此要求）
     await renderer.init();
-    return { renderer: applyCommon(renderer), backend: "webgpu" };
+    return { renderer: applyCommon(cfg, renderer), backend: "webgpu" };
   } catch (e) {
     console.warn(`[renderer] WebGPU 不可用（${e?.message ?? e}），已回退 WebGL`);
-    return { renderer: applyCommon(makeWebGL()), backend: "webgl" };
+    return { renderer: applyCommon(cfg, makeWebGL(cfg, false)), backend: "webgl" };
   }
+}
+
+/**
+ * 重建 WebGL 渲染器并开启跨帧缓冲保留（仅深度/仅颜色清除标志需要；场景数据在
+ * 渲染器创建之后才可读，player 在首个渲染前、挂载舞台前调用本函数换出渲染器，
+ * 此时 GPU 资源尚未上传，重建零成本）。
+ */
+export function recreateWebGLRendererPreserveBuffer(cfg, renderer) {
+  renderer.dispose();
+  return applyCommon(cfg, makeWebGL(cfg, true));
 }
 
 /**

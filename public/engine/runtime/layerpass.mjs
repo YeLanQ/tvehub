@@ -20,31 +20,41 @@ export function populatedLayerBits(scene) {
   return bits;
 }
 
+/** 层位掩码 → 升序单层位列表（每项为单层位掩码） */
+function bitsOf(bits) {
+  const out = [];
+  for (let i = 0; i < 32; i++) {
+    if (bits & (1 << i)) out.push(1 << i);
+  }
+  return out;
+}
+
 /**
  * 相机本帧需要的分层 pass 位列表（升序，每项为单层位掩码）；
  * 返回 null = 无需拆分，调用方照常单 pass。
  * 相机掩码全开且无部分掩码灯光、或掩码内在用层 ≤1 → null；
  * 相机掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆（Culling Mask 语义下灯光
  * Culling Mask 恒生效，与相机掩码无关；每层 pass 只收集掩码覆盖该层的灯）。
+ *
+ * 渲染体占用层与（掩码全开时的）灯光部分掩码标记在**单次** traverseVisible 内同时
+ * 收集：旧实现按需各走一遍全场景，常见单 pass 路径每帧也要两次全树遍历。
  */
 export function layerPassBits(scene, camera) {
-  const populated = populatedLayerBits(scene);
-  const bitsOf = (bits) => {
-    const out = [];
-    for (let i = 0; i < 32; i++) {
-      if (bits & (1 << i)) out.push(1 << i);
+  const fullMask = camera.layers.mask === -1;
+  let populated = 0;
+  let anyLight = false;
+  let hasPartialLight = false;
+  scene.traverseVisible((o) => {
+    if (o.isLight === true) {
+      anyLight = true;
+      if (o.layers.mask !== -1) hasPartialLight = true;
+      return;
     }
-    return out;
-  };
-  if (camera.layers.mask === -1) {
-    let hasPartialLight = false;
-    let anyLight = false;
-    scene.traverseVisible((o) => {
-      if (o.isLight === true) {
-        anyLight = true;
-        if (o.layers.mask !== -1) hasPartialLight = true;
-      }
-    });
+    if (o.isMesh === true || o.isLine === true || o.isPoints === true || o.isSprite === true) {
+      populated |= o.layers.mask;
+    }
+  });
+  if (fullMask) {
     if (!anyLight || !hasPartialLight) return null;
     const bits = bitsOf(populated);
     return bits.length > 1 ? bits : null;

@@ -43,10 +43,16 @@ export const MAT_DEFAULTS = {
 };
 
 /** 卡通灰阶渐变条 DataTexture（n 列灰阶 暗→亮；与编辑器算法一致）。
- * MeshToonMaterial 约束：NearestFilter + 关 mipmap + NoColorSpace，shader 只取红通道分档。 */
+ * MeshToonMaterial 约束：NearestFilter + 关 mipmap + NoColorSpace，shader 只取红通道分档。
+ * 按 steps|shadowStrength 缓存：同参数网格共享一份纹理（实例只读）。 */
+const toonGradientCache = new Map();
+
 export function makeToonGradient(steps, shadowStrength) {
   const n = Math.max(2, Math.min(6, Math.round(num(steps, 3))));
   const darkest = Math.max(0, Math.min(1, 1 - num(shadowStrength, 0.6)));
+  const key = `${n}|${darkest}`;
+  let tex = toonGradientCache.get(key);
+  if (tex) return tex;
   const data = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     const v = darkest + (i / (n - 1)) * (1 - darkest);
@@ -56,19 +62,37 @@ export function makeToonGradient(steps, shadowStrength) {
     data[i * 4 + 2] = byte;
     data[i * 4 + 3] = 255;
   }
-  const tex = new THREE.DataTexture(data, n, 1);
+  tex = new THREE.DataTexture(data, n, 1);
   tex.minFilter = THREE.NearestFilter;
   tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.colorSpace = THREE.NoColorSpace;
   tex.needsUpdate = true;
+  toonGradientCache.set(key, tex);
   return tex;
 }
+
+/** 轮廓体外扩几何按（源几何, 外扩量）缓存：同规格网格的描边壳共享一份顶点缓冲。
+ * 缓存的克隆几何与源几何一样只读（运行时无几何写入路径）。 */
+const displacedGeometryCache = new WeakMap();
 
 /** 拷贝几何并沿顶点外扩 offset（对象空间单位）作为轮廓体几何；无法线则返回未外扩克隆。
  * 外扩方向取“焊接平均法线”（同位置多面重复顶点法线按位置合并平均），避免硬边处
  * 各面沿自身法线外扩把轮廓撕开（连接处断开）。 */
 export function displacedGeometry(geom, offset) {
+  let byOffset = displacedGeometryCache.get(geom);
+  if (!byOffset) {
+    byOffset = new Map();
+    displacedGeometryCache.set(geom, byOffset);
+  }
+  const cached = byOffset.get(offset);
+  if (cached) return cached;
+  const out = displacedGeometryUncached(geom, offset);
+  byOffset.set(offset, out);
+  return out;
+}
+
+function displacedGeometryUncached(geom, offset) {
   const pos = geom.getAttribute("position");
   const nor = geom.getAttribute("normal");
   const out = geom.clone();

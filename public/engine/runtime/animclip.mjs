@@ -202,9 +202,8 @@ function sampleClip(clip, time, out) {
   return out;
 }
 
-/** 按点路径写属性值（"color.r" → target.color.r） */
-function setPath(target, path, v) {
-  const segs = path.split(".");
+/** 按预解析路径段写属性值（"color.r" → target.color.r；段数组剪辑加载时拆好） */
+function setSegs(target, segs, v) {
   let cur = target;
   for (let i = 0; i < segs.length - 1; i++) {
     cur = cur ? cur[segs[i]] : undefined;
@@ -213,27 +212,69 @@ function setPath(target, path, v) {
   if (cur != null) cur[segs[segs.length - 1]] = v;
 }
 
-/** 按通道分组应用到节点对象（变换/材质/灯光） */
-function applyValues(obj, values) {
-  for (const [prop, v] of values) {
-    const i = prop.indexOf(".");
-    if (i < 0) continue;
-    const group = prop.slice(0, i);
-    const path = prop.slice(i + 1);
+/** 对象子树内首个灯光（灯光缓存未命中时逐帧重试，命中后固定） */
+function findFirstLight(obj) {
+  let light = null;
+  obj.traverse((o) => {
+    if (!light && o.isLight) light = o;
+  });
+  return light;
+}
+
+/**
+ * 预编译通道应用项：分组判断/路径拆分/目标定位只在剪辑加载时做一次。
+ * 旧实现每帧对每条通道 split(".") + 前缀切片 + 灯光子树全遍历；
+ * 编译后采样循环只做曲线求值 + 属性直写（语义与逐帧解析完全一致）。
+ */
+function compileBinding(b) {
+  const items = [];
+  for (const c of b.clip.curves) {
+    const dot = c.prop.indexOf(".");
+    if (dot < 0) continue;
+    const group = c.prop.slice(0, dot);
+    const path = c.prop.slice(dot + 1);
     if (group === "position" || group === "rotation" || group === "scale") {
-      if (group === "position") obj.position[path] = v;
-      else if (group === "rotation") obj.rotation[path] = v * D2R;
-      else obj.scale[path] = Math.max(0.001, v);
+      items.push({ curve: c, group, prop: path });
     } else if (group === "material") {
-      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-      setPath(m, path, v);
+      items.push({ curve: c, group, segs: path.split(".") });
     } else if (group === "light") {
-      let light = null;
-      obj.traverse((o) => {
-        if (!light && o.isLight) light = o;
-      });
-      setPath(light, path, v);
+      items.push({ curve: c, group, segs: path.split("."), light: null });
     }
+    // 其余分组不构成应用目标（与编辑器通道目录一致）：跳过
+  }
+  b.compiled = items;
+}
+
+function applyItem(b, item, v) {
+  const obj = b.obj;
+  if (item.group === "position") {
+    obj.position[item.prop] = v;
+  } else if (item.group === "rotation") {
+    obj.rotation[item.prop] = v * D2R;
+  } else if (item.group === "scale") {
+    obj.scale[item.prop] = Math.max(0.001, v);
+  } else if (item.group === "material") {
+    const m = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+    setSegs(m, item.segs, v);
+  } else if (item.group === "light") {
+    // 灯光目标惰性解析（组件灯光可能在剪辑加载后才挂上）；命中后固定复用
+    if (item.light === null) {
+      item.light = findFirstLight(obj);
+      if (item.light === null) return;
+    }
+    setSegs(item.light, item.segs, v);
+  }
+}
+
+/** 采样剪辑并把通道值直写节点（时间包裹规则与 sampleClip 一致） */
+function applyClipAt(b, time) {
+  const clip = b.clip;
+  let t = time;
+  if (clip.loops && clip.duration > 0) t = ((time % clip.duration) + clip.duration) % clip.duration;
+  else t = clamp(time, 0, clip.duration);
+  for (const item of b.compiled) {
+    const v = evalCurve(item.curve, t);
+    if (v !== null) applyItem(b, item, v);
   }
 }
 
@@ -244,7 +285,7 @@ async function loadClip(rel) {
   return parseClip(JSON.parse(await res.text()));
 }
 
-/** 单个绑定（组件）：播放进度 + 剪辑数据 + 采样缓存。
+/** 单个绑定（组件）：播放进度 + 剪辑数据 + 预编译应用项。
  *  播放态模型：playing = 正在推进；paused = 经 pause() 暂停（resume 续播）；
  *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）。 */
 function createBinding(entry) {
@@ -259,15 +300,16 @@ function createBinding(entry) {
     paused: false,
     clipPath: typeof entry.clip === "string" ? entry.clip : "",
     clip: null,
-    values: new Map(),
+    compiled: [],
   };
 }
 
-/** 加载绑定当前 clipPath 指向的剪辑（写入 b.clip；失败告警并保持 null） */
+/** 加载绑定当前 clipPath 指向的剪辑（写入 b.clip 并预编译；失败告警并保持 null） */
 async function loadInto(b) {
   if (!b.clipPath) return false;
   try {
     b.clip = await loadClip(b.clipPath);
+    compileBinding(b);
     return true;
   } catch (e) {
     console.error("[anim] 剪辑加载失败 " + b.clipPath + ": " + (e && e.message ? e.message : e));
@@ -275,11 +317,10 @@ async function loadInto(b) {
   }
 }
 
-/** 立即采样并应用某时刻的值（seek/停止回初始姿势用；共享 update 的采样缓存） */
-function sampleAt(b, values, time) {
+/** 立即采样并应用某时刻的值（seek/停止回初始姿势用） */
+function sampleAt(b, time) {
   if (!b.clip) return;
-  sampleClip(b.clip, time, values);
-  applyValues(b.obj, values);
+  applyClipAt(b, time);
 }
 
 /**
@@ -313,13 +354,11 @@ export async function createClipAnimations(entries) {
     }),
   );
 
-  const values = new Map();
   api.update = function (dt) {
     for (const b of bindings) {
       if (!b.playing || !b.clip) continue;
       b.time += Math.max(0, dt) * b.speed;
-      sampleClip(b.clip, b.time, values);
-      applyValues(b.obj, values);
+      applyClipAt(b, b.time);
     }
   };
 
@@ -349,14 +388,14 @@ export async function createClipAnimations(entries) {
     b.playing = false;
     b.paused = false;
     b.time = 0;
-    sampleAt(b, values, 0); // 回初始姿势
+    sampleAt(b, 0); // 回初始姿势
     return true;
   };
   api.setTime = (b, t) => {
     if (!b) return false;
     const v = Number(t);
     b.time = typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
-    sampleAt(b, values, b.time);
+    sampleAt(b, b.time);
     return true;
   };
   api.setSpeed = (b, s) => {

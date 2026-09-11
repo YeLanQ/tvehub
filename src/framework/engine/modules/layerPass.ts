@@ -32,6 +32,15 @@ export function populatedLayerBits(scene: THREE.Object3D): number {
   return bits;
 }
 
+/** 层位掩码 → 升序单层位列表（每项是单层位掩码） */
+function bitsOf(bits: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < 32; i++) {
+    if (bits & (1 << i)) out.push(1 << i);
+  }
+  return out;
+}
+
 /**
  * 相机本帧需要的分层 pass 位列表（升序；每项是单层位掩码）。
  * 返回 null = 无需拆分，调用方照常单 pass。
@@ -42,26 +51,33 @@ export function populatedLayerBits(scene: THREE.Object3D): number {
  * - 掩码全开但存在部分掩码灯光且场景占用多层 → 仍按层拆：Culling Mask 语义下灯光
  *   Culling Mask 恒生效（掩码全开的相机只是"看得到所有层"，灯光仍只照亮所选层），
  *   拆分后每层 pass 只收集掩码覆盖该层的灯。
+ *
+ * 渲染体占用层与（掩码全开时的）灯光部分掩码标记在**单次** traverseVisible 内同时
+ * 收集：旧实现按需各走一遍全场景，常见单 pass 路径每帧也要两次全树遍历。
+ * （与运行时 public/engine/runtime/layerpass.mjs 镜像；改动需两侧同步。）
  */
 export function layerPassBits(scene: THREE.Object3D, camera: THREE.Camera): number[] | null {
-  const populated = populatedLayerBits(scene);
-  const bitsOf = (bits: number): number[] => {
-    const out: number[] = [];
-    for (let i = 0; i < 32; i++) {
-      if (bits & (1 << i)) out.push(1 << i);
+  const fullMask = camera.layers.mask === -1;
+  let populated = 0;
+  let anyLight = false;
+  let hasPartialLight = false;
+  scene.traverseVisible((o) => {
+    const anyObj = o as THREE.Object3D & {
+      isMesh?: boolean;
+      isLine?: boolean;
+      isPoints?: boolean;
+      isSprite?: boolean;
+    };
+    if ((o as THREE.Light).isLight === true) {
+      anyLight = true;
+      if (o.layers.mask !== -1) hasPartialLight = true;
+      return;
     }
-    return out;
-  };
-  if (camera.layers.mask === -1) {
-    // 相机掩码全开：只有存在"部分掩码灯光"且场景占用多层时才需要拆分
-    let hasPartialLight = false;
-    let anyLight = false;
-    scene.traverseVisible((o) => {
-      if ((o as THREE.Light).isLight === true) {
-        anyLight = true;
-        if (o.layers.mask !== -1) hasPartialLight = true;
-      }
-    });
+    if (anyObj.isMesh || anyObj.isLine || anyObj.isPoints || anyObj.isSprite) {
+      populated |= o.layers.mask;
+    }
+  });
+  if (fullMask) {
     if (!anyLight || !hasPartialLight) return null;
     const bits = bitsOf(populated);
     return bits.length > 1 ? bits : null;

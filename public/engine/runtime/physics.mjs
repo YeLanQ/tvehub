@@ -1069,6 +1069,10 @@ export async function createPhysics({ nodes, settings } = {}) {
     //    对 prev/curr 两次物理位姿按 accumulator/FIXED_DT 插值后写回，运动在
     //    任意帧率下都平滑；非步进帧 prev=curr，插值结果保持不变。
     const alpha = Math.max(0, Math.min(1, accumulator / FIXED_DT));
+    // 父级世界矩阵的逆变换按父级缓存：同一父级下多个动态体（常见：同一容器内
+    // 的一批刚体）只做一次 updateWorldMatrix + 求逆；帧内共享父级的世界矩阵不会
+    // 变（回写只改子级局部变换），与逐体重算结果一致
+    let lastParent = null;
     for (const b of bindings) {
       if (!b.body || !b.rb || b.rb.mode !== "dynamic") continue;
       if (stepped) {
@@ -1093,12 +1097,17 @@ export async function createPhysics({ nodes, settings } = {}) {
       writePos.lerpVectors(b.prevPos, b.currPos, alpha);
       writeQuat.copy(b.prevQuat).slerp(b.currQuat, alpha);
       const parent = b.obj.parent;
+      if (parent !== lastParent) {
+        lastParent = parent;
+        if (parent) {
+          parent.updateWorldMatrix(true, false);
+          tmpMat.copy(parent.matrixWorld).invert();
+          parentQuat.setFromRotationMatrix(parent.matrixWorld).invert();
+        }
+      }
       if (parent) {
-        parent.updateWorldMatrix(true, false);
-        tmpMat.copy(parent.matrixWorld).invert();
         writePos.applyMatrix4(tmpMat);
-        parentQuat.setFromRotationMatrix(parent.matrixWorld);
-        writeQuat.premultiply(parentQuat.invert());
+        writeQuat.premultiply(parentQuat);
       }
       b.obj.position.copy(writePos);
       b.obj.quaternion.copy(writeQuat);

@@ -20,7 +20,8 @@
         "minHeight": 860,
         "visible": false,
         "url": "home.html",
-        "backgroundColor": "#000"
+        "backgroundColor": "#000",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
       },
       {
         "label": "main",
@@ -31,7 +32,8 @@
         "minHeight": 860,
         "visible": false,
         "url": "index.html",
-        "backgroundColor": "#000"
+        "backgroundColor": "#000",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
       }
     ],
     "security": {

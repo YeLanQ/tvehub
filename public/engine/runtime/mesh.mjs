@@ -53,6 +53,53 @@ function warnMissingMaterial(rel, nodeName) {
   console.warn("[tve] 材质未解析，已回退默认材质: " + rel + "（首个引用它的网格: " + (nodeName || "?") + "）");
 }
 
+// —— 构建期共享缓存：同参数只建一份，运行期只读 ——
+// 导出产物常含大量同规格基元网格；共享后 GPU 顶点缓冲、WebGL 着色程序数与
+// WebGPU 管线数按"参数种数"而非网格数增长（模型实例经 SkeletonUtils.clone 本就
+// 共享几何/材质，基元对齐同一策略）。运行时无销毁/改写这些资源的路径（节点移除
+// 不 dispose），脚本 API 也不暴露几何/材质改写。
+const primitiveGeometryCache = new Map();
+const branchMaterialCache = new WeakMap();
+const outlineMaterialCache = new WeakMap();
+
+/** 按种类+尺寸取基元几何（相同参数共享一份 BufferGeometry） */
+function getPrimitiveGeometry(kind, x, y, z) {
+  const key = `${kind}|${x}|${y}|${z}`;
+  let geom = primitiveGeometryCache.get(key);
+  if (geom === undefined) {
+    if (kind === "sphere") geom = new THREE.SphereGeometry(x / 2, 32, 24);
+    else if (kind === "plane") geom = new THREE.PlaneGeometry(x, z);
+    else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
+    else geom = new THREE.BoxGeometry(x, y, z);
+    primitiveGeometryCache.set(key, geom);
+  }
+  return geom;
+}
+
+/** 按解析后的 .mat 参数对象取共享材质（同引用网格共用一个材质实例；
+ * 贴图回填/Hook 注入按参数幂等，共享后各网格渲染结果不变） */
+function sharedBranchMaterial(m, build) {
+  let mat = branchMaterialCache.get(m);
+  if (mat === undefined) {
+    mat = build();
+    branchMaterialCache.set(m, mat);
+  }
+  return mat;
+}
+
+/** 描边壳材质只取 outlineColor：同参数网格共享一份 */
+function sharedOutlineMaterial(m) {
+  let mat = outlineMaterialCache.get(m);
+  if (mat === undefined) {
+    mat = new THREE.MeshBasicMaterial({
+      color: (m.outlineColor & 0xffffff) || 0x000000,
+      side: THREE.BackSide,
+    });
+    outlineMaterialCache.set(m, mat);
+  }
+  return mat;
+}
+
 export function createMesh(json, ctx) {
   const obj = buildMeshNode(json, ctx);
   // 阴影参与：网格默认**投射 + 接收**（与编辑器 SceneSynchronizer 同一策略，
@@ -93,11 +140,7 @@ function buildMeshNode(json, ctx) {
   const x = Math.max(0.01, num(sz.x, 1));
   const y = Math.max(0.01, num(sz.y, 1));
   const z = Math.max(0.01, num(sz.z, 1));
-  let geom;
-  if (kind === "sphere") geom = new THREE.SphereGeometry(x / 2, 32, 24);
-  else if (kind === "plane") geom = new THREE.PlaneGeometry(x, z);
-  else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
-  else geom = new THREE.BoxGeometry(x, y, z);
+  const geom = getPrimitiveGeometry(kind, x, y, z);
 
   // 材质解析：引用缺失（.mat 未随产物/解析失败）时回退默认材质 —— 但必须**可见地**告警，
   // 否则表现为"材质变成一块纯灰"，让人误以为是渲染后端或着色器的问题
@@ -116,17 +159,19 @@ function buildMeshNode(json, ctx) {
   if (m.type === "toon") {
     // Toon → MeshToonMaterial（cel shading；color/map/emissive/法线 + 灰阶渐变条分档）
     const on = m.emissionEnabled === true;
-    const mat = createBranchMaterial("toon", THREE.MeshToonMaterial, {
-      color: m.color & 0xffffff,
-      emissive: on ? m.emissive & 0xffffff : 0x000000,
-      emissiveIntensity: on ? m.emissiveIntensity : 1,
-      gradientMap: makeToonGradient(m.toonSteps, m.toonShadowStrength),
-      opacity: m.opacity,
-      transparent: f.transparent,
-      alphaTest: f.alphaTest,
-      wireframe: f.wireframe,
-    });
-    // 着色器 Hook 注入/接线（如有）
+    const mat = sharedBranchMaterial(m, () =>
+      createBranchMaterial("toon", THREE.MeshToonMaterial, {
+        color: m.color & 0xffffff,
+        emissive: on ? m.emissive & 0xffffff : 0x000000,
+        emissiveIntensity: on ? m.emissiveIntensity : 1,
+        gradientMap: makeToonGradient(m.toonSteps, m.toonShadowStrength),
+        opacity: m.opacity,
+        transparent: f.transparent,
+        alphaTest: f.alphaTest,
+        wireframe: f.wireframe,
+      }),
+    );
+    // 着色器 Hook 注入/接线（如有；共享材质只注入一次）
     applyBranchHooks("toon", mat, m);
     const mesh = new THREE.Mesh(geom, mat);
     if (m.outlineEnabled === true) {
@@ -135,10 +180,7 @@ function buildMeshNode(json, ctx) {
       const radius = geom.boundingSphere ? geom.boundingSphere.radius : 1;
       const outline = new THREE.Mesh(
         displacedGeometry(geom, m.outlineWidth * radius),
-        new THREE.MeshBasicMaterial({
-          color: (m.outlineColor & 0xffffff) || 0x000000,
-          side: THREE.BackSide,
-        }),
+        sharedOutlineMaterial(m),
       );
       outline.name = "__matOutline";
       mesh.add(outline);
@@ -147,44 +189,48 @@ function buildMeshNode(json, ctx) {
   }
   if (m.type === "unlit") {
     // Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
-    const mat = createBranchMaterial("unlit", THREE.MeshBasicMaterial, {
-      color: m.color & 0xffffff,
-      opacity: m.opacity,
-      transparent: f.transparent,
-      alphaTest: f.alphaTest,
-      wireframe: f.wireframe,
-    });
+    const mat = sharedBranchMaterial(m, () =>
+      createBranchMaterial("unlit", THREE.MeshBasicMaterial, {
+        color: m.color & 0xffffff,
+        opacity: m.opacity,
+        transparent: f.transparent,
+        alphaTest: f.alphaTest,
+        wireframe: f.wireframe,
+      }),
+    );
     // 着色器 Hook 注入/接线（如有）
     applyBranchHooks("unlit", mat, m);
     return new THREE.Mesh(geom, mat);
   }
-  const mat = createBranchMaterial("physical", THREE.MeshPhysicalMaterial, {
-    color: m.color & 0xffffff,
-    metalness: m.metalness,
-    roughness: m.roughness,
-    specularIntensity: m.specularIntensity,
-    specularColor: m.specularColor & 0xffffff,
-    ior: m.ior,
-    emissive: m.emissive & 0xffffff,
-    emissiveIntensity: m.emissiveIntensity,
-    clearcoat: m.clearcoat,
-    clearcoatRoughness: m.clearcoatRoughness,
-    sheen: m.sheen,
-    sheenColor: m.sheenColor & 0xffffff,
-    sheenRoughness: m.sheenRoughness,
-    transmission: m.transmission,
-    thickness: m.thickness,
-    attenuationColor: m.attenuationColor & 0xffffff,
-    attenuationDistance: m.attenuationDistance,
-    anisotropy: m.anisotropy,
-    anisotropyRotation: m.anisotropyRotation,
-    iridescence: m.iridescence,
-    iridescenceIOR: m.iridescenceIOR,
-    opacity: m.opacity,
-    transparent: f.transparent,
-    alphaTest: f.alphaTest,
-    wireframe: f.wireframe,
-  });
+  const mat = sharedBranchMaterial(m, () =>
+    createBranchMaterial("physical", THREE.MeshPhysicalMaterial, {
+      color: m.color & 0xffffff,
+      metalness: m.metalness,
+      roughness: m.roughness,
+      specularIntensity: m.specularIntensity,
+      specularColor: m.specularColor & 0xffffff,
+      ior: m.ior,
+      emissive: m.emissive & 0xffffff,
+      emissiveIntensity: m.emissiveIntensity,
+      clearcoat: m.clearcoat,
+      clearcoatRoughness: m.clearcoatRoughness,
+      sheen: m.sheen,
+      sheenColor: m.sheenColor & 0xffffff,
+      sheenRoughness: m.sheenRoughness,
+      transmission: m.transmission,
+      thickness: m.thickness,
+      attenuationColor: m.attenuationColor & 0xffffff,
+      attenuationDistance: m.attenuationDistance,
+      anisotropy: m.anisotropy,
+      anisotropyRotation: m.anisotropyRotation,
+      iridescence: m.iridescence,
+      iridescenceIOR: m.iridescenceIOR,
+      opacity: m.opacity,
+      transparent: f.transparent,
+      alphaTest: f.alphaTest,
+      wireframe: f.wireframe,
+    }),
+  );
   // 着色器 Hook 注入/接线（如有）
   applyBranchHooks("physical", mat, m);
   return new THREE.Mesh(geom, mat);

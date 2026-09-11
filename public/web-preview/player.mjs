@@ -27,7 +27,7 @@ import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
-import { createRenderer, createStage } from "../engine/runtime/stage.mjs";
+import { createRenderer, createStage, recreateWebGLRendererPreserveBuffer } from "../engine/runtime/stage.mjs";
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
 import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
@@ -164,7 +164,9 @@ async function main() {
   // 渲染后端（项目设置 renderer）在建场景树之前确定：粒子在场景树构建时即创建
   // 发射器，其材质实现是后端相关的（GLSL / TSL 节点材质）。渲染器挂载到舞台
   // 推迟到相机就绪之后（createStage）。
-  const { renderer, backend } = await createRenderer(cfg);
+  // renderer 可能因清除标志需要跨帧保留缓冲而重建（见 createRenderCamera 之后）
+  const { renderer: initialRenderer, backend } = await createRenderer(cfg);
+  let renderer = initialRenderer;
   // 立方体贴图采样约定按后端不同（GL vs D3D）：天空纹理翻转策略随之后定（见 sky.mjs）
   configureSkyOrientation(backend);
   if (backend === "webgpu") {
@@ -302,6 +304,15 @@ async function main() {
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
   const { cam, applyProjection, syncPose, clear } = createRenderCamera(cameras);
   const clearColor = new THREE.Color(clear.color);
+
+  // 仅深度/仅颜色清除标志需要跨帧保留缓冲：WebGL 默认关闭（省一整块画布带宽），
+  // 命中时在挂载舞台前重建渲染器（首个渲染前 GPU 资源未上传，重建零成本）
+  if (
+    backend === "webgl" &&
+    (clear.flags === "depthOnly" || clear.flags === "colorOnly")
+  ) {
+    renderer = recreateWebGLRendererPreserveBuffer(cfg, renderer);
+  }
 
   // 正交相机的天空背景面：three.js 的纹理背景只支持透视相机（立方体路径按贴在
   // 相机位置的 1×1×1 反转盒绘制，正交取景远大于盒子），正交 + 天空盒清除标志
@@ -453,6 +464,15 @@ async function main() {
   // 所以必须在渲染循环启动前置位）。
   configureShadows(scene);
 
+  // 首帧管线/着色程序预热：全部材质（含阴影深度变体）在载入阶段编译完毕
+  // （WebGPU 异步、WebGL 同步），避免首个渲染帧集中编译造成的启动卡顿
+  try {
+    if (backend === "webgpu") await renderer.compileAsync(scene, cam);
+    else renderer.compile(scene, cam);
+  } catch (e) {
+    postLog("warn", `渲染预热失败（${e?.message ?? e}），首帧可能卡顿`);
+  }
+
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
   const animations = createAnimations(meshes, models);
 
@@ -507,13 +527,44 @@ async function main() {
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
   window.addEventListener("pagehide", () => scripts.dispose(), { once: true, capture: true });
 
-  const clock = new THREE.Clock();
-  // 着色器时间（钩子 _Time；按帧间隔累加，与 clock 的 getDelta 取值互不干扰）
+  // 静态场景门控：无用户脚本/模型动画/关键帧剪辑/物理时，场景每帧不变 ——
+  // 世界矩阵停更（render 跳过全树遍历重算），阴影贴图只渲染一次
+  // （每灯 shadow.needsUpdate 首帧消费后冻结，WebGL/WebGPU 同语义）。
+  // 脚本/动画/物理都可能移动任意节点，存在其一即保持逐帧更新。
+  // 注意物理判据用配置的 physicsEnabled（createPhysics 未启用时也返回空转 API，非 null）。
+  const physicsSettings =
+    (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics) || null;
+  const physicsActive = !!(physicsSettings && physicsSettings.physicsEnabled === true);
+  const hasScriptComponent = nodes.some(({ json }) =>
+    (Array.isArray(json.components) ? json.components : []).some(
+      (c) => c && c.type === "script" && c.enabled !== false && typeof c.script === "string" && c.script,
+    ),
+  );
+  const hasEntryScript = typeof cfg.entryScript === "string" && cfg.entryScript.trim() !== "";
+  const hasModelClip = meshes.some(
+    ({ json }) => json.source === "model" && (models.get(json.model)?.clips?.length > 0),
+  );
+  if (!hasScriptComponent && !hasEntryScript && clips.length === 0 && !hasModelClip && !physicsActive) {
+    scene.matrixWorldAutoUpdate = false;
+    scene.traverse((o) => {
+      if (o.isLight === true && o.castShadow === true) {
+        o.shadow.autoUpdate = false;
+        o.shadow.needsUpdate = true;
+      }
+    });
+  }
+
+  // 帧间隔计时（THREE.Clock 已在 r183 弃用 → Timer；connect 启用页面可见性处理，
+  // 切后台恢复后不产生巨大补帧间隔。update 用 rAF 时间戳，与帧回调同源对齐）
+  const timer = new THREE.Timer();
+  timer.connect(document);
+  // 着色器时间（钩子 _Time；按帧间隔累加，与 timer 的 getDelta 取值互不干扰）
   let shaderTime = 0;
 
-  function frame() {
+  function frame(now) {
     requestAnimationFrame(frame);
-    const dt = clock.getDelta();
+    timer.update(now);
+    const dt = timer.getDelta();
     shaderTime += dt;
     tickShaderTime(shaderTime);
     scripts.update(dt);
