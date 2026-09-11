@@ -5,6 +5,8 @@
 // - cameraNode → Group（记录世界位姿供渲染相机选用）；
 // - particleSystemNode → Group + 粒子 Points 子对象（发射器见 core/particles.mjs，
 //   与编辑器 ParticleEmitter 同语义；每帧推进由 runtime/particles.mjs 驱动）；
+// - UI（Canvas-Widget）：uiCanvasNode/uiImageNode/uiTextNode/uiButtonNode →
+//   buildUI*（ui.mjs；画布叠加与渲染序合成由 runtime/ui.mjs 的 createUI 驱动）；
 // - 其余 → Group；
 // - 组件模式：任意节点 components 中的 light / audioSource 组件同样生效——
 //   灯光组件重建灯光子对象（与灯光节点同一光照语义），音源组件并入音频绑定
@@ -14,6 +16,7 @@ import { num, vec, D2R } from "../core/utils.mjs";
 import { buildComponentLight } from "../core/lights.mjs";
 import { createParticleEmitter } from "../core/particles.mjs";
 import { createMesh } from "./mesh.mjs";
+import { buildUICanvas, buildUIImage, buildUIText, buildUIButton } from "./ui.mjs";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
 function parseLayerIndex(v) {
@@ -69,6 +72,14 @@ export function buildSceneTree(rootJson, scene, ctx) {
         return wrapLight(json, "ambient");
       case "particleSystemNode":
         return wrapParticles(json);
+      case "uiCanvasNode":
+        return buildUICanvas();
+      case "uiImageNode":
+        return buildUIImage(json);
+      case "uiTextNode":
+        return buildUIText(json);
+      case "uiButtonNode":
+        return buildUIButton(json);
       default:
         return new THREE.Group();
     }

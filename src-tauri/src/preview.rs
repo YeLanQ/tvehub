@@ -306,6 +306,21 @@ pub(crate) fn collect_scene_assets(
             Err(_) => missing.push(rel.clone()),
         }
     }
+    // UI Widget 图片引用（uiImageNode/uiButtonNode 的 image）：二进制随导出
+    // （缺失跳过，player 侧该 Widget 回退纯色矩形）
+    let mut ui_image_refs = Vec::new();
+    crate::scene::migrate::collect_ui_image_refs(&scene_json, &mut ui_image_refs);
+    for rel in &ui_image_refs {
+        if binaries.contains_key(rel) {
+            continue;
+        }
+        match read_asset_bytes(root_path, rel) {
+            Ok(bytes) => {
+                binaries.insert(rel.clone(), bytes);
+            }
+            Err(_) => missing.push(rel.clone()),
+        }
+    }
     missing
 }
 

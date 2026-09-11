@@ -23,6 +23,7 @@ import { createParticles } from "../engine/runtime/particles.mjs";
 import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
+import { createUI } from "../engine/runtime/ui.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
@@ -257,6 +258,23 @@ async function main() {
     particleMaterial: particleMaterialFactory,
   });
 
+  // UI（Canvas-Widget，屏幕叠加）：画布根贴合渲染相机由 update 每帧完成；
+  // 主渲染各 pass 隐藏画布、主渲染后由专属叠加渲染绘制（beginRender/endRender）；
+  // 图片/按钮背景贴图按相对路径异步回填（与网格贴图同一 fetch 链路）
+  function renderOverlayPass(c) {
+    const prevBg = scene.background;
+    const prevClearColor = renderer.autoClearColor;
+    const prevClearDepth = renderer.autoClearDepth;
+    scene.background = null;
+    renderer.autoClearColor = false;
+    renderer.autoClearDepth = false;
+    renderer.render(scene, c);
+    scene.background = prevBg;
+    renderer.autoClearColor = prevClearColor;
+    renderer.autoClearDepth = prevClearDepth;
+  }
+  const uiApi = createUI({ nodes, canvas: renderer.domElement, scene, render: renderOverlayPass });
+
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
   // 节点 cubeMap 兜底），未绑定/加载失败（含 .hdr）回退三段色带
@@ -300,6 +318,9 @@ async function main() {
 
   // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）
   await applyMeshTextures(meshes, materialParams);
+  await uiApi.applyTextures().catch((e) => {
+    postLog("warn", `UI 贴图回填失败: ${e?.message ?? e}`);
+  });
 
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
   const { cam, applyProjection, syncPose, clear } = createRenderCamera(cameras);
@@ -519,6 +540,7 @@ async function main() {
       physics: physicsApi,
       clipAnims,
       particles: particlesApi,
+      ui: uiApi,
       canvas: renderer.domElement,
     });
   } catch (e) {
@@ -544,7 +566,16 @@ async function main() {
   const hasModelClip = meshes.some(
     ({ json }) => json.source === "model" && (models.get(json.model)?.clips?.length > 0),
   );
-  if (!hasScriptComponent && !hasEntryScript && clips.length === 0 && !hasModelClip && !physicsActive) {
+  // UI 画布存在时保持逐帧更新：画布根每帧贴合相机（矩阵覆写）不能被冻结
+  const hasUICanvas = nodes.some(({ json }) => json.type === "uiCanvasNode");
+  if (
+    !hasScriptComponent &&
+    !hasEntryScript &&
+    clips.length === 0 &&
+    !hasModelClip &&
+    !physicsActive &&
+    !hasUICanvas
+  ) {
     scene.matrixWorldAutoUpdate = false;
     scene.traverse((o) => {
       if (o.isLight === true && o.castShadow === true) {
@@ -576,12 +607,17 @@ async function main() {
     particlesApi.update(dt);
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
+    // UI 相机叠加：画布根贴合渲染相机（相机位姿回填之后）
+    uiApi.update(cam);
     applyClearFlags();
+    // 主渲染各 pass 隐藏 UI 画布；完成后恢复并做 UI 专属叠加渲染
+    const uiHidden = uiApi.beginRender();
     // 分层渲染（Culling Mask）：相机掩码全开/单层占用 → 单 pass（零开销）；
     // 多层占用 → 按层拆 pass，灯光只照亮各自掩码内的层（layerpass.mjs）
     const bits = layerPassBits(scene, cam);
     if (!bits) renderer.render(scene, cam);
     else renderLayerPasses(renderer, scene, cam, bits);
+    if (uiHidden > 0) uiApi.endRender(cam);
   }
   frame();
 

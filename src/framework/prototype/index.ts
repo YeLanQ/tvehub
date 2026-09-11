@@ -16,6 +16,10 @@ export {
   CameraNode,
   AudioNode,
   ParticleSystemNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
+  UIButtonNode,
 } from "./derived/Primitives";
 export { PrototypeRegistry, createDefaultRegistry };
 export type { PrototypeCtor };
@@ -70,6 +74,10 @@ export type { ICameraNode } from "./nodes/CameraNode";
 export type { ISkyboxNode } from "./nodes/SkyboxNode";
 export type { IAudioNode } from "./nodes/AudioNode";
 export type { IParticleSystemNode } from "./nodes/ParticleSystemNode";
+export type { IUICanvasNode } from "./nodes/UICanvasNode";
+export type { IUIImageNode } from "./nodes/UIImageNode";
+export type { IUITextNode } from "./nodes/UITextNode";
+export type { IUIButtonNode } from "./nodes/UIButtonNode";
 export type {
   ScenePrototypeDoc,
   NodePrototypeDoc,

@@ -15,6 +15,10 @@ import {
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
   LIGHT_SPOT_ICON_PATHS,
+  UI_CANVAS_ICON_PATHS,
+  UI_IMAGE_ICON_PATHS,
+  UI_TEXT_ICON_PATHS,
+  UI_BUTTON_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 import {
   openContextMenu,
@@ -50,6 +54,10 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   skyboxNode: { d: SKYBOX_ICON_PATHS, color: "#8ecae6" },
   audioNode: { d: AUDIO_ICON_PATHS, color: "#7ed49a" },
   particleSystemNode: { d: PARTICLE_ICON_PATHS, color: "#e0a0ff" },
+  uiCanvasNode: { d: UI_CANVAS_ICON_PATHS, color: "#f4a261" },
+  uiImageNode: { d: UI_IMAGE_ICON_PATHS, color: "#90be6d" },
+  uiTextNode: { d: UI_TEXT_ICON_PATHS, color: "#6ea8fe" },
+  uiButtonNode: { d: UI_BUTTON_ICON_PATHS, color: "#ff70a6" },
 };
 
 const FALLBACK_BADGE: Record<string, string> = {
@@ -64,6 +72,10 @@ const FALLBACK_BADGE: Record<string, string> = {
   skyboxNode: "SK",
   audioNode: "AU",
   particleSystemNode: "FX",
+  uiCanvasNode: "UI",
+  uiImageNode: "IM",
+  uiTextNode: "TX",
+  uiButtonNode: "BT",
 };
 
 /** 预制体实例：图标统一绿色（与其他对象区分；仅实例根节点带 prefab 来源引用） */

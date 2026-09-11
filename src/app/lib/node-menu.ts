@@ -59,6 +59,16 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
   items.push({ label: "Particle System", type: "particle" });
   items.push({ separator: true });
   items.push({
+    label: "UI",
+    children: [
+      { label: "UI Canvas", type: "ui:canvas" },
+      { label: "Text", type: "ui:text" },
+      { label: "Image", type: "ui:image" },
+      { label: "Button", type: "ui:button" },
+    ],
+  });
+  items.push({ separator: true });
+  items.push({
     label: "天空盒",
     children: [
       { label: "Procedural Skybox", type: "skybox:procedural" },
@@ -100,6 +110,9 @@ export function addNodeArgs(
   } else if (type.startsWith("script:")) {
     args.kind = "script";
     args.subtype = type.slice("script:".length);
+  } else if (type.startsWith("ui:")) {
+    args.kind = "ui";
+    args.subtype = type.slice("ui:".length);
   } else if (type === "camera") {
     args.kind = "camera";
   } else if (type === "audio") {

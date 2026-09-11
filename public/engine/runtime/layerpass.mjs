@@ -67,11 +67,13 @@ export function layerPassBits(scene, camera) {
 
 /** 多 pass 渲染中，后续 pass 需要隐藏的"天空背景面"标记（userData 键） */
 export const SKY_ONLY_FIRST_PASS = "skyOnlyFirstPass";
+/** 多 pass 渲染中，后续 pass 需要隐藏的"UI 画布"标记（叠加半透明重复绘制会变浓） */
+export const UI_ONLY_FIRST_PASS = "uiOnlyFirstPass";
 
 /**
  * 按分层 pass 渲染场景（layerPassBits 返回非 null 时调用）：
  * 首个 pass 按调用方已就位的清除状态/背景正常绘制；后续 pass 收窄相机层、
- * 不清屏、不画背景（scene.background 置空）、隐藏天空背景面，叠加绘制。
+ * 不清屏、不画背景（scene.background 置空）、隐藏天空背景面与 UI 画布，叠加绘制。
  * 结束后恢复相机层掩码/背景/autoClear 标志。
  */
 export function renderLayerPasses(renderer, scene, camera, bits) {
@@ -79,9 +81,15 @@ export function renderLayerPasses(renderer, scene, camera, bits) {
   const prevBg = scene.background;
   const prevClearColor = renderer.autoClearColor;
   const prevClearDepth = renderer.autoClearDepth;
-  const skyQuads = [];
+  const firstPassOnly = [];
   scene.traverse((o) => {
-    if (o.userData && o.userData[SKY_ONLY_FIRST_PASS] === true && o.visible) skyQuads.push(o);
+    if (
+      o.userData &&
+      (o.userData[SKY_ONLY_FIRST_PASS] === true || o.userData[UI_ONLY_FIRST_PASS] === true) &&
+      o.visible
+    ) {
+      firstPassOnly.push(o);
+    }
   });
   try {
     bits.forEach((bit, i) => {
@@ -90,7 +98,7 @@ export function renderLayerPasses(renderer, scene, camera, bits) {
         scene.background = null;
         renderer.autoClearColor = false;
         renderer.autoClearDepth = false;
-        skyQuads.forEach((q) => {
+        firstPassOnly.forEach((q) => {
           q.visible = false;
         });
       }
@@ -101,7 +109,7 @@ export function renderLayerPasses(renderer, scene, camera, bits) {
     scene.background = prevBg;
     renderer.autoClearColor = prevClearColor;
     renderer.autoClearDepth = prevClearDepth;
-    skyQuads.forEach((q) => {
+    firstPassOnly.forEach((q) => {
       q.visible = true;
     });
   }

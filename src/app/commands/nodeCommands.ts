@@ -93,6 +93,31 @@ registerCommand({
       case "particlesystemnode":
         node = engine().addParticleSystem(parentId);
         break;
+      case "ui":
+      case "uicanvas":
+      case "uiimage":
+      case "uitext":
+      case "uibutton": {
+        // ui:<canvas|text|image|button>（裸 "ui" = 画布）；Widget 建议挂在画布下
+        const uiKind = kind === "ui" ? (subtype ?? "canvas") : kind.startsWith("ui") ? kind.slice(2) : (subtype ?? "canvas");
+        switch (uiKind) {
+          case "canvas":
+            node = engine().addUICanvas(parentId);
+            break;
+          case "text":
+            node = engine().addUIText(parentId);
+            break;
+          case "image":
+            node = engine().addUIImage(parentId);
+            break;
+          case "button":
+            node = engine().addUIButton(parentId);
+            break;
+          default:
+            throw new Error(`未知 UI 节点类型: ui:${uiKind}（应为 canvas/text/image/button）`);
+        }
+        break;
+      }
       case "script":
       case "scriptnode": {
         const rel = subtype ?? args?.scriptRel;

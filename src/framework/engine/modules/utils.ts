@@ -85,7 +85,16 @@ export function disposeObject3D(obj: THREE.Object3D): void {
   const mesh = obj as THREE.Mesh;
   if (mesh.geometry) mesh.geometry.dispose();
   const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-  if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-  else if (mat) mat.dispose();
+  // UI 文本光栅化贴图（uiOwnedTexture）为节点自有资源，随对象销毁释放；
+  // 其余贴图来自共享缓存（textureCache），只卸材质不卸贴图
+  const disposeMap = (m: THREE.Material): void => {
+    const map = (m as THREE.MeshBasicMaterial).map;
+    const owned = (map as unknown as { userData?: { uiOwnedTexture?: boolean } })?.userData
+      ?.uiOwnedTexture;
+    if (map && owned) map.dispose();
+    m.dispose();
+  };
+  if (Array.isArray(mat)) mat.forEach(disposeMap);
+  else if (mat) disposeMap(mat);
   for (const child of [...obj.children]) disposeObject3D(child);
 }

@@ -34,7 +34,11 @@ export type ScriptNodeKind =
   | "cameraNode"
   | "lightNode"
   | "skyboxNode"
-  | "particleSystemNode";
+  | "particleSystemNode"
+  | "uiCanvasNode"
+  | "uiImageNode"
+  | "uiTextNode"
+  | "uiButtonNode";
 
 export interface ScriptNodeType {
   /** 基础节点类型（缺省 "node"=空组；运行时按此创建对应节点） */
@@ -58,6 +62,10 @@ const NODE_KINDS: ScriptNodeKind[] = [
   "lightNode",
   "skyboxNode",
   "particleSystemNode",
+  "uiCanvasNode",
+  "uiImageNode",
+  "uiTextNode",
+  "uiButtonNode",
 ];
 
 /** 解析脚本类 `static nodeType = { kind, label }` 声明（非法/未声明返回 null） */

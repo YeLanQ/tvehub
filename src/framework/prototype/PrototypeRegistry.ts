@@ -9,6 +9,10 @@ import {
   PointLightNode,
   SkyboxNode,
   SpotLightNode,
+  UIButtonNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
 } from "./derived/Primitives";
 import { Node, type RegisteredNodeTypes } from "./Node";
 import type { JsonRecord } from "./types";
@@ -73,5 +77,10 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(SkyboxNode.kType, () => new SkyboxNode());
   registry.register(AudioNode.kType, () => new AudioNode());
   registry.register(ParticleSystemNode.kType, () => new ParticleSystemNode());
+  // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget
+  registry.register(UICanvasNode.kType, () => new UICanvasNode());
+  registry.register(UIImageNode.kType, () => new UIImageNode());
+  registry.register(UITextNode.kType, () => new UITextNode());
+  registry.register(UIButtonNode.kType, () => new UIButtonNode());
   return registry;
 }

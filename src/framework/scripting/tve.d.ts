@@ -35,7 +35,11 @@ export type EntityKind =
   | "spotLightNode"
   | "skyboxNode"
   | "audioNode"
-  | "particleSystemNode";
+  | "particleSystemNode"
+  | "uiCanvasNode"
+  | "uiImageNode"
+  | "uiTextNode"
+  | "uiButtonNode";
 
 /** 节点类型 token 类的构造器形状（@property 的 type 选项可用） */
 export type NodeClass =
@@ -44,7 +48,11 @@ export type NodeClass =
   | typeof LightNode
   | typeof CameraNode
   | typeof SkyboxNode
-  | typeof ParticleSystemNode;
+  | typeof ParticleSystemNode
+  | typeof UICanvasNode
+  | typeof UIImageNode
+  | typeof UITextNode
+  | typeof UIButtonNode;
 
 /** 内置组件门面类（@property 组件引用字段 / getComponent / addComponent 可用） */
 export type ComponentClass =
@@ -72,7 +80,11 @@ export type ScriptNodeKind =
   | "cameraNode"
   | "lightNode"
   | "skyboxNode"
-  | "particleSystemNode";
+  | "particleSystemNode"
+  | "uiCanvasNode"
+  | "uiImageNode"
+  | "uiTextNode"
+  | "uiButtonNode";
 
 // ---------------------------------------------------------------------------
 // 装饰器（@property / @nodeType 声明式写法）
@@ -553,6 +565,74 @@ export class ParticleSystemNode extends Entity {
   texture: string;
 }
 
+// ---------------------------------------------------------------------------
+// UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget
+// ---------------------------------------------------------------------------
+
+/**
+ * UI 画布节点（编辑器 uiCanvasNode）：屏幕叠加渲染的 UI 容器根，
+ * Widget（图片/文本/按钮）作为其子节点参与叠加；SortOrder 控制叠加顺序。
+ */
+export class UICanvasNode extends Entity {
+  /** 画布整体排序（多画布叠加时大者在上；优先于画布内 Widget 排序） */
+  sortOrder: number;
+}
+
+/** UI Widget 共有字段（叠加序 + 矩形尺寸，UI 单位） */
+export interface UIWidgetBase {
+  /** 画布内叠加序（大者在上；点击命中也按此取最上层） */
+  sortOrder: number;
+  /** 矩形尺寸（UI 单位；原点=屏幕中心，纵向可见 10 个单位） */
+  size: { x: number; y: number };
+}
+
+/** UI 图片节点（编辑器 uiImageNode）：矩形图片或纯色块 */
+export class UIImageNode extends Entity implements UIWidgetBase {
+  sortOrder: number;
+  size: { x: number; y: number };
+  /** 图片资产相对路径（空串 = 纯色矩形；运行态异步加载后热替换） */
+  image: string;
+  /** 着色（0xRRGGBB；与图片相乘） */
+  color: number;
+}
+
+/** UI 文本节点（编辑器 uiTextNode）：多行文本（自动换行，样式可调） */
+export class UITextNode extends Entity implements UIWidgetBase {
+  sortOrder: number;
+  size: { x: number; y: number };
+  /** 文本内容（\n 分行；超界自动换行） */
+  text: string;
+  /** 字号（1080p 参考分辨率下的像素字号） */
+  fontSize: number;
+  /** 文本颜色（0xRRGGBB） */
+  color: number;
+  bold: boolean;
+  italic: boolean;
+  /** 字族：system 系统无衬线 / serif 衬线 / mono 等宽 */
+  fontFamily: "system" | "serif" | "mono";
+  /** 相对文本框的水平对齐 */
+  align: "left" | "center" | "right";
+}
+
+/** UI 按钮节点（编辑器 uiButtonNode）：背景 + 标签，运行时可点击 */
+export class UIButtonNode extends Entity implements UIWidgetBase {
+  sortOrder: number;
+  size: { x: number; y: number };
+  /** 背景图片资产相对路径（空串 = 纯色背景） */
+  image: string;
+  /** 背景着色（0xRRGGBB） */
+  color: number;
+  /** 标签文本 */
+  label: string;
+  /** 标签颜色（0xRRGGBB） */
+  labelColor: number;
+  /** 标签字号（1080p 参考分辨率像素） */
+  fontSize: number;
+  labelBold: boolean;
+  /** 可交互（false 时仅展示，不参与点击命中） */
+  interactable: boolean;
+}
+
 export {
   Transform as transform,
   MeshNode as meshNode,
@@ -560,6 +640,10 @@ export {
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
   ParticleSystemNode as particleSystemNode,
+  UICanvasNode as uiCanvasNode,
+  UIImageNode as uiImageNode,
+  UITextNode as uiTextNode,
+  UIButtonNode as uiButtonNode,
 };
 
 // ---------------------------------------------------------------------------
@@ -1340,7 +1424,19 @@ export interface PhysicsApi {
   setGravity(x: number, y: number, z: number): void;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / 日志） */
+/** UI 运行期控制（画布叠加序读写 + 按钮点击订阅；按实体寻址） */
+export interface UIApi {
+  /** 合并 Widget/画布设置（子集；运行态生效，不回写场景文件） */
+  set(entity: Entity, patch: Record<string, unknown>): void;
+  /** 读取 Widget/画布当前设置快照（非 UI 节点返回 null） */
+  get(entity: Entity): Record<string, unknown> | null;
+  /** 订阅按钮点击（仅 uiButtonNode 且 interactable；返回解绑函数） */
+  onClick(entity: Entity, cb: () => void): () => void;
+  /** 解除按钮点击订阅 */
+  offClick(entity: Entity, cb: () => void): void;
+}
+
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
@@ -1349,6 +1445,7 @@ export interface EngineApi {
   readonly audio: AudioApi;
   readonly particles: ParticlesApi;
   readonly physics: PhysicsApi;
+  readonly ui: UIApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */
   log(...args: unknown[]): void;
   warn(...args: unknown[]): void;

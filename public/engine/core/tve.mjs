@@ -1450,6 +1450,35 @@ for (const key of [
   });
 }
 
+// UI（Canvas-Widget）节点门面：屏幕叠加渲染的画布与 Widget，
+// 字段读写经 host.ui（settingsOf/updateSettings）转发到运行时 UI 系统（运行态生效，
+// 不回写场景文件）。字段表与 tve.d.ts 的 UI 节点声明一致。
+class UICanvasNode extends Transform {}
+class UIImageNode extends Transform {}
+class UITextNode extends Transform {}
+class UIButtonNode extends Transform {}
+
+for (const [Cls, keys] of [
+  [UICanvasNode, ["sortOrder"]],
+  [UIImageNode, ["sortOrder", "size", "image", "color"]],
+  [UITextNode, ["sortOrder", "size", "text", "fontSize", "color", "bold", "italic", "fontFamily", "align"]],
+  [UIButtonNode, ["sortOrder", "size", "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable"]],
+]) {
+  for (const key of keys) {
+    Object.defineProperty(Cls.prototype, key, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        const s = host?.ui?.settingsOf(this.id);
+        return s ? s[key] : undefined;
+      },
+      set(v) {
+        host?.ui?.updateSettings(this.id, { [key]: v });
+      },
+    });
+  }
+}
+
 // 编辑器 type 键 → 类型类（供 getEntity 按 userData.nodeKind 构建实例）
 const KIND_CLASSES = {
   node: Transform,
@@ -1463,6 +1492,10 @@ const KIND_CLASSES = {
   directionalLightNode: LightNode,
   ambientLightNode: LightNode,
   spotLightNode: LightNode,
+  uiCanvasNode: UICanvasNode,
+  uiImageNode: UIImageNode,
+  uiTextNode: UITextNode,
+  uiButtonNode: UIButtonNode,
 };
 
 // 节点类型类的静态过滤键（property 装饰器据此识别"节点引用"属性；
@@ -1479,6 +1512,10 @@ LightNode.__nodeKinds = [
 CameraNode.__nodeKinds = ["cameraNode"];
 SkyboxNode.__nodeKinds = ["skyboxNode"];
 ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
+UICanvasNode.__nodeKinds = ["uiCanvasNode"];
+UIImageNode.__nodeKinds = ["uiImageNode"];
+UITextNode.__nodeKinds = ["uiTextNode"];
+UIButtonNode.__nodeKinds = ["uiButtonNode"];
 
 /** @property({ type: 节点类 }) 是否节点引用选项（运行时标识） */
 function isNodeRefType(v) {
@@ -2055,6 +2092,27 @@ const particlesApi = {
   },
 };
 
+/** UI 运行期控制（按实体寻址；画布/Widget 设置 + 按钮点击订阅，经 engine.ui 调用） */
+const uiApi = {
+  /** 合并 Widget/画布设置（子集；运行态生效，不回写场景文件） */
+  set(entity, patch) {
+    host?.ui?.updateSettings(entity?.id, patch);
+  },
+  /** 读取 Widget/画布当前设置快照（非 UI 节点返回 null） */
+  get(entity) {
+    return host?.ui?.settingsOf(entity?.id) ?? null;
+  },
+  /** 订阅按钮点击（仅 uiButtonNode 且 interactable；返回解绑函数） */
+  onClick(entity, cb) {
+    const un = host?.ui?.onClick(entity?.id, cb);
+    return typeof un === "function" ? un : () => {};
+  },
+  /** 解除按钮点击订阅 */
+  offClick(entity, cb) {
+    host?.ui?.offClick(entity?.id, cb);
+  },
+};
+
 /** 物理控制（按实体寻址；仅挂刚体组件的节点有效，脚本经 engine.physics 调用） */
 const physicsApi = {
   applyImpulse(entity, x, y, z) {
@@ -2319,6 +2377,7 @@ const engine = {
   audio: audioApi,
   particles: particlesApi,
   physics: physicsApi,
+  ui: uiApi,
   log(...args) {
     postLog("info", formatArgs(args));
     console.log(...args);
@@ -2344,12 +2403,20 @@ export {
   CameraNode,
   SkyboxNode,
   ParticleSystemNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
+  UIButtonNode,
   Transform as transform,
   MeshNode as meshNode,
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
   ParticleSystemNode as particleSystemNode,
+  UICanvasNode as uiCanvasNode,
+  UIImageNode as uiImageNode,
+  UITextNode as uiTextNode,
+  UIButtonNode as uiButtonNode,
   // 脚本通用系统（委托/对象池/数据中心）
   Delegate,
   Pool,

@@ -87,6 +87,34 @@ export const PARTICLE_ICON_PATHS: string[] = [
   "M6.5 17.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z",
 ];
 
+/** UI 画布：层叠矩形画框（Canvas-Widget 的 Canvas 语义） */
+export const UI_CANVAS_ICON_PATHS: string[] = [
+  "M3 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  "M8 21h9",
+  "M16 8.5h-8",
+  "M16 12h-5",
+];
+
+/** UI 图片：相框 + 山形（图片 Widget 语义） */
+export const UI_IMAGE_ICON_PATHS: string[] = [
+  "M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
+  "M9 11a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5z",
+  "m3.5 17.5 5-5 3.5 3.5 3-3 5.5 5",
+];
+
+/** UI 文本：字面 T + 基线（文本 Widget 语义） */
+export const UI_TEXT_ICON_PATHS: string[] = [
+  "M5 7V5h14v2",
+  "M12 5v14",
+  "M9 19h6",
+];
+
+/** UI 按钮：圆角矩形 + 内部横条（按钮 Widget 语义） */
+export const UI_BUTTON_ICON_PATHS: string[] = [
+  "M4 6.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 16V8A1.5 1.5 0 0 1 4 6.5z",
+  "M8 12h8",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

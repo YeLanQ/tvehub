@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode, UIButtonNode, UICanvasNode, UIImageNode, UITextNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
   isAudioSourceComponent,
@@ -16,6 +16,7 @@ import { useInspectorPhysics } from "../composables/inspector/useInspectorPhysic
 import { useInspectorLightAudio } from "../composables/inspector/useInspectorLightAudio";
 import { useInspectorCameraSky } from "../composables/inspector/useInspectorCameraSky";
 import { useInspectorParticles } from "../composables/inspector/useInspectorParticles";
+import { useInspectorUI } from "../composables/inspector/useInspectorUI";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
@@ -28,6 +29,10 @@ import CameraSection from "./inspector/CameraSection.vue";
 import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
 import ParticleSection from "./inspector/ParticleSection.vue";
+import UICanvasSection from "./inspector/UICanvasSection.vue";
+import UIImageSection from "./inspector/UIImageSection.vue";
+import UITextSection from "./inspector/UITextSection.vue";
+import UIButtonSection from "./inspector/UIButtonSection.vue";
 import AssetInspector from "./inspector/AssetInspector.vue";
 import ScriptFields from "./inspector/ScriptFields.vue";
 import RigidBodyFields from "./inspector/RigidBodyFields.vue";
@@ -98,6 +103,7 @@ const {
   onSkyMaterialCopyToProject,
 } = useInspectorCameraSky(inspector);
 const { onParticleUpdate } = useInspectorParticles(inspector);
+const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate } = useInspectorUI(inspector);
 
 // ---------------------------------------------------------------------------
 // 资产检查器模式（最后点击优先）：点击资产面板条目 → 显示资产预览与属性；
@@ -229,6 +235,20 @@ onBeforeUnmount(flushMaterialPersist);
 
       <ComponentCard v-if="node instanceof ParticleSystemNode" title="Particle System" :open="true">
         <ParticleSection :node="node" :rev="revision" @update="onParticleUpdate" />
+      </ComponentCard>
+
+      <!-- —— UI（Canvas-Widget）：画布与 Widget 卡 —— -->
+      <ComponentCard v-if="node instanceof UICanvasNode" title="UI Canvas" :open="true">
+        <UICanvasSection :node="node" :rev="revision" @update="onUICanvasUpdate" />
+      </ComponentCard>
+      <ComponentCard v-if="node instanceof UIImageNode" title="UI Image" :open="true">
+        <UIImageSection :node="node" :rev="revision" @update="onUIImageUpdate" />
+      </ComponentCard>
+      <ComponentCard v-if="node instanceof UITextNode" title="UI Text" :open="true">
+        <UITextSection :node="node" :rev="revision" @update="onUITextUpdate" />
+      </ComponentCard>
+      <ComponentCard v-if="node instanceof UIButtonNode" title="UI Button" :open="true">
+        <UIButtonSection :node="node" :rev="revision" @update="onUIButtonUpdate" />
       </ComponentCard>
 
       <!-- —— 已挂组件卡（按挂载序 = 卡片序；组件卡语义：启用勾选 + ⋮ 菜单） —— -->

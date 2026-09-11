@@ -46,6 +46,10 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
       return "audioNode";
     case "particle":
       return "particleSystemNode";
+    case "ui": {
+      const cap = (subtype ?? "canvas")[0].toUpperCase() + (subtype ?? "canvas").slice(1);
+      return `ui${cap}Node`; // canvas → uiCanvasNode / text → uiTextNode / image → uiImageNode / button → uiButtonNode
+    }
     case "light":
       return `${subtype}LightNode`; // point → pointLightNode / directional → directionalLightNode …
     default:
@@ -57,6 +61,7 @@ console.log("[1] 菜单项定义");
 check("菜单非空", types.length > 0, `${types.length} 项`);
 check("菜单不含已移除的阴影节点入口", !types.includes("shadow"), types.join(", "));
 check("含网格/灯光/天空盒/相机/空组/音源/粒子入口", ["mesh:", "light:", "skybox:", "camera", "group", "audio", "particle"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
+check("含 UI（Canvas-Widget）入口", ["ui:canvas", "ui:text", "ui:image", "ui:button"].every((t) => types.includes(t)), types.join(", "));
 check("脚本节点分组只在有脚本时出现", types.some((t) => t.startsWith("script:")));
 
 console.log("[2] 每个菜单项都能映射成 node.add 参数");
@@ -112,6 +117,10 @@ console.log("[4] 工厂真能造出对应类型（菜单 → 命令 → 节点�
     { type: "skybox:cube", make: (a) => factory.createSkybox(a?.subtype as SkyboxKind) },
     { type: "audio", make: () => factory.createAudio() },
     { type: "particle", make: () => factory.createParticleSystem() },
+    { type: "ui:canvas", make: () => factory.createUICanvas() },
+    { type: "ui:text", make: () => factory.createUIText() },
+    { type: "ui:image", make: () => factory.createUIImage() },
+    { type: "ui:button", make: () => factory.createUIButton() },
   ];
   for (const c of cases) {
     const args = addNodeArgs(c.type, "p1");

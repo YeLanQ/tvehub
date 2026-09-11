@@ -11,7 +11,16 @@ import {
   SpotLightNode,
   CameraNode,
   ParticleSystemNode,
+  UIButtonNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
 } from "../../prototype/derived/Primitives";
+import {
+  uiRenderOrder,
+  type Vec2,
+} from "../../prototype/nodes/ui-shared";
+import { buildUITextTexture, uiTextSignature, type UITextStyle } from "./ui";
 import { PARTICLES_CHILD_NAME } from "../../particles/ParticleEmitter";
 import {
   SHADOW_MAP_SIZE_PLANE,
@@ -82,6 +91,8 @@ const AUDIO_ICON_COLOR = 0x7ed49a;
 const PARTICLE_ICON_NAME = "__particleIcon";
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
+/** UI 按钮标签子网格名（文本光栅化贴图；随按钮背景同序渲染） */
+const UI_LABEL_CHILD_NAME = "__uiLabel";
 
 /** 灯光组件类型 → 图标精灵种类（与灯光节点同一套图标） */
 function compLightIconKind(kind: string): SpriteIconKind {
@@ -95,6 +106,15 @@ function compLightIconKind(kind: string): SpriteIconKind {
     default:
       return "light-point";
   }
+}
+
+/** UI Widget 类型键集合（渲染体是网格：创建 Mesh 容器） */
+const UI_IS_WIDGET_KINDS = new Set<string>(["uiImageNode", "uiTextNode", "uiButtonNode"]);
+
+/** UI 材质标记（区分 three Mesh 自带的默认材质与自建叠加材质） */
+function isOwnUIMaterial(mat: THREE.Material | THREE.Material[] | undefined): boolean {
+  const m = Array.isArray(mat) ? mat[0] : mat;
+  return (m as unknown as { userData?: { isTveUIMaterial?: boolean } })?.userData?.isTveUIMaterial === true;
 }
 
 /**
@@ -240,6 +260,7 @@ export class SceneSynchronizer {
     if (node instanceof MeshNode) obj = new THREE.Mesh();
     else if (node instanceof LightNode) obj = new THREE.Group();
     else if (node instanceof CameraNode) obj = new THREE.Group();
+    else if (UI_IS_WIDGET_KINDS.has(node.typeKey)) obj = new THREE.Mesh();
     else obj = new THREE.Group();
     obj.name = node.name;
     obj.userData.nodeId = node.id;
@@ -322,6 +343,8 @@ export class SceneSynchronizer {
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
     else if (node instanceof AudioNode) this.refreshAudio(node, obj);
     else if (node instanceof ParticleSystemNode) this.refreshParticleSystem(node, obj);
+    else if (node instanceof UICanvasNode) this.refreshUICanvas(node, obj);
+    else if (UI_IS_WIDGET_KINDS.has(node.typeKey)) this.refreshUIWidget(node, obj as THREE.Mesh);
     // 组件模式：灯光组件挂任意节点（含网格/空组），与节点类型原生能力并存
     this.refreshComponentLights(node, obj);
     this.applyTransform(node);
@@ -347,6 +370,9 @@ export class SceneSynchronizer {
         c.traverse((d) => d.layers.set(layer));
       } else if (c.name === PARTICLES_CHILD_NAME) {
         // 粒子 Points 是节点的渲染内容：跟随节点层（ParticleSystem 首次挂载时也置位）
+        c.layers.set(layer);
+      } else if (c.name === UI_LABEL_CHILD_NAME) {
+        // UI 按钮标签网格是节点的渲染内容：跟随节点层（refreshUIWidget 每次刷新重置位）
         c.layers.set(layer);
       }
     });
@@ -986,6 +1012,174 @@ export class SceneSynchronizer {
       obj.add(icon);
     }
     (icon.material as THREE.SpriteMaterial).color.setHex(node.particles.startColor & 0xffffff);
+  }
+
+  /**
+   * UI 画布刷新（Canvas-Widget 的 Canvas）：打标注供运行期系统使用 ——
+   * - uiCanvasSort：画布级 SortOrder（UISystem 每帧据此合成子树渲染序）；
+   * - uiOnlyFirstPass：分层多 pass 渲染时画布只在首个 pass 绘制（避免半透明
+   *   UI 在后续叠加 pass 重复绘制变浓；layerPass 按该标注隐藏）。
+   * 画布根矩阵由 UISystem 每帧覆写（matrixAutoUpdate=false，节点变换不参与取景）。
+   */
+  private refreshUICanvas(node: UICanvasNode, obj: THREE.Object3D): void {
+    obj.userData.uiCanvas = true;
+    obj.userData.uiCanvasSort = node.sortOrder;
+    obj.userData.uiOnlyFirstPass = true;
+  }
+
+  /**
+   * UI Widget 刷新（图片/文本/按钮）：按签名重建几何与资源。
+   * - 几何：PlaneGeometry(size.x, size.y)（尺寸变化重建）；
+   * - 材质：MeshBasicMaterial 透明 + 关深度测试/不写深度（UI 恒叠在场景之上，
+   *   叠加序由 renderOrder 决定：画布 SortOrder×1e4 + Widget SortOrder）；
+   * - 图片：loadTexture 异步回填（带失效 token，过期回填丢弃）；
+   * - 文本：2D 画布光栅化 CanvasTexture（样式签名变化重光栅化）；
+   * - 按钮：背景网格 + __uiLabel 文本子网格（z 偏移浮向相机，同 renderOrder）。
+   */
+  private refreshUIWidget(node: Node, obj: THREE.Mesh): void {
+    const isImage = node instanceof UIImageNode;
+    const isText = node instanceof UITextNode;
+    const isButton = node instanceof UIButtonNode;
+    const size = (node as unknown as { size: Vec2 }).size;
+    const sortOrder = (node as unknown as { sortOrder: number }).sortOrder;
+    obj.userData.uiSort = sortOrder;
+    obj.frustumCulled = false;
+
+    // —— 几何（尺寸签名变化重建）——
+    const sizeSig = `${size.x}|${size.y}`;
+    if (obj.userData.uiSizeSig !== sizeSig || !obj.geometry) {
+      obj.geometry?.dispose();
+      obj.geometry = new THREE.PlaneGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
+      obj.userData.uiSizeSig = sizeSig;
+    }
+
+    // —— 材质（无则建；统一叠加语义）——
+    // 注意：new THREE.Mesh() 自带默认 MeshBasicMaterial（不透明 + 深度测试开），
+    // 不能以 obj.material 判空——按 isTveUIMaterial 标记识别自建材质，命中默认材质即替换
+    if (!isOwnUIMaterial(obj.material)) {
+      const prev = obj.material;
+      if (prev && !Array.isArray(prev)) prev.dispose();
+      obj.material = this.createUIMaterial();
+    }
+    const mat = obj.material as THREE.MeshBasicMaterial;
+
+    if (isImage) {
+      const img = node as UIImageNode;
+      mat.color.setHex(img.color & 0xffffff);
+      this.applyUITexture(obj, mat, img.image);
+    } else if (isText) {
+      const txt = node as UITextNode;
+      const style: UITextStyle = {
+        text: txt.text,
+        fontSize: txt.fontSize,
+        color: txt.color,
+        bold: txt.bold,
+        italic: txt.italic,
+        fontFamily: txt.fontFamily,
+        align: txt.align,
+      };
+      mat.color.setHex(0xffffff);
+      this.applyUITextTexture(obj, mat, style, size);
+    } else if (isButton) {
+      const btn = node as UIButtonNode;
+      mat.color.setHex(btn.color & 0xffffff);
+      this.applyUITexture(obj, mat, btn.image);
+      this.refreshUIButtonLabel(btn, obj, size);
+    }
+
+    // 渲染序基值（画布级 SortOrder 由 UISystem 每帧按父链合成覆写）
+    obj.renderOrder = uiRenderOrder(0, sortOrder);
+  }
+
+  /** 按钮标签子网格（文本光栅化；z 偏移使标签浮向相机一侧，同 renderOrder 后绘） */
+  private refreshUIButtonLabel(btn: UIButtonNode, obj: THREE.Mesh, size: Vec2): void {
+    let label = obj.children.find((c) => c.name === UI_LABEL_CHILD_NAME) as THREE.Mesh | null;
+    if (!label) {
+      label = new THREE.Mesh();
+      label.name = UI_LABEL_CHILD_NAME;
+      label.userData.uiRenderable = true;
+      label.frustumCulled = false;
+      label.material = this.createUIMaterial();
+      label.position.z = 0.02;
+      obj.add(label);
+    }
+    label.layers.set(clampLayerIndex((obj.userData.nodeLayer as number | undefined) ?? 0));
+    if (label.userData.uiSizeSig !== `${size.x}|${size.y}` || !label.geometry) {
+      label.geometry?.dispose();
+      label.geometry = new THREE.PlaneGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
+      label.userData.uiSizeSig = `${size.x}|${size.y}`;
+    }
+    const style: UITextStyle = {
+      text: btn.label,
+      fontSize: btn.fontSize,
+      color: btn.labelColor,
+      bold: btn.labelBold,
+      italic: false,
+      fontFamily: "system",
+      align: "center",
+    };
+    const sig = uiTextSignature(style, size);
+    if (obj.userData.uiLabelSig === sig) return;
+    obj.userData.uiLabelSig = sig;
+    const lmat = label.material as THREE.MeshBasicMaterial;
+    const old = lmat.map;
+    lmat.map = buildUITextTexture(style, size);
+    (lmat.map as unknown as { userData: Record<string, unknown> }).userData.uiOwnedTexture = true;
+    lmat.needsUpdate = true;
+    old?.dispose();
+  }
+
+  /** UI 材质（叠加语义统一：透明 + 关深度测试/写深度 + 无雾 + 不参与色调映射） */
+  private createUIMaterial(): THREE.MeshBasicMaterial {
+    const mat = new THREE.MeshBasicMaterial();
+    mat.transparent = true;
+    mat.depthTest = false;
+    mat.depthWrite = false;
+    mat.side = THREE.DoubleSide;
+    mat.fog = false;
+    mat.toneMapped = false;
+    (mat.userData as Record<string, unknown>).isTveUIMaterial = true;
+    return mat;
+  }
+
+  /**
+   * 图片资产异步回填（贴图路径变化才重载；loadTexture 内部带缓存）。
+   * token 失效保护：回填落位前路径又变了/节点已删 → 丢弃本次回填。
+   */
+  private applyUITexture(owner: THREE.Mesh, mat: THREE.MeshBasicMaterial, rel: string): void {
+    if (owner.userData.uiImageSig === rel) return;
+    owner.userData.uiImageSig = rel;
+    const token = ((owner.userData.uiTexToken as number | undefined) ?? 0) + 1;
+    owner.userData.uiTexToken = token;
+    if (!rel) {
+      mat.map = null;
+      mat.needsUpdate = true;
+      return;
+    }
+    const load = this.lookup.loadTexture;
+    if (!load) return;
+    void load(rel, true).then((tex) => {
+      if (owner.userData.uiTexToken !== token) return;
+      mat.map = tex;
+      mat.needsUpdate = true;
+    });
+  }
+
+  /** 文本光栅化回填：样式签名变化才重光栅化（旧自有贴图释放） */
+  private applyUITextTexture(
+    owner: THREE.Mesh,
+    mat: THREE.MeshBasicMaterial,
+    style: UITextStyle,
+    size: Vec2,
+  ): void {
+    const sig = uiTextSignature(style, size);
+    if (owner.userData.uiTextSig === sig) return;
+    owner.userData.uiTextSig = sig;
+    const old = mat.map;
+    mat.map = buildUITextTexture(style, size);
+    (mat.map as unknown as { userData: Record<string, unknown> }).userData.uiOwnedTexture = true;
+    mat.needsUpdate = true;
+    old?.dispose();
   }
 
   dispose(): void {

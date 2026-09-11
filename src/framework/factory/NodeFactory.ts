@@ -6,6 +6,10 @@ import {
   MeshNode,
   ParticleSystemNode,
   SkyboxNode,
+  UIButtonNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
   skyMaterialForKind,
   type LightKind,
   type SkyboxKind,
@@ -22,7 +26,11 @@ export type EditorNodeType =
   | "cameraNode"
   | "skyboxNode"
   | "audioNode"
-  | "particleSystemNode";
+  | "particleSystemNode"
+  | "uiCanvasNode"
+  | "uiImageNode"
+  | "uiTextNode"
+  | "uiButtonNode";
 
 export interface CreateOptions {
   parentId?: string | null;
@@ -132,6 +140,38 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染） */
+  createUICanvas(opts: CreateOptions = {}): UICanvasNode {
+    const node = this.registry.create("uiCanvasNode") as UICanvasNode;
+    node.name = opts.name ?? "UI Canvas";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /** 创建 UI 图片 Widget（默认纯色矩形；图片资产经检查器绑定） */
+  createUIImage(opts: CreateOptions = {}): UIImageNode {
+    const node = this.registry.create("uiImageNode") as UIImageNode;
+    node.name = opts.name ?? "Image";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /** 创建 UI 文本 Widget（默认内容 "Text"；样式经检查器调整） */
+  createUIText(opts: CreateOptions = {}): UITextNode {
+    const node = this.registry.create("uiTextNode") as UITextNode;
+    node.name = opts.name ?? "Text";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /** 创建 UI 按钮 Widget（背景 + 标签；运行时可点击，脚本经 engine.ui 订阅） */
+  createUIButton(opts: CreateOptions = {}): UIButtonNode {
+    const node = this.registry.create("uiButtonNode") as UIButtonNode;
+    node.name = opts.name ?? "Button";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   fromJSON(json: JsonRecord): Node {
     return this.registry.createFromJSON(json);
   }
@@ -149,13 +189,32 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
           ? AudioNode
           : K extends "particleSystemNode"
             ? ParticleSystemNode
-            : Node;
+            : K extends "uiCanvasNode"
+              ? UICanvasNode
+              : K extends "uiImageNode"
+                ? UIImageNode
+                : K extends "uiTextNode"
+                  ? UITextNode
+                  : K extends "uiButtonNode"
+                    ? UIButtonNode
+                    : Node;
 
 function defaultSkyboxName(kind: SkyboxKind): string {
   return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";
 }
 
-export type { MeshNode, LightNode, CameraNode, SkyboxNode, AudioNode, ParticleSystemNode };
+export type {
+  MeshNode,
+  LightNode,
+  CameraNode,
+  SkyboxNode,
+  AudioNode,
+  ParticleSystemNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
+  UIButtonNode,
+};
 
 export function createNodeFactory(registry: PrototypeRegistry): NodeFactory {
   return new NodeFactory(registry);

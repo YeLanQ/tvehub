@@ -174,7 +174,7 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
 }
 
 /// 递归重写 JSON 里 meshNode 的 material/model、skyboxNode 的 cubeMap、组件 animationClip 的 clip、
-/// 音源的 audio.source、粒子系统的 particles.texture 资产引用
+/// 音源的 audio.source、粒子系统的 particles.texture、UI Widget（图片/按钮）的 image 资产引用
 fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
     match v {
         serde_json::Value::Array(items) => {
@@ -205,6 +205,11 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
                                 *tex = serde_json::Value::String(new.clone());
                             }
                         }
+                    }
+                } else if k == "image" && val.is_string() {
+                    // UI Widget（uiImageNode/uiButtonNode）：image 为图片资产引用
+                    if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
+                        *val = serde_json::Value::String(new.clone());
                     }
                 } else {
                     rewrite_scene_refs(val, renames);

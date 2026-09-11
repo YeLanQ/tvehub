@@ -20,6 +20,10 @@ import {
   MeshNode,
   ParticleSystemNode,
   SkyboxNode,
+  UIButtonNode,
+  UICanvasNode,
+  UIImageNode,
+  UITextNode,
   type GeometryKind,
   type SkyboxKind,
 } from "../prototype/derived/Primitives";
@@ -52,6 +56,7 @@ import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
 import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
 import { PhysicsSystem } from "../physics";
+import { UISystem } from "./modules/ui";
 
 /**
  * 脚本节点类型声明（脚本类 `@nodeType({ kind })`）→ 基础节点创建。
@@ -69,6 +74,10 @@ const SCRIPT_NODE_BASE: Record<
   skyboxNode: (e, p) => e.addSkybox("procedural", p),
   audioNode: (e, p) => e.addAudio(p),
   particleSystemNode: (e, p) => e.addParticleSystem(p),
+  uiCanvasNode: (e, p) => e.addUICanvas(p),
+  uiImageNode: (e, p) => e.addUIImage(p),
+  uiTextNode: (e, p) => e.addUIText(p),
+  uiButtonNode: (e, p) => e.addUIButton(p),
 };
 
 export interface EditorEvents extends Record<string, unknown> {
@@ -118,6 +127,8 @@ export class EditorEngine {
   readonly physics = new PhysicsSystem();
   /** 粒子系统（粒子节点的 CPU 模拟 + Points 渲染；渲染循环推进） */
   readonly particles = new ParticleSystem();
+  /** UI 系统（Canvas-Widget 相机叠加；渲染循环把画布根贴合活动相机并合成渲染序） */
+  private readonly uiSystem = new UISystem();
   /** 帧间隔计时器（渲染回调里取帧间隔；THREE.Clock 已在 r183 弃用 → Timer） */
   private timer = new THREE.Timer();
   /** 扩展着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
@@ -390,6 +401,12 @@ export class EditorEngine {
     await this.applyBackendMaterialPolicy();
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
+    // UI 叠加 pass：UISystem 在主渲染前隐藏画布、主渲染后做专属叠加渲染
+    this.uiSystem.attach(this.renderer.scene, (cam) => this.renderer.renderOverlayPass(cam));
+    this.renderer.setUiOverlayCb({
+      begin: () => this.uiSystem.beginRender(),
+      end: (cam) => this.uiSystem.endRender(cam),
+    });
     this.renderer.setRenderCb(() => {
       // 帧间隔（Timer.update 每帧一次；getDelta 取值在本帧内多次调用结果一致）
       this.timer.update();
@@ -413,6 +430,10 @@ export class EditorEngine {
       this.helperSystem.tick(this.synchronizer.getObjectMap());
       // 阴影相机贴合场景包围盒（按节拍惰性重算，场景增删/移动后投影范围自动跟上）
       this.synchronizer.refitShadowCameras();
+      // UI 相机叠加：画布根贴合活动渲染相机 + 按 SortOrder 合成 Widget 渲染序
+      // （renderActive 用的同一活动相机；scene 模式 = 编辑器轨道相机，非 null）
+      const renderCam = this.renderer.getActiveCamera();
+      if (renderCam) this.uiSystem.update(renderCam, this.synchronizer.getObjectMap());
       // 正交预览的天空背景面跟随（渲染前更新 uniforms）
       this.updateOrthoSkyQuad();
     });
@@ -638,6 +659,42 @@ export class EditorEngine {
   addCamera(parentId?: string): CameraNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createCamera({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染） */
+  addUICanvas(parentId?: string): UICanvasNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createUICanvas({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加 UI 图片 Widget（挂画布下参与叠加；画布外仅作普通面片显示） */
+  addUIImage(parentId?: string): UIImageNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createUIImage({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加 UI 文本 Widget（2D 画布光栅化多行文本） */
+  addUIText(parentId?: string): UITextNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createUIText({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加 UI 按钮 Widget（运行时可点击；脚本经 engine.ui.onClick 订阅） */
+  addUIButton(parentId?: string): UIButtonNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createUIButton({ parentId: parent?.id ?? null });
     this.graph.add(node);
     this.select(node.id);
     return node;

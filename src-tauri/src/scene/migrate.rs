@@ -592,6 +592,43 @@ pub fn collect_particle_texture_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集 UI Widget 的图片资产引用（图片二进制资产；去重）：
+/// uiImageNode 的 image 字段 + uiButtonNode 的背景 image 字段（空串 = 纯色，不收集）。
+/// 扩展名集合与 collect_particle_texture_refs 一致。
+pub fn collect_ui_image_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_image_rel(rel: &str) -> bool {
+        let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tga" | "svg"
+        ) && rel.contains('.')
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_ui_image_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            let ty = o.get("type").and_then(Value::as_str);
+            if ty == Some("uiImageNode") || ty == Some("uiButtonNode") {
+                if let Some(rel) = o.get("image").and_then(Value::as_str) {
+                    if is_image_rel(rel) && !out.iter().any(|r| r == rel) {
+                        out.push(rel.to_string());
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_ui_image_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_ui_image_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {
