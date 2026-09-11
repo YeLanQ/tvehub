@@ -14,6 +14,7 @@ import {
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
+  UILayoutNode,
   UITextNode,
 } from "../../prototype/derived/Primitives";
 import {
@@ -111,10 +112,31 @@ function compLightIconKind(kind: string): SpriteIconKind {
 /** UI Widget 类型键集合（渲染体是网格：创建 Mesh 容器） */
 const UI_IS_WIDGET_KINDS = new Set<string>(["uiImageNode", "uiTextNode", "uiButtonNode"]);
 
+/** UI 锚点/布局定位托管类型（位置与缩放由 UISystem 每帧布局解析接管） */
+const UI_IS_POSITION_MANAGED = new Set<string>([...UI_IS_WIDGET_KINDS, "uiLayoutNode"]);
+
+/** UI 布局容器编辑器辅助体子对象名（边框线 + 拾取面；运行时无此对象） */
+const UI_LAYOUT_HELPER_NAME = "__uiLayoutHelper";
+
 /** UI 材质标记（区分 three Mesh 自带的默认材质与自建叠加材质） */
 function isOwnUIMaterial(mat: THREE.Material | THREE.Material[] | undefined): boolean {
   const m = Array.isArray(mat) ? mat[0] : mat;
   return (m as unknown as { userData?: { isTveUIMaterial?: boolean } })?.userData?.isTveUIMaterial === true;
+}
+
+/** UI 布局容器边框线几何（XY 平面矩形线框；缺省 1×1） */
+function uiRectOutlineGeometry(w = 1, h = 1): THREE.BufferGeometry {
+  const hw = Math.max(0.005, w) / 2;
+  const hh = Math.max(0.005, h) / 2;
+  const pts = new Float32Array([
+    -hw, -hh, 0, hw, -hh, 0,
+    hw, -hh, 0, hw, hh, 0,
+    hw, hh, 0, -hw, hh, 0,
+    -hw, hh, 0, -hw, -hh, 0,
+  ]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+  return g;
 }
 
 /**
@@ -244,7 +266,12 @@ export class SceneSynchronizer {
         if (node) this.remount(node);
         break;
       case "transform":
-        if (node) this.applyTransform(node);
+        if (node) {
+          // UI 锚点/布局托管类型：transform.scale 等经 stamp 驱动每帧布局解析，
+          // 需要重打标注（gizmo 拖拽实时回写后数值才能落到解析结果里）
+          if (UI_IS_POSITION_MANAGED.has(node.typeKey)) this.refreshNode(node);
+          else this.applyTransform(node);
+        }
         break;
       case "rename":
         if (node) this.renameObject(node);
@@ -327,10 +354,29 @@ export class SceneSynchronizer {
   applyTransform(node: Node): void {
     const obj = this.objectMap.get(node.id);
     if (!obj) return;
+    // 锚点/布局托管的 UI 节点（画布子树内）：位置与缩放由 UISystem 每帧布局解析
+    // 接管（画布外 Widget 仍是普通 3D 变换），这里只同步旋转
+    const uiManaged =
+      UI_IS_POSITION_MANAGED.has(node.typeKey) && SceneSynchronizer.hasCanvasAncestor(obj);
+    if (uiManaged) {
+      const rotRad = degToRad(node.transform.rotation);
+      obj.rotation.set(rotRad.x, rotRad.y, rotRad.z);
+      return;
+    }
     obj.position.set(node.transform.position.x, node.transform.position.y, node.transform.position.z);
     const rotRad = degToRad(node.transform.rotation);
     obj.rotation.set(rotRad.x, rotRad.y, rotRad.z);
     obj.scale.set(node.transform.scale.x, node.transform.scale.y, node.transform.scale.z);
+  }
+
+  /** 对象父链上是否存在 UI 画布（顶层或嵌套） */
+  private static hasCanvasAncestor(obj: THREE.Object3D): boolean {
+    let cur: THREE.Object3D | null = obj.parent;
+    while (cur) {
+      if (cur.userData?.nodeKind === "uiCanvasNode") return true;
+      cur = cur.parent;
+    }
+    return false;
   }
 
   private refreshNode(node: Node): void {
@@ -345,6 +391,7 @@ export class SceneSynchronizer {
     else if (node instanceof ParticleSystemNode) this.refreshParticleSystem(node, obj);
     else if (node instanceof UICanvasNode) this.refreshUICanvas(node, obj);
     else if (UI_IS_WIDGET_KINDS.has(node.typeKey)) this.refreshUIWidget(node, obj as THREE.Mesh);
+    else if (node instanceof UILayoutNode) this.refreshUILayout(node, obj);
     // 组件模式：灯光组件挂任意节点（含网格/空组），与节点类型原生能力并存
     this.refreshComponentLights(node, obj);
     this.applyTransform(node);
@@ -374,6 +421,9 @@ export class SceneSynchronizer {
       } else if (c.name === UI_LABEL_CHILD_NAME) {
         // UI 按钮标签网格是节点的渲染内容：跟随节点层（refreshUIWidget 每次刷新重置位）
         c.layers.set(layer);
+      } else if (c.name === UI_LAYOUT_HELPER_NAME) {
+        // UI 布局容器辅助体（边框/拾取面）：跟随节点层（视口点选按层过滤射线）
+        c.traverse((d) => d.layers.set(layer));
       }
     });
   }
@@ -1019,6 +1069,8 @@ export class SceneSynchronizer {
    * - uiNodeVisible：节点自身显隐（UISystem 每帧据此接管根对象可见性：
    *   场景视图整体隐藏，布局视图按此显示）；
    * - uiCanvasSort：画布级 SortOrder（UISystem 每帧据此合成子树渲染序）；
+   * - uiDesignW/H + uiScaleMode：画布渲染尺寸（设计像素）与屏幕适配方案
+   *   （UISystem 每帧据此合成贴合矩阵：100px = 1 UI 单位 + 缩放模式映射）；
    * - uiOnlyFirstPass：分层多 pass 渲染时画布只在首个 pass 绘制（避免半透明
    *   UI 在后续叠加 pass 重复绘制变浓；layerPass 按该标注隐藏）。
    * 画布根矩阵由 UISystem 每帧覆写（matrixAutoUpdate=false，节点变换不参与取景）。
@@ -1027,14 +1079,34 @@ export class SceneSynchronizer {
     obj.userData.uiCanvas = true;
     obj.userData.uiNodeVisible = node.visible && node.active;
     obj.userData.uiCanvasSort = node.sortOrder;
+    obj.userData.uiDesignW = node.designWidth;
+    obj.userData.uiDesignH = node.designHeight;
+    obj.userData.uiScaleMode = node.scaleMode;
     obj.userData.uiOnlyFirstPass = true;
+  }
+
+  /** 锚点字段 → 每帧布局解析用标注（UISystem.update 读取；拷贝防共享可变） */
+  private stampUIAnchors(obj: THREE.Object3D, node: {
+    anchorMin: Vec2; anchorMax: Vec2; pivot: Vec2;
+    anchoredPosition: Vec2; offsetMin: Vec2; offsetMax: Vec2; size: Vec2;
+  }, transformScale: { x: number; y: number; z: number }): void {
+    obj.userData.uiAnchorMin = { ...node.anchorMin };
+    obj.userData.uiAnchorMax = { ...node.anchorMax };
+    obj.userData.uiPivot = { ...node.pivot };
+    obj.userData.uiAnchorPos = { ...node.anchoredPosition };
+    obj.userData.uiOffsetMin = { ...node.offsetMin };
+    obj.userData.uiOffsetMax = { ...node.offsetMax };
+    obj.userData.uiSize = { ...node.size };
+    obj.userData.uiScale2D = { x: transformScale.x, y: transformScale.y };
   }
 
   /**
    * UI Widget 刷新（图片/文本/按钮）：按签名重建几何与资源。
-   * - 几何：PlaneGeometry(size.x, size.y)（尺寸变化重建）；
+   * - 几何：PlaneGeometry(size.x, size.y)（设计尺寸，尺寸变化重建；拉伸锚点的
+   *   实际矩形由 UISystem 每帧经对象 scale 缩放实现）；
    * - 材质：MeshBasicMaterial 透明 + 关深度测试/不写深度（UI 恒叠在场景之上，
    *   叠加序由 renderOrder 决定：画布 SortOrder×1e4 + Widget SortOrder）；
+   * - 锚点字段：stamp 供 UISystem 每帧布局解析（resolveUIRect）；
    * - 图片：loadTexture 异步回填（带失效 token，过期回填丢弃）；
    * - 文本：2D 画布光栅化 CanvasTexture（样式签名变化重光栅化）；
    * - 按钮：背景网格 + __uiLabel 文本子网格（z 偏移浮向相机，同 renderOrder）。
@@ -1043,12 +1115,16 @@ export class SceneSynchronizer {
     const isImage = node instanceof UIImageNode;
     const isText = node instanceof UITextNode;
     const isButton = node instanceof UIButtonNode;
-    const size = (node as unknown as { size: Vec2 }).size;
-    const sortOrder = (node as unknown as { sortOrder: number }).sortOrder;
-    obj.userData.uiSort = sortOrder;
+    const widget = node as unknown as {
+      size: Vec2; sortOrder: number; anchorMin: Vec2; anchorMax: Vec2; pivot: Vec2;
+      anchoredPosition: Vec2; offsetMin: Vec2; offsetMax: Vec2;
+    };
+    obj.userData.uiSort = widget.sortOrder;
+    this.stampUIAnchors(obj, widget, node.transform.scale);
     obj.frustumCulled = false;
 
     // —— 几何（尺寸签名变化重建）——
+    const size = widget.size;
     const sizeSig = `${size.x}|${size.y}`;
     if (obj.userData.uiSizeSig !== sizeSig || !obj.geometry) {
       obj.geometry?.dispose();
@@ -1091,7 +1167,69 @@ export class SceneSynchronizer {
     }
 
     // 渲染序基值（画布级 SortOrder 由 UISystem 每帧按父链合成覆写）
-    obj.renderOrder = uiRenderOrder(0, sortOrder);
+    obj.renderOrder = uiRenderOrder(0, widget.sortOrder);
+  }
+
+  /**
+   * UI 布局容器刷新：打锚点/布局标注 + 编辑器辅助体（边框线 + 不可见拾取面）。
+   * 容器自身不渲染内容；辅助体让布局视口可见可点选（运行时无此对象）。
+   * 子元素位置由 UISystem 每帧布局解析（resolveUILayoutCenters）接管。
+   */
+  private refreshUILayout(node: UILayoutNode, obj: THREE.Object3D): void {
+    obj.userData.uiSort = node.sortOrder;
+    this.stampUIAnchors(obj, node, node.transform.scale);
+    obj.userData.uiLayoutMode = node.layoutMode;
+    obj.userData.uiPadding = { ...node.padding };
+    obj.userData.uiSpacing = { ...node.spacing };
+    obj.userData.uiGridCols = node.gridColumns;
+    obj.renderOrder = uiRenderOrder(0, node.sortOrder);
+    obj.frustumCulled = false;
+
+    const size = node.size;
+    const sig = `${size.x}|${size.y}`;
+    let helper = obj.children.find((c) => c.name === UI_LAYOUT_HELPER_NAME) as THREE.Group | null;
+    if (!helper) {
+      helper = new THREE.Group();
+      helper.name = UI_LAYOUT_HELPER_NAME;
+      helper.userData.uiRenderable = true;
+      helper.frustumCulled = false;
+      // 拾取面：材质不可见（渲染器跳过），Mesh.raycast 不检查可见性仍可命中
+      const pickPlane = new THREE.Mesh();
+      pickPlane.material = new THREE.MeshBasicMaterial({ visible: false });
+      pickPlane.position.z = -0.01;
+      pickPlane.frustumCulled = false;
+      pickPlane.userData.uiRenderable = true;
+      // 边框线（z 略浮向相机，避免与子 Widget 深度打架——材质都关了深度测试，
+      // renderOrder 相同时按提交序绘制）
+      const border = new THREE.LineSegments(
+        uiRectOutlineGeometry(),
+        new THREE.LineBasicMaterial({
+          color: 0x7dd3fc,
+          transparent: true,
+          opacity: 0.85,
+          depthTest: false,
+          toneMapped: false,
+        }),
+      );
+      border.position.z = 0.005;
+      border.frustumCulled = false;
+      border.userData.uiRenderable = true;
+      helper.add(pickPlane, border);
+      obj.add(helper);
+    }
+    const pickPlane = helper.children[0] as THREE.Mesh;
+    const border = helper.children[1] as THREE.LineSegments;
+    const planeSig = (pickPlane.userData.uiSizeSig as string | undefined);
+    if (planeSig !== sig || !pickPlane.geometry) {
+      pickPlane.geometry?.dispose();
+      pickPlane.geometry = new THREE.PlaneGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
+      pickPlane.userData.uiSizeSig = sig;
+    }
+    if (border.userData.uiSizeSig !== sig || !border.geometry) {
+      border.geometry?.dispose();
+      border.geometry = uiRectOutlineGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
+      border.userData.uiSizeSig = sig;
+    }
   }
 
   /** 按钮标签子网格（文本光栅化；z 偏移使标签浮向相机一侧，同 renderOrder 后绘） */

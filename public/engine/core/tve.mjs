@@ -1450,19 +1450,25 @@ for (const key of [
   });
 }
 
-// UI（Canvas-Widget）节点门面：屏幕叠加渲染的画布与 Widget，
+// UI（Canvas-Widget）节点门面：屏幕叠加渲染的画布与 Widget/布局容器，
 // 字段读写经 host.ui（settingsOf/updateSettings）转发到运行时 UI 系统（运行态生效，
 // 不回写场景文件）。字段表与 tve.d.ts 的 UI 节点声明一致。
+// 锚点/2D 变换字段单位与编辑器一致：size/anchoredPosition/offset 为 UI 单位
+// （100px = 1 单位），anchorMin/Max/pivot 为 0..1 归一化。
 class UICanvasNode extends Transform {}
 class UIImageNode extends Transform {}
 class UITextNode extends Transform {}
 class UIButtonNode extends Transform {}
+class UILayoutNode extends Transform {}
+
+const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "offsetMin", "offsetMax"];
 
 for (const [Cls, keys] of [
-  [UICanvasNode, ["sortOrder"]],
-  [UIImageNode, ["sortOrder", "size", "image", "color"]],
-  [UITextNode, ["sortOrder", "size", "text", "fontSize", "color", "bold", "italic", "fontFamily", "align"]],
-  [UIButtonNode, ["sortOrder", "size", "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable"]],
+  [UICanvasNode, ["sortOrder", "designWidth", "designHeight", "scaleMode"]],
+  [UIImageNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color"]],
+  [UITextNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "text", "fontSize", "color", "bold", "italic", "fontFamily", "align"]],
+  [UIButtonNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable"]],
+  [UILayoutNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "layoutMode", "padding", "spacing", "gridColumns"]],
 ]) {
   for (const key of keys) {
     Object.defineProperty(Cls.prototype, key, {
@@ -1496,6 +1502,7 @@ const KIND_CLASSES = {
   uiImageNode: UIImageNode,
   uiTextNode: UITextNode,
   uiButtonNode: UIButtonNode,
+  uiLayoutNode: UILayoutNode,
 };
 
 // 节点类型类的静态过滤键（property 装饰器据此识别"节点引用"属性；
@@ -1516,6 +1523,7 @@ UICanvasNode.__nodeKinds = ["uiCanvasNode"];
 UIImageNode.__nodeKinds = ["uiImageNode"];
 UITextNode.__nodeKinds = ["uiTextNode"];
 UIButtonNode.__nodeKinds = ["uiButtonNode"];
+UILayoutNode.__nodeKinds = ["uiLayoutNode"];
 
 /** @property({ type: 节点类 }) 是否节点引用选项（运行时标识） */
 function isNodeRefType(v) {
@@ -2407,6 +2415,7 @@ export {
   UIImageNode,
   UITextNode,
   UIButtonNode,
+  UILayoutNode,
   Transform as transform,
   MeshNode as meshNode,
   LightNode as lightNode,
@@ -2417,6 +2426,7 @@ export {
   UIImageNode as uiImageNode,
   UITextNode as uiTextNode,
   UIButtonNode as uiButtonNode,
+  UILayoutNode as uiLayoutNode,
   // 脚本通用系统（委托/对象池/数据中心）
   Delegate,
   Pool,

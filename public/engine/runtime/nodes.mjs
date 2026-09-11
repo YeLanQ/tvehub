@@ -16,7 +16,7 @@ import { num, vec, D2R } from "../core/utils.mjs";
 import { buildComponentLight } from "../core/lights.mjs";
 import { createParticleEmitter } from "../core/particles.mjs";
 import { createMesh } from "./mesh.mjs";
-import { buildUICanvas, buildUIImage, buildUIText, buildUIButton } from "./ui.mjs";
+import { buildUICanvas, buildUIImage, buildUIText, buildUIButton, buildUILayout } from "./ui.mjs";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
 function parseLayerIndex(v) {
@@ -80,6 +80,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
         return buildUIText(json);
       case "uiButtonNode":
         return buildUIButton(json);
+      case "uiLayoutNode":
+        return buildUILayout();
       default:
         return new THREE.Group();
     }

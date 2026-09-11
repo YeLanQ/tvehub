@@ -61,7 +61,7 @@ console.log("[1] 菜单项定义");
 check("菜单非空", types.length > 0, `${types.length} 项`);
 check("菜单不含已移除的阴影节点入口", !types.includes("shadow"), types.join(", "));
 check("含网格/灯光/天空盒/相机/空组/音源/粒子入口", ["mesh:", "light:", "skybox:", "camera", "group", "audio", "particle"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
-check("含 UI（Canvas-Widget）入口", ["ui:canvas", "ui:text", "ui:image", "ui:button"].every((t) => types.includes(t)), types.join(", "));
+check("含 UI（Canvas-Widget）入口", ["ui:canvas", "ui:text", "ui:image", "ui:button", "ui:layout"].every((t) => types.includes(t)), types.join(", "));
 check("脚本节点分组只在有脚本时出现", types.some((t) => t.startsWith("script:")));
 
 console.log("[2] 每个菜单项都能映射成 node.add 参数");
@@ -121,6 +121,7 @@ console.log("[4] 工厂真能造出对应类型（菜单 → 命令 → 节点�
     { type: "ui:text", make: () => factory.createUIText() },
     { type: "ui:image", make: () => factory.createUIImage() },
     { type: "ui:button", make: () => factory.createUIButton() },
+    { type: "ui:layout", make: () => factory.createUILayout() },
   ];
   for (const c of cases) {
     const args = addNodeArgs(c.type, "p1");

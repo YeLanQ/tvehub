@@ -229,6 +229,8 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
   const w = clampInt(draft.designWidth, 1, 16384);
   const h = clampInt(draft.designHeight, 1, 16384);
   p.setDesignSize(w, h);
+  p.setOrientation(draft.orientation);
+  p.setScaleMode(draft.scaleMode);
   logStore.log("success", "已保存项目设置", "toolbar");
 }
 

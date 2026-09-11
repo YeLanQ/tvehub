@@ -15,6 +15,9 @@ export type { RecentProject };
 /** 编辑器渲染后端偏好（来自项目设置） */
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
+/** 屏幕方向（project.config.json orientation） */
+export type ScreenOrientation = "auto" | "portrait" | "landscape";
+
 export interface ProjectStore {
   recent: RecentProject[];
   view: "home" | "editor";
@@ -48,6 +51,10 @@ export interface ProjectStore {
   /** 项目设计分辨率（project.config.json designResolution；相机辅助视锥取景用） */
   designWidth: number;
   designHeight: number;
+  /** 屏幕方向（project.config.json orientation；UI 画布默认尺寸定向用） */
+  orientation: ScreenOrientation;
+  /** 缩放模式（project.config.json scaleMode；UI 画布默认适配方案用） */
+  scaleMode: string;
   setRendererBackend: (v: RendererBackend) => void;
   setPhysicsBackend: (v: PhysicsBackendId) => void;
   setPhysicsEnabled: (v: boolean) => void;
@@ -57,6 +64,8 @@ export interface ProjectStore {
   setTags: (v: string[]) => void;
   setLayers: (v: LayerTable) => void;
   setDesignSize: (width: number, height: number) => void;
+  setOrientation: (v: ScreenOrientation) => void;
+  setScaleMode: (v: string) => void;
   setView: (view: "home" | "editor") => void;
   /**
    * 首页窗口打开/新建项目后由编辑器窗口调用：仅同步本地状态与渲染配置，
@@ -117,6 +126,8 @@ export function getProjectStore(): ProjectStore {
     layers: parseLayerTable(undefined),
     designWidth: 1280,
     designHeight: 720,
+    orientation: "landscape" as ScreenOrientation,
+    scaleMode: "fixedauto" as string,
   });
 
   /** 把 project.config.json 解析结果应用到状态（渲染后端/抗锯齿/HDR/设计分辨率/物理/标签/图层） */
@@ -130,6 +141,8 @@ export function getProjectStore(): ProjectStore {
       state.physicsGravity = { x: 0, y: -9.81, z: 0 };
       state.designWidth = 1280;
       state.designHeight = 720;
+      state.orientation = "landscape";
+      state.scaleMode = "fixedauto";
       state.tags = [];
       state.layers = parseLayerTable(undefined);
       return;
@@ -154,6 +167,10 @@ export function getProjectStore(): ProjectStore {
     const dh = typeof dr.height === "number" ? Math.round(dr.height) : 0;
     state.designWidth = dw > 0 ? dw : 1280;
     state.designHeight = dh > 0 ? dh : 720;
+    state.orientation =
+      cfg.orientation === "portrait" || cfg.orientation === "landscape" ? cfg.orientation : "auto";
+    state.scaleMode =
+      typeof cfg.scaleMode === "string" && cfg.scaleMode.trim() ? cfg.scaleMode.trim() : "fixedauto";
     state.tags = parseTagList(cfg.tags);
     state.layers = parseLayerTable(cfg.layers);
   }
@@ -285,6 +302,12 @@ export function getProjectStore(): ProjectStore {
     get designHeight() {
       return state.designHeight;
     },
+    get orientation(): ScreenOrientation {
+      return state.orientation;
+    },
+    get scaleMode(): string {
+      return state.scaleMode;
+    },
     setRendererBackend(v) {
       state.rendererBackend = v;
     },
@@ -312,6 +335,12 @@ export function getProjectStore(): ProjectStore {
     setDesignSize(width, height) {
       state.designWidth = Math.max(1, Math.min(16384, Math.round(width)));
       state.designHeight = Math.max(1, Math.min(16384, Math.round(height)));
+    },
+    setOrientation(v) {
+      state.orientation = v;
+    },
+    setScaleMode(v) {
+      state.scaleMode = v;
     },
     setView(view) {
       state.view = view;

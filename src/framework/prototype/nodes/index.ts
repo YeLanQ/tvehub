@@ -15,18 +15,36 @@ export {
   type IUICanvasNode,
 } from "./UICanvasNode";
 export { UIWidgetNode, type UIWidgetNodeInit } from "./UIWidgetNode";
+export { UILayoutNode, type UILayoutNodeInit, type IUILayoutNode } from "./UILayoutNode";
 export { UIImageNode, type UIImageNodeInit, type IUIImageNode } from "./UIImageNode";
 export { UITextNode, type UITextNodeInit, type IUITextNode } from "./UITextNode";
 export { UIButtonNode, type UIButtonNodeInit, type IUIButtonNode } from "./UIButtonNode";
 export {
   UI_HALF_HEIGHT,
+  UI_PPU,
+  pxToUnits,
+  unitsToPx,
   UI_RENDER_ORDER_BASE,
   uiRenderOrder,
   clampUISortOrder,
   clampUICanvasSortOrder,
   parseVec2,
+  parseUIFreeVec2,
+  parseUIUnitVec2,
   parseUIColor,
+  parseUIScaleMode,
+  parseUIDesignPx,
+  parseUILayoutMode,
+  parseUIPadding,
   uiFontSizeToUnits,
+  resolveUIRect,
+  resolveUILayoutCenters,
+  uiCanvasModeScale,
+  type UIScaleMode,
+  type UIRect,
+  type UIAnchorInput,
+  type UILayoutMode,
+  type UIPadding,
   type Vec2,
   type UIFontFamily,
   type UIAlign,

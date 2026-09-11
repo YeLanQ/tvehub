@@ -12,6 +12,7 @@ import {
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
+  UILayoutNode,
   UITextNode,
 } from "./derived/Primitives";
 import { Node, type RegisteredNodeTypes } from "./Node";
@@ -77,10 +78,11 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(SkyboxNode.kType, () => new SkyboxNode());
   registry.register(AudioNode.kType, () => new AudioNode());
   registry.register(ParticleSystemNode.kType, () => new ParticleSystemNode());
-  // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget
+  // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器
   registry.register(UICanvasNode.kType, () => new UICanvasNode());
   registry.register(UIImageNode.kType, () => new UIImageNode());
   registry.register(UITextNode.kType, () => new UITextNode());
   registry.register(UIButtonNode.kType, () => new UIButtonNode());
+  registry.register(UILayoutNode.kType, () => new UILayoutNode());
   return registry;
 }

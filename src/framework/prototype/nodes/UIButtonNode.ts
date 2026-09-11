@@ -10,7 +10,7 @@ export interface UIButtonNodeInit extends UIWidgetNodeInit {
   color?: number;
   label?: string;
   labelColor?: number;
-  /** 标签字号（与文本 Widget 同一 1080p 参考语义） */
+  /** 标签字号（与文本 Widget 同一设计像素语义，100px = 1 单位） */
   fontSize?: number;
   labelBold?: boolean;
   /** 可交互：运行时参与指针点击命中（false 时仅展示） */

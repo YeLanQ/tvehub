@@ -10,16 +10,34 @@ export { SkyboxNode, type SkyboxKind, type SkySunDisk, skyMaterialForKind } from
 export { AudioNode } from "../nodes/AudioNode";
 export { ParticleSystemNode } from "../nodes/ParticleSystemNode";
 export { UICanvasNode, type UIRenderMode, type IUICanvasNode } from "../nodes/UICanvasNode";
-export { UIWidgetNode } from "../nodes/UIWidgetNode";
+export { UIWidgetNode, type UIWidgetNodeInit } from "../nodes/UIWidgetNode";
+export { UILayoutNode, type UILayoutNodeInit, type IUILayoutNode } from "../nodes/UILayoutNode";
 export { UIImageNode, type IUIImageNode } from "../nodes/UIImageNode";
 export { UITextNode, type IUITextNode } from "../nodes/UITextNode";
 export { UIButtonNode, type IUIButtonNode } from "../nodes/UIButtonNode";
 export {
   UI_HALF_HEIGHT,
+  UI_PPU,
+  pxToUnits,
+  unitsToPx,
   uiRenderOrder,
   clampUISortOrder,
   clampUICanvasSortOrder,
   uiFontSizeToUnits,
+  parseUIScaleMode,
+  parseUIDesignPx,
+  parseUIFreeVec2,
+  parseUIUnitVec2,
+  parseUILayoutMode,
+  parseUIPadding,
+  resolveUIRect,
+  resolveUILayoutCenters,
+  uiCanvasModeScale,
+  type UIScaleMode,
+  type UIRect,
+  type UIAnchorInput,
+  type UILayoutMode,
+  type UIPadding,
   type Vec2,
   type UIFontFamily,
   type UIAlign,

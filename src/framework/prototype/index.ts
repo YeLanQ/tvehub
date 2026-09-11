@@ -18,6 +18,7 @@ export {
   ParticleSystemNode,
   UICanvasNode,
   UIImageNode,
+  UILayoutNode,
   UITextNode,
   UIButtonNode,
 } from "./derived/Primitives";
@@ -78,6 +79,7 @@ export type { IUICanvasNode } from "./nodes/UICanvasNode";
 export type { IUIImageNode } from "./nodes/UIImageNode";
 export type { IUITextNode } from "./nodes/UITextNode";
 export type { IUIButtonNode } from "./nodes/UIButtonNode";
+export type { IUILayoutNode } from "./nodes/UILayoutNode";
 export type {
   ScenePrototypeDoc,
   NodePrototypeDoc,

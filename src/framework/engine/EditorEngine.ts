@@ -23,9 +23,12 @@ import {
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
+  UILayoutNode,
   UITextNode,
+  UIWidgetNode,
   type GeometryKind,
   type SkyboxKind,
+  type UIScaleMode,
 } from "../prototype/derived/Primitives";
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { clampCameraParam } from "../camera";
@@ -57,6 +60,7 @@ import { AudioSystem, isAudioAssetRel } from "../audio";
 import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
 import { PhysicsSystem } from "../physics";
 import { UISystem } from "./modules/ui";
+import { uiInverseAnchoredPosition, vec2, type UIRect } from "../prototype/nodes/ui-shared";
 
 /**
  * 脚本节点类型声明（脚本类 `@nodeType({ kind })`）→ 基础节点创建。
@@ -78,6 +82,7 @@ const SCRIPT_NODE_BASE: Record<
   uiImageNode: (e, p) => e.addUIImage(p),
   uiTextNode: (e, p) => e.addUIText(p),
   uiButtonNode: (e, p) => e.addUIButton(p),
+  uiLayoutNode: (e, p) => e.addUILayout(p),
 };
 
 export interface EditorEvents extends Record<string, unknown> {
@@ -156,6 +161,8 @@ export class EditorEngine {
   /** 天空重算纪元：任何贴图/材质失效时 bump，使天空签名失效 */
   private skyEpoch = 0;
   gizmo!: GizmoController;
+  /** UI 锚点托管节点拖拽起点快照（整节点 JSON；提交走 commitPatch 一次撤销） */
+  private uiDragBeforeJSON: JsonRecord | null = null;
 
   /**
    * 项目设计分辨率（取自 project.config.json 的 designResolution）。
@@ -336,6 +343,13 @@ export class EditorEngine {
     this.gizmo.setCallbacks({
       onDraggingChanged: (val) => {
         this.renderer.orbitControls.enabled = !val;
+        // UI 锚点托管节点：拖拽起点快照整节点 JSON（提交走 commitPatch 一次撤销）
+        this.uiDragBeforeJSON = null;
+        if (val) {
+          const id = this.selectedId;
+          const node = id ? this.graph.get(id) : undefined;
+          if (node && id && this.isUIPositionManaged(id)) this.uiDragBeforeJSON = node.toJSON() as JsonRecord;
+        }
       },
       onGizmoObjectChange: () => {
         // 拖动中把 three 对象的当前变换实时回写数据节点并广播，
@@ -344,6 +358,17 @@ export class EditorEngine {
       },
     });
     this.gizmo.onCommitTransform = (id, after, before) => {
+      // UI 锚点托管节点：拖拽改写的是 anchoredPosition 等锚点字段（普通 transform
+      // 提交表达不了），按整节点 JSON 补丁提交；其余节点走变换快照提交
+      if (this.isUIPositionManaged(id) && this.uiDragBeforeJSON) {
+        const node = this.graph.get(id);
+        if (node) {
+          const beforeJSON = this.uiDragBeforeJSON;
+          this.uiDragBeforeJSON = null;
+          this.graph.commitPatch(id, beforeJSON, node.toJSON() as JsonRecord, "变换 UI 节点");
+          return;
+        }
+      }
       // 拖动期间镜像已实时生效；此处携带 before/after 一次性提交后端（一个拖动 = 一条历史）
       this.graph.commitTransform(id, before, after);
     };
@@ -366,6 +391,9 @@ export class EditorEngine {
    * gizmo 拖动中调用：把当前被拖 three 对象的变换实时写回数据节点
    * （不产生历史命令，undo 仍以拖动起点/终点为准），并广播 transform 变化，
    * 让属性面板数值与 gizmo 同步。
+   * UI 锚点托管节点（画布子树内的 Widget/布局容器）：位置换算回 anchoredPosition
+   * （拉伸轴不可表达、忽略），缩放除以拉伸比折算回 2D 缩放；位置/缩放字段由
+   * UISystem 每帧布局解析接管，transform.position 不再是位置源。
    */
   private syncGizmoTransformToNode(): void {
     const id = this.selectedId;
@@ -374,10 +402,54 @@ export class EditorEngine {
     const obj = id ? this.synchronizer.getObjectMap().get(id) : undefined;
     if (!node || !obj) return;
     const rot = radToDeg({ x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z });
+    if (node instanceof UIWidgetNode && this.isUIPositionManaged(id)) {
+      const u = obj.userData;
+      const parentRect = obj.parent?.userData?.uiRect as UIRect | undefined;
+      if (parentRect) {
+        const inv = uiInverseAnchoredPosition(
+          parentRect,
+          {
+            anchorMin: u.uiAnchorMin,
+            anchorMax: u.uiAnchorMax,
+            pivot: u.uiPivot,
+            anchoredPosition: u.uiAnchorPos,
+            offsetMin: u.uiOffsetMin,
+            offsetMax: u.uiOffsetMax,
+            size: u.uiSize,
+          },
+          obj.position.x,
+          obj.position.y,
+        );
+        if (inv.x !== null) node.anchoredPosition = vec2(inv.x, node.anchoredPosition.y);
+        if (inv.y !== null) node.anchoredPosition = vec2(node.anchoredPosition.x, inv.y);
+      }
+      // obj.scale = 2D 缩放 × 解析比 → 除回解析比得到纯 2D 缩放
+      const rx = u.uiRect && u.uiSize ? (u.uiRect as UIRect).w / Math.max(0.01, u.uiSize.x) : 1;
+      const ry = u.uiRect && u.uiSize ? (u.uiRect as UIRect).h / Math.max(0.01, u.uiSize.y) : 1;
+      node.transform.setScale(obj.scale.x / rx, obj.scale.y / ry, obj.scale.z);
+      node.transform.setRotation(rot.x, rot.y, rot.z);
+      this.graph.notifyTransformChanged(node.id);
+      return;
+    }
     node.transform.setPosition(obj.position.x, obj.position.y, obj.position.z);
     node.transform.setRotation(rot.x, rot.y, rot.z);
     node.transform.setScale(obj.scale.x, obj.scale.y, obj.scale.z);
     this.graph.notifyTransformChanged(node.id);
+  }
+
+  /**
+   * 节点位置是否由 UI 锚点/布局解析托管（画布子树内的 Widget/布局容器；
+   * 画布外的 Widget 仍是普通 3D 变换）。按 three 对象父链判断。
+   */
+  private isUIPositionManaged(id: string): boolean {
+    const obj = this.synchronizer.getObjectMap().get(id);
+    if (!obj) return false;
+    let cur: THREE.Object3D | null = obj.parent;
+    while (cur) {
+      if (cur.userData?.nodeKind === "uiCanvasNode") return true;
+      cur = cur.parent;
+    }
+    return false;
   }
 
   // ===================== 生命周期 =====================
@@ -433,8 +505,11 @@ export class EditorEngine {
       this.synchronizer.refitShadowCameras();
       // UI 相机叠加：画布根贴合活动渲染相机 + 按 SortOrder 合成 Widget 渲染序
       // （renderActive 用的同一活动相机；scene 模式 = 编辑器轨道相机，非 null）
+      // gizmo 拖拽中把被拖对象传给布局解析（拖拽子树跳过，避免位置被拉回）
       const renderCam = this.renderer.getActiveCamera();
-      if (renderCam) this.uiSystem.update(renderCam, this.synchronizer.getObjectMap());
+      const dragId = this.gizmo.isDragging() ? this.selectedId : null;
+      const dragObj = dragId ? this.synchronizer.getObjectMap().get(dragId) ?? null : null;
+      if (renderCam) this.uiSystem.update(renderCam, this.synchronizer.getObjectMap(), dragObj);
       // 正交预览的天空背景面跟随（渲染前更新 uniforms）
       this.updateOrthoSkyQuad();
     });
@@ -665,10 +740,11 @@ export class EditorEngine {
     return node;
   }
 
-  /** 添加 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染） */
-  addUICanvas(parentId?: string): UICanvasNode {
+  /** 添加 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
+   *  defaults：项目设置默认值（设计分辨率/缩放模式），缺省 1280×720 / fixedauto */
+  addUICanvas(parentId?: string, defaults?: { designWidth: number; designHeight: number; scaleMode: UIScaleMode }): UICanvasNode {
     const parent = this.resolveParent(parentId);
-    const node = this.factory.createUICanvas({ parentId: parent?.id ?? null });
+    const node = this.factory.createUICanvas({ parentId: parent?.id ?? null }, defaults);
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -696,6 +772,15 @@ export class EditorEngine {
   addUIButton(parentId?: string): UIButtonNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createUIButton({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加 UI 布局容器（横向/竖向/网格排列直接子 UI 节点；自身经锚点定位） */
+  addUILayout(parentId?: string): UILayoutNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createUILayout({ parentId: parent?.id ?? null });
     this.graph.add(node);
     this.select(node.id);
     return node;

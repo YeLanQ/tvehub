@@ -9,10 +9,12 @@ import {
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
+  UILayoutNode,
   UITextNode,
   skyMaterialForKind,
   type LightKind,
   type SkyboxKind,
+  type UIScaleMode,
 } from "../prototype/derived/Primitives";
 import { Node } from "../prototype/Node";
 import { PrototypeRegistry } from "../prototype/PrototypeRegistry";
@@ -30,7 +32,15 @@ export type EditorNodeType =
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
-  | "uiButtonNode";
+  | "uiButtonNode"
+  | "uiLayoutNode";
+
+/** UI 画布创建默认值（应用层从项目设置传入：设计分辨率/屏幕方向/缩放模式） */
+export interface UICanvasDefaults {
+  designWidth: number;
+  designHeight: number;
+  scaleMode: UIScaleMode;
+}
 
 export interface CreateOptions {
   parentId?: string | null;
@@ -140,10 +150,19 @@ export class NodeFactory {
     return node;
   }
 
-  /** 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染） */
-  createUICanvas(opts: CreateOptions = {}): UICanvasNode {
+  /**
+   * 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
+   * defaults：项目设置默认值（设计分辨率按屏幕方向定向 + 缩放模式）；
+   * 缺省回退 1280×720 / fixedauto。
+   */
+  createUICanvas(opts: CreateOptions = {}, defaults?: UICanvasDefaults): UICanvasNode {
     const node = this.registry.create("uiCanvasNode") as UICanvasNode;
     node.name = opts.name ?? "UI Canvas";
+    if (defaults) {
+      node.designWidth = defaults.designWidth;
+      node.designHeight = defaults.designHeight;
+      node.scaleMode = defaults.scaleMode;
+    }
     this.decorate(node, { ...opts, name: undefined });
     return node;
   }
@@ -172,6 +191,14 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建 UI 布局容器（横向/竖向/网格排列直接子 UI 节点；自身经锚点定位） */
+  createUILayout(opts: CreateOptions = {}): UILayoutNode {
+    const node = this.registry.create("uiLayoutNode") as UILayoutNode;
+    node.name = opts.name ?? "Layout";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   fromJSON(json: JsonRecord): Node {
     return this.registry.createFromJSON(json);
   }
@@ -195,9 +222,11 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
                 ? UIImageNode
                 : K extends "uiTextNode"
                   ? UITextNode
-                  : K extends "uiButtonNode"
-                    ? UIButtonNode
-                    : Node;
+              : K extends "uiButtonNode"
+                ? UIButtonNode
+                : K extends "uiLayoutNode"
+                  ? UILayoutNode
+                  : Node;
 
 function defaultSkyboxName(kind: SkyboxKind): string {
   return kind === "procedural" ? "Procedural Skybox" : "Cube Skybox";
@@ -214,6 +243,7 @@ export type {
   UIImageNode,
   UITextNode,
   UIButtonNode,
+  UILayoutNode,
 };
 
 export function createNodeFactory(registry: PrototypeRegistry): NodeFactory {

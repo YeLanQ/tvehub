@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * UI 按钮（Button）Widget 卡片：背景（图片/纯色）、标签样式、可交互开关、
- * 矩形尺寸与画布内 Sort Order。运行时点击经 engine.ui.onClick 订阅。
+ * UI 按钮（Button）Widget 卡片：背景（图片/纯色）、标签样式、可交互开关。
+ * 位置/尺寸/排序在 2D Transform 与 Anchor 卡。运行时点击经 engine.ui.onClick 订阅。
  */
 import { computed } from "vue";
 import { isInternalAsset } from "../../../lib/internal-assets";
@@ -42,18 +42,6 @@ const color = computed(() => {
 const labelColor = computed(() => {
   void props.rev;
   return "#" + (props.node.labelColor & 0xffffff).toString(16).padStart(6, "0");
-});
-const sizeX = computed(() => {
-  void props.rev;
-  return props.node.size.x;
-});
-const sizeY = computed(() => {
-  void props.rev;
-  return props.node.size.y;
-});
-const sortOrder = computed(() => {
-  void props.rev;
-  return props.node.sortOrder;
 });
 
 function onImageSelect(e: Event): void {
@@ -100,26 +88,15 @@ function onInteractableChange(e: Event): void {
       <input type="color" :value="labelColor" @input="onColorInput('labelColor')" @change="onColorInput('labelColor')" />
     </div>
     <div class="field">
-      <label title="Font Size（1080p 参考分辨率像素）">标签字号</label>
-      <NumberField :model-value="node.fontSize" :step="1" :min="4" :max="512" title="标签字号（1080p 参考像素）" @commit="(v) => emit('update', 'fontSize', v)" />
+      <label title="Font Size（设计像素；100px = 1 单位）">标签字号</label>
+      <NumberField :model-value="node.fontSize" :step="1" :min="4" :max="512" title="标签字号（设计像素，100px = 1 单位）" @commit="(v) => emit('update', 'fontSize', v)" />
     </div>
     <div class="field">
       <label>样式</label>
       <label class="check"><input type="checkbox" :checked="node.labelBold" @change="(e) => emit('update', 'labelBold', (e.target as HTMLInputElement).checked)" /> 加粗</label>
       <label class="check"><input type="checkbox" :checked="node.interactable" @change="onInteractableChange" /> 可点击</label>
     </div>
-    <div class="field">
-      <label title="Size（UI 单位）">尺寸 X</label>
-      <NumberField :model-value="sizeX" :step="0.1" :min="0.01" title="按钮宽（UI 单位）" @commit="(v) => emit('update', 'size.x', v)" />
-    </div>
-    <div class="field">
-      <label>尺寸 Y</label>
-      <NumberField :model-value="sizeY" :step="0.1" :min="0.01" title="按钮高（UI 单位）" @commit="(v) => emit('update', 'size.y', v)" />
-    </div>
-    <div class="field">
-      <label title="Sort Order（同画布内大者在上；点击命中也按此取最上层）">Sort Order</label>
-      <NumberField :model-value="sortOrder" :step="1" :min="-999" :max="999" title="画布内叠加序（大者在上）" @commit="(v) => emit('update', 'sortOrder', v)" />
-    </div>
+    <div class="hint">位置/尺寸/排序在「2D Transform」与「Anchor」卡编辑（100px = 1 单位）</div>
   </div>
 </template>
 

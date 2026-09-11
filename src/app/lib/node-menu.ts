@@ -65,6 +65,7 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
       { label: "Text", type: "ui:text" },
       { label: "Image", type: "ui:image" },
       { label: "Button", type: "ui:button" },
+      { label: "Layout", type: "ui:layout" },
     ],
   });
   items.push({ separator: true });

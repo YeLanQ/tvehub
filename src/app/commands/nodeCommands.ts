@@ -3,12 +3,14 @@
 // 类型解析（geometry/light/skybox/脚本节点）、命名与 guard（根节点/成环/子孙去重）。
 
 import { getEditorStore } from "../stores/editor";
+import { getProjectStore } from "../stores/project";
 import { getScriptsStore } from "../stores/scripts";
 import { prompt } from "../lib/prompt";
 import { registerCommand } from "./registry";
 import { isEditingText } from "./context";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
 import type { JsonRecord } from "../../framework/prototype/types";
+import { parseUIScaleMode } from "../../framework/prototype/nodes/ui-shared";
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
@@ -97,13 +99,25 @@ registerCommand({
       case "uicanvas":
       case "uiimage":
       case "uitext":
-      case "uibutton": {
-        // ui:<canvas|text|image|button>（裸 "ui" = 画布）；Widget 建议挂在画布下
+      case "uibutton":
+      case "uilayout": {
+        // ui:<canvas|text|image|button|layout>（裸 "ui" = 画布）；Widget 建议挂在画布下
         const uiKind = kind === "ui" ? (subtype ?? "canvas") : kind.startsWith("ui") ? kind.slice(2) : (subtype ?? "canvas");
         switch (uiKind) {
-          case "canvas":
-            node = engine().addUICanvas(parentId);
+          case "canvas": {
+            // 画布渲染尺寸默认取项目设置（设计分辨率按屏幕方向定向 + 缩放模式）
+            const ps = getProjectStore();
+            let w = Math.max(1, Math.round(ps.designWidth));
+            let h = Math.max(1, Math.round(ps.designHeight));
+            if (ps.orientation === "portrait" && w > h) [w, h] = [h, w];
+            if (ps.orientation === "landscape" && h > w) [w, h] = [h, w];
+            node = engine().addUICanvas(parentId, {
+              designWidth: w,
+              designHeight: h,
+              scaleMode: parseUIScaleMode(ps.scaleMode),
+            });
             break;
+          }
           case "text":
             node = engine().addUIText(parentId);
             break;
@@ -113,8 +127,11 @@ registerCommand({
           case "button":
             node = engine().addUIButton(parentId);
             break;
+          case "layout":
+            node = engine().addUILayout(parentId);
+            break;
           default:
-            throw new Error(`未知 UI 节点类型: ui:${uiKind}（应为 canvas/text/image/button）`);
+            throw new Error(`未知 UI 节点类型: ui:${uiKind}（应为 canvas/text/image/button/layout）`);
         }
         break;
       }

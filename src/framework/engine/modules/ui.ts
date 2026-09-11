@@ -5,9 +5,15 @@
 // - 画布（uiCanvasNode）空间每帧贴合活动渲染相机（相机叠加）：
 //   - 透视相机：画布平面放在相机前方 d = UI_HALF_HEIGHT / tan(fov/2) 处，
 //     使纵向可见范围恰为 2×UI_HALF_HEIGHT 个 UI 单位（与 fov 无关的恒定标尺）；
-//   - 正交相机：按缩放 s = orthoTop / UI_HALF_HEIGHT 对齐（平面深度取视轴中点）。
-//   画布根对象 matrixAutoUpdate 关闭、矩阵每帧覆写，节点自身变换不参与取景；
-//   子节点（Widget）的 transform 即 UI 坐标（原点=屏幕中心，+x 右 +y 上）。
+//   - 正交相机：按缩放 s = orthoTop / UI_HALF_HEIGHT 对齐（平面深度取视轴中点）；
+//   - 画布渲染尺寸 = 设计分辨率/100（UI_PPU 设计标准），按画布 scaleMode 把
+//     设计矩形映射到屏幕矩形（noscale/fixedwidth/fixedheight/fixedauto/full）；
+//     运行时舞台固定按设计分辨率取景（aspect = 设计比例），各等比模式收敛为
+//     精确铺满——模式差异只在编辑器布局视口（视口比例 ≠ 设计比例）可视化。
+//   画布根对象 matrixAutoUpdate 关闭、矩阵每帧覆写，节点自身变换不参与取景。
+// - 定位：Widget/布局容器的位置由锚点系统每帧解析（resolveUIRect：点锚点用
+//   anchoredPosition、拉伸锚点用 offset 边距；布局容器再按 horizontal/vertical/
+//   grid 排列其直接子 UI 节点）——子节点的 transform.position 不再直接生效。
 // - Widget（uiImageNode/uiTextNode/uiButtonNode）材质统一：透明 + 关深度测试 +
 //   不写深度 + frustumCulled 关；渲染序 = UI_RENDER_ORDER_BASE + 画布 sortOrder×1e4
 //   + Widget sortOrder —— SortOrder 决定画布上 UI 节点的叠加顺序（大者在上）。
@@ -21,8 +27,15 @@ import {
   UI_HALF_HEIGHT,
   uiFontSizeToUnits,
   uiRenderOrder,
+  parseUIScaleMode,
+  pxToUnits,
+  resolveUIRect,
+  resolveUILayoutCenters,
+  uiCanvasModeScale,
+  type UIScaleMode,
   type UIAlign,
   type UIFontFamily,
+  type UIRect,
   type Vec2,
 } from "../../prototype/nodes/ui-shared";
 
@@ -50,24 +63,43 @@ export interface UITextStyle {
 
 const _scaleVec = new THREE.Vector3();
 
+/** 数值标注读取（非法回退 fallback） */
+function numOf(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
 /**
  * 相机叠加贴合矩阵 M：camSpace = M × uiSpace。
- * 透视 → 平移 (0,0,-d)；正交 → 平移 (0,0,-d) 后缩放 s（this = T·S，作用为
- * 先缩放 UI 坐标再放深度 d）。与相机的 worldMatrix 相乘后即画布根矩阵。
+ * 透视 → 平移 (0,0,-d)（d 使画布平面纵向可见 2×UI_HALF_HEIGHT 单位）；正交 →
+ * 平移 (0,0,-d) 后按 s0 = |top|/UI_HALF_HEIGHT 对齐。在此标尺上再按画布设计
+ * 尺寸（UI 单位）与缩放模式把设计矩形映射到屏幕矩形（this = T·S，作用为先
+ * 缩放 UI 坐标再放深度 d）。与相机的 worldMatrix 相乘后即画布根矩阵。
  */
-export function uiGlueMatrixForCamera(cam: THREE.Camera, out: THREE.Matrix4): THREE.Matrix4 {
+export function uiGlueMatrixForCamera(
+  cam: THREE.Camera,
+  out: THREE.Matrix4,
+  canvasW = UI_HALF_HEIGHT * 2,
+  canvasH = UI_HALF_HEIGHT * 2,
+  mode: UIScaleMode = "fixedauto",
+): THREE.Matrix4 {
   if ((cam as THREE.OrthographicCamera).isOrthographicCamera === true) {
     const oc = cam as THREE.OrthographicCamera;
     const halfH = Math.abs(oc.top) > 1e-6 ? Math.abs(oc.top) : 1;
-    const s = halfH / UI_HALF_HEIGHT;
+    const s0 = halfH / UI_HALF_HEIGHT;
+    const aspect =
+      Math.abs(oc.top - oc.bottom) > 1e-6 ? Math.abs(oc.right - oc.left) / Math.abs(oc.top - oc.bottom) : 1;
+    const s = uiCanvasModeScale(mode, UI_HALF_HEIGHT * 2 * aspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
     out.makeTranslation(0, 0, -(oc.near + oc.far) / 2);
-    out.scale(_scaleVec.set(s, s, s));
+    out.scale(_scaleVec.set(s0 * s.sx, s0 * s.sy, s0));
     return out;
   }
   const pc = cam as THREE.PerspectiveCamera;
   const fovDeg = pc.fov > 0 ? pc.fov : 50;
   const d = UI_HALF_HEIGHT / Math.tan((fovDeg * Math.PI) / 360);
+  const aspect = pc.aspect > 0 ? pc.aspect : 1;
+  const s = uiCanvasModeScale(mode, UI_HALF_HEIGHT * 2 * aspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
   out.makeTranslation(0, 0, -d);
+  out.scale(_scaleVec.set(s.sx, s.sy, 1));
   return out;
 }
 
@@ -205,7 +237,7 @@ export class UISystem {
     return this.uiVisible;
   }
 
-  update(cam: THREE.Camera | null, objects: Map<string, THREE.Object3D>): void {
+  update(cam: THREE.Camera | null, objects: Map<string, THREE.Object3D>, dragOverride: THREE.Object3D | null = null): void {
     this.frameTopRoots.length = 0;
     // 相机不在场景图内（预览相机）或本帧渲染尚未推进 matrixWorld 时需手动刷新，
     // 否则采到上一帧位姿（与 updateOrthoSkyQuad 同一处理）
@@ -221,7 +253,11 @@ export class UISystem {
       // 画布根可见性由本系统接管：场景视图整体隐藏（点选同规则），布局视图按节点状态显示
       obj.visible = this.uiVisible && obj.userData?.uiNodeVisible !== false;
       if (!this.uiVisible || !obj.visible || !cam) continue;
-      uiGlueMatrixForCamera(cam, this.glueMatrix);
+      // 画布渲染尺寸（设计像素 → UI 单位，100px = 1 单位）按缩放模式映射到屏幕
+      const cw = pxToUnits(numOf(obj.userData?.uiDesignW, 1280));
+      const ch = pxToUnits(numOf(obj.userData?.uiDesignH, 720));
+      const mode = parseUIScaleMode(obj.userData?.uiScaleMode);
+      uiGlueMatrixForCamera(cam, this.glueMatrix, cw, ch, mode);
       obj.matrix.multiplyMatrices(this.camMatrix, this.glueMatrix);
       obj.matrixWorldNeedsUpdate = true;
     }
@@ -231,10 +267,130 @@ export class UISystem {
         case "uiImageNode":
         case "uiTextNode":
         case "uiButtonNode":
+        case "uiLayoutNode":
           this.applyRenderOrder(obj);
           break;
       }
     }
+    // 每帧布局解析：锚点矩形 + 布局容器排列（子节点 transform.position 由本系统
+    // 接管；applyTransform 对画布子树内的托管类型只同步旋转，见 SceneSynchronizer）
+    for (const root of this.frameTopRoots) {
+      if (!root.visible) continue;
+      const cw = pxToUnits(numOf(root.userData?.uiDesignW, 1280));
+      const ch = pxToUnits(numOf(root.userData?.uiDesignH, 720));
+      const rect: UIRect = { cx: 0, cy: 0, w: cw, h: ch };
+      root.userData.uiRect = rect;
+      this.resolveSubtree(root, rect, dragOverride, false);
+    }
+  }
+
+  /**
+   * 递归解析画布子树：rect 为 owner 局部空间中「owner 矩形」（原点 = owner 中心）。
+   * - 托管类型（Widget/布局容器）：resolveUIRect 算出父局部矩形 → 写 obj.position
+   *   与 scale（2D 缩放 × 解析尺寸/设计尺寸比，拉伸轴经缩放生效）；子树递归传
+   *   「子矩形」（子局部空间）；
+   * - 布局容器的直接子节点：位置已由 applyLayout 接管（anchoredPosition 不生效，
+   *   与 Unity Layout Group 同语义），只按「本地位置 + 设计尺寸」落矩形标注；
+   * - 普通容器（Group/嵌套画布）：矩形按其 transform.position 平移后下传（自身
+   *   位置仍走 3D 变换）；
+   * - gizmo 拖拽中的子树整体跳过（提交后由下一帧解析接管，避免拖拽中被拉回）。
+   */
+  private resolveSubtree(
+    owner: THREE.Object3D,
+    rect: UIRect,
+    dragOverride: THREE.Object3D | null,
+    ownerIsLayout: boolean,
+  ): void {
+    for (const child of owner.children) {
+      if (typeof (child.userData as Record<string, unknown> | undefined)?.nodeId !== "string") continue;
+      const kind = child.userData.nodeKind as string | undefined;
+      if (kind !== "uiImageNode" && kind !== "uiTextNode" && kind !== "uiButtonNode" && kind !== "uiLayoutNode") {
+        // 普通容器：自身变换照常生效，矩形按其位置平移后传给子树
+        child.userData.uiRect = rect;
+        this.resolveSubtree(
+          child,
+          { cx: rect.cx - child.position.x, cy: rect.cy - child.position.y, w: rect.w, h: rect.h },
+          dragOverride,
+          false,
+        );
+        continue;
+      }
+      if (this.inDragSubtree(child, dragOverride)) continue;
+      const u = child.userData;
+      const design = (u.uiSize ?? { x: 1, y: 1 }) as Vec2;
+      const s2 = (u.uiScale2D ?? { x: 1, y: 1 }) as Vec2;
+      let r: UIRect;
+      if (ownerIsLayout) {
+        // 布局接管：位置来自 applyLayout，尺寸 = 设计尺寸 × 2D 缩放（无拉伸语义）
+        child.scale.set(s2.x, s2.y, child.scale.z);
+        r = { cx: child.position.x, cy: child.position.y, w: design.x * s2.x, h: design.y * s2.y };
+      } else {
+        r = resolveUIRect(rect, {
+          anchorMin: u.uiAnchorMin ?? { x: 0.5, y: 0.5 },
+          anchorMax: u.uiAnchorMax ?? { x: 0.5, y: 0.5 },
+          pivot: u.uiPivot ?? { x: 0.5, y: 0.5 },
+          anchoredPosition: u.uiAnchorPos ?? { x: 0, y: 0 },
+          offsetMin: u.uiOffsetMin ?? { x: 0, y: 0 },
+          offsetMax: u.uiOffsetMax ?? { x: 0, y: 0 },
+          size: design,
+        });
+        child.position.x = r.cx;
+        child.position.y = r.cy;
+        // 缩放 = 2D 缩放 × 解析尺寸/设计尺寸（拉伸轴把父矩形差值折算成缩放）
+        child.scale.set(
+          s2.x * (r.w / Math.max(0.01, design.x)),
+          s2.y * (r.h / Math.max(0.01, design.y)),
+          child.scale.z,
+        );
+      }
+      u.uiRect = r;
+      if (kind === "uiLayoutNode") this.applyLayout(child, r, dragOverride);
+      this.resolveSubtree(child, { cx: 0, cy: 0, w: r.w, h: r.h }, dragOverride, kind === "uiLayoutNode");
+    }
+  }
+
+  /** 布局容器排列直接子 UI 节点（容器局部空间；mode=none 时子节点走锚点定位） */
+  private applyLayout(container: THREE.Object3D, rect: UIRect, dragOverride: THREE.Object3D | null): void {
+    const u = container.userData;
+    const mode = (u.uiLayoutMode as string | undefined) ?? "none";
+    if (mode === "none") return;
+    const kids: THREE.Object3D[] = [];
+    const sizes: Vec2[] = [];
+    for (const c of container.children) {
+      const ku = c.userData as Record<string, unknown> | undefined;
+      const kind = ku?.nodeKind as string | undefined;
+      if (kind !== "uiImageNode" && kind !== "uiTextNode" && kind !== "uiButtonNode" && kind !== "uiLayoutNode") {
+        continue;
+      }
+      kids.push(c);
+      sizes.push((ku?.uiSize as Vec2 | undefined) ?? { x: 1, y: 1 });
+    }
+    const centers = resolveUILayoutCenters(
+      { cx: 0, cy: 0, w: rect.w, h: rect.h },
+      mode as "horizontal" | "vertical" | "grid",
+      sizes,
+      (u.uiPadding as { left: number; right: number; top: number; bottom: number } | undefined) ?? { left: 0, right: 0, top: 0, bottom: 0 },
+      (u.uiSpacing as Vec2 | undefined) ?? { x: 0, y: 0 },
+      typeof u.uiGridCols === "number" ? u.uiGridCols : 2,
+    );
+    for (let i = 0; i < kids.length; i++) {
+      const c = centers[i];
+      const kid = kids[i];
+      if (!c || this.inDragSubtree(kid, dragOverride)) continue;
+      kid.position.x = c.x;
+      kid.position.y = c.y;
+    }
+  }
+
+  /** obj 是否处于拖拽子树内（自身即拖拽对象或为其子孙） */
+  private inDragSubtree(obj: THREE.Object3D, dragOverride: THREE.Object3D | null): boolean {
+    if (!dragOverride) return false;
+    let cur: THREE.Object3D | null = obj;
+    while (cur) {
+      if (cur === dragOverride) return true;
+      cur = cur.parent;
+    }
+    return false;
   }
 
   /**

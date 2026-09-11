@@ -115,6 +115,13 @@ export const UI_BUTTON_ICON_PATHS: string[] = [
   "M8 12h8",
 ];
 
+/** UI 布局容器：虚线框 + 三格排列（Layout Group 语义） */
+export const UI_LAYOUT_ICON_PATHS: string[] = [
+  "M3.5 4.5h17a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z",
+  "M9 5.5v13",
+  "M15 5.5v13",
+];
+
 /** 依据路径数组生成完整 SVG 字符串（用于 Canvas 贴图 / 数据 URI） */
 export function buildIconSvg(
   paths: string[],

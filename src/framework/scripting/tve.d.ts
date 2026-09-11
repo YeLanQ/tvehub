@@ -39,7 +39,8 @@ export type EntityKind =
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
-  | "uiButtonNode";
+  | "uiButtonNode"
+  | "uiLayoutNode";
 
 /** 节点类型 token 类的构造器形状（@property 的 type 选项可用） */
 export type NodeClass =
@@ -52,7 +53,8 @@ export type NodeClass =
   | typeof UICanvasNode
   | typeof UIImageNode
   | typeof UITextNode
-  | typeof UIButtonNode;
+  | typeof UIButtonNode
+  | typeof UILayoutNode;
 
 /** 内置组件门面类（@property 组件引用字段 / getComponent / addComponent 可用） */
 export type ComponentClass =
@@ -84,7 +86,8 @@ export type ScriptNodeKind =
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
-  | "uiButtonNode";
+  | "uiButtonNode"
+  | "uiLayoutNode";
 
 // ---------------------------------------------------------------------------
 // 装饰器（@property / @nodeType 声明式写法）
@@ -566,23 +569,64 @@ export class ParticleSystemNode extends Entity {
 }
 
 // ---------------------------------------------------------------------------
-// UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget
+// UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器
+// 2D 定位标准：100px = 1 UI 单位；锚点 anchorMin/Max/pivot 为 0..1 归一化
+//（父矩形/自身），anchoredPosition/offset 单位与 size 一致（UI 单位）。
 // ---------------------------------------------------------------------------
+
+/** UI 缩放模式（与项目设置 scaleMode 同名集） */
+export type UIScaleMode = "noscale" | "fixedwidth" | "fixedheight" | "fixedauto" | "full";
+
+/** UI 锚点/布局容器的二维向量（分量语义见各字段） */
+export interface UIVec2 {
+  x: number;
+  y: number;
+}
+
+/** UI 内边距（UI 单位） */
+export interface UIPadding {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
 
 /**
  * UI 画布节点（编辑器 uiCanvasNode）：屏幕叠加渲染的 UI 容器根，
- * Widget（图片/文本/按钮）作为其子节点参与叠加；SortOrder 控制叠加顺序。
+ * Widget（图片/文本/按钮/布局容器）作为其子节点参与叠加；SortOrder 控制叠加顺序。
  */
 export class UICanvasNode extends Entity {
   /** 画布整体排序（多画布叠加时大者在上；优先于画布内 Widget 排序） */
   sortOrder: number;
+  /** 设计宽度（设计像素；100px = 1 UI 单位） */
+  designWidth: number;
+  /** 设计高度（设计像素） */
+  designHeight: number;
+  /** 屏幕适配方案（运行时舞台按设计分辨率取景，等比模式收敛为精确铺满） */
+  scaleMode: UIScaleMode;
 }
 
-/** UI Widget 共有字段（叠加序 + 矩形尺寸，UI 单位） */
-export interface UIWidgetBase {
+/** UI 元素共有锚点字段（位置由锚点系统解析：点锚点用 anchoredPosition，拉伸轴用 offset） */
+export interface UIAnchorBase {
+  /** 归一化锚点下限（父矩形 0..1；某轴 min==max 为点锚点） */
+  anchorMin: UIVec2;
+  /** 归一化锚点上限（min<max 该轴拉伸，尺寸由边距推导） */
+  anchorMax: UIVec2;
+  /** 归一化枢轴（自身 0..1） */
+  pivot: UIVec2;
+  /** 点锚点轴：枢轴相对锚点的偏移（UI 单位） */
+  anchoredPosition: UIVec2;
+  /** 拉伸轴边距：左/下（UI 单位） */
+  offsetMin: UIVec2;
+  /** 拉伸轴边距：右/上（UI 单位） */
+  offsetMax: UIVec2;
+}
+
+/** UI Widget 共有字段（叠加序 + 矩形尺寸 + 锚点；尺寸/位置单位 = UI 单位，100px = 1 单位） */
+export interface UIWidgetBase extends UIAnchorBase {
   /** 画布内叠加序（大者在上；点击命中也按此取最上层） */
   sortOrder: number;
-  /** 矩形尺寸（UI 单位；原点=屏幕中心，纵向可见 10 个单位） */
+  /** 矩形尺寸（UI 单位；拉伸锚点轴由父矩形与边距推导） */
   size: { x: number; y: number };
 }
 
@@ -590,6 +634,12 @@ export interface UIWidgetBase {
 export class UIImageNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  anchorMin: UIVec2;
+  anchorMax: UIVec2;
+  pivot: UIVec2;
+  anchoredPosition: UIVec2;
+  offsetMin: UIVec2;
+  offsetMax: UIVec2;
   /** 图片资产相对路径（空串 = 纯色矩形；运行态异步加载后热替换） */
   image: string;
   /** 着色（0xRRGGBB；与图片相乘） */
@@ -600,9 +650,15 @@ export class UIImageNode extends Entity implements UIWidgetBase {
 export class UITextNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  anchorMin: UIVec2;
+  anchorMax: UIVec2;
+  pivot: UIVec2;
+  anchoredPosition: UIVec2;
+  offsetMin: UIVec2;
+  offsetMax: UIVec2;
   /** 文本内容（\n 分行；超界自动换行） */
   text: string;
-  /** 字号（1080p 参考分辨率下的像素字号） */
+  /** 字号（设计像素，100px = 1 单位） */
   fontSize: number;
   /** 文本颜色（0xRRGGBB） */
   color: number;
@@ -618,6 +674,12 @@ export class UITextNode extends Entity implements UIWidgetBase {
 export class UIButtonNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  anchorMin: UIVec2;
+  anchorMax: UIVec2;
+  pivot: UIVec2;
+  anchoredPosition: UIVec2;
+  offsetMin: UIVec2;
+  offsetMax: UIVec2;
   /** 背景图片资产相对路径（空串 = 纯色背景） */
   image: string;
   /** 背景着色（0xRRGGBB） */
@@ -626,11 +688,34 @@ export class UIButtonNode extends Entity implements UIWidgetBase {
   label: string;
   /** 标签颜色（0xRRGGBB） */
   labelColor: number;
-  /** 标签字号（1080p 参考分辨率像素） */
+  /** 标签字号（设计像素，100px = 1 单位） */
   fontSize: number;
   labelBold: boolean;
   /** 可交互（false 时仅展示，不参与点击命中） */
   interactable: boolean;
+}
+
+/**
+ * UI 布局容器节点（编辑器 uiLayoutNode）：按横向/竖向/网格排列直接子 UI 节点。
+ * 自身有尺寸/锚点（可被父布局排列），无渲染内容；layoutMode=none 时子节点回归锚点定位。
+ */
+export class UILayoutNode extends Entity implements UIWidgetBase {
+  sortOrder: number;
+  size: { x: number; y: number };
+  anchorMin: UIVec2;
+  anchorMax: UIVec2;
+  pivot: UIVec2;
+  anchoredPosition: UIVec2;
+  offsetMin: UIVec2;
+  offsetMax: UIVec2;
+  /** 排列模式：none 不排列 / horizontal 横向一行 / vertical 竖向一列 / grid 网格 */
+  layoutMode: "none" | "horizontal" | "vertical" | "grid";
+  /** 内容区内边距（UI 单位） */
+  padding: UIPadding;
+  /** 子元素间距（UI 单位；x 横向 / y 纵向） */
+  spacing: UIVec2;
+  /** 网格列数（grid 模式；行数由子元素数量推导） */
+  gridColumns: number;
 }
 
 export {
@@ -644,6 +729,7 @@ export {
   UIImageNode as uiImageNode,
   UITextNode as uiTextNode,
   UIButtonNode as uiButtonNode,
+  UILayoutNode as uiLayoutNode,
 };
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * UI 文本（Text）Widget 卡片：内容（多行）、字号（1080p 参考分辨率像素）、
- * 颜色/加粗/斜体、字族、水平对齐、矩形尺寸与画布内 Sort Order。
+ * UI 文本（Text）Widget 卡片：内容（多行）、字号（设计像素，100px = 1 单位）、
+ * 颜色/加粗/斜体、字族、水平对齐。位置/框尺寸/排序在 2D Transform 与 Anchor 卡。
  */
 import { computed } from "vue";
 import { UITextNode } from "../../../framework/prototype/derived/Primitives";
@@ -37,18 +37,6 @@ const color = computed(() => {
   void props.rev;
   return "#" + (props.node.color & 0xffffff).toString(16).padStart(6, "0");
 });
-const sizeX = computed(() => {
-  void props.rev;
-  return props.node.size.x;
-});
-const sizeY = computed(() => {
-  void props.rev;
-  return props.node.size.y;
-});
-const sortOrder = computed(() => {
-  void props.rev;
-  return props.node.sortOrder;
-});
 
 function onTextInput(e: Event): void {
   emit("update", "text", (e.target as HTMLTextAreaElement).value);
@@ -82,8 +70,8 @@ function onItalicChange(e: Event): void {
       />
     </div>
     <div class="field">
-      <label title="Font Size（1080p 参考分辨率下的像素字号）">字号</label>
-      <NumberField :model-value="fontSize" :step="1" :min="4" :max="512" title="字号（1080p 参考像素）" @commit="(v) => emit('update', 'fontSize', v)" />
+      <label title="Font Size（设计像素；100px = 1 单位）">字号</label>
+      <NumberField :model-value="fontSize" :step="1" :min="4" :max="512" title="字号（设计像素，100px = 1 单位）" @commit="(v) => emit('update', 'fontSize', v)" />
     </div>
     <div class="field">
       <label title="Color">颜色</label>
@@ -106,18 +94,7 @@ function onItalicChange(e: Event): void {
       <label class="check"><input type="checkbox" :checked="node.bold" @change="onBoldChange" /> 加粗</label>
       <label class="check"><input type="checkbox" :checked="node.italic" @change="onItalicChange" /> 斜体</label>
     </div>
-    <div class="field">
-      <label title="Size（文本框尺寸，UI 单位）">框宽</label>
-      <NumberField :model-value="sizeX" :step="0.1" :min="0.01" title="文本框宽（UI 单位）" @commit="(v) => emit('update', 'size.x', v)" />
-    </div>
-    <div class="field">
-      <label>框高</label>
-      <NumberField :model-value="sizeY" :step="0.1" :min="0.01" title="文本框高（UI 单位）" @commit="(v) => emit('update', 'size.y', v)" />
-    </div>
-    <div class="field">
-      <label title="Sort Order（同画布内大者在上）">Sort Order</label>
-      <NumberField :model-value="sortOrder" :step="1" :min="-999" :max="999" title="画布内叠加序（大者在上）" @commit="(v) => emit('update', 'sortOrder', v)" />
-    </div>
+    <div class="hint">位置/框尺寸/排序在「2D Transform」与「Anchor」卡编辑（100px = 1 单位）</div>
   </div>
 </template>
 

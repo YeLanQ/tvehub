@@ -12,7 +12,7 @@ import {
 
 export interface UITextNodeInit extends UIWidgetNodeInit {
   text?: string;
-  /** 字号（1080p 参考分辨率下的像素字号；映射到 UI 空间 = fontSize/108 个单位） */
+  /** 字号（设计像素；100px = 1 单位设计标准，映射到 UI 空间 = fontSize/100 个单位） */
   fontSize?: number;
   color?: number;
   bold?: boolean;
@@ -35,7 +35,7 @@ export interface IUITextNode extends INode {
 
 /**
  * UI 文本 Widget：2D 画布光栅化的多行文本（自动换行，SystemUI/衬线/等宽三种字族）。
- * 字号按 1080p 参考分辨率解释（fontSize 像素 → UI 空间 fontSize/108 单位），
+ * 字号按设计像素解释（100px = 1 UI 单位，fontSize 像素 → UI 空间 fontSize/100 单位），
  * 与屏幕比例无关：同字号在不同分辨率视口里占屏比例一致。
  */
 export class UITextNode extends UIWidgetNode implements IUITextNode {

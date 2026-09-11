@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode, UIButtonNode, UICanvasNode, UIImageNode, UITextNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
   isAudioSourceComponent,
@@ -20,6 +20,9 @@ import { useInspectorUI } from "../composables/inspector/useInspectorUI";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
 import TransformSection from "./inspector/TransformSection.vue";
+import UI2DTransformSection from "./inspector/UI2DTransformSection.vue";
+import UIAnchorSection from "./inspector/UIAnchorSection.vue";
+import UILayoutSection from "./inspector/UILayoutSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
 import MaterialSection from "./inspector/MaterialSection.vue";
 import ModelMaterialSection from "./inspector/ModelMaterialSection.vue";
@@ -103,7 +106,23 @@ const {
   onSkyMaterialCopyToProject,
 } = useInspectorCameraSky(inspector);
 const { onParticleUpdate } = useInspectorParticles(inspector);
-const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate } = useInspectorUI(inspector);
+const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate, onUILayoutUpdate } = useInspectorUI(inspector);
+
+/** UI 节点（画布/Widget/布局容器）：3D Transform 卡换成 2D 变换/锚点卡 */
+const isUINode = computed(
+  () =>
+    node.value instanceof UICanvasNode ||
+    node.value instanceof UIWidgetNode,
+);
+
+/** 2D 变换/锚点卡共用分发（按当前节点类型路由到对应域处理器） */
+function dispatchUIUpdate(label: string, value: unknown): void {
+  const n = node.value;
+  if (n instanceof UILayoutNode) onUILayoutUpdate(label, value);
+  else if (n instanceof UITextNode) onUITextUpdate(label, value);
+  else if (n instanceof UIButtonNode) onUIButtonUpdate(label, value);
+  else if (n instanceof UIImageNode) onUIImageUpdate(label, value);
+}
 
 // ---------------------------------------------------------------------------
 // 资产检查器模式（最后点击优先）：点击资产面板条目 → 显示资产预览与属性；
@@ -182,8 +201,12 @@ onBeforeUnmount(flushMaterialPersist);
         />
       </ComponentCard>
 
-      <ComponentCard title="Transform" :open="true">
+      <!-- UI 节点：3D 变换换成 2D 变换 + 锚点（位置由锚点系统每帧解析） -->
+      <ComponentCard v-if="!isUINode" title="Transform" :open="true">
         <TransformSection :node="node" :rev="revision" @transform="onTransformChange" />
+      </ComponentCard>
+      <ComponentCard v-else-if="node instanceof UIWidgetNode" title="2D Transform" :open="true">
+        <UI2DTransformSection :node="node" :rev="revision" @update="(l: string, v: unknown) => dispatchUIUpdate(l, v)" />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof MeshNode" title="Mesh" :open="true">
@@ -237,9 +260,12 @@ onBeforeUnmount(flushMaterialPersist);
         <ParticleSection :node="node" :rev="revision" @update="onParticleUpdate" />
       </ComponentCard>
 
-      <!-- —— UI（Canvas-Widget）：画布与 Widget 卡 —— -->
+      <!-- —— UI（Canvas-Widget）：画布与 Widget/布局卡 —— -->
       <ComponentCard v-if="node instanceof UICanvasNode" title="UI Canvas" :open="true">
         <UICanvasSection :node="node" :rev="revision" @update="onUICanvasUpdate" />
+      </ComponentCard>
+      <ComponentCard v-if="node instanceof UILayoutNode" title="UI Layout" :open="true">
+        <UILayoutSection :node="node" :rev="revision" @update="onUILayoutUpdate" />
       </ComponentCard>
       <ComponentCard v-if="node instanceof UIImageNode" title="UI Image" :open="true">
         <UIImageSection :node="node" :rev="revision" @update="onUIImageUpdate" />
@@ -249,6 +275,10 @@ onBeforeUnmount(flushMaterialPersist);
       </ComponentCard>
       <ComponentCard v-if="node instanceof UIButtonNode" title="UI Button" :open="true">
         <UIButtonSection :node="node" :rev="revision" @update="onUIButtonUpdate" />
+      </ComponentCard>
+      <!-- 锚点卡：Widget/布局容器共用（画布无锚点） -->
+      <ComponentCard v-if="node instanceof UIWidgetNode" title="Anchor" :open="true">
+        <UIAnchorSection :node="node" :rev="revision" @update="(l: string, v: unknown) => dispatchUIUpdate(l, v)" />
       </ComponentCard>
 
       <!-- —— 已挂组件卡（按挂载序 = 卡片序；组件卡语义：启用勾选 + ⋮ 菜单） —— -->
