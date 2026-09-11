@@ -58,6 +58,9 @@ export class CameraNodeHelper implements NodeHelper {
     this.object = new THREE.Group();
     this.object.name = "__helper_camera";
     this.object.matrixAutoUpdate = false;
+    // 默认隐藏：相机视锥/视向线只在节点被选中时显示（HelperSystem 按选中集开关；
+    // 构造后到首次门控同步之间不应闪现）
+    this.object.visible = false;
     this.object.add(this.frustum, this.ray);
   }
 
