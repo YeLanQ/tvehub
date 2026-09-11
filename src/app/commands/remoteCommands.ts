@@ -16,6 +16,7 @@ import {
   fetchWebPreviewRuntimeTexts,
   configUsesPhysics,
   configPhysicsBackend,
+  configUsesWebgpu,
 } from "../lib/web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
 import { registerCommand } from "./registry";
@@ -39,6 +40,9 @@ async function buildPreviewFiles(): Promise<Record<string, string>> {
   const files = await fetchWebPreviewRuntimeTexts({
     includePhysics: configUsesPhysics(physicsConfigText),
     physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
+    // 渲染后端为 WebGPU/自动时必须随产物带上 WebGPU 运行时（three.webgpu 构建等），
+    // 漏带会让播放器静默回退 WebGL——预览画面与项目设置的 WebGPU 后端不符
+    includeWebgpu: configUsesWebgpu(physicsConfigText),
   });
   files["config.json"] = physicsConfigText ?? "{}";
   try {
@@ -83,6 +87,7 @@ registerCommand({
       viewMode: editor.state.viewMode,
       dirty: editor.state.dirty,
       mounted: editor.state.mounted,
+      rendererBackend: editor.engine.renderer.activeBackend,
       canUndo: editor.state.canUndo,
       canRedo: editor.state.canRedo,
     };

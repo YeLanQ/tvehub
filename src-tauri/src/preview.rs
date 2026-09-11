@@ -625,8 +625,10 @@ fn mime_for(path: &Path) -> &'static str {
 }
 
 fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) {
+    // no-store：预览产物随"重新导出"原地覆写且无版本化文件名/协商器，
+    // 不禁缓存时 WebView 会命中旧运行时模块（改了运行时代码预览却不变/仍是旧行为）
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
     // 头与响应体合并为单次写入（禁用 Nagle 立即发出），减少浏览器并行拉取

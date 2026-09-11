@@ -338,6 +338,49 @@ console.log("[6] WebGPU 路径（Hook → TSL → 节点材质端口）");
       console.error("    ", e?.message ?? e);
     }
     ok(translated, "运行时转译器支持复合赋值与局部变量再赋值（emissive += …；k = …）");
+
+    // 回归：CGINCLUDE 工具函数（hash/noise）+ Hook 调用工具函数 —— 入口必须选中
+    // __tve_hook__ 而不是首个工具函数（此前工具函数被误当入口，形参解析报
+    // "未知标识符"，节点材质构建失败渲染成黑）
+    const { parseStage } = await import(
+      pathToFileURL(resolve(root, "public/engine/core/glslToTsl.mjs")).href
+    );
+    const toolInclude = `
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+      float noise(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                   mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+    `;
+    const stage = parseStage(
+      `${toolInclude}\nvec4 __tve_hook__(vec4 diffuseColor) { float n = noise(uv * _NoiseScale); return diffuseColor; }\n`,
+    );
+    ok(stage.entry?.name === "__tve_hook__", "合成 Hook 源码的入口 = __tve_hook__（而非首个工具函数）");
+    ok(
+      stage.tools.some((f) => f.name === "noise") && stage.tools.some((f) => f.name === "hash"),
+      "CGINCLUDE 工具函数（hash/noise）留在工具表供 inline 展开",
+    );
+    let translatedWithTools = true;
+    try {
+      const node = compileHookNode({
+        code: "float n = noise(uv * _NoiseScale);\nif (n < _Threshold) discard;\ndiffuseColor.rgb *= n;",
+        include: toolInclude,
+        tsl: TSL,
+        port: { name: "diffuseColor", seed: TSL.vec4(TSL.materialColor.rgb, TSL.materialOpacity) },
+        idents: { uv: TSL.uv() },
+        uniforms: { _NoiseScale: TSL.uniform(8), _Threshold: TSL.uniform(0.35) },
+        timeNode: TSL.uniform(0),
+      });
+      translatedWithTools = !!node;
+    } catch (e) {
+      translatedWithTools = false;
+      console.error("    ", e?.message ?? e);
+    }
+    ok(
+      translatedWithTools,
+      "调用工具函数的 Hook 走完编译（噪声溶解场景；TSL Fn 惰性求值，构建期错误由入口选择用例把关）",
+    );
   }
 }
 

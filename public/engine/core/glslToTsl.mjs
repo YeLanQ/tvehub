@@ -118,6 +118,9 @@ const DECL_TYPES = new Set([
 
 const SWIZZLE_CHARS = new Set("xyzwrgbastpq".split(""));
 
+/** Hook 编译的合成入口函数名（compileHookNode 生成；与编辑器侧 glslParser.ts 同名约定） */
+const HOOK_ENTRY_NAME = "__tve_hook__";
+
 class Parser {
   constructor(src) {
     this.tokens = tokenize(src).tokens;
@@ -273,8 +276,12 @@ class Parser {
 
     const mainFn = functions.find((f) => f.name === "main") ?? null;
     const entryName = mainFn?.entryName ?? null;
+    // Hook 编译的合成源码（compileHookNode：CGINCLUDE 工具函数 + __tve_hook__ 入口）
+    // 没有 main 包装 —— 入口必须按名取回，否则首个工具函数会被误选为入口、
+    // 真正的 Hook 体落进 tools（WebGPU 下材质节点构建失败渲染成黑）。
     const entry =
       (entryName ? functions.find((f) => f.name === entryName) ?? null : null) ??
+      functions.find((f) => f.name === HOOK_ENTRY_NAME) ??
       functions.find((f) => f.name !== "main") ??
       null;
     const tools = functions.filter((f) => f !== entry && f.name !== "main");
@@ -811,7 +818,7 @@ export function translateProgram(input) {
 export function compileHookNode(input) {
   const tsl = input.tsl;
   const source = `${input.include}
-vec4 __tve_hook__(vec4 ${input.port.name}) {
+vec4 ${HOOK_ENTRY_NAME}(vec4 ${input.port.name}) {
 ${input.code}
 return ${input.port.name};
 }

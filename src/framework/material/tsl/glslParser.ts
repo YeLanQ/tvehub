@@ -34,6 +34,9 @@ const DECL_TYPES = new Set([
 /** swizzle 允许的分量字符（x/y/z/w 与 r/g/b/a 与 s/t/p/q） */
 const SWIZZLE_CHARS = new Set("xyzwrgbastpq".split(""));
 
+/** Hook 编译的合成入口函数名（compileHookNode 生成；与运行时 glslToTsl.mjs 同名约定） */
+export const HOOK_ENTRY_NAME = "__tve_hook__";
+
 class Parser {
   private tokens: GlslToken[];
   private pos = 0;
@@ -212,8 +215,12 @@ class Parser {
 
     const mainFn = functions.find((f) => f.name === "main") ?? null;
     const entryName = mainFn?.entryName ?? null;
+    // Hook 编译的合成源码（compileHookNode：CGINCLUDE 工具函数 + __tve_hook__ 入口）
+    // 没有 main 包装 —— 入口必须按名取回，否则首个工具函数会被误选为入口、
+    // 真正的 Hook 体落进 tools（WebGPU 下材质节点构建失败渲染成黑）。
     const entry =
       (entryName ? functions.find((f) => f.name === entryName) ?? null : null) ??
+      functions.find((f) => f.name === HOOK_ENTRY_NAME) ??
       functions.find((f) => f.name !== "main") ??
       null;
     const tools = functions.filter((f) => f !== entry && f.name !== "main");

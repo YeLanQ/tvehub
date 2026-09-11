@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Expr, GlslFunction, StageParse, Stmt } from "./ast";
-import { parseStage, TranslateError } from "./glslParser";
+import { parseStage, TranslateError, HOOK_ENTRY_NAME } from "./glslParser";
 
 /** TSL 节点（运行时为 three 节点对象；不透明传递，避免被不完整类型绑住） */
 export type TslNode = any;
@@ -495,7 +495,7 @@ export interface HookCompileInput {
 export function compileHookNode(input: HookCompileInput): TslNode {
   const { tsl } = input;
   // 用函数外壳解析片段：端口作为形参名出现在体内，返回值即端口本身
-  const source = `${input.include}\nvec4 __tve_hook__(vec4 ${input.port.name}) {\n${input.code}\nreturn ${input.port.name};\n}\n`;
+  const source = `${input.include}\nvec4 ${HOOK_ENTRY_NAME}(vec4 ${input.port.name}) {\n${input.code}\nreturn ${input.port.name};\n}\n`;
   const stage = parseStage(source);
   if (stage.error) throw new TranslateError(stage.error);
   if (!stage.entry) throw new TranslateError("Hook 片段为空或无法解析");

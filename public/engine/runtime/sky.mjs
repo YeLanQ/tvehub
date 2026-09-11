@@ -171,12 +171,13 @@ export function configureSkyOrientation(backend) {
 }
 
 /** fetch 相对路径 → ImageBitmap（失败返回 null；归档/磁盘资产统一走 fetch 拦截）。
- * 是否预翻转由 configureSkyOrientation 按后端决定（见上）。 */
-async function fetchImageBitmap(rel) {
+ * 是否预翻转由 configureSkyOrientation 按后端决定（见上）；
+ * orientation 可显式覆盖（equirect 全景 2D 纹理不分后端统一预翻转，见 loadSkyTexCube）。 */
+async function fetchImageBitmap(rel, orientation = imageOrientation) {
   try {
     const r = await fetch(rel);
     if (!r.ok) return null;
-    return await createImageBitmap(await r.blob(), { imageOrientation });
+    return await createImageBitmap(await r.blob(), { imageOrientation: orientation });
   } catch {
     return null;
   }
@@ -670,11 +671,14 @@ export async function loadSkyTexCube(rel) {
     }
     const mapRel = doc.map ?? "";
     if (!mapRel || /\.hdr$/i.test(mapRel)) return null;
-    const bmp = await fetchImageBitmap(mapRel);
+    // equirect 全景是普通 2D 纹理：不分后端统一按 GL 朝向预翻转位图。
+    // （此前 WebGPU 取"none"位图 + flipY=false，全景天地颠倒——俯视看到的是天）
+    const bmp = await fetchImageBitmap(mapRel, "flipY");
     if (!bmp) return null;
     const tex = new THREE.Texture(bmp);
     tex.mapping = THREE.EquirectangularReflectionMapping;
-    // WebGPU 后端用着色器 UV 翻转实现 flipY：位图已按后端朝向取用，这里关掉避免二次翻转
+    // 预翻转后的位图不能再让后端做 flipY：GL 对 ImageBitmap 上传本就忽略该标记
+    // （保持默认 true 无影响），WebGPU 的 flipY 是着色器 UV 翻转，必须显式关掉
     if (imageOrientation === "none") tex.flipY = false;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.RepeatWrapping;
