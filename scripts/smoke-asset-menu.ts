@@ -49,8 +49,8 @@ const workshops: MenuWorkshopCategory[] = [
     id: "effect",
     label: "Effect",
     items: [
-      { category: "effect", file: "Hologram.shader", name: "Hologram", kind: "shader" },
-      { category: "effect", file: "Dissolve.shader", name: "Dissolve", kind: "shader" },
+      { category: "effect", file: "HologramExt.shader", name: "HologramExt", kind: "shader" },
+      { category: "effect", file: "DissolveExt.shader", name: "DissolveExt", kind: "shader" },
     ],
   },
 ];
@@ -126,7 +126,7 @@ console.log("[1] 创意工坊 ▸ 标签 ▸ 内容");
   const assetsChild = workshopTree(buildEntryMenu(dirEntry("assets/materials"), api));
   ok(!!assetsChild.Code && !!assetsChild.Effect, "assets 子目录：Code 与 Effect 两个标签");
   ok(assetsChild.Code?.join(",") === "Spin,Follow", "Code 标签下为该分类内容（脚本原型）");
-  ok(assetsChild.Effect?.join(",") === "Hologram,Dissolve", "Effect 标签下为该分类内容（效果原型）");
+  ok(assetsChild.Effect?.join(",") === "HologramExt,DissolveExt", "Effect 标签下为该分类内容（效果原型）");
   ok(labels(buildEntryMenu(dirEntry("assets/materials"), api)).includes("新建材质"), "原有新建项保留");
 
   const srcTree = workshopTree(buildEntryMenu(dirEntry("src"), api));
@@ -165,8 +165,11 @@ console.log("[3] 点击行为");
   effectCat.children![0].onClick?.({} as never);
   const args = calls.onNewFromWorkshop ?? [];
   ok(args[0] === "assets/materials", "回调带右键目录");
-  ok((args[1] as MenuWorkshopItem)?.file === "Hologram.shader", "回调带来源文件");
-  ok((args[1] as MenuWorkshopItem)?.kind === "shader", "效果项 kind = shader（落盘当前目录）");
+  ok((args[1] as MenuWorkshopItem)?.file === "HologramExt.shader", "回调带来源文件");
+  ok(
+    (args[1] as MenuWorkshopItem)?.kind === "shader",
+    "效果项 kind = shader（落盘当前目录为 .shader 资产）",
+  );
 
   const { api: api2, calls: calls2 } = makeApi();
   const tree2 = workshop(buildEntryMenu(dirEntry("assets/materials"), api2))!;

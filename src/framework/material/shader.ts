@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
 // 着色器资产基础类型与约定（framework 层，不依赖 app/api）。
 //
-// 着色器与材质分离：着色器（.shader）是"渲染程序"资产，决定网格用哪种
-// three 材质分支渲染（PBR/Unlit/卡通）以及材质暴露哪些参数分组；
-// 材质（.mat）是"数据"资产，通过 shader 字段引用一份 .shader 资产并携带参数值。
-// .shader 格式解析/序列化所有权在 Rust（shader_read/shader_write），本模块
-// 只收敛 UI 层需要的约定：kind 取值、显示名、文件名、内置着色器引用。
+// 着色器（.shader）是引擎唯一的"自定义着色"载体：它用 `Base` 声明材质走哪个
+// 渲染分支（PBR / Unlit / 卡通，另有两个内置天空程序），用 `Hook` 块在该分支的
+// 着色阶段叠加自定义效果。材质（.mat）通过 shader 字段引用一份 .shader 资产，
+// 携带分支参数（color/metalness/… 顶字段）与着色器 Properties 值（props 字段）。
+// .shader 格式解析/序列化所有权在 Rust（shader_read/shader_write），本模块只收敛
+// UI 层需要的约定：kind 取值、显示名、文件名、内置着色器引用。
 // ---------------------------------------------------------------------------
 
 import { materialFileStem } from "./types";
@@ -14,56 +15,40 @@ import { materialFileStem } from "./types";
 export const SHADER_EXT = ".shader";
 
 /**
- * 着色器种类（.shader 的 kind 字段；.mat 经引用解析后的渲染分支 key）。
- * 取值与旧 .mat materialType 字段一致（physical/unlit/toon），渲染端
- * （工厂注册表 / 网页预览 mesh.mjs）按同一 key 分派；
- * 天空程序 skyprocedural（大气散射）/ skycube（立方体贴图天空盒）由
- * PreviewType=Skybox 标签识别，供天空材质（.mat）引用；
- * custom 为自定义着色器（GLSL 顶点/片元源码真正编译为 three ShaderMaterial，
- * 属性经 Properties 暴露给材质面板，见 customShader.ts）。
+ * 着色器渲染分支（.shader 的 Base 声明；.mat 经引用解析后的分支 key）。
+ * physical/unlit/toon 为三个网格渲染出口；天空程序 skyprocedural（大气散射）/
+ * skycube（立方体贴图天空盒）是内置资产，由天空材质引用。
  */
-export type ShaderKind =
-  | "physical"
-  | "unlit"
-  | "toon"
-  | "custom"
-  | "skyprocedural"
-  | "skycube";
+export type ShaderKind = "physical" | "unlit" | "toon" | "skyprocedural" | "skycube";
 
-/** 全部合法的着色器种类（注册表顺序 = 新建着色器子菜单 / 下拉展示顺序） */
+/** 全部合法的渲染分支（注册表顺序 = 新建着色器子菜单 / 下拉展示顺序） */
 export const SHADER_KINDS: ShaderKind[] = [
   "physical",
   "unlit",
   "toon",
-  "custom",
   "skyprocedural",
   "skycube",
 ];
 
-/** 自定义着色器种类 key（挂载它的材质按 ShaderMaterial 渲染） */
-export const CUSTOM_SHADER_KIND: ShaderKind = "custom";
-
-/** 着色器种类 → 菜单/下拉显示名 */
+/** 着色器渲染分支 → 菜单/下拉显示名 */
 const SHADER_KIND_LABELS: Record<ShaderKind, string> = {
   physical: "PBR着色器",
   unlit: "Unlit着色器",
   toon: "卡通着色器",
-  custom: "自定义着色器",
   skyprocedural: "程序化天空着色器",
   skycube: "立方体天空盒着色器",
 };
 
-/** 着色器种类 → 新建资产默认文件名（去重前基名） */
+/** 着色器渲染分支 → 新建资产默认文件名（去重前基名） */
 export const SHADER_KIND_STEMS: Record<ShaderKind, string> = {
   physical: "PBR",
   unlit: "Unlit",
   toon: "Toon",
-  custom: "Custom",
   skyprocedural: "SkyProcedural",
   skycube: "SkyBox",
 };
 
-/** 自定义着色器属性类型（Properties 行第二段；与后端 shader.rs 的取值一致） */
+/** 着色器属性类型（Properties 行第二段；与后端 shader.rs 的取值一致） */
 export type ShaderPropertyKind =
   | "color"
   | "range"
@@ -72,7 +57,7 @@ export type ShaderPropertyKind =
   | "vector"
   | "texture";
 
-/** 自定义着色器暴露的属性（Properties 块一项）→ 材质面板字段 + 自动 uniform 声明 */
+/** 着色器属性（Properties 块一项）→ 材质面板字段 + uniform 声明 */
 export interface ShaderPropertyDef {
   /** 属性名（= uniform 名，惯例以 _ 开头） */
   key: string;
@@ -86,36 +71,39 @@ export interface ShaderPropertyDef {
   default: number | number[] | string;
 }
 
-/** 自定义着色器渲染状态（Tags/ZWrite/Cull 声明） */
-export interface CustomShaderState {
-  /** 半透明混合（Queue/RenderType = Transparent） */
-  transparent: boolean;
-  /** 深度写入（ZWrite Off 关闭） */
-  depthWrite: boolean;
-  /** 面剔除：front（缺省）/ back（Cull Front）/ double（Cull Off） */
-  side: "front" | "back" | "double";
-}
-
-/** 组装后的自定义着色器程序（标题为 three ShaderMaterial 的顶点/片元源码） */
-export interface CustomShaderProgram {
-  vertex: string;
-  fragment: string;
-  state: CustomShaderState;
+/** 效果片段（.shader 的 Hook 块） */
+export interface ShaderHook {
+  /** 钩子名（Vertex/Normal/Diffuse/Emissive/Fragment） */
+  name: string;
+  /** 钩子体 GLSL 代码（注入到内置着色器对应阶段） */
+  code: string;
 }
 
 /** 解析后的着色器文档（后端 shader_read 返回形态） */
 export interface ShaderDoc {
   name: string;
+  /** 渲染分支（由 Base 或天空标签判别） */
   kind: ShaderKind;
   /** 着色器源码全文（ShaderLab 风格；检查器/源码编辑器展示用） */
   source: string;
-  /** 自定义着色器（kind=custom）暴露的属性（材质面板字段；其它种类为空表） */
+  /** Base 声明原文（PBR/Unlit/Toon；天空程序为空串） */
+  base: string;
+  /** CGINCLUDE 共享代码（inline 到各钩子之前） */
+  include: string;
+  /** 效果片段（空表 = 只选分支，不叠效果） */
+  hooks: ShaderHook[];
+  /** 暴露给材质面板的属性（值存 .mat 的 props；天空程序为空表） */
   properties: ShaderPropertyDef[];
-  /** 自定义着色器组装后的程序（顶点/片元源码 + 渲染状态）；不可组装/非自定义时为 null */
-  program: CustomShaderProgram | null;
-  /** 自定义着色器组装失败原因（null = 无错误） */
+  /** 解析错误（null = 无错误；非 null 时仍按 Base 分支渲染，只是不叠效果） */
   error: string | null;
 }
+
+/** 各渲染分支支持的钩子（three 内置着色器的注入点差异；与后端 hook_support 一致） */
+export const SHADER_HOOKS_BY_KIND: Record<string, string[]> = {
+  physical: ["Vertex", "Normal", "Diffuse", "Emissive", "Fragment"],
+  toon: ["Vertex", "Normal", "Diffuse", "Emissive", "Fragment"],
+  unlit: ["Vertex", "Diffuse", "Fragment"],
+};
 
 /** 着色器种类显示名（未知 kind 回退原值展示，便于排查脏数据） */
 export function shaderKindLabel(kind: string): string {
@@ -135,7 +123,6 @@ export const DEFAULT_SHADER_RELS: Record<ShaderKind, string> = {
   physical: `${INTERNAL_SHADER_ROOT}/PBR.shader`,
   unlit: `${INTERNAL_SHADER_ROOT}/Unlit.shader`,
   toon: `${INTERNAL_SHADER_ROOT}/Toon.shader`,
-  custom: `${INTERNAL_SHADER_ROOT}/Custom.shader`,
   skyprocedural: `${INTERNAL_SHADER_ROOT}/SkyProcedural.shader`,
   skycube: `${INTERNAL_SHADER_ROOT}/SkyBox.shader`,
 };

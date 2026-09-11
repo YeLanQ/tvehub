@@ -44,8 +44,8 @@ import {
 import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { MaterialManager } from "../material/MaterialManager";
 import { ShaderManager } from "../material/ShaderManager";
-import { tickCustomShaderTime, setCustomBackend } from "../material/customBackend";
-import { loadTslCustomBackend } from "../material/customNodeMaterial";
+import { hookDataOf, tickAllHookTime } from "../material/shaderHooks";
+import { loadNodeMaterialBackend, setNodeMaterialBackend, tickAllNodeHookTime } from "../material/nodeMaterialBackend";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
@@ -103,7 +103,7 @@ export class EditorEngine {
   readonly helperSystem: HelperSystem;
   /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
   readonly materials = new MaterialManager();
-  /** 着色器程序缓存（自定义着色器按引用取程序；应用层注入文件读取器） */
+  /** 着色器文档缓存（渲染分支 + 钩子 + 属性表按引用取；应用层注入文件读取器） */
   readonly shaders = new ShaderManager();
   /** 模型资产缓存/实例化（模型网格按引用克隆渲染；应用层注入文件读取器） */
   readonly models = new ModelManager();
@@ -119,7 +119,7 @@ export class EditorEngine {
   readonly particles = new ParticleSystem();
   /** 动画推进时钟（渲染回调里取帧间隔） */
   private clock = new THREE.Clock();
-  /** 自定义着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
+  /** 扩展着色器时间（秒；按帧间隔累加，供 _Time uniform 使用） */
   private shaderTime = 0;
   /** 贴图 URL 解析器（相对路径 → asset:// 协议 URL；应用层注入） */
   private textureUrlResolver: ((rel: string) => string | null) | null = null;
@@ -235,8 +235,7 @@ export class EditorEngine {
       paramsFor: (rel) => this.materials.paramsFor(rel),
       typeFor: (rel) => this.materials.typeFor(rel),
       shaderFor: (rel) => this.materials.shaderFor(rel),
-      shaderProgramFor: (shaderRel) => this.shaders.programFor(shaderRel),
-      shaderPropertiesFor: (shaderRel) => this.shaders.propertiesFor(shaderRel),
+      shaderHooksFor: (shaderRel) => hookDataOf(this.shaders.docFor(shaderRel)),
       loadTexture: (rel, srgb) => this.loadTexture(rel, srgb),
       instantiateModel: (rel) => this.models.instantiate(rel),
       modelReady: (rel) => this.models.has(rel),
@@ -245,7 +244,7 @@ export class EditorEngine {
     });
     // 材质库缓存更新（编辑保存等）→ 刷新引用该材质的所有网格外观
     this.materials.onChanged((rel) => this.refreshMaterialNodes(rel));
-    // 着色器程序更新（首次加载/源码保存）→ 刷新引用该着色器的材质所挂网格
+    // 着色器文档更新（首次加载/源码保存）→ 刷新引用该着色器的材质所挂网格
     this.shaders.onChanged((rel) => {
       this.refreshShaderNodes(rel);
       this.events.emit("shader:changed", { rel });
@@ -382,8 +381,8 @@ export class EditorEngine {
     // 此时渲染器已释放，直接终止后续初始化，避免在已销毁的引擎上补建 gizmo/监听。
     if (this.disposed) return;
     this.initGizmo();
-    // WebGPU 后端：GLSL ShaderMaterial 不参与渲染（WGSL 需要节点材质），
-    // 粒子与自定义着色器改注入 TSL 节点材质工厂（等待就绪后再装载场景）
+    // WebGPU 后端：粒子改注入 TSL 节点材质工厂（GLSL ShaderMaterial 不参与渲染），
+    // 等待工厂就绪后再装载场景
     await this.applyBackendMaterialPolicy();
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
@@ -396,9 +395,11 @@ export class EditorEngine {
       this.physics.update(dt);
       // 粒子模拟推进（发射/积分/回收并写渲染缓冲）；world 空间粒子按节点世界矩阵回本地
       this.particles.update(dt);
-      // 自定义着色器时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
+      // 着色器 Hook 时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
+      // GL 侧走材质 userData 的 uniform 表，GPU 侧走节点 uniform，两条路都要推
       this.shaderTime += dt;
-      tickCustomShaderTime(this.shaderTime);
+      tickAllHookTime(this.shaderTime);
+      tickAllNodeHookTime(this.shaderTime);
       // 音频：监听器随活动渲染相机 + 可见性自动暂停（Web Audio 自走时钟）
       const activeCam = this.renderer.getActiveCamera();
       if (activeCam) this.audio.attachListener(activeCam);
@@ -464,20 +465,16 @@ export class EditorEngine {
 
   /**
    * 按渲染后端应用材质策略（挂载后调用一次；后端运行期不可切换）：
-   * - 经典 WebGLRenderer：粒子用 GLSL ShaderMaterial（默认路径，无需处理）；
-   * - WebGPURenderer：粒子改注入 TSL 节点材质工厂（three/webgpu + three/tsl 动态加载，
-   *   未选 WebGPU 的产物不加载它们）；自定义着色器（GLSL ShaderMaterial）改注入
-   *   TSL 转译后端（glslToTsl → NodeMaterial），使之在 WGSL 下可渲染。
-   * 内置材质由 three 自动转换，表现不变。
+   * - 经典 WebGLRenderer：粒子用 GLSL ShaderMaterial，材质 Hook 走 onBeforeCompile 注入（默认路径）；
+   * - WebGPURenderer：粒子改注入 TSL 节点材质工厂、材质改注入节点材质后端（three/webgpu +
+   *   three/tsl 动态加载，未选 WebGPU 的产物不加载它们）——材质 Hook 同时翻译为 TSL 接到
+   *   节点槽位，使同一份 .shader 在两种后端下语义一致。
    */
   private async applyBackendMaterialPolicy(): Promise<void> {
-    if (this.renderer.activeBackend !== "webgpu") {
-      setCustomBackend(null);
-      return;
-    }
-    const [particleFactory, customBackend] = await Promise.all([
+    if (this.renderer.activeBackend !== "webgpu") return;
+    const [particleFactory, materialBackend] = await Promise.all([
       loadParticleNodeMaterialFactory(),
-      loadTslCustomBackend(),
+      loadNodeMaterialBackend(),
     ]);
     if (this.disposed) return;
     if (particleFactory) {
@@ -485,11 +482,11 @@ export class EditorEngine {
     } else {
       logger.warn("[particles] WebGPU 后端下未能加载 TSL 粒子材质，粒子将不参与渲染");
     }
-    if (customBackend) {
-      setCustomBackend(customBackend);
+    if (materialBackend) {
+      setNodeMaterialBackend(materialBackend);
     } else {
       logger.warn(
-        "[material] WebGPU 后端下未能加载 TSL 自定义着色器后端，自定义着色器将不参与渲染",
+        "[material] WebGPU 后端下未能加载节点材质后端，着色器 Hook 不参与渲染（材质仍按分支参数渲染）",
       );
     }
   }
@@ -852,8 +849,8 @@ export class EditorEngine {
   }
 
   /**
-   * 着色器程序（重新）解析后：刷新引用该着色器的全部材质所挂网格（自定义着色器
-   * 程序变更即时生效：源码保存、首次加载完成、撤销/重做切回引用）。
+   * 着色器文档（重新）解析后：刷新引用该着色器的全部材质所挂网格
+   * （渲染分支变更即时生效：源码保存、首次加载完成、撤销/重做切回引用）。
    * rel 为空时刷新全部网格材质。
    */
   refreshShaderNodes(shaderRel?: string | null): void {
@@ -866,8 +863,8 @@ export class EditorEngine {
   }
 
   /**
-   * 预取材质引用及其挂载的着色器程序：节点入图即按正确外观渲染
-   * （自定义着色器先取到程序再刷新，避免先占位后跳变）。
+   * 预取材质引用及其挂载的着色器：节点入图即按正确外观渲染
+   * （渲染分支与 Hook 都先取到再刷新，避免先默认外观后跳变）。
    */
   async preloadMaterials(rels: string[]): Promise<void> {
     if (rels.length === 0) return;

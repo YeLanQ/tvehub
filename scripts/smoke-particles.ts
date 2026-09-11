@@ -803,7 +803,12 @@ async function previewPackagingSection(): Promise<void> {
       /createNodeParticleMaterialFactory\(\)/.test(player) &&
       /particleMaterialFactory/.test(player),
   );
-  check("播放器在 WebGPU 下告警自定义着色器不参与渲染", /WebGPU 后端不支持 GLSL 自定义着色器/.test(player));
+  check(
+    "播放器在 WebGPU 下注入节点材质后端（材质 Hook 走 TSL 端口）",
+    /setNodeMaterialBackend/.test(player) &&
+      /nodeMaterialHooks.mjs/.test(player) &&
+      /createNodeMaterialBackend()/.test(player),
+  );
   const stage = readFileSync(resolve("public/engine/runtime/stage.mjs"), "utf8");
   check(
     "舞台层动态加载 WebGPU 构建并在失败时回退 WebGL",

@@ -35,7 +35,8 @@ export function loadImageTex(texCache, rel, srgb) {
 
 /** 逐网格按材质声明回填贴图（贴图文件已在导出产物内，按相对路径 fetch）。
  * unlit 只支持基础色贴图 map；toon 无金属/粗糙通道；
- * 自定义着色器（ShaderMaterial）：按属性表把贴图属性写入同名 uniform（2D → sRGB）。 */
+ * 着色器 Properties 的贴图参数（props 值）：按属性表加载后写入该材质的钩子
+ * uniform 表（shaderHooks.mjs 在 userData 上维护同一批对象）。 */
 export async function applyMeshTextures(meshes, materialParams) {
   const texCache = new Map();
   for (const entry of meshes) {
@@ -43,11 +44,13 @@ export async function applyMeshTextures(meshes, materialParams) {
     if (!mat) continue;
     const m = materialParams.get(entry.json.material);
     if (!m) continue;
-    if (Array.isArray(mat.userData?.customProperties)) {
+    if (m.shaderData) {
+      // GL 侧 uniform 表与节点侧 uniform 表二选一（当前后端决定哪个存在）
+      const table = mat.userData?.__tveHookUniforms ?? (mat.userData?.__tveNodeHooks ? mat.userData.__tveNodeHooks.uniforms : undefined);
       const props = m.props || {};
-      for (const prop of mat.userData.customProperties) {
+      for (const prop of m.shaderData.properties || []) {
         if (prop.kind !== "texture") continue;
-        const uniform = mat.uniforms ? mat.uniforms[prop.key] : null;
+        const uniform = table ? table[prop.key] : null;
         if (!uniform) continue;
         const rel = typeof props[prop.key] === "string" ? props[prop.key] : "";
         if (!rel) {
@@ -56,7 +59,6 @@ export async function applyMeshTextures(meshes, materialParams) {
         }
         uniform.value = await loadImageTex(texCache, rel, true);
       }
-      continue;
     }
     const basicOnly = mat.type === "MeshBasicMaterial"; // unlit：只支持基础色贴图 map
     const isToon = mat.type === "MeshToonMaterial"; // toon：无金属/粗糙通道

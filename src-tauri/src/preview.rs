@@ -133,53 +133,53 @@ pub(crate) fn collect_scene_assets(
         // 材质引用的贴图二进制（缺失跳过，player 回退无贴图）
         if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) {
             // 材质引用的着色器资产（.shader 文本随导出；缺失跳过，player 回退 PBR）
-            let mut shader_text: Option<String> = None;
+            // 与着色器 Properties 的贴图参数（props 中按属性名存的贴图引用）：
+            // 属性类型来自着色器源码（2D → sampler2D），据此把 props 里的引用一并打包
             if let Some(shader_rel) = doc.get("shader").and_then(|v| v.as_str()) {
-                if shader_rel.ends_with(".shader") && !files.contains_key(shader_rel) {
-                    match crate::scene::material::read_material_text(root_path, shader_rel) {
-                        Ok(text) => {
-                            files.insert(shader_rel.to_string(), text.clone());
-                            shader_text = Some(text);
+                if shader_rel.ends_with(".shader") {
+                    let shader_src = match files.get(shader_rel) {
+                        Some(src) => Some(src.clone()),
+                        None => match crate::scene::material::read_material_text(root_path, shader_rel) {
+                            Ok(text) => {
+                                files.insert(shader_rel.to_string(), text.clone());
+                                Some(text)
+                            }
+                            Err(_) => {
+                                missing.push(shader_rel.to_string());
+                                None
+                            }
+                        },
+                    };
+                    if let Some(shader_src) = shader_src {
+                        let parsed = crate::scene::shader::parse_shader(&shader_src);
+                        let props = doc.get("props").and_then(|v| v.as_object());
+                        for prop in parsed
+                            .properties
+                            .iter()
+                            .filter(|p| p.kind == crate::scene::shader::PROP_TEXTURE)
+                        {
+                            let Some(tex) = props
+                                .and_then(|m| m.get(&prop.key))
+                                .and_then(|v| v.as_str())
+                            else {
+                                continue;
+                            };
+                            if tex.is_empty() || binaries.contains_key(tex) {
+                                continue;
+                            }
+                            match read_asset_bytes(root_path, tex) {
+                                Ok(bytes) => {
+                                    binaries.insert(tex.to_string(), bytes);
+                                }
+                                Err(_) => missing.push(tex.to_string()),
+                            }
                         }
-                        Err(_) => missing.push(shader_rel.to_string()),
                     }
                 }
             }
             for field in TEXTURE_FIELDS {
                 if let Some(tex) = doc.get(field).and_then(|v| v.as_str()) {
                     if !tex.is_empty() && !binaries.contains_key(tex) {
-                        match read_asset_bytes(root_path, tex) {
-                            Ok(bytes) => {
-                                binaries.insert(tex.to_string(), bytes);
-                            }
-                            Err(_) => missing.push(tex.to_string()),
-                        }
-                    }
-                }
-            }
-            // 自定义着色器贴图属性（.mat props 中按属性名存的贴图引用）：
-            // 属性类型来自着色器源码（2D → sampler2D），据此把 props 里的引用一并打包
-            if let Some(shader_rel) = doc.get("shader").and_then(|v| v.as_str()) {
-                let shader_src = shader_text.or_else(|| {
-                    crate::scene::material::read_material_text(root_path, shader_rel).ok()
-                });
-                if let Some(shader_src) = shader_src {
-                    let parsed = crate::scene::shader::parse_custom_shader(&shader_src, shader_rel);
-                    let props = doc.get("props").and_then(|v| v.as_object());
-                    for prop in parsed
-                        .properties
-                        .iter()
-                        .filter(|p| p.kind == crate::scene::shader::PROP_TEXTURE)
-                    {
-                        let Some(tex) = props
-                            .and_then(|m| m.get(&prop.key))
-                            .and_then(|v| v.as_str())
-                        else {
-                            continue;
-                        };
-                        if tex.is_empty() || binaries.contains_key(tex) {
-                            continue;
-                        }
                         match read_asset_bytes(root_path, tex) {
                             Ok(bytes) => {
                                 binaries.insert(tex.to_string(), bytes);
@@ -649,7 +649,60 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use super::{gltf_sibling_rel, start_server, stop_server, PREVIEW_FIXED_PORT};
+    use super::{
+        collect_scene_assets, gltf_sibling_rel, start_server, stop_server, PREVIEW_FIXED_PORT,
+    };
+
+    /// 材质引用的着色器（.mat 的 shader）与其贴图参数（props）必须随产物打包：
+    /// 缺失会让产物内效果整体消失（且只表现为"没效果"，不好排查）。
+    #[test]
+    fn collect_scene_assets_packs_shader_and_its_textures() {
+        let root = std::env::temp_dir().join(format!("tve-shader-pack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("assets/materials")).unwrap();
+        fs::create_dir_all(root.join("assets/shaders")).unwrap();
+        fs::create_dir_all(root.join("assets/textures")).unwrap();
+        fs::write(
+            root.join("assets/shaders/Rim.shader"),
+            "Shader \"assets/shaders/Rim\"\n{\n    Properties\n    {\n        _Tint (\"Tint\", Color) = (1, 1, 1, 1)\n        _MainTex (\"Tex\", 2D) = \"white\" {}\n    }\n    Base \"PBR\"\n    Hook \"Emissive\" { emissive += _Tint.rgb; }\n}\n",
+        )
+        .unwrap();
+        fs::write(root.join("assets/textures/a.png"), b"png").unwrap();
+        fs::write(
+            root.join("assets/materials/M.mat"),
+            serde_json::json!({
+                "$type": "material",
+                "name": "M",
+                "shader": "assets/shaders/Rim.shader",
+                "props": { "_MainTex": "assets/textures/a.png" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let scene = serde_json::json!({
+            "type": "scene",
+            "root": { "type": "meshNode", "id": "m", "material": "assets/materials/M.mat" },
+        })
+        .to_string();
+        let mut files = std::collections::HashMap::new();
+        let mut binaries = std::collections::HashMap::new();
+        let missing = collect_scene_assets(&root, &scene, &mut files, &mut binaries);
+
+        assert!(
+            files.contains_key("assets/shaders/Rim.shader"),
+            "着色器文本应随产物打包（files: {:?}）",
+            files.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            binaries.contains_key("assets/textures/a.png"),
+            "着色器的贴图参数应随产物打包（binaries: {:?}）",
+            binaries.keys().collect::<Vec<_>>()
+        );
+        assert!(missing.is_empty(), "无缺失资产（实际 {missing:?}）");
+
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn preview_server_reuses_fixed_port() {

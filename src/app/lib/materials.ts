@@ -7,6 +7,7 @@
 import { api } from "../../lib/api";
 import {
   DEFAULT_SHADER_REL,
+  materialParamsFrom,
   type MaterialDoc,
   type MaterialParams,
 } from "../../framework/material";
@@ -22,7 +23,7 @@ export async function loadMaterialDoc(root: string | null, rel: string): Promise
       name: doc.name,
       type: doc.materialType,
       shader: doc.shader,
-      params: doc.params as unknown as MaterialParams,
+      params: materialParamsFrom(doc.params),
     };
   } catch {
     return null;

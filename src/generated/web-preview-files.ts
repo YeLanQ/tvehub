@@ -29,7 +29,8 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/pak.mjs",
   "engine/runtime/particles.mjs",
   "engine/runtime/physics.mjs",
-  "engine/runtime/shaderlab.mjs",
+  "engine/runtime/shader.mjs",
+  "engine/runtime/shaderHooks.mjs",
   "engine/runtime/sky.mjs",
   "engine/runtime/stage.mjs",
   "engine/runtime/textures.mjs",
@@ -53,5 +54,5 @@ export const WEB_PREVIEW_WEBGPU_FILES: string[] = [
   "engine/core/three.webgpu.min.js",
   "engine/core/particleNodeMaterial.mjs",
   "engine/core/glslToTsl.mjs",
-  "engine/core/customNodeMaterial.mjs"
+  "engine/core/nodeMaterialHooks.mjs"
 ];

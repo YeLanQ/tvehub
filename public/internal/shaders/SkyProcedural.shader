@@ -1,4 +1,4 @@
-// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
+// TVE 天空程序（内置资产；由天空材质引用，无效果着色器入口）
 // 天空程序：PreviewType=Skybox 标签 + _SUNDISK 关键字标记程序化大气散射
 // （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现）。
 Shader "internal/shaders/SkyProcedural"

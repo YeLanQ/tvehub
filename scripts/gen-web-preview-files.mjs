@@ -31,15 +31,15 @@ export const RUNTIME_FILES_PATH = "src/generated/web-preview-files.ts";
 const PHYSICS_PREFIX = "engine/runtime/physics-engines/";
 
 /**
- * WebGPU 运行时文件（体积大：three 的 WebGPU 构建 ~670KB + 粒子/自定义着色器的
- * 节点材质实现）：仅在项目渲染后端为 webgpu / auto 时随产物（与物理引擎同一
- * "按需包含"策略），其余情况播放器走 WebGL 构建，不会请求这些文件。
+ * WebGPU 运行时文件（体积大：three 的 WebGPU 构建 ~670KB + 粒子/材质 Hook 的节点
+ * 实现与 GLSL→TSL 转译器）：仅在项目渲染后端为 webgpu / auto 时随产物（与物理引擎
+ * 同一"按需包含"策略），其余情况播放器走 WebGL 构建，不会请求这些文件。
  */
 const WEBGPU_FILES = [
   "engine/core/three.webgpu.min.js",
   "engine/core/particleNodeMaterial.mjs",
   "engine/core/glslToTsl.mjs",
-  "engine/core/customNodeMaterial.mjs",
+  "engine/core/nodeMaterialHooks.mjs",
 ];
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */

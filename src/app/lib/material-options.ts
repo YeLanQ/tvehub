@@ -3,7 +3,7 @@
 // - 内置材质：internal/materials/…（真实目录经 scan_internal_assets 并入 assets 后派生）；
 // - 项目材质：assets/… 下的全部 .mat；着色器（.shader）同构（internal/shaders/… + assets/…）。
 import { computed, type ComputedRef } from "vue";
-import { materialFileStem, shaderFileStem } from "../../framework/material";
+import { materialFileStem, shaderFileStem, skyKindOfShaderRef } from "../../framework/material";
 import type { AssetEntry } from "../../lib/api";
 import { isInternalAsset } from "../../lib/internal-assets";
 
@@ -55,9 +55,27 @@ export function useMaterialAssetOptions(
   return useKindAssetOptions(getAssets, "mat", "internal/materials/", materialFileStem);
 }
 
-/** 着色器资产下拉分组选项（内置 internal/shaders/… + 项目 assets/… 的全部 .shader） */
+/** 着色器资产下拉分组选项（内置 internal/shaders/… + 项目 assets/… 的全部 .shader；
+ *  天空程序（SkyProcedural / SkyBox）由天空材质引用，不属于网格材质的渲染分支，排除） */
 export function useShaderAssetOptions(
   getAssets: () => readonly AssetEntry[],
 ): ComputedRef<MaterialOptionGroups> {
-  return useKindAssetOptions(getAssets, "shader", "internal/shaders/", shaderFileStem);
+  return computed(() => {
+    const seen = new Set<string>();
+    const internal: MaterialOption[] = [];
+    const project: MaterialOption[] = [];
+    for (const a of getAssets()) {
+      if (a.kind !== "shader" || skyKindOfShaderRef(a.path)) continue;
+      if (isInternalAsset(a.path)) {
+        if (!a.path.startsWith("internal/shaders/") || seen.has(a.path)) continue;
+        seen.add(a.path);
+        internal.push({ rel: a.path, name: shaderFileStem(a.path), internal: true });
+      } else {
+        if (!a.path.startsWith("assets/") || seen.has(a.path)) continue;
+        seen.add(a.path);
+        project.push({ rel: a.path, name: shaderFileStem(a.path), internal: false });
+      }
+    }
+    return { internal, project };
+  });
 }

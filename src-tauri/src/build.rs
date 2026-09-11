@@ -243,7 +243,7 @@ fn rewrite_texcube_text(text: &str, renames: &HashMap<String, String>) -> String
 
 /// 重写 .mat JSON 里贴图字段引用；parse 成功则同时紧凑化（发布模式 JSON 压缩）。
 /// cubeMap 为天空盒材质的 TextureCube 引用，shader 为材质挂的着色器资产引用，
-/// props 内自定义着色器的贴图属性值（字符串）一并重写，三者随重命名表同步。
+/// props 内着色器 Properties 的贴图参数值（字符串）一并重写，三者随重命名表同步。
 fn rewrite_mat_text(text: &str, renames: &HashMap<String, String>) -> String {
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
         return text.to_string();
@@ -257,7 +257,7 @@ fn rewrite_mat_text(text: &str, renames: &HashMap<String, String>) -> String {
                     *val = serde_json::Value::String(new.clone());
                 }
             }
-            // 自定义着色器参数：字符串值即贴图引用（颜色为数字、向量为数组，不受影响）
+            // 着色器参数：字符串值即贴图引用（颜色为数字、向量为数组，不受影响）
             if k == "props" {
                 if let serde_json::Value::Object(props) = val {
                     for (_, pv) in props.iter_mut() {

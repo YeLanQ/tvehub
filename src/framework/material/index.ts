@@ -43,11 +43,11 @@ export type {
   OutlineConfig,
 } from "./factory";
 export {
-  CUSTOM_SHADER_KIND,
   DEFAULT_SHADER_REL,
   DEFAULT_SHADER_RELS,
   INTERNAL_SHADER_ROOT,
   SHADER_EXT,
+  SHADER_HOOKS_BY_KIND,
   SHADER_KINDS,
   SHADER_KIND_STEMS,
   normalizeShaderKind,
@@ -56,25 +56,34 @@ export {
   skyKindOfShaderRef,
 } from "./shader";
 export type {
-  CustomShaderProgram,
-  CustomShaderState,
   ShaderDoc,
+  ShaderHook,
   ShaderKind,
   ShaderPropertyDef,
   ShaderPropertyKind,
   SkyMaterialKind,
 } from "./shader";
 export {
-  CUSTOM_PARAM_GROUP_TITLE,
-  TIME_UNIFORM,
-  applyCustomProgram,
-  applyCustomTextures,
-  buildCustomUniforms,
-  customMaterialCount,
-  customParamGroups,
-  customPropColorString,
-  customPropDefaults,
-  customPropValue,
-  registerCustomMaterial,
-  tickShaderTime,
-} from "./customShader";
+  SHADER_PARAM_GROUP_TITLE,
+  applyShaderHooks,
+  hasShaderHooks,
+  hookDataOf,
+  hookMaterialCount,
+  shaderParamGroups,
+  shaderPropDefaults,
+  tickAllHookTime,
+  tickHookTime,
+} from "./shaderHooks";
+export type {
+  ShaderHookData,
+  ShaderProps,
+  ShaderTextureLoader,
+} from "./shaderHooks";
+export {
+  getNodeMaterialBackend,
+  loadNodeMaterialBackend,
+  nodeHookMaterialCount,
+  setNodeMaterialBackend,
+  tickAllNodeHookTime,
+} from "./nodeMaterialBackend";
+export type { NodeMaterialBackend } from "./nodeMaterialBackend";

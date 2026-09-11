@@ -4,12 +4,15 @@
 //   UI 参数分组、默认参数都收敛在类型定义内；
 // - 需要新材质类型时：写一个 MaterialTypeDef 并在 createDefaultMaterialTypeRegistry
 //   里 register 一行即可（同步更新网页预览 engine/runtime/material.mjs / engine/runtime/mesh.mjs 的同名分支）；
-// - 材质与着色器分离：.mat 经 shader 字段引用 .shader 资产，后端解析出种类 key
-//   （physical/unlit/toon，缺省 physical）→ 注册表查找类型定义；旧 .mat 的
+// - 材质与着色器分离：.mat 经 shader 字段引用 .shader 资产；着色器的 Base 声明
+//   渲染分支（physical/unlit/toon，缺省 physical）→ 注册表查找类型定义；旧 .mat 的
 //   materialType 字段作为回退仍可读。
+// - 自定义着色效果不新增类型：着色器的 Hook 片段注入到上面三个分支（withShaderHooks），
+//   见 shaderHooks.ts。
 // ---------------------------------------------------------------------------
 
 import * as THREE from "three";
+import { logger } from "../../platform_abstraction/logger";
 import {
   DEFAULT_MATERIAL_PARAMS,
   type MaterialParamKey,
@@ -22,10 +25,14 @@ import {
   type MaterialParamGroup,
 } from "./defs";
 import {
-  CUSTOM_SHADER_KIND,
-} from "./customShader";
-import { getCustomBackend } from "./customBackend";
-import type { CustomShaderProgram, ShaderPropertyDef } from "./shader";
+  getNodeMaterialBackend,
+} from "./nodeMaterialBackend";
+import {
+  applyShaderHooks,
+  type ShaderHookData,
+  type ShaderProps,
+  type ShaderTextureLoader,
+} from "./shaderHooks";
 
 /** 默认材质类型 key（.mat 缺失/未知 materialType 时的回退） */
 export const DEFAULT_MATERIAL_TYPE = "physical";
@@ -35,20 +42,17 @@ export interface MaterialTextureLoader {
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
 }
 
-/** 材质应用上下文（非内置分支需要额外数据时使用） */
+/** 材质应用上下文（内置分支注入着色器钩子时需要额外数据） */
 export interface MaterialApplyContext {
-  /**
-   * 自定义着色器程序（由应用层按 .mat 的 shader 引用提供；后端已解析组装）。
-   * null = 着色器缺失/组装失败 → 渲染占位材质（洋红），面板显示错误原因。
-   */
-  program?: CustomShaderProgram | null;
-  /** 自定义着色器属性表（与 program 同源；面板参数分组/默认值用） */
-  properties?: ShaderPropertyDef[];
+  /** 钩子数据（材质引用的 .shader 解析结果；PBR/Toon/Unlit 三个分支共用） */
+  hooks?: ShaderHookData | null;
+  /** 着色器参数值（.mat 的 props 字段） */
+  props?: ShaderProps;
 }
 
 /** 单个材质类型的完整定义（工厂产物 = three 材质实例 + 参数应用规则） */
 export interface MaterialTypeDef {
-  /** 类型 key（= 着色器种类；.shader 的 kind 字段取值） */
+  /** 类型 key（= 渲染分支；.shader 的 Base 解析结果） */
   key: string;
   /** UI 显示名（属性面板类型标签） */
   label: string;
@@ -56,11 +60,11 @@ export interface MaterialTypeDef {
   create(): THREE.Material;
   /** 缓存复用判断：现有 three 材质是否已是该类型（instanceof） */
   matches(mat: THREE.Material): boolean;
-  /** 该类型在属性面板暴露的参数分组（数据驱动 UI；自定义着色器由属性表动态构造） */
+  /** 该类型在属性面板暴露的参数分组（数据驱动 UI） */
   paramGroups: MaterialParamGroup[];
   /** 该类型的默认参数（新建材质/回退用；返回超集 MaterialParams 的一份拷贝） */
   defaultParams(): MaterialParams;
-  /** 把参数应用到 three 材质实例（含贴图通道异步回填与自定义着色器程序装配） */
+  /** 把参数应用到 three 材质实例（含贴图通道异步回填与着色器钩子注入） */
   apply(
     mat: THREE.Material,
     params: MaterialParams,
@@ -193,12 +197,60 @@ function applyPhysical(
 const PHYSICAL_DEF: MaterialTypeDef = {
   key: "physical",
   label: "PBR",
-  create: () => new THREE.MeshPhysicalMaterial(),
-  matches: (mat) => mat instanceof THREE.MeshPhysicalMaterial,
+  create: () => createBranchMaterial("physical", () => new THREE.MeshPhysicalMaterial()),
+  matches: (mat) => matchesBranchMaterial("physical", mat, (m) => m instanceof THREE.MeshPhysicalMaterial),
   paramGroups: MATERIAL_PARAM_GROUPS,
   defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
-  apply: applyPhysical,
+  apply: withShaderHooks("physical", applyPhysical),
 };
+
+/**
+ * 包装内置分支的 apply：先应用标准参数，再把着色器 Hook 接到当前后端
+ * （WebGL：onBeforeCompile 注入 GLSL；WebGPU：翻译为 TSL 接节点槽位）。
+ */
+function withShaderHooks(
+  kind: string,
+  baseApply: (
+    mat: THREE.Material,
+    params: MaterialParams,
+    loader?: MaterialTextureLoader,
+  ) => void,
+): MaterialTypeDef["apply"] {
+  return (mat, params, loader, ctx) => {
+    baseApply(mat, params, loader);
+    if (!ctx?.hooks || ctx.hooks.hooks.length === 0) return;
+    const nodeBackend = getNodeMaterialBackend();
+    if (nodeBackend) {
+      const errors = nodeBackend.applyHooks(
+        kind,
+        mat,
+        ctx.hooks,
+        ctx.props ?? {},
+        loader as ShaderTextureLoader,
+      );
+      // 未生效的 Hook 显式告警（Fragment 端口 / 受控子集外语法），不静默失败
+      for (const message of errors) logger.warn(`[shader] ${message}`);
+      return;
+    }
+    applyShaderHooks(mat, ctx.hooks, ctx.props ?? {}, loader as ShaderTextureLoader);
+  };
+}
+
+/** 创建分支材质：节点后端激活时用节点材质（WebGPU），否则用经典 three 材质 */
+function createBranchMaterial(kind: string, classic: () => THREE.Material): THREE.Material {
+  const nodeBackend = getNodeMaterialBackend();
+  return nodeBackend ? nodeBackend.create(kind) : classic();
+}
+
+/** 判定现有材质是否属于该分支（两后端的材质类不同，按当前后端分流判定） */
+function matchesBranchMaterial(
+  kind: string,
+  mat: THREE.Material,
+  classic: (mat: THREE.Material) => boolean,
+): boolean {
+  const nodeBackend = getNodeMaterialBackend();
+  return nodeBackend ? nodeBackend.matches(kind, mat) : classic(mat);
+}
 
 // ---------------------------------------------------------------------------
 // Unlit（unlit）：three MeshBasicMaterial，不受光照影响（纯色/贴图直出），
@@ -254,11 +306,12 @@ function applyUnlit(
 const UNLIT_DEF: MaterialTypeDef = {
   key: "unlit",
   label: "Unlit",
-  create: () => new THREE.MeshBasicMaterial(),
-  matches: (mat) => mat instanceof THREE.MeshBasicMaterial,
+  create: () => createBranchMaterial("unlit", () => new THREE.MeshBasicMaterial()),
+  matches: (mat) =>
+    matchesBranchMaterial("unlit", mat, (m) => m instanceof THREE.MeshBasicMaterial),
   paramGroups: UNLIT_PARAM_GROUPS,
   defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
-  apply: applyUnlit,
+  apply: withShaderHooks("unlit", applyUnlit),
 };
 
 // ---------------------------------------------------------------------------
@@ -399,19 +452,20 @@ function applyToon(
 const TOON_DEF: MaterialTypeDef = {
   key: "toon",
   label: "Toon",
-  create: () => {
-    const mat = new THREE.MeshToonMaterial();
-    // 类型切换 dispose 该材质时，顺带释放其渐变条纹理（Material.dispose 不释放贴图）
-    mat.addEventListener("dispose", () => {
-      mat.gradientMap?.dispose();
-      mat.gradientMap = null;
-    });
-    return mat;
-  },
-  matches: (mat) => mat instanceof THREE.MeshToonMaterial,
+  create: () =>
+    createBranchMaterial("toon", () => {
+      const mat = new THREE.MeshToonMaterial();
+      // 类型切换 dispose 该材质时，顺带释放其渐变条纹理（Material.dispose 不释放贴图）
+      mat.addEventListener("dispose", () => {
+        mat.gradientMap?.dispose();
+        mat.gradientMap = null;
+      });
+      return mat;
+    }),
+  matches: (mat) => matchesBranchMaterial("toon", mat, (m) => m instanceof THREE.MeshToonMaterial),
   paramGroups: TOON_PARAM_GROUPS,
   defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS }),
-  apply: applyToon,
+  apply: withShaderHooks("toon", applyToon),
   outlineFor: (params) =>
     params.outlineEnabled
       ? { color: params.outlineColor, width: params.outlineWidth }
@@ -419,32 +473,17 @@ const TOON_DEF: MaterialTypeDef = {
 };
 
 // ---------------------------------------------------------------------------
-// Custom（custom）：自定义着色器（GLSL 顶点/片元真正编译）。
-// 源码由后端解析并组装（scene/shader.rs），此处只做装配：
-// - uniforms 来自 shader Properties（颜色/数值/向量/贴图）+ 引擎注入的 _Time；
-// - props 缺失项回退着色器声明的默认值；
-// - 程序缺失/组装失败 → 占位程序（洋红棋盘），面板显示错误原因，渲染不中断；
-// - 材质登记进时间表（tickShaderTime 每帧推进 _Time；dispose 时自动出册）。
-// 面板参数分组由属性表动态构造（customParamGroups），故 paramGroups 为空表。
+// 自定义着色效果不新增材质类型：着色器的 Hook 片段注入到上面三个内置
+// 分支（PBR/Unlit/Toon），基础材质的光照/贴图/参数全部保留。注入实现见
+// shaderHooks.ts（材质经 .mat 的 shader 字段引用带 Hook 的着色器）。
 // ---------------------------------------------------------------------------
 
-const CUSTOM_DEF: MaterialTypeDef = {
-  key: CUSTOM_SHADER_KIND,
-  label: "Custom",
-  create: () => getCustomBackend().create(),
-  matches: (mat) => getCustomBackend().matches(mat),
-  paramGroups: [],
-  defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS, props: {} }),
-  apply: (mat, params, loader, ctx) => getCustomBackend().apply(mat, params, loader, ctx),
-};
-
-/** 默认材质类型注册表（physical + unlit + toon + custom；新类型在此追加一行 register） */
+/** 默认材质类型注册表（physical + unlit + toon；新类型在此追加一行 register） */
 export function createDefaultMaterialTypeRegistry(): MaterialTypeRegistry {
   const registry = new MaterialTypeRegistry();
   registry.register(PHYSICAL_DEF);
   registry.register(UNLIT_DEF);
   registry.register(TOON_DEF);
-  registry.register(CUSTOM_DEF);
   return registry;
 }
 

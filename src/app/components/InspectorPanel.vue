@@ -65,9 +65,9 @@ const {
   flushMaterialPersist,
   onSetMaterial,
   onMaterialEdit,
-  onMaterialPropEdit,
   onMaterialChangeShader,
   onMaterialCopyToProject,
+  onMaterialPropEdit,
 } = useInspectorMaterial(inspector);
 const {
   mountedComponents,
@@ -314,9 +314,9 @@ onBeforeUnmount(flushMaterialPersist);
             :rev="revision"
             @setMaterial="onSetMaterial"
             @editParam="onMaterialEdit"
-            @editProp="onMaterialPropEdit"
             @changeShader="onMaterialChangeShader"
             @copyToProject="onMaterialCopyToProject"
+            @editProp="onMaterialPropEdit"
           />
         </ComponentCard>
       </template>

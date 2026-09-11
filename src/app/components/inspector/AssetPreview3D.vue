@@ -22,7 +22,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
-import { materialTypeRegistry, type MaterialParams } from "../../../framework/material";
+import { hookDataOf, materialTypeRegistry, type MaterialParams } from "../../../framework/material";
 import {
   fetchTexCubeDoc,
   loadTexCubeTexture,
@@ -38,7 +38,7 @@ const props = defineProps<{
   /** material：实时参数（编辑时随 reactive 更新） */
   params?: MaterialParams | null;
   matType?: string;
-  /** material：挂载的着色器资产引用（自定义着色器需据此取已组装程序） */
+  /** material：挂载的着色器资产引用（据此取 Hook 片段与 Properties 参数） */
   shaderRel?: string;
   /** sky：Nishita 大气散射参数（程序化材质） */
   nishita?: NishitaSkyParams | null;
@@ -236,7 +236,7 @@ interface FlatSwap {
 let flatSwaps: FlatSwap[] = [];
 
 /** 受光照影响的材质 → 纯基础色材质（保留基础色/贴图/透明/双面/线框等外观参数）；
- *  自定义着色器等本就不受场景光照影响的材质原样保留 */
+ *  无 color 通道的材质（如自定义 ShaderMaterial）原样保留 */
 function toFlatMaterial(src: THREE.Material): THREE.Material {
   const m = src as THREE.MeshStandardMaterial;
   if (!("color" in m) || !m.color) return src;
@@ -261,7 +261,7 @@ function applyFlatMaterials(): void {
     if (!mesh.isMesh || !mesh.material) return;
     const originals = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const flats = originals.map(toFlatMaterial);
-    if (flats.every((f, i) => f === originals[i])) return; // 无可替换项（自定义着色器等）
+    if (flats.every((f, i) => f === originals[i])) return; // 无可替换项
     flatSwaps.push({
       mesh,
       original: mesh.material,
@@ -337,11 +337,11 @@ function clearSubject(): void {
   if (keyLight) keyLight.castShadow = false;
 }
 
-// —— material：材质球（参数/贴图实时应用，随注册表工厂装配） ——
+// —— material：材质球（分支参数 + 着色器 Hook 实时应用，随注册表工厂装配） ——
 function buildMaterialPreview(): void {
   if (props.kind !== "material" || !props.params || !scene) return;
-  // 自定义着色器（kind=custom）：程序必须随上下文一起交给类型定义，否则会渲染占位
-  // 材质；程序尚未缓存时先按当前状态构建，并在程序就绪后自动重建
+  // 着色器文档（Base 决定分支、Hook 是效果片段）：钩子数据必须随上下文一起交给
+  // 类型定义，否则预览看不到叠加效果；尚未解析时先按当前状态构建，就绪后重建
   const shaderRel = props.shaderRel ?? "";
   if (shaderRel && !editorStore.engine.shaders.has(shaderRel)) {
     void editorStore.engine.shaders.preload([shaderRel]).then(() => {
@@ -356,8 +356,8 @@ function buildMaterialPreview(): void {
     props.params,
     { loadTexture: (rel, srgb) => editorStore.engine.loadTexture(rel, srgb) },
     {
-      program: shaderRel ? editorStore.engine.shaders.programFor(shaderRel) : null,
-      properties: shaderRel ? editorStore.engine.shaders.propertiesFor(shaderRel) : [],
+      hooks: shaderRel ? hookDataOf(editorStore.engine.shaders.docFor(shaderRel)) : null,
+      props: props.params.props,
     },
   );
   liveMaterial = mat;

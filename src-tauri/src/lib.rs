@@ -245,7 +245,7 @@ async fn ensure_project_meta(root: String) -> Result<(), String> {
 
 /// 复制资产后把 .shader 的 Shader 指令跟随新路径（失败静默，不影响主操作）
 fn follow_shader_directive(root: &str, rel: &str) {
-    let _ = scene::migrate::rewrite_shader_directive(std::path::Path::new(root), rel);
+    let _ = scene::shader::rewrite_shader_directive(std::path::Path::new(root), rel);
 }
 
 /// 复制资产，返回新资产相对路径

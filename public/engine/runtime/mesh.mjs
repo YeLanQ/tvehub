@@ -1,68 +1,43 @@
 // 网格（meshNode）构建：基元几何 + 按材质类型分派 three 材质
-// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / custom → ShaderMaterial
-//  （自定义着色器，程序由 shaderlab.mjs 组装）/ 其余 → MeshPhysicalMaterial），
+// （toon → MeshToonMaterial / unlit → MeshBasicMaterial / 其余 → MeshPhysicalMaterial），
 // 以及模型网格（source=model）的实例化挂载。
+// 自定义着色效果由材质所挂 .shader 的 Hook 片段以注入方式叠加在上述内置材质上
+// （shaderHooks.mjs），不替换渲染分支。
 // 与编辑器 framework/mesh、framework/material/factory 的规则保持同步。
 import * as THREE from "../core/three.module.min.js";
 import { num, vec } from "../core/utils.mjs";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material.mjs";
 import { instantiateModel } from "./model.mjs";
+import { applyShaderHooks as applyHooks, tickAllHookTime } from "./shaderHooks.mjs";
 
-/** 自定义着色器占位程序（程序缺失/组装失败时渲染洋红棋盘，避免无源码报错） */
-const PLACEHOLDER_VERTEX = `varying vec2 vPlaceholderUv;
-void main() {
-  vPlaceholderUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-const PLACEHOLDER_FRAGMENT = `varying vec2 vPlaceholderUv;
-void main() {
-  float s = floor(vPlaceholderUv.x * 8.0) + floor(vPlaceholderUv.y * 8.0);
-  gl_FragColor = vec4(mix(vec3(1.0, 0.0, 1.0), vec3(0.12, 0.12, 0.12), mod(s, 2.0)), 1.0);
-}
-`;
-
-/** 在册自定义材质（每帧推进 _Time；材质释放时自动出册） */
-const timeMaterials = new Set();
-
-/** 自定义材质 TSL 后端工厂（WebGPU 时由 player 注入；null = 走 GLSL ShaderMaterial） */
-let customMaterialFactory = null;
-
-/** 注入自定义材质 TSL 后端（WebGPU）；null 恢复 GLSL 默认 */
-export function setCustomMaterialFactory(factory) {
-  customMaterialFactory = factory ?? null;
-}
-
-/** 渲染循环推进：设置全部在册自定义材质的 _Time（秒；GLSL 与 TSL 两条路径各走各的） */
+/** 渲染循环的着色器时间推进（钩子的 _Time uniform；秒） */
 export function tickShaderTime(seconds) {
-  if (customMaterialFactory) customMaterialFactory.tick(seconds);
-  if (timeMaterials.size === 0) return;
-  for (const mat of timeMaterials) {
-    const uniform = mat.uniforms?._Time;
-    if (uniform) uniform.value = seconds;
-  }
+  tickAllHookTime(seconds);
+  if (nodeBackend) nodeBackend.tickTime(seconds);
 }
 
-/** 属性值 → three uniform 初值（与编辑器 customShader.ts 同规则：
- * 颜色 sRGB hex → 线性 vec4；向量 → vec4；数值 → float；贴图 → 纹理，异步回填） */
-function customUniformValue(prop, props) {
-  const raw = props[prop.key];
-  const value = raw === undefined ? prop.default : raw;
-  switch (prop.kind) {
-    case "color": {
-      const hex = typeof value === "number" ? value : parseInt(String(value).replace("#", ""), 16);
-      const c = new THREE.Color().setHex(Number.isFinite(hex) ? hex & 0xffffff : 0xffffff);
-      return { value: [c.r, c.g, c.b, 1] };
-    }
-    case "vector":
-      return { value: (Array.isArray(value) ? value : [0, 0, 0, 0]).slice(0, 4) };
-    case "texture":
-      return { value: null };
-    case "int":
-      return { value: Math.round(typeof value === "number" ? value : 0) };
-    default:
-      return { value: typeof value === "number" ? value : 0 };
+/** 节点材质后端（WebGPU 时由 player 注入；null = 经典 three 材质 + GLSL 注入） */
+let nodeBackend = null;
+
+/** 注入节点材质后端（WebGPU）；null 恢复经典材质路径 */
+export function setNodeMaterialBackend(backend) {
+  nodeBackend = backend ?? null;
+}
+
+/** 按分支创建材质：节点后端激活时用节点材质（WebGPU），否则用经典 three 材质 */
+function createBranchMaterial(kind, Ctor, options) {
+  return nodeBackend ? new (nodeBackend.classFor(kind))(options) : new Ctor(options);
+}
+
+/** 应用着色器 Hook：节点后端走 TSL 端口（未生效项显式告警），否则注入 GLSL */
+function applyBranchHooks(kind, mat, m) {
+  if (!m.shaderData) return;
+  if (nodeBackend) {
+    const errors = nodeBackend.applyHooks(kind, mat, m.shaderData, m.props || {});
+    for (const message of errors) console.warn("[tve] " + message);
+    return;
   }
+  applyHooks(mat, m.shaderData, m.props || {});
 }
 
 /** 材质解析失败的告警去重（同一引用只报一次，避免逐网格刷屏） */
@@ -76,39 +51,6 @@ function warnMissingMaterial(rel, nodeName) {
   if (warnedMissingMaterials.has(rel)) return;
   warnedMissingMaterials.add(rel);
   console.warn("[tve] 材质未解析，已回退默认材质: " + rel + "（首个引用它的网格: " + (nodeName || "?") + "）");
-}
-
-/** 自定义着色器 → ShaderMaterial（uniforms = 属性 + _Time；渲染状态取自 Tags 声明） */
-function createCustomMaterial(m) {
-  // WebGPU 后端：委托 TSL NodeMaterial 工厂（GLSL ShaderMaterial 在该后端不参与渲染）
-  if (customMaterialFactory) {
-    const nodeMat = customMaterialFactory.create(m);
-    if (nodeMat) return nodeMat;
-  }
-  const program = m.program ?? null;
-  const properties = m.properties ?? [];
-  const uniforms = {};
-  for (const prop of properties) uniforms[prop.key] = customUniformValue(prop, m.props || {});
-  uniforms._Time = { value: 0 };
-  const mat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: program ? program.vertex : PLACEHOLDER_VERTEX,
-    fragmentShader: program ? program.fragment : PLACEHOLDER_FRAGMENT,
-    transparent: program ? program.transparent === true : false,
-    depthWrite: program ? program.depthWrite !== false : true,
-    side: !program
-      ? THREE.FrontSide
-      : program.side === "double"
-        ? THREE.DoubleSide
-        : program.side === "back"
-          ? THREE.BackSide
-          : THREE.FrontSide,
-  });
-  // 贴图属性回填用（textures.mjs 按属性表加载并写 uniform）
-  mat.userData.customProperties = properties;
-  mat.addEventListener("dispose", () => timeMaterials.delete(mat));
-  timeMaterials.add(mat);
-  return mat;
 }
 
 export function createMesh(json, ctx) {
@@ -167,14 +109,10 @@ function buildMeshNode(json, ctx) {
     alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
     wireframe: m.wireframe === true,
   };
-  if (m.type === "custom") {
-    // Custom → GLSL ShaderMaterial（程序 + 属性 uniform；贴图由 textures.mjs 回填）
-    return new THREE.Mesh(geom, createCustomMaterial(m));
-  }
   if (m.type === "toon") {
     // Toon → MeshToonMaterial（cel shading；color/map/emissive/法线 + 灰阶渐变条分档）
     const on = m.emissionEnabled === true;
-    const mat = new THREE.MeshToonMaterial({
+    const mat = createBranchMaterial("toon", THREE.MeshToonMaterial, {
       color: m.color & 0xffffff,
       emissive: on ? m.emissive & 0xffffff : 0x000000,
       emissiveIntensity: on ? m.emissiveIntensity : 1,
@@ -184,6 +122,8 @@ function buildMeshNode(json, ctx) {
       alphaTest: f.alphaTest,
       wireframe: f.wireframe,
     });
+    // 着色器 Hook 注入/接线（如有）
+    applyBranchHooks("toon", mat, m);
     const mesh = new THREE.Mesh(geom, mat);
     if (m.outlineEnabled === true) {
       // 轮廓体：沿法线外扩（宽度×包围半径）、只渲染背面的纯色子网格
@@ -203,16 +143,18 @@ function buildMeshNode(json, ctx) {
   }
   if (m.type === "unlit") {
     // Unlit → MeshBasicMaterial（只映射 color/map/透明/线框，其余 PBR 项忽略）
-    const mat = new THREE.MeshBasicMaterial({
+    const mat = createBranchMaterial("unlit", THREE.MeshBasicMaterial, {
       color: m.color & 0xffffff,
       opacity: m.opacity,
       transparent: f.transparent,
       alphaTest: f.alphaTest,
       wireframe: f.wireframe,
     });
+    // 着色器 Hook 注入/接线（如有）
+    applyBranchHooks("unlit", mat, m);
     return new THREE.Mesh(geom, mat);
   }
-  const mat = new THREE.MeshPhysicalMaterial({
+  const mat = createBranchMaterial("physical", THREE.MeshPhysicalMaterial, {
     color: m.color & 0xffffff,
     metalness: m.metalness,
     roughness: m.roughness,
@@ -239,5 +181,7 @@ function buildMeshNode(json, ctx) {
     alphaTest: f.alphaTest,
     wireframe: f.wireframe,
   });
+  // 着色器 Hook 注入/接线（如有）
+  applyBranchHooks("physical", mat, m);
   return new THREE.Mesh(geom, mat);
 }

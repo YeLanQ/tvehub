@@ -97,7 +97,7 @@ export class RendererManager {
     if (this.activeBackend !== "webgl") {
       console.info("[renderer] 渲染后端: WebGPU（WebGPU 不可用时 three 自动回退 WebGL2）");
     }
-    // 着色器编译失败（自定义着色器源码有误等）：转到引擎事件 → 编辑器控制台。
+    // 着色器编译失败（扩展着色器 GLSL 有误等）：转到引擎事件 → 编辑器控制台。
     // three 默认只在浏览器控制台打印，编辑器面板看不到，这里显式接出摘要信息。
     const gl = this.renderer as unknown as THREE.WebGLRenderer;
     if (this.activeBackend === "webgl" && gl.debug) {

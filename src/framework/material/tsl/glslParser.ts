@@ -60,6 +60,12 @@ class Parser {
     return this.peek()?.type === "op" && this.peek()!.value === value;
   }
 
+  /** 当前 token 若为运算符则返回其原文（复合赋值判定用） */
+  private peekOp(): string | null {
+    const t = this.peek();
+    return t && t.type === "op" && typeof t.value === "string" ? t.value : null;
+  }
+
   private isIdent(value?: string): boolean {
     const t = this.peek();
     if (!t || t.type !== "ident") return false;
@@ -298,6 +304,19 @@ class Parser {
 
   private parseAssignStatement(): Stmt {
     const target = this.parseExpression();
+    // 复合赋值（`emissive += x` / `diffuseColor.rgb *= k`）展开为 `target = target op x`
+    const compound: Record<string, string> = { "+=": "+", "-=": "-", "*=": "*", "/=": "/" };
+    const op = this.peekOp();
+    if (op && compound[op]) {
+      this.next();
+      const rhs = this.parseExpression();
+      this.consumeSemicolon();
+      return {
+        kind: "assign",
+        target,
+        value: { kind: "binary", op: compound[op], left: target, right: rhs },
+      };
+    }
     if (!this.isOp("=")) {
       // 纯表达式语句（如包装器里的 `vert();`）——受控子集忽略其副作用
       this.consumeSemicolon();

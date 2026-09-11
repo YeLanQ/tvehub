@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
 // 普通材质字段块（展示型，从 AssetInspector 抽出）：着色器下拉（内置/项目分组 +
-// 未挂载/缺失占位项）+ 渲染分支标签 + 自定义着色器的组装错误与属性说明 +
-// 参数编辑器（MaterialParamsEditor，普通材质走内建参数、自定义着色器走 props 镜像）。
+// 未挂载/缺失占位项）+ 渲染分支标签 + 着色器解析错误 + 参数编辑器
+// （MaterialParamsEditor：分支参数与着色器 Properties 参数同卡呈现）。
 // 只展示与上抛：着色器改写与参数编辑由父组件执行（引擎缓存 + 防抖写盘）。
 // ---------------------------------------------------------------------------
 import { shaderKindLabel, type MaterialParamGroup } from "../../../../framework/material";
@@ -11,9 +11,9 @@ import MaterialParamsEditor from "../MaterialParamsEditor.vue";
 type AssetOption = { rel: string; name: string };
 
 defineProps<{
-  /** 参数展示镜像（自定义着色器 = props 镜像，其余 = 内建参数对象；由父组件持有） */
+  /** 分支参数展示镜像 + 着色器参数镜像（父组件合并持有） */
   local: Record<string, unknown>;
-  /** 当前渲染分支的参数分组（自定义着色器由属性表动态构造） */
+  /** 参数分组：分支参数分组 + 着色器 Properties 分组 */
   groups: MaterialParamGroup[];
   /** 只读（内置材质） */
   disabled: boolean;
@@ -23,20 +23,16 @@ defineProps<{
   shaderOptions: { internal: AssetOption[]; project: AssetOption[] };
   /** 引用的着色器不在候选内（文件被删/未挂载） */
   shaderMissing: boolean;
-  /** 渲染分支 key（后端按 .mat 的 shader 引用解析） */
+  /** 渲染分支 key（由所挂着色器的 Base 解析） */
   matType: string;
-  /** 是否自定义着色器（props 存值、参数来自属性表） */
-  custom: boolean;
-  /** 当前着色器的组装错误（null = 无错误；仅自定义着色器有值） */
+  /** 着色器解析错误（null = 无错误；非 null 时仍按分支渲染，只是不叠效果） */
   shaderError: string | null;
-  /** 当前着色器暴露的属性项数（自定义着色器的说明文案用） */
-  shaderPropCount: number;
 }>();
 
 const emit = defineEmits<{
   /** 改挂着色器（空串回退默认 PBR，由父组件解析渲染分支并写盘） */
   shaderChange: [v: string];
-  /** 参数编辑（键 + 值，父组件写镜像/缓存并防抖落盘） */
+  /** 参数编辑（键 + 值，父组件按“分支字段 / 着色器属性”分流写盘） */
   editParam: [key: string, value: number | boolean | string | number[]];
 }>();
 
@@ -72,11 +68,8 @@ function onShaderChange(e: Event): void {
     <label>渲染分支</label>
     <span class="type-tag">{{ shaderKindLabel(matType) }}</span>
   </div>
-  <div v-if="custom && shaderError" class="hint hint-error">
-    着色器组装失败，视口显示占位材质：{{ shaderError }}
-  </div>
-  <div v-else-if="custom" class="hint">
-    参数来自挂载着色器的 Properties（{{ shaderPropCount }} 项）；值写入本 .mat 的 props 字段。
+  <div v-if="shaderError" class="hint hint-error">
+    着色器解析失败（仍按当前分支渲染，只是不叠加效果）：{{ shaderError }}
   </div>
   <MaterialParamsEditor
     :local="local"

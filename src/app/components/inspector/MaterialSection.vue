@@ -1,20 +1,21 @@
 <script setup lang="ts">
 /**
- * 材质（Material）卡片 —— 参数按挂载着色器的渲染分支（工厂注册表 MaterialTypeDef）
+ * 材质（Material）卡片 —— 参数按所挂着色器的渲染分支（工厂注册表 MaterialTypeDef）
  * 数据驱动渲染：PBR（MeshPhysicalMaterial，「原理化 BSDF」分组全量暴露）、
  * Unlit（MeshBasicMaterial，基础色/贴图/输出子集）、Toon（MeshToonMaterial，卡通明暗）。
  * - 顶部：材质资产选择（内置 internal/… 只读 / 项目 assets/materials/… 可写）+ 着色器切换；
- * - 中部：当前渲染分支的全部参数（共享 MaterialParamsEditor 渲染，资产检查器复用同一实现）；
+ *   着色器决定渲染分支（其 Base 声明）与自定义效果的 Hook 片段；
+ * - 中部：当前渲染分支的全部参数 + 所挂着色器 Properties 暴露的参数（共享
+ *   MaterialParamsEditor 渲染，资产检查器复用同一实现）；
  * - 内置材质只读，先「复制到项目材质」后才能编辑参数/切换着色器。
  */
 import { computed, reactive, ref, watch } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import {
-  CUSTOM_SHADER_KIND,
   DEFAULT_MATERIAL_TYPE,
-  customParamGroups,
-  customPropDefaults,
   materialTypeRegistry,
+  shaderParamGroups,
+  shaderPropDefaults,
   type MaterialEnableKey,
   type MaterialParamGroup,
   type MaterialParamKey,
@@ -22,10 +23,7 @@ import {
 } from "../../../framework/material";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
-import {
-  useMaterialAssetOptions,
-  useShaderAssetOptions,
-} from "../../lib/material-options";
+import { useMaterialAssetOptions, useShaderAssetOptions } from "../../lib/material-options";
 import { getAssetsStore } from "../../stores/assets";
 import { getEditorStore } from "../../stores/editor";
 import { getProjectStore } from "../../stores/project";
@@ -36,7 +34,7 @@ const props = defineProps<{ node: MeshNode; rev?: number }>();
 const emit = defineEmits<{
   setMaterial: [rel: string];
   editParam: [field: MaterialParamKey | MaterialEnableKey, value: number | boolean | string];
-  /** 自定义着色器参数编辑（props 字段；key = 着色器属性名） */
+  /** 着色器 Properties 参数编辑（props 字段；key = 属性名） */
   editProp: [key: string, value: number | string | number[]];
   changeShader: [rel: string];
   copyToProject: [];
@@ -54,22 +52,23 @@ const shaderOptions = useShaderAssetOptions(() => assetsStore.assets);
 const local = reactive<Record<string, unknown>>(
   { ...editorStore.engine.materials.paramsFor(props.node.material) },
 );
-/** 当前渲染分支（= 挂载着色器的种类；随资产切换/着色器变更同步） */
+/** 着色器参数镜像（props；键 = 属性名） */
+const shaderLocal = reactive<Record<string, unknown>>({});
+/** 当前渲染分支（= 所挂着色器的 Base；随资产切换/着色器变更同步） */
 const matType = ref(DEFAULT_MATERIAL_TYPE);
 /** 当前挂载的着色器资产引用（下拉展示值） */
 const matShader = ref("");
 
-/** 是否自定义着色器（参数来自着色器 Properties，值存 .mat 的 props） */
-const isCustom = computed(() => matType.value === CUSTOM_SHADER_KIND);
-/** 自定义着色器属性表（引擎着色器缓存；未解析为空表） */
-const shaderProps = computed<ShaderPropertyDef[]>(() => {
-  const rel = matShader.value;
-  return rel ? editorStore.engine.shaders.propertiesFor(rel) : [];
-});
-/** 自定义着色器组装错误（null = 无错误；面板显示提示并禁用参数编辑） */
-const shaderError = computed(() =>
-  isCustom.value && matShader.value ? editorStore.engine.shaders.errorFor(matShader.value) : null,
+/** 所挂着色器的文档（引擎着色器缓存；未解析为 null） */
+const shaderDoc = computed(() =>
+  matShader.value ? editorStore.engine.shaders.docFor(matShader.value) : null,
 );
+/** 着色器暴露的属性表（面板参数分组用；未解析为空表） */
+const shaderProps = computed<ShaderPropertyDef[]>(() => shaderDoc.value?.properties ?? []);
+/** 着色器解析错误（null = 无错误；非 null 时仍按 Base 分支渲染，只是不叠效果） */
+const shaderError = computed(() => (matShader.value ? (shaderDoc.value?.error ?? null) : null));
+/** 着色器参数分组（由 Properties 动态构造） */
+const propGroups = computed<MaterialParamGroup[]>(() => shaderParamGroups(shaderProps.value));
 
 /** 就地替换展示镜像（切换材质/着色器时属性集合变化，避免残留旧字段） */
 function replaceLocal(next: Record<string, unknown>): void {
@@ -77,26 +76,29 @@ function replaceLocal(next: Record<string, unknown>): void {
   Object.assign(local, next);
 }
 
+/** 就地替换着色器参数镜像 */
+function replaceShaderLocal(next: Record<string, unknown>): void {
+  for (const key of Object.keys(shaderLocal)) delete shaderLocal[key];
+  Object.assign(shaderLocal, next);
+}
+
 function syncFromEngine(): void {
   const rel = props.node?.material ?? "";
   const p = editorStore.engine.materials.paramsFor(rel);
   matType.value = editorStore.engine.materials.typeFor(rel);
   matShader.value = editorStore.engine.materials.shaderFor(rel);
-  if (matType.value === CUSTOM_SHADER_KIND) {
-    // 自定义着色器：镜像 = 属性默认值 + .mat 已存 props（面板按属性表渲染）
-    replaceLocal({ ...customPropDefaults(shaderProps.value), ...p.props });
-    return;
-  }
+  // 着色器参数镜像 = 属性默认值 + .mat 已存 props
+  replaceShaderLocal({ ...shaderPropDefaults(shaderProps.value), ...p.props });
   replaceLocal({ ...p });
 }
 
-/** 确保当前着色器的程序已解析（面板取属性/引擎取程序；缺失时先取占位程序） */
-function ensureShaderProgram(): void {
+/** 确保当前着色器的文档已解析（面板取属性/引擎取钩子；缺失时先取占位） */
+function ensureShaderDoc(): void {
   const rel = matShader.value;
   if (!rel || editorStore.engine.shaders.has(rel)) return;
   void loadShaderDoc(projectStore.currentPath, rel).then((doc) => {
     if (!doc) return;
-    // 写入缓存即广播：引擎按程序刷新引用该着色器的网格（占位 → 真实外观）
+    // 写入缓存即广播：引擎按钩子刷新引用该着色器的网格（先默认外观 → 叠加效果）
     editorStore.engine.shaders.cachePut(rel, doc);
   });
 }
@@ -105,7 +107,7 @@ watch(
   () => props.node?.material,
   () => {
     syncFromEngine();
-    ensureShaderProgram();
+    ensureShaderDoc();
   },
   { immediate: true },
 );
@@ -113,7 +115,7 @@ watch(
   () => props.rev,
   () => {
     syncFromEngine();
-    ensureShaderProgram();
+    ensureShaderDoc();
   },
 );
 
@@ -127,12 +129,11 @@ const isInternal = computed(() => {
   return isInternalAsset(props.node.material);
 });
 
-/** 当前渲染分支的参数分组（自定义着色器由属性表动态构造；其余取类型定义） */
-const groups = computed<MaterialParamGroup[]>(() =>
-  isCustom.value
-    ? customParamGroups(shaderProps.value)
-    : materialTypeRegistry.getOrDefault(matType.value).paramGroups,
-);
+/** 渲染分支的参数分组（取类型定义）；着色器参数单独一组追加在后 */
+const groups = computed<MaterialParamGroup[]>(() => [
+  ...materialTypeRegistry.getOrDefault(matType.value).paramGroups,
+  ...propGroups.value,
+]);
 
 /** 挂载的着色器是否不在可选项中（空串 = 旧格式未挂载；有值但缺失 = 文件被删） */
 const matShaderMissing = computed(
@@ -147,10 +148,10 @@ function onSelect(e: Event): void {
   if (v && v !== props.node.material) emit("setMaterial", v);
 }
 
-/** 参数编辑分流：内置分支写参数字段；自定义着色器写 .mat 的 props（键 = 属性名） */
+/** 参数编辑分流：分支参数字段 → .mat 顶字段；着色器属性 → .mat 的 props */
 function onParamEdit(key: string, value: number | boolean | string | number[]): void {
-  if (isCustom.value) {
-    // 自定义着色器属性无布尔项（布尔由启用开关/分组承担）
+  if (shaderProps.value.some((p) => p.key === key)) {
+    // 着色器属性无布尔项（布尔由启用开关/分组承担）
     if (typeof value === "boolean") return;
     emit("editProp", key, value);
     return;
@@ -169,7 +170,7 @@ async function onShaderSelect(e: Event): Promise<void> {
   if (!v || v === matShader.value) return;
   matShader.value = v;
   matType.value = await loadShaderKind(projectStore.currentPath, v);
-  ensureShaderProgram();
+  ensureShaderDoc();
   emit("changeShader", v);
 }
 </script>
@@ -194,7 +195,7 @@ async function onShaderSelect(e: Event): Promise<void> {
       <select
         :value="matShader"
         :disabled="isInternal"
-        :title="isInternal ? '内置材质只读；请先复制到项目材质' : '切换材质挂载的着色器（渲染分支与参数分组随之切换）'"
+        :title="isInternal ? '内置材质只读；请先复制到项目材质' : '切换材质挂载的着色器（渲染分支与参数、效果随之切换）'"
         @change="onShaderSelect"
       >
         <option v-if="!matShader" value="" disabled>（未挂载，默认 PBR）</option>
@@ -225,15 +226,12 @@ async function onShaderSelect(e: Event): Promise<void> {
 
     <div v-if="isInternal" class="hint">内置材质只读；如需调整参数，请先「复制到项目材质」。</div>
     <div v-else class="hint">参数写入 .mat 资产文件，引用该材质的所有网格同步更新。</div>
-    <div v-if="isCustom && !shaderError" class="hint">
-      自定义着色器参数来自 .shader 的 Properties；在资产检查器中「编辑源码」可改写着色器程序。
-    </div>
-    <div v-else-if="isCustom && shaderError" class="hint hint-error">
-      着色器组装失败，视口显示占位材质：{{ shaderError }}
+    <div v-if="shaderError" class="hint hint-error">
+      着色器解析失败（仍按当前分支渲染，只是不叠加效果）：{{ shaderError }}
     </div>
 
     <MaterialParamsEditor
-      :local="local"
+      :local="shaderProps.length > 0 ? { ...local, ...shaderLocal } : local"
       :groups="groups"
       :disabled="isInternal"
       @editParam="onParamEdit"
@@ -242,36 +240,6 @@ async function onShaderSelect(e: Event): Promise<void> {
 </template>
 
 <style scoped>
-.mat-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim, #999);
-  border-top: 1px solid var(--border, #333);
-  padding: 6px 0 2px;
-  margin-top: 4px;
-}
-.mat-group-title {
-  flex: 1 1 auto;
-}
-.mat-enable {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text, #ddd);
-  cursor: pointer;
-}
-.mat-enable input {
-  margin: 0;
-}
-.mat-enable input:disabled + span {
-  color: var(--text-dim, #999);
-}
 .mat-meta {
   display: flex;
   align-items: center;

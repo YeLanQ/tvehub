@@ -68,6 +68,38 @@ function uniqueRel(assets: AssetEntry[], dir: string, base: string, ext: string)
   return `${prefix}${name}${ext}`;
 }
 
+/**
+ * 按给定源码新建着色器资产（.shader；创意工坊效果原型 → 项目资产）：
+ * 源码经后端 shader_write_source 落盘（Shader 指令名自动同步为资产路径、
+ * 解析校验、自动补 .meta），失败返回 null。
+ */
+async function createShaderFromSource(
+  root: string,
+  destDir: string,
+  stem: string,
+  source: string,
+  assets: AssetEntry[],
+): Promise<string | null> {
+  if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+    logStore.log("warn", "内置目录与 src 目录不允许新建着色器");
+    return null;
+  }
+  const clean = sanitizeAssetStem(stem);
+  if (!clean) {
+    logStore.log("warn", "无效的着色器名（不能含 / \\ : ..）");
+    return null;
+  }
+  const rel = uniqueRel(assets, destDir, clean, SHADER_EXT);
+  try {
+    await api.shaderWriteSource(root, rel, source);
+    logStore.log("success", `已新建着色器: ${rel}`);
+    return rel;
+  } catch (e) {
+    logStore.log("error", `新建着色器失败: ${e}`);
+    return null;
+  }
+}
+
 /** 内置资源按类型复制到项目的默认目录 */
 const INTERNAL_COPY_DIRS: Record<string, string> = {
   mat: "assets/materials",
@@ -336,7 +368,7 @@ export const assetService = {
   },
 
   /**
-   * 新建着色器资产（.shader）：kind 为渲染程序种类（PBR/Unlit/卡通），创建即可
+   * 新建着色器资产（.shader）：kind 为渲染分支（PBR/Unlit/卡通/天空），创建即可
    * 被材质挂着色器下拉引用；Shader 指令名 = 路径去扩展名（与资产位置一致）；
    * 序列化/落盘由后端 shader_write 完成（自动补 .meta）。
    */
@@ -377,24 +409,7 @@ export const assetService = {
     source: string,
     assets: AssetEntry[],
   ): Promise<string | null> {
-    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
-      logStore.log("warn", "内置目录与 src 目录不允许新建着色器");
-      return null;
-    }
-    const clean = sanitizeAssetStem(stem);
-    if (!clean) {
-      logStore.log("warn", "无效的着色器名（不能含 / \\ : ..）");
-      return null;
-    }
-    const rel = uniqueRel(assets, destDir, clean, SHADER_EXT);
-    try {
-      await api.shaderWriteSource(root, rel, source);
-      logStore.log("success", `已新建着色器: ${rel}`);
-      return rel;
-    } catch (e) {
-      logStore.log("error", `新建着色器失败: ${e}`);
-      return null;
-    }
+    return createShaderFromSource(root, destDir, stem, source, assets);
   },
 
   /**

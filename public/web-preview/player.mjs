@@ -25,7 +25,7 @@ import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
-import { tickShaderTime, setCustomMaterialFactory } from "../engine/runtime/mesh.mjs";
+import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createRenderer, createStage } from "../engine/runtime/stage.mjs";
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
@@ -181,15 +181,16 @@ async function main() {
     } catch (e) {
       postLog("warn", `粒子 TSL 材质加载失败（${e?.message ?? e}），粒子将不参与渲染`);
     }
-    // 自定义着色器（.shader）在 WebGPU 下经 GLSL→TSL 转译为 NodeMaterial 渲染
-    // （GLSL ShaderMaterial 在该后端不参与渲染）；模块静态依赖 three 的 WebGPU 构建
+    // 材质：改用节点材质 + 把 Hook 翻译为 TSL 接节点槽位（与编辑器同一策略，
+    // 使同一份 .shader 在 WebGL 与 WebGPU 下语义一致）；模块静态依赖 WebGPU 构建，
+    // 故仅在 WebGPU 后端下动态引入
     try {
-      const mod = await import("../engine/core/customNodeMaterial.mjs");
-      const factory = mod.createNodeCustomMaterialFactory();
-      if (factory) setCustomMaterialFactory(factory);
-      else postLog("warn", "自定义着色器 TSL 后端不可用，自定义着色器将不参与渲染");
+      const mod = await import("../engine/core/nodeMaterialHooks.mjs");
+      const backend = mod.createNodeMaterialBackend();
+      if (backend) setNodeMaterialBackend(backend);
+      else postLog("warn", "节点材质后端不可用，着色器 Hook 不参与渲染（材质仍按分支参数渲染）");
     } catch (e) {
-      postLog("warn", `自定义着色器 TSL 后端加载失败（${e?.message ?? e}），自定义着色器将不参与渲染`);
+      postLog("warn", `节点材质后端加载失败（${e?.message ?? e}），着色器 Hook 不参与渲染`);
     }
   }
 
@@ -507,7 +508,7 @@ async function main() {
   window.addEventListener("pagehide", () => scripts.dispose(), { once: true, capture: true });
 
   const clock = new THREE.Clock();
-  // 自定义着色器时间（_Time；按帧间隔累加，与 clock 的 getDelta 取值互不干扰）
+  // 着色器时间（钩子 _Time；按帧间隔累加，与 clock 的 getDelta 取值互不干扰）
   let shaderTime = 0;
 
   function frame() {

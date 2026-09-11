@@ -55,10 +55,10 @@ const protoFormText = computed(() =>
         codePlaceholder: "// @desc 描述会自动写在首行\nimport { Component, property } from \"tve\";",
       }
     : {
-        namePlaceholder: "全息效果",
-        codeHint: "着色器源码（自定义着色器：Properties + CGINCLUDE + 两个 CGPROGRAM 块）",
+        namePlaceholder: "边缘光",
+        codeHint: "着色器源码（效果着色器：Properties 属性 + Base 分支 + Hook 效果片段）",
         codePlaceholder:
-          "// @desc 描述会自动写在首行\nShader \"effect/MyEffect\"\n{\n    Properties { _Color (\"Color\", Color) = (1, 1, 1, 1) }\n}",
+          "// @desc 描述会自动写在首行\nShader \"effect/MyEffect\"\n{\n    Properties { _Color (\"Color\", Color) = (1, 1, 1, 1) }\n    Base \"PBR\"\n    Hook \"Emissive\" { emissive += _Color.rgb * 0.2; }\n}",
       },
 );
 

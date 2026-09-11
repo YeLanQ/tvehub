@@ -339,7 +339,7 @@ registerCommand({
   label: "新建资源",
   group: "资源",
   expose: true,
-  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/custom；skybox 可带 skyKind: procedural/cube）",
+  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube；skybox 可带 skyKind: procedural/cube）",
   run: async (_ctx, args: any) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();

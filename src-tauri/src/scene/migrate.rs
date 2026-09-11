@@ -65,8 +65,9 @@ pub struct MaterialParams {
     pub roughness_map: String,
     pub normal_map: String,
     pub emissive_map: String,
-    /// 自定义着色器参数（.shader kind=custom 的 Properties 值；键 = 属性名，
-    /// 值 = 数字/颜色 hex 字符串/四元数组/贴图相对路径）。空表不写字段，旧 .mat 不受影响。
+    /// 着色器参数（.shader 的 Properties 值；键 = 属性名）。
+    /// 值按属性类型存储（颜色 → RGB hex 数字 / 数值 → 数字 / 向量 → [x,y,z,w] / 贴图 → 资产路径）。
+    /// 空表不写字段（旧 .mat 逐字节不变）。
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub props: Map<String, Value>,
 }
@@ -213,558 +214,9 @@ pub fn material_params_from(o: &Map<String, Value>) -> MaterialParams {
 /// 内置默认着色器引用（.mat shader 字段缺省写入值；与 public/internal/shaders 一致）
 pub(crate) const DEFAULT_SHADER_REL: &str = "internal/shaders/PBR.shader";
 
-/// 着色器种类归一（未知/空值回退 physical；与前端 normalizeShaderKind 一致）。
-/// 天空程序：skyprocedural（大气散射）/ skycube（立方体贴图天空盒）；custom 为
-/// 自定义着色器（源码真正编译，见 scene::shader）。
-pub(crate) fn normalize_shader_kind(kind: &str) -> &'static str {
-    match kind.trim() {
-        "unlit" => "unlit",
-        "toon" => "toon",
-        "skyprocedural" => "skyprocedural",
-        "skycube" => "skycube",
-        "custom" => "custom",
-        _ => "physical",
-    }
-}
-
 /// 内置天空着色器引用（天空材质 shader 字段的正形值）
 pub const SKY_PROCEDURAL_SHADER_REL: &str = "internal/shaders/SkyProcedural.shader";
 pub const SKY_CUBE_SHADER_REL: &str = "internal/shaders/SkyBox.shader";
-
-// ---------------------------------------------------------------------------
-// .shader = ShaderLab 风格着色器源码（渲染程序资产，材质经 shader 字段引用）。
-// 内置渲染分支（本引擎提供 three 材质管线）不编译这份源码，而是按 pragma 识别分支：
-//   `#pragma surface surf Standard` → physical（PBR）
-//   `#pragma surface surf Toon`     → toon（卡通）
-//   无 surface pragma、仅顶点片元（#pragma fragment）→ unlit
-// Properties 只声明暴露项（与材质检查器的参数分组对应）；参数值存于材质资产。
-// 自定义着色器（kind=custom，含 CGINCLUDE 或两个 CGPROGRAM 块）例外：源码会被真正
-// 编译为 three ShaderMaterial，解析/程序组装见 scene::shader。
-// ---------------------------------------------------------------------------
-
-const SHADER_HEADER: &str = "\
-// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
-// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
-";
-
-const PBR_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
-// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
-Shader "{NAME}"
-{
-    Properties
-    {
-        _Color ("Base Color", Color) = (0.604, 0.643, 0.698, 1)
-        _MainTex ("Base Color Texture", 2D) = "white" {}
-        _Metallic ("Metallic", Range(0, 1)) = 0.1
-        _Roughness ("Roughness", Range(0, 1)) = 0.75
-        _EmissionColor ("Emission Color", Color) = (0, 0, 0, 1)
-        _EmissionIntensity ("Emission Strength", Range(0, 10)) = 1
-    }
-    SubShader
-    {
-        Tags { "RenderType"="Opaque" }
-        LOD 200
-
-        CGPROGRAM
-        // 原理化 BSDF（Principled BSDF），完整物理光照
-        #pragma surface surf Standard fullforwardshadows
-        #pragma target 3.0
-
-        sampler2D _MainTex;
-        fixed4 _Color;
-        half _Metallic;
-        half _Roughness;
-        fixed4 _EmissionColor;
-        half _EmissionIntensity;
-
-        struct Input
-        {
-            float2 uv_MainTex;
-        };
-
-        void surf (Input IN, inout SurfaceOutputStandard o)
-        {
-            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-            o.Albedo = c.rgb;
-            o.Metallic = _Metallic;
-            o.Smoothness = 1 - _Roughness;
-            o.Emission = _EmissionColor.rgb * _EmissionIntensity;
-            o.Alpha = c.a;
-        }
-        ENDCG
-    }
-    FallBack "VertexLit"
-}
-"##;
-
-const UNLIT_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
-// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
-Shader "{NAME}"
-{
-    Properties
-    {
-        _Color ("Base Color", Color) = (1, 1, 1, 1)
-        _MainTex ("Base Color Texture", 2D) = "white" {}
-        _Opacity ("Opacity", Range(0, 1)) = 1
-        _AlphaClip ("Alpha Clip Threshold", Range(0, 1)) = 0.5
-    }
-    SubShader
-    {
-        Tags { "RenderType"="Opaque" }
-        LOD 100
-
-        CGPROGRAM
-        // 无光照直出（不受光照影响，适合 UI 面、标志、风格化场景）
-        #pragma vertex vert
-        #pragma fragment frag
-        #pragma target 2.0
-
-        sampler2D _MainTex;
-        fixed4 _Color;
-        fixed _Opacity;
-        fixed _AlphaClip;
-
-        struct appdata
-        {
-            float4 vertex : POSITION;
-            float2 uv : TEXCOORD0;
-        };
-
-        struct v2f
-        {
-            float4 pos : SV_POSITION;
-            float2 uv : TEXCOORD0;
-        };
-
-        v2f vert (appdata v)
-        {
-            v2f o;
-            o.pos = UnityObjectToClipPos(v.vertex);
-            o.uv = v.uv;
-            return o;
-        }
-
-        fixed4 frag (v2f i) : SV_Target
-        {
-            fixed4 c = tex2D (_MainTex, i.uv) * _Color;
-            if (_AlphaClip > 0.001) clip(c.a - _AlphaClip);
-            c.a *= _Opacity;
-            return c;
-        }
-        ENDCG
-    }
-    FallBack "Unlit/Texture"
-}
-"##;
-
-const TOON_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// TVE 引擎按 pragma 识别渲染分支：surface + Standard → PBR / surface + Toon → 卡通 / 仅顶点片元 → Unlit；
-// 具体参数值存于材质资产（.mat），本文件的 Properties 只声明暴露项。
-Shader "{NAME}"
-{
-    Properties
-    {
-        _Color ("Base Color", Color) = (1, 1, 1, 1)
-        _MainTex ("Base Color Texture", 2D) = "white" {}
-        _ToonSteps ("Toon Steps", Range(2, 6)) = 3
-        _ToonShadowStrength ("Shadow Strength", Range(0, 1)) = 0.6
-        _EmissionColor ("Emission Color", Color) = (0, 0, 0, 1)
-        _EmissionIntensity ("Emission Strength", Range(0, 10)) = 1
-    }
-    SubShader
-    {
-        Tags { "RenderType"="Opaque" }
-        LOD 200
-
-        CGPROGRAM
-        // 卡通分档光照（cel shading）；轮廓描边由引擎以独立背面外扩 pass 实现
-        #pragma surface surf Toon fullforwardshadows
-        #pragma target 3.0
-
-        sampler2D _MainTex;
-        fixed4 _Color;
-        half _ToonSteps;
-        half _ToonShadowStrength;
-        fixed4 _EmissionColor;
-        half _EmissionIntensity;
-
-        struct Input
-        {
-            float2 uv_MainTex;
-        };
-
-        void surf (Input IN, inout SurfaceOutput o)
-        {
-            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-            o.Albedo = c.rgb;
-            o.Emission = _EmissionColor.rgb * _EmissionIntensity;
-            o.Alpha = c.a;
-        }
-
-        // 分档漫反射：N·L 量化为 _ToonSteps 档，最暗档亮度 = 1 − _ToonShadowStrength
-        half4 LightingToon (SurfaceOutput s, half3 lightDir, half atten)
-        {
-            half nd = dot (s.Normal, lightDir) * 0.5 + 0.5;
-            half steps = max (2, _ToonSteps);
-            half level = floor (nd * steps) / steps;
-            half darkest = 1 - _ToonShadowStrength;
-            half shade = darkest + level * (1 - darkest);
-            half4 c;
-            c.rgb = s.Albedo * _LightColor0.rgb * shade * atten;
-            c.a = s.Alpha;
-            return c;
-        }
-        ENDCG
-    }
-    FallBack "VertexLit"
-}
-"##;
-
-// 天空程序（天空盒着色器惯例）：Tags 携带 "PreviewType"="Skybox" 标记，
-// TVE 引擎据此与材质 .mat 的 kind 字段映射渲染（skyprocedural→大气散射 / skycube→立方体贴图）。
-
-const SKY_PROCEDURAL_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// 天空程序：PreviewType=Skybox 标签 + _SUNDISK 关键字标记程序化大气散射
-// （TVE 引擎内为透射 LUT + 多重散射双 pass 的等价实现）。
-Shader "{NAME}"
-{
-    Properties
-    {
-        _SunSize ("Sun Size", Range(0.1, 30)) = 1
-        _SunStrength ("Sun Strength", Range(0, 20)) = 1
-        _SunElevation ("Sun Elevation", Range(-90, 90)) = 25
-        _SunRotation ("Sun Rotation", Range(0, 360)) = 0
-        _Altitude ("Altitude", Range(0, 20000)) = 0
-        _Air ("Air Density", Range(0, 10)) = 1
-        _Dust ("Dust Density", Range(0, 10)) = 1
-        _Ozone ("Ozone Density", Range(0, 10)) = 1
-        [Toggle] _ms ("Multiple Scattering", Float) = 1
-    }
-    SubShader
-    {
-        Tags { "Queue"="Background" "RenderType"="Background" "PreviewType"="Skybox" }
-        Cull Off ZWrite Off
-
-        CGPROGRAM
-        // Nishita 大气散射：太阳方向由高度角/方位角给出，
-        // 散射沿视线解析积分；_SUNDISK 关键字同时作为 TVE 的种类识别标记
-        #pragma vertex vert
-        #pragma fragment frag
-        #pragma multi_compile _ _SUNDISK_NONE _SUNDISK_SIMPLE _SUNDISK_HIGH_QUALITY
-        #pragma target 3.0
-
-        #include "UnityCG.cginc"
-
-        half _SunSize;
-        half _SunStrength;
-        half _SunElevation;
-        half _SunRotation;
-        half _Altitude;
-        half _Air;
-        half _Dust;
-        half _Ozone;
-        half _ms;
-
-        struct appdata
-        {
-            float4 vertex : POSITION;
-        };
-
-        struct v2f
-        {
-            float4 pos : SV_POSITION;
-            float3 dir : TEXCOORD0;
-        };
-
-        v2f vert (appdata v)
-        {
-            v2f o;
-            o.pos = UnityObjectToClipPos(v.vertex);
-            float3 w = mul((float3x3)unity_ObjectToWorld, v.vertex.xyz);
-            o.dir = normalize(w - _WorldSpaceCameraPos);
-            return o;
-        }
-
-        // 太阳方向：高度角 + 方位角（度）
-        float3 SunDirection ()
-        {
-            half el = radians(_SunElevation);
-            half az = radians(_SunRotation);
-            return normalize(float3(cos(el) * sin(az), sin(el), cos(el) * cos(az)));
-        }
-
-        fixed4 frag (v2f i) : SV_Target
-        {
-            float3 dir = normalize(i.dir);
-            float3 sun = SunDirection();
-            half cosSun = dot(dir, sun);
-            // 瑞利 + 米氏相位近似：空气/气溶胶密度缩放，地平线方向增厚，臭氧吸收
-            half horizon = 1 - abs(dir.y);
-            float3 rayleigh = float3(0.18, 0.42, 0.92) * (0.055 + 0.35 * horizon * horizon) * _Air;
-            float3 mie = float3(1.0, 0.86, 0.68) * (0.018 + 0.12 * pow(saturate(cosSun * 0.5 + 0.5), 8)) * _Dust;
-            float3 col = rayleigh + mie;
-            #if defined(_SUNDISK_SIMPLE) || defined(_SUNDISK_HIGH_QUALITY)
-            // 日轮：平台高斯软边缘（小尺寸亮核不缩水、无硬边锯齿）
-            half d = distance(dir, sun);
-            half disc = exp(-6.0 * pow(saturate(d / max(_SunSize * 0.01, 0.001) - 0.5), 2.0));
-            col += _SunStrength * disc * float3(1.0, 0.95, 0.85);
-            #endif
-            return fixed4(col, 1);
-        }
-        ENDCG
-    }
-    FallBack Off
-}
-"##;
-
-const SKY_CUBE_SHADER_TEMPLATE: &str = r##"// TVE 着色器（ShaderLab 风格源文件；.shader = 渲染程序，材质 .mat 通过 shader 字段引用它）
-// 天空程序：PreviewType=Skybox 标签 + samplerCUBE 采样标记立方体贴图天空盒
-// （贴图引用与渲染参数存于材质 .mat 的 cubeMap/rotation/strength/blur 字段）。
-Shader "{NAME}"
-{
-    Properties
-    {
-        _CubeMap ("Cubemap (HDR)", CUBE) = "" {}
-        _Rotation ("Rotation", Range(0, 360)) = 0
-        _Strength ("Strength", Range(0, 16)) = 1
-        _Blur ("Blur", Range(0, 1)) = 0
-    }
-    SubShader
-    {
-        Tags { "Queue"="Background" "RenderType"="Background" "PreviewType"="Skybox" }
-        Cull Off ZWrite Off
-
-        CGPROGRAM
-        // 立方体贴图天空：视线方向绕世界 Y 轴旋转后采样 CUBE（mip 级别近似模糊）
-        #pragma vertex vert
-        #pragma fragment frag
-        #pragma target 3.0
-
-        #include "UnityCG.cginc"
-
-        samplerCUBE _CubeMap;
-        half _Rotation;
-        half _Strength;
-        half _Blur;
-
-        struct appdata
-        {
-            float4 vertex : POSITION;
-        };
-
-        struct v2f
-        {
-            float4 pos : SV_POSITION;
-            float3 dir : TEXCOORD0;
-        };
-
-        v2f vert (appdata v)
-        {
-            v2f o;
-            o.pos = UnityObjectToClipPos(v.vertex);
-            float3 w = mul((float3x3)unity_ObjectToWorld, v.vertex.xyz);
-            o.dir = normalize(w - _WorldSpaceCameraPos);
-            return o;
-        }
-
-        fixed4 frag (v2f i) : SV_Target
-        {
-            float3 dir = normalize(i.dir);
-            half rad = radians(_Rotation);
-            float3 rotated = float3(
-                cos(rad) * dir.x + sin(rad) * dir.z,
-                dir.y,
-                -sin(rad) * dir.x + cos(rad) * dir.z);
-            half mip = _Blur * 8.0;
-            return fixed4(texCUBElod(_CubeMap, float4(rotated, mip)).rgb * _Strength, 1);
-        }
-        ENDCG
-    }
-    FallBack Off
-}
-"##;
-
-/// 着色器文档 → .shader 源码（ShaderLab 风格；kind 决定模板）。
-/// rel 为着色器资产相对路径：Shader 指令名 = 路径去扩展名，保证与资产位置一致。
-pub fn serialize_shader_file(rel: &str, kind: &str) -> String {
-    let template = match normalize_shader_kind(kind) {
-        "unlit" => UNLIT_SHADER_TEMPLATE,
-        "toon" => TOON_SHADER_TEMPLATE,
-        "skyprocedural" => SKY_PROCEDURAL_SHADER_TEMPLATE,
-        "skycube" => SKY_CUBE_SHADER_TEMPLATE,
-        "custom" => return crate::scene::shader::serialize_custom_shader_file(rel),
-        _ => PBR_SHADER_TEMPLATE,
-    };
-    template.replace("{NAME}", &shader_directive_name(rel))
-}
-
-/// .shader 指令名 = 资产相对路径去扩展名（如 "internal/shaders/PBR.shader" →
-/// "internal/shaders/PBR"），保证 Shader "…" 与资产路径始终一致
-pub(crate) fn shader_directive_name(rel: &str) -> String {
-    let rel = rel.trim().replace('\\', "/");
-    let stem = rel.strip_suffix(SHADER_EXT).unwrap_or(&rel);
-    stem.to_string()
-}
-
-/// 把着色器源码里的 `Shader "…"` 指令改写为与资产 rel 一致（纯文本变换）：
-/// 无 Shader 指令行返回 None；指令已一致返回 None（无需改写）；否则返回新文本。
-/// 供复制/移动后的跟随改写与「保存着色器源码」共用。
-pub(crate) fn sync_shader_directive_text(text: &str, rel: &str) -> Option<String> {
-    let directive = format!("Shader \"{}\"", shader_directive_name(rel));
-    let mut out: Vec<String> = Vec::new();
-    let mut replaced = false;
-    for line in text.lines() {
-        let t = line.trim();
-        if !replaced && (t.starts_with("Shader ") || t.starts_with("shader ")) {
-            out.push(directive.clone());
-            replaced = true;
-        } else {
-            out.push(line.to_string());
-        }
-    }
-    if !replaced {
-        return None;
-    }
-    let mut new_text = out.join("\n");
-    new_text.push('\n');
-    if new_text == text.replace("\r\n", "\n") {
-        return None;
-    }
-    Some(new_text)
-}
-
-/// 把资产（.shader 文件，或目录下全部 .shader）的 Shader 指令改写为与当前
-/// 路径一致——复制/导入/移动/重命名后调用，指令随位置跟随。
-/// 非着色器文档跳过；改写失败不报错（跟随改写是尽力而为的元数据修正）。
-pub(crate) fn rewrite_shader_directive(root: &Path, rel: &str) {
-    let Ok(root_abs) = root.canonicalize() else {
-        return;
-    };
-    let Ok(target) = crate::project::resolve_in_root(&root_abs, rel) else {
-        return;
-    };
-    if target.is_dir() {
-        let Ok(rd) = std::fs::read_dir(&target) else {
-            return;
-        };
-        for entry in rd.flatten() {
-            let child = entry.path();
-            let name = child.file_name().map(|s| s.to_string_lossy().to_string());
-            let Some(name) = name else { continue };
-            let child_rel = format!("{}/{}", rel.trim_end_matches('/'), name);
-            if child.is_dir() {
-                rewrite_shader_directive(root, &child_rel);
-            } else if name.to_ascii_lowercase().ends_with(SHADER_EXT) {
-                rewrite_shader_directive(root, &child_rel);
-            }
-        }
-        return;
-    }
-    if !rel.to_ascii_lowercase().ends_with(SHADER_EXT) {
-        return;
-    }
-    let Ok(text) = std::fs::read_to_string(&target) else {
-        return;
-    };
-    // 仅改写可解析的着色器（外部任意 ShaderLab 也支持；无 Shader 指令行则不动）
-    if parse_shader_doc(&text).is_none() {
-        return;
-    }
-    if let Some(new_text) = sync_shader_directive_text(&text, rel) {
-        let _ = std::fs::write(&target, new_text);
-    }
-}
-
-/// 解析 .shader 源文本 → (name, kind)；非着色器文档返回 None。
-/// - name：首个 `Shader "Group/Name"` 指令（去掉组前缀）；
-/// - kind：自定义着色器（CGINCLUDE / 双 CGPROGRAM 块，见 scene::shader）→ custom；
-///   surface 光照模型（Toon→toon / Standard→physical / 其余 surface 归 physical），
-///   无 surface pragma 但有 `#pragma fragment/vertex`（顶点片元无光照）→ unlit；
-/// 另兼容旧版 JSON 格式（$type=shader，早期内部实现遗留）。
-pub(crate) fn parse_shader_doc(text: &str) -> Option<(String, String)> {
-    let trimmed = text.trim_start();
-    if trimmed.starts_with('{') {
-        let v: Value = serde_json::from_str(text).ok()?;
-        let o = v.as_object()?;
-        if o.get("$type").and_then(Value::as_str) != Some("shader") {
-            return None;
-        }
-        let name = o
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Shader")
-            .to_string();
-        let kind = o
-            .get("kind")
-            .and_then(Value::as_str)
-            .map(normalize_shader_kind)
-            .unwrap_or("physical");
-        return Some((name, kind.to_string()));
-    }
-    let mut name: Option<String> = None;
-    // 天空程序（天空盒惯例 PreviewType=Skybox 标签）：_SUNDISK → 程序化散射 /
-    // samplerCUBE → 立方体贴图。先于 pragma 检查（天空是顶点片元着色器，否则误判 unlit）。
-    // 自定义着色器（CGINCLUDE / 双 CGPROGRAM 块，源码真正编译）同理先于 pragma 判定
-    // —— 它同样带 #pragma vertex/fragment，否则会被误判为 unlit。
-    let is_sky = text.contains(r#""PreviewType"="Skybox""#);
-    let mut kind: Option<String> = if is_sky {
-        Some(
-            if text.contains("samplerCUBE") {
-                "skycube"
-            } else {
-                "skyprocedural"
-            }
-            .to_string(),
-        )
-    } else if crate::scene::shader::is_custom_shader(text) {
-        Some("custom".to_string())
-    } else {
-        None
-    };
-    for line in text.lines() {
-        let t = line.trim();
-        if name.is_none() {
-            if let Some(rest) = t.strip_prefix("Shader ").or_else(|| t.strip_prefix("shader ")) {
-                let rest = rest.trim_start();
-                if let Some(quoted) = rest.strip_prefix('"') {
-                    if let Some(end) = quoted.find('"') {
-                        let full = &quoted[..end];
-                        let bare = full.rsplit('/').next().unwrap_or(full);
-                        name = Some(bare.trim().to_string());
-                    }
-                }
-            }
-        }
-        if kind.is_none() {
-            if let Some(rest) = t.strip_prefix("#pragma") {
-                let rest = rest.trim_start();
-                if let Some(rest) = rest.strip_prefix("surface") {
-                    // #pragma surface <surfFunc> <lightingModel> [options]
-                    let mut it = rest.split_whitespace();
-                    let _func = it.next();
-                    kind = Some(
-                        match it.next().unwrap_or("").to_ascii_lowercase().as_str() {
-                            "toon" => "toon",
-                            _ => "physical",
-                        }
-                        .to_string(),
-                    );
-                } else if rest.starts_with("fragment") || rest.starts_with("vertex") {
-                    kind = Some("unlit".to_string());
-                }
-            }
-        }
-        if name.is_some() && kind.is_some() {
-            break;
-        }
-    }
-    Some((name?, kind.unwrap_or_else(|| "physical".to_string())))
-}
 
 /// 材质文档 → .mat 文件内容（字段顺序与前端 serializeMaterialFile 一致）：
 /// shader 非空写 shader 字段（材质 ↔ 着色器分离后的正形），否则回退写
@@ -824,7 +276,7 @@ pub fn serialize_material_file(name: &str, shader: &str, fallback_type: &str, p:
     v.insert("roughnessMap".into(), Value::String(p.roughness_map.clone()));
     v.insert("normalMap".into(), Value::String(p.normal_map.clone()));
     v.insert("emissiveMap".into(), Value::String(p.emissive_map.clone()));
-    // 自定义着色器参数（键序稳定：与写入时一致；空表不写字段，旧 .mat 逐字节不变）
+    // 着色器参数（.shader 的 Properties 值；空表不写字段，旧 .mat 逐字节不变）
     if !p.props.is_empty() {
         v.insert("props".into(), Value::Object(p.props.clone()));
     }
@@ -1261,46 +713,49 @@ mod tests {
         assert_eq!(p.ior, 1.5); // 缺失回退默认
     }
 
-    /// 自定义着色器参数（props）：非空才写字段、逐字段原样往返；空表不落字段
-    /// （旧 .mat 序列化结果逐字节不变）。
+    /// 着色器参数（.mat 的 props = 挂载着色器的 Properties 值）：非空才写字段、
+    /// 逐字段原样往返；空表不落字段（未挂效果着色器的 .mat 序列化结果逐字节不变）。
     #[test]
-    fn props_roundtrip_and_omitted_when_empty() {
+    fn shader_props_roundtrip_and_omitted_when_empty() {
         let mut o = Map::new();
         o.insert(
             "props".into(),
             json!({
-                "_Speed": 2.5,
-                "_Color": "#ff8800",
+                "_RimPower": 2.5,
+                "_RimColor": "#ff8800",
                 "_Dir": [0, 1, 0, 0],
                 "_MainTex": "assets/textures/a.png"
             }),
         );
         let p = material_params_from(&o);
         assert_eq!(p.props.len(), 4);
-        assert_eq!(p.props["_Speed"], json!(2.5));
+        assert_eq!(p.props["_RimPower"], json!(2.5));
         assert_eq!(p.props["_Dir"], json!([0, 1, 0, 0]));
 
-        let text = serialize_material_file("M", "assets/shaders/Glow.shader", "", &p);
+        let text = serialize_material_file("M", "assets/shaders/RimLight.shader", "", &p);
         let v: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["props"]["_Speed"], json!(2.5));
+        assert_eq!(v["shader"], json!("assets/shaders/RimLight.shader"));
         assert_eq!(v["props"]["_MainTex"], json!("assets/textures/a.png"));
         let back = material_params_from(v.as_object().unwrap());
         assert_eq!(back.props, p.props);
 
-        // 无 props（非自定义着色器材质）→ 不写 props 字段
+        // 无着色器参数 → 不写 props 字段
         let plain = serialize_material_file("M", "", "physical", &MaterialParams::default());
         assert!(!plain.contains("\"props\""));
+        // 旧 .mat 的 extension/extensionProps 字段（上一版扩展着色器）读取时被忽略、不再回写
+        let legacy = material_params_from(
+            json!({
+                "extension": "assets/shaders/Old.ext.shader",
+                "extensionProps": { "_Speed": 2.0 }
+            })
+            .as_object()
+            .unwrap(),
+        );
+        let legacy_text = serialize_material_file("M", "", "physical", &legacy);
+        assert!(!legacy_text.contains("\"extension\""));
+        assert!(!legacy_text.contains("\"props\""));
     }
 
-    /// 保存着色器源码时的 Shader 指令同步：路径不符改写、已一致不改写
-    #[test]
-    fn sync_shader_directive_text_rewrites_only_when_needed() {
-        let text = "Shader \"Assets/Old Name\"\n{\n}\n";
-        let out = sync_shader_directive_text(text, "assets/shaders/New.shader").unwrap();
-        assert!(out.starts_with("Shader \"assets/shaders/New\""));
-        assert!(sync_shader_directive_text(&out, "assets/shaders/New.shader").is_none());
-        assert!(sync_shader_directive_text("// 无指令", "assets/shaders/New.shader").is_none());
-    }
 
     /// IPC（material_write 参数）与 .mat 文件共用 three.js 键 iridescenceIOR；
     /// serde camelCase 默认会把 ior 规整成 Ior，须由字段级 rename 钉住。

@@ -119,15 +119,16 @@ export const api = {
     shader: string,
     params: Record<string, unknown>,
   ) => invoke<void>("material_write", { root, rel, name, shader, params }),
-  /** 读取并解析 .shader 着色器资产（ShaderLab 风格源码，name/kind 从源码解析；
-   *  source 为源码全文；自定义着色器（kind=custom）随文档返回 properties（属性表）、
-   *  program（组装后的顶点/片元源码 + 渲染状态）与 error（组装失败原因）；
+  /** 读取并解析 .shader 着色器资产（渲染分支由 Base 声明、Hook 片段、Properties 属性表；
    *  缺失/非着色器文档返回 null） */
   shaderRead: (root: string, rel: string) =>
     invoke<{
       name: string;
       kind: string;
       source: string;
+      base: string;
+      include: string;
+      hooks: { name: string; code: string }[];
       properties: {
         key: string;
         label: string;
@@ -136,13 +137,6 @@ export const api = {
         max?: number | null;
         default: number | number[] | string;
       }[];
-      program: {
-        vertex: string;
-        fragment: string;
-        transparent: boolean;
-        depthWrite: boolean;
-        side: string;
-      } | null;
       error: string | null;
     } | null>("shader_read", { root, rel }),
   /** 序列化并写着色器资产（后端持有 .shader 格式；Shader 指令名取 rel 去扩展名，
@@ -150,12 +144,15 @@ export const api = {
   shaderWrite: (root: string, rel: string, kind: string) =>
     invoke<void>("shader_write", { root, rel, kind }),
   /** 保存着色器源码（仅项目内 .shader；指令跟随路径 + 解析校验 + 自动补 .meta），
-   *  返回重新解析后的文档（含自定义着色器的属性/程序/组装错误） */
+   *  返回重新解析后的文档（含 Base/钩子/属性表/解析错误） */
   shaderWriteSource: (root: string, rel: string, source: string) =>
     invoke<{
       name: string;
       kind: string;
       source: string;
+      base: string;
+      include: string;
+      hooks: { name: string; code: string }[];
       properties: {
         key: string;
         label: string;
@@ -164,13 +161,6 @@ export const api = {
         max?: number | null;
         default: number | number[] | string;
       }[];
-      program: {
-        vertex: string;
-        fragment: string;
-        transparent: boolean;
-        depthWrite: boolean;
-        side: string;
-      } | null;
       error: string | null;
     }>("shader_write_source", { root, rel, source }),
   /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */

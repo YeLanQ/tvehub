@@ -1,11 +1,12 @@
 // 材质资产（.mat）解析：节点只保存 .mat 引用，这里按引用预取文件并解析参数
 // （缺失文件/字段回退默认），并附材质相关辅助（卡通灰阶渐变条、轮廓体外扩几何）。
 // 与编辑器 framework/material（factory/types）的参数与默认值保持同步。
-// 自定义着色器（kind=custom）额外解析 .shader 源码：组装后的顶点/片元程序与属性表
-// 随材质文档输出，供 mesh.mjs 构建 ShaderMaterial（解析规则见 shaderlab.mjs）。
+// 材质经 shader 字段引用 .shader 资产（Base → 渲染分支 + Hook 效果片段），
+// 解析规则见 shader.mjs，注入见 shaderHooks.mjs。
+//
 import * as THREE from "../core/three.module.min.js";
 import { num, u01, matColor } from "../core/utils.mjs";
-import { isCustomShader, parseCustomShader } from "./shaderlab.mjs";
+import { parseShader, shaderKind } from "./shader.mjs";
 
 // 材质参数兜底：与编辑器内置 internal/materials/Default.mat（含 PBR 默认）一致
 export const MAT_DEFAULTS = {
@@ -117,8 +118,8 @@ export function displacedGeometry(geom, offset) {
   return out;
 }
 
-/** 合法渲染分支 key（与编辑器工厂注册表一致）；.shader kind 归一到此集合 */
-const SHADER_KINDS = new Set(["physical", "unlit", "toon", "custom"]);
+/** 合法渲染分支 key（与编辑器工厂注册表一致）；.shader 的 Base 归一到此集合 */
+const SHADER_KINDS = new Set(["physical", "unlit", "toon"]);
 
 /** 解析单个 .mat JSON → 规整化参数对象（缺省回退 MAT_DEFAULTS）。
  * type 为渲染分支 key：shader 字段引用的 .shader 资产由 loadMaterialParams
@@ -162,68 +163,50 @@ function parseMaterialDoc(j) {
     roughnessMap: typeof j.roughnessMap === "string" ? j.roughnessMap : "",
     normalMap: typeof j.normalMap === "string" ? j.normalMap : "",
     emissiveMap: typeof j.emissiveMap === "string" ? j.emissiveMap : "",
-    // 自定义着色器参数（props：颜色 hex / 数字 / 向量数组 / 贴图相对路径）
+    // 着色器参数（所挂 .shader 的 Properties 值：颜色 hex / 数字 / 向量数组 / 贴图相对路径）
     props: j.props && typeof j.props === "object" && !Array.isArray(j.props) ? { ...j.props } : {},
   };
 }
 
-/** ShaderLab 源文本 → 渲染分支 key（与后端 parse_shader_doc 同规则）：
- * 天空程序（PreviewType=Skybox 标签）→ skyprocedural/skycube（不属于网格渲染
- * 分支，fetchShaderKind 校验时回退）；自定义着色器（CGINCLUDE / 双 CGPROGRAM 块，
- * 源码真正编译）→ custom；surface 光照模型 Toon → toon / Standard → physical
- * （其余 surface 模型归 physical）；无 surface pragma 但有顶点片元 pragma
- * （#pragma fragment/vertex）→ unlit。 */
-function shaderKindFromSource(text) {
-  const src = String(text ?? "");
-  if (src.includes('"PreviewType"="Skybox"')) {
-    return src.includes("samplerCUBE") ? "skycube" : "skyprocedural";
-  }
-  if (isCustomShader(src)) return "custom";
-  let kind = "";
-  for (const line of src.split(/\r?\n/)) {
-    const t = line.trim();
-    const m = t.match(/^#pragma\s+surface\s+\S+\s+(\S+)/);
-    if (m) {
-      kind = m[1].toLowerCase() === "toon" ? "toon" : "physical";
-      break;
+/** 解析 .shader 源文本 → { kind, base, include, hooks, properties, error }。
+ * 渲染分支由 Base 声明（天空程序按 PreviewType=Skybox 标签识别，不走网格分支）。
+ * 旧版 JSON 格式（$type=shader，早期内部实现遗留）兼容读取。 */
+function parseShaderDoc(text) {
+  const trimmed = String(text ?? "").trimStart();
+  if (trimmed.startsWith("{")) {
+    try {
+      const j = JSON.parse(trimmed);
+      if (!j || j.$type !== "shader") return null;
+      return { kind: SHADER_KINDS.has(j.kind) ? j.kind : "physical", base: "", hooks: [], properties: [], error: null };
+    } catch {
+      return null;
     }
-    if (!kind && /^#pragma\s+(fragment|vertex)/.test(t)) kind = "unlit";
   }
-  return kind || "physical";
+  const parsed = parseShader(text);
+  const kind = shaderKind(text);
+  return { ...parsed, kind };
 }
 
-/** 按引用拉取 .shader 资产 → 渲染分支 key 与（自定义着色器的）程序/属性表。
- * 缺失/损坏/未知 kind 返回 null；旧版 JSON 格式（$type=shader）兼容读取。 */
+/** 按引用拉取 .shader 资产 → 渲染分支 + 钩子数据。
+ * 缺失/损坏/未知分支返回 null（调用方回退默认材质）。 */
 async function fetchShaderDoc(rel) {
   try {
     const r = await fetch(rel);
     if (!r.ok) return null;
-    const text = await r.text();
-    const trimmed = text.trimStart();
-    if (trimmed.startsWith("{")) {
-      try {
-        const j = JSON.parse(trimmed);
-        return j && j.$type === "shader" && SHADER_KINDS.has(j.kind) ? { kind: j.kind } : null;
-      } catch {
-        return null;
-      }
-    }
-    const kind = shaderKindFromSource(text);
-    if (!SHADER_KINDS.has(kind)) return null;
-    if (kind !== "custom") return { kind };
-    // 自定义着色器：组装顶点/片元程序 + 属性表（面板/渲染同源）
-    const parsed = parseCustomShader(text, rel);
-    return { kind, program: parsed.program, properties: parsed.properties, error: parsed.error };
+    const doc = parseShaderDoc(await r.text());
+    if (!doc) return null;
+    // 天空程序/未知 Base：不构成网格渲染分支 → 调用方回退默认材质
+    if (!doc.kind || !SHADER_KINDS.has(doc.kind)) return null;
+    return doc;
   } catch {
     return null;
   }
 }
 
 /** 收集场景树里 meshNode 的 .mat 引用，逐个 fetch 解析为参数表（ref → params）。
- * 材质经 shader 字段引用 .shader 资产时二次拉取，把渲染分支 key 写入 type，
- * 自定义着色器另带 program（组装后的顶点/片元源码）与 properties（属性表）
- * （旧 .mat 无 shader 字段则沿用 materialType）。缺失/解析失败的引用不进表
- * （后续按 MAT_DEFAULTS 回退）。 */
+ * 材质经 shader 字段引用 .shader 资产时二次拉取：Base → 渲染分支 key（写入 type），
+ * 钩子 + 属性表 → shaderData（供 mesh.mjs 注入内置材质）。
+ * 缺失/解析失败的引用不进表（后续按 MAT_DEFAULTS 回退）。 */
 export async function loadMaterialParams(rootJson) {
   const materialParams = new Map();
   const refs = new Set();
@@ -242,8 +225,12 @@ export async function loadMaterialParams(rootJson) {
           const shader = await fetchShaderDoc(doc.shader);
           if (shader) {
             doc.type = shader.kind;
-            doc.program = shader.program ?? null;
-            doc.properties = shader.properties ?? [];
+            doc.shaderData = {
+              base: shader.base,
+              include: shader.include,
+              hooks: shader.hooks,
+              properties: shader.properties,
+            };
             doc.shaderError = shader.error ?? null;
           }
         }

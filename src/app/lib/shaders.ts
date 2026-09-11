@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // 着色器资产操作（应用层薄封装）：读取/保存走后端命令（.shader 格式所有权在
-// Rust：internal/项目路由、ShaderLab 源码解析、自定义着色器的顶点/片元程序组装
-// 都在后端完成），本文件只做类型桥接与缓存接线。
-// 着色器类型在创建时固定（shader_write 仅用于创建）；自定义着色器（custom）
-// 支持保存源码（shader_write_source），保存后程序组装结果随文档返回。
+// Rust：internal/项目路由、Base/Hook/Properties 解析都在后端完成），
+// 本文件只做类型桥接与缓存接线。
+// 着色器创建时确定渲染分支（shader_write 按 kind 出模板）；项目内 .shader 支持
+// 保存源码（shader_write_source），保存后重新解析的 Base/钩子/属性表随文档返回。
 // ---------------------------------------------------------------------------
 
 import { api } from "../../lib/api";
@@ -29,11 +29,14 @@ function normalizePropKind(kind: string): ShaderPropertyKind {
   }
 }
 
-/** 后端 shader_read 返回形态 → ShaderDoc（程序/属性/错误逐字段收敛） */
+/** 后端 shader_read 返回形态 → ShaderDoc（Base/钩子/属性/错误逐字段收敛） */
 function toShaderDoc(doc: {
   name: string;
   kind: string;
   source?: string;
+  base?: string;
+  include?: string;
+  hooks?: { name: string; code: string }[];
   properties?: {
     key: string;
     label: string;
@@ -42,25 +45,8 @@ function toShaderDoc(doc: {
     max?: number | null;
     default: number | number[] | string;
   }[];
-  program?: { vertex: string; fragment: string; transparent: boolean; depthWrite: boolean; side: string } | null;
   error?: string | null;
 }): ShaderDoc {
-  const program = doc.program
-    ? {
-        vertex: doc.program.vertex,
-        fragment: doc.program.fragment,
-        state: {
-          transparent: doc.program.transparent === true,
-          depthWrite: doc.program.depthWrite !== false,
-          side:
-            doc.program.side === "double"
-              ? ("double" as const)
-              : doc.program.side === "back"
-                ? ("back" as const)
-                : ("front" as const),
-        },
-      }
-    : null;
   const properties: ShaderPropertyDef[] = (doc.properties ?? []).map((p) => ({
     key: p.key,
     label: p.label || p.key,
@@ -73,14 +59,16 @@ function toShaderDoc(doc: {
     name: doc.name,
     kind: normalizeShaderKind(doc.kind),
     source: doc.source ?? "",
+    base: doc.base ?? "",
+    include: doc.include ?? "",
+    hooks: (doc.hooks ?? []).map((h) => ({ name: h.name, code: h.code })),
     properties,
-    program,
     error: doc.error ?? null,
   };
 }
 
-/** 按引用读取并解析着色器文档（后端 shader_read；source 为 ShaderLab 源码全文；
- * 自定义着色器随文档返回属性表与组装后的程序；失败/缺失返回 null） */
+/** 按引用读取并解析着色器文档（后端 shader_read；source 为 ShaderLab 源码全文，
+ * Base 决定渲染分支、钩子为效果片段、properties 为材质面板参数；失败/缺失返回 null） */
 export async function loadShaderDoc(root: string | null, rel: string): Promise<ShaderDoc | null> {
   if (!root) return null;
   try {
@@ -91,7 +79,7 @@ export async function loadShaderDoc(root: string | null, rel: string): Promise<S
   }
 }
 
-/** 按引用解析着色器渲染分支 kind（失败回退 "physical"） */
+/** 按引用解析着色器渲染分支（失败回退 "physical"） */
 export async function loadShaderKind(root: string | null, rel: string): Promise<ShaderDoc["kind"]> {
   const doc = await loadShaderDoc(root, rel);
   return doc?.kind ?? "physical";
@@ -99,7 +87,8 @@ export async function loadShaderKind(root: string | null, rel: string): Promise<
 
 /**
  * 保存着色器源码（后端 shader_write_source：指令跟随路径 + 解析校验 + 自动补 .meta），
- * 返回重新解析后的文档（含组装报错，供编辑器/面板展示）；失败抛错由调用方提示。
+ * 返回重新解析后的文档（含 Base/钩子/属性表/解析错误，供编辑器与面板展示）；
+ * 失败抛错由调用方提示。
  */
 export async function saveShaderSource(
   root: string,

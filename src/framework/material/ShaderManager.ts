@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// 着色器程序缓存（着色器资产 rel → 解析后的文档）。
-// 与 MaterialManager 同构：读取/解析在后端（shader_read：Rust 解析 ShaderLab
-// 并组装顶点/片元程序），本类只做「按引用缓存 + 变更广播」，应用层注入读取器。
-// 引擎渲染网格时按 .mat 的 shader 引用同步取程序；程序加载完成/被改写后
-// 广播 onChanged，引擎据此刷新引用该着色器的全部网格。
+// 着色器文档缓存（着色器资产 rel → 解析后的文档）。
+// 与 MaterialManager 同构：读取/解析在后端（shader_read：Rust 解析 Base/Hook/属性表），
+// 本类只做「按引用缓存 + 变更广播」，应用层注入读取器。
+// 引擎渲染网格时按 .mat 的 shader 引用同步取文档：渲染分支（Base）用于选材质类型，
+// 钩子数据用于注入；文档加载完成/被改写后广播 onChanged，引擎据此刷新引用它的网格。
 // ---------------------------------------------------------------------------
 
 import type { ShaderDoc } from "./shader";
@@ -11,7 +11,7 @@ import type { ShaderDoc } from "./shader";
 /** 按着色器资产相对路径读取解析后的文档；不存在/失败返回 null */
 export type ShaderDocFetcher = (rel: string) => Promise<ShaderDoc | null>;
 
-/** 着色器程序变更回调（源码保存/首次加载完成后触发） */
+/** 着色器文档变更回调（源码保存/首次加载完成后触发） */
 export type ShaderChangeListener = (rel: string) => void;
 
 export class ShaderManager {
@@ -38,24 +38,9 @@ export class ShaderManager {
     return this.cache.has(rel);
   }
 
-  /** 着色器文档（未解析返回 null；渲染按占位程序回退） */
+  /** 着色器文档（未解析返回 null） */
   docFor(rel: string): ShaderDoc | null {
     return this.cache.get(rel) ?? null;
-  }
-
-  /** 自定义着色器程序（未解析/非自定义/组装失败返回 null） */
-  programFor(rel: string): ShaderDoc["program"] {
-    return this.cache.get(rel)?.program ?? null;
-  }
-
-  /** 自定义着色器属性表（材质面板参数分组用；未解析返回空表） */
-  propertiesFor(rel: string): ShaderDoc["properties"] {
-    return this.cache.get(rel)?.properties ?? [];
-  }
-
-  /** 组装错误（null = 无错误/未解析） */
-  errorFor(rel: string): string | null {
-    return this.cache.get(rel)?.error ?? null;
   }
 
   /** 直接写入缓存（源码保存后由应用层调用，触发变更回调） */
@@ -64,7 +49,7 @@ export class ShaderManager {
     this.notify(rel);
   }
 
-  /** 预取一组着色器引用（失败项静默跳过，渲染回退占位程序） */
+  /** 预取一组着色器引用（失败项静默跳过） */
   async preload(rels: string[]): Promise<number> {
     if (!this.fetcher) return 0;
     let loaded = 0;
@@ -78,7 +63,7 @@ export class ShaderManager {
           loaded++;
         }
       } catch {
-        // 读取失败：保持未解析（渲染占位程序）
+        // 读取失败：保持未解析
       } finally {
         this.loading.delete(rel);
       }

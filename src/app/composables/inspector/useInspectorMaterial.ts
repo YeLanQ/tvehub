@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // 材质卡片（Material）域：材质参数落盘（300ms 防抖合并 + 引擎缓存即时同步）、
-// 切换材质引用、编辑内置/自定义着色器参数、切换挂载着色器、内置材质复制为
+// 切换材质引用、编辑着色器 Properties 参数、切换挂载着色器、内置材质复制为
 // 项目资产。
 //
 // 协作：只依赖 useInspectorNode 返回的 ctx（node / commit / mutateNode / engine /
@@ -33,9 +33,10 @@ export interface InspectorMaterialApi {
   flushMaterialPersist: () => void;
   onSetMaterial: (rel: string) => Promise<void>;
   onMaterialEdit: (field: MaterialParamKey | MaterialEnableKey, value: number | boolean | string) => Promise<void>;
-  onMaterialPropEdit: (key: string, value: number | string | number[]) => Promise<void>;
   onMaterialChangeShader: (shaderRel: string) => Promise<void>;
   onMaterialCopyToProject: () => Promise<void>;
+  /** 着色器 Properties 参数编辑（.mat 的 props 字段；键 = 属性名） */
+  onMaterialPropEdit: (key: string, value: number | string | number[]) => Promise<void>;
 }
 
 export function useInspectorMaterial(ctx: InspectorNodeApi): InspectorMaterialApi {
@@ -112,7 +113,7 @@ export function useInspectorMaterial(ctx: InspectorNodeApi): InspectorMaterialAp
     if (materialDirty) flushMaterialPersist(); // 切换前把正在编辑的材质落盘
     if (root && !engine.materials.has(rel)) {
       await engine.materials.preload([rel]);
-      // 自定义着色器：程序与参数一并预取（先取到再入图，避免占位材质跳变）
+      // 着色器文档：先取到钩子再入图（避免先默认外观后叠加效果）
       await engine.shaders.preload([engine.materials.shaderFor(rel)].filter((s) => s.length > 0));
     }
     commit((m) => { (m as MeshNode).material = rel; }, "Set Material");
@@ -164,33 +165,6 @@ export function useInspectorMaterial(ctx: InspectorNodeApi): InspectorMaterialAp
     scheduleMaterialPersist(rel, params);
   }
 
-  /**
-   * 自定义着色器参数编辑（.mat 的 props 字段；键 = 着色器 Properties 属性名）：
-   * 与内置参数同一链路——即时写引擎缓存（视口同步刷新）+ 防抖写盘。
-   */
-  async function onMaterialPropEdit(
-    key: string,
-    value: number | string | number[],
-  ): Promise<void> {
-    const n = node.value;
-    if (!n || !(n instanceof MeshNode)) return;
-    const root = projectStore.currentPath;
-    if (!root) {
-      logStore.log("error", "未打开项目，无法保存材质修改", "engine");
-      return;
-    }
-    const rel = n.material;
-    if (isInternalAsset(rel)) return; // 内置材质只读（UI 已禁用，这里兜底）
-    const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
-    params.props = {
-      ...params.props,
-      [key]: Array.isArray(value) ? [...value] : value,
-    };
-    engine.materials.cachePut(rel, params);
-    scheduleMaterialPersist(rel, params);
-  }
-
-  /** 切换当前材质资产的类型（physical/unlit…）：改写 .mat 并按新类型重建视口材质 */
   /** 切换当前材质挂载的着色器：改写 .mat 的 shader 引用并按新渲染分支重建视口材质 */
   async function onMaterialChangeShader(shaderRel: string): Promise<void> {
     const n = node.value;
@@ -244,6 +218,32 @@ export function useInspectorMaterial(ctx: InspectorNodeApi): InspectorMaterialAp
     void assetsStore.load(root);
   }
 
+  /**
+   * 着色器 Properties 参数编辑（.mat 的 props 字段；键 = 着色器属性名）：
+   * 与分支参数同一链路——即时写引擎缓存（视口同步刷新）+ 防抖写盘。
+   */
+  async function onMaterialPropEdit(
+    key: string,
+    value: number | string | number[],
+  ): Promise<void> {
+    const n = node.value;
+    if (!n || !(n instanceof MeshNode)) return;
+    const root = projectStore.currentPath;
+    if (!root) {
+      logStore.log("error", "未打开项目，无法保存材质修改", "engine");
+      return;
+    }
+    const rel = n.material;
+    if (isInternalAsset(rel)) return; // 内置材质只读（UI 已禁用，这里兜底）
+    const params: MaterialParams = { ...engine.materials.paramsFor(rel) };
+    params.props = {
+      ...params.props,
+      [key]: Array.isArray(value) ? [...value] : value,
+    };
+    engine.materials.cachePut(rel, params);
+    scheduleMaterialPersist(rel, params);
+  }
+
   /** 材质卡折叠状态（面板内存，不持久化） */
   const materialOpen = ref(true);
 
@@ -252,8 +252,8 @@ export function useInspectorMaterial(ctx: InspectorNodeApi): InspectorMaterialAp
     flushMaterialPersist,
     onSetMaterial,
     onMaterialEdit,
-    onMaterialPropEdit,
     onMaterialChangeShader,
     onMaterialCopyToProject,
+    onMaterialPropEdit,
   };
 }

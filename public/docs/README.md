@@ -11,7 +11,7 @@ tve（three-visual-editor）内置 3D 场景编辑器与脚本 SDK 的用户文�
 | [场景编辑](editor/scene.md) | 层级面板、视口操作、节点系统 |
 | [检查器与组件](editor/inspector.md) | 变换、网格、灯光、相机、物理、音频、动画等组件编辑 |
 | [资产系统](editor/assets.md) | 资产面板、导入、资产类型、预制体、材质与着色器 |
-| [自定义着色器](editor/shaders.md) | 自定义着色器（custom）：源码结构、Properties 参数、渲染状态、报错回退 |
+| [着色器与自定义效果](editor/shaders.md) | .shader 效果着色器：Base 分支、Hook 钩子、Properties 参数、挂载与回退 |
 | [动画编辑器](editor/animation.md) | 关键帧动画剪辑、曲线编辑、动画图（状态机） |
 | [脚本工作台](editor/scripting.md) | 脚本编写、编译、绑定节点、脚本属性 |
 | [预览与构建](editor/preview-build.md) | 网页预览、构建导出渠道与配置 |

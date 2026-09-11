@@ -371,7 +371,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 随仓库分发的示例效果（public/repos/effect/*.shader）必须始终可用：    /// 每个文件都能被自定义着色器解析器组装（示例被改坏时在此拦住），
+    /// 随仓库分发的示例效果（public/repos/effect/*.shader）必须始终可用：
+    /// 每个文件都是可解析的效果着色器（Properties + Base + 至少一个 Hook），
     /// 且首部带 // @desc: 描述（工坊卡片展示用）。
     #[test]
     fn shipped_effect_examples_stay_parseable() {
@@ -379,21 +380,28 @@ mod tests {
         let files = scan_category(&dir);
         assert!(!files.is_empty(), "public/repos/effect 下应有示例效果");
         for f in &files {
-            assert_eq!(f.ext, "shader", "示例效果应为 .shader（实际 {}）", f.file);
+            assert!(
+                f.file.ends_with(".shader"),
+                "示例效果应为 .shader（实际 {}）",
+                f.file
+            );
             assert!(!f.description.is_empty(), "示例 {} 缺少 // @desc: 描述", f.file);
             let text = fs::read_to_string(dir.join(&f.file)).unwrap_or_default();
-            let parsed = crate::scene::shader::parse_custom_shader(&text, &f.file);
+            let parsed = crate::scene::shader::parse_shader(&text);
             assert!(
                 parsed.error.is_none(),
-                "示例 {} 无法组装为自定义着色器: {:?}",
+                "示例 {} 无法解析为效果着色器: {:?}",
                 f.file,
                 parsed.error
             );
             assert!(
-                parsed.program.is_some() && !parsed.properties.is_empty(),
-                "示例 {} 应含 Properties 且可组装",
-                f.file
+                crate::scene::shader::base_kind(&parsed.base).is_some(),
+                "示例 {} 应声明渲染分支 Base（实际 \"{}\"）",
+                f.file,
+                parsed.base
             );
+            assert!(!parsed.hooks.is_empty(), "示例 {} 应含至少一个 Hook", f.file);
+            assert!(!parsed.properties.is_empty(), "示例 {} 应含 Properties", f.file);
         }
     }
 

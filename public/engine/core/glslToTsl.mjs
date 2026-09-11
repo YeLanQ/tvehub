@@ -8,7 +8,7 @@
 // ===================== 词法（tokenizer） =====================
 
 /** 多字符运算符（按长度降序，先匹配长符号） */
-const MULTI_OPS = ["==", "!=", "<=", ">=", "&&", "||"];
+const MULTI_OPS = ["+=", "-=", "*=", "/=", "==", "!=", "<=", ">=", "&&", "||"];
 const SINGLE_OPS = "+-*/=<>!(){}[].,;?:";
 
 function isDigit(ch) {
@@ -361,8 +361,26 @@ class Parser {
     return { kind: "var", type, name, init };
   }
 
+  peekOp() {
+    const t = this.peek();
+    return t && t.type === "op" ? t.value : null;
+  }
+
   parseAssignStatement() {
     const target = this.parseExpression();
+    // 复合赋值（emissive += x / diffuseColor.rgb *= k）展开为 target = target op rhs
+    const compound = { "+=": "+", "-=": "-", "*=": "*", "/=": "/" };
+    const op = this.peekOp();
+    if (op && compound[op]) {
+      this.next();
+      const rhs = this.parseExpression();
+      this.consumeSemicolon();
+      return {
+        kind: "assign",
+        target,
+        value: { kind: "binary", op: compound[op], left: target, right: rhs },
+      };
+    }
     if (!this.isOp("=")) {
       this.consumeSemicolon();
       return { kind: "block", stmts: [] };
@@ -571,10 +589,12 @@ function compileStageNode(stage, ctx) {
 }
 
 function resolveIdent(name, ctx) {
+  // 说明：idents 由 Hook 端口注入（normal → 视空间法线、viewDir → 视空间视线）
   if (name === "_Time") return ctx.timeNode;
   if (ctx.locals.has(name)) return ctx.locals.get(name);
   if (ctx.varyings.has(name)) return ctx.varyings.get(name);
   if (name in ctx.uniforms) return ctx.uniforms[name];
+  if (ctx.idents && name in ctx.idents) return ctx.idents[name];
   if (name in BUILTIN_IDENT) return ctx.tsl[BUILTIN_IDENT[name]];
   if (name === "uv") return ctx.tsl.uv();
   if (name.startsWith("gl_")) {
@@ -656,6 +676,9 @@ function genCall(name, args, ctx) {
   throw new TranslateError(`不支持的函数调用 '${name}()'（受控子集仅支持类型构造与常见内置函数）`);
 }
 
+/** 局部变量是否包成可写节点（.toVar()）：Hook 片段常"声明后再赋值" */
+let varAsWritable = false;
+
 function genStmts(node, ctx, state) {
   if (state.earlyReturn) return;
   switch (node.kind) {
@@ -668,7 +691,9 @@ function genStmts(node, ctx, state) {
     }
     case "var": {
       const init = node.init ? genExpr(node.init, ctx) : null;
-      ctx.locals.set(node.name, init ?? zeroOf(node.type, ctx));
+      const value = init ?? zeroOf(node.type, ctx);
+      // Hook 片段里局部变量常被再次赋值（其它场景按 SSA 处理）
+      ctx.locals.set(node.name, varAsWritable ? value.toVar() : value);
       return;
     }
     case "assign": {
@@ -768,5 +793,48 @@ export function translateProgram(input) {
       fragmentNode: null,
       error: e instanceof Error ? e.message : String(e),
     };
+  }
+}
+// ---------------------------------------------------------------------------
+// Hook 片段 → TSL（WebGPU 运行时用）：端口作为可写局部参与读写，返回修改后的端口
+// 节点；只读环境（normal/viewDir/uv/_Time）与 Properties uniform 由调用方注入。
+// 与编辑器侧 src/framework/material/tsl/glslToTsl.ts 的 compileHookNode 同规则。
+// ---------------------------------------------------------------------------
+export function compileHookNode(input) {
+  const tsl = input.tsl;
+  const source = `${input.include}
+vec4 __tve_hook__(vec4 ${input.port.name}) {
+${input.code}
+return ${input.port.name};
+}
+`;
+  const stage = parseStage(source);
+  if (stage.error) throw new TranslateError(stage.error);
+  if (!stage.entry) throw new TranslateError("Hook 片段为空或无法解析");
+
+  const tools = new Map();
+  for (const fn of stage.tools) tools.set(fn.name, fn);
+
+  const prevWritable = varAsWritable;
+  varAsWritable = true;
+  try {
+    return tsl.Fn(() => {
+      const locals = new Map();
+      locals.set(input.port.name, input.port.seed.toVar());
+      const ctx = {
+        tsl,
+        locals,
+        varyings: new Map(),
+        uniforms: input.uniforms,
+        timeNode: input.timeNode,
+        tools,
+        idents: input.idents,
+      };
+      const state = { earlyReturn: false, returnValue: null };
+      genStmts(stage.entry.body, ctx, state);
+      return state.returnValue ?? locals.get(input.port.name);
+    })();
+  } finally {
+    varAsWritable = prevWritable;
   }
 }

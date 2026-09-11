@@ -101,7 +101,7 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
    * - 脚本（code 分类的 .ts）：固定创建在 src/（脚本系统只编译 src/ 下的 .ts），
    *   故从任意目录调起都落到 src/，提示里显示真实目标而不随右键位置变化；
    * - 效果（effect 分类的 .shader）：把原型源码写成当前目录下的着色器资产
-   *   （指令名随路径自动同步，随后可在材质卡片「着色器」下拉中挂载）。
+   *   （指令名随路径自动同步，随后在材质卡片「着色器」下拉中挂载）。
    */
   async function doNewFromWorkshop(dir: string, item: MenuWorkshopItem) {
     const root = projectStore.currentPath;

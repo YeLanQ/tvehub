@@ -31,21 +31,19 @@ import {
   materialTypeRegistry,
   type MaterialTypeDef,
 } from "../../material/factory";
-import type { CustomShaderProgram, ShaderPropertyDef } from "../../material/shader";
+import type { ShaderHookData } from "../../material/shaderHooks";
 
-/** 材质参数查询（EditorEngine 注入 MaterialManager） */
+/** 材质参数查询（EditorEngine 注入 MaterialManager / ShaderManager） */
 export interface MaterialParamsLookup {
   paramsFor(rel: string): MaterialParams;
   /** 材质类型查询（注册表 key；未注入回退默认类型 physical） */
   typeFor?(rel: string): string;
   /** 异步加载贴图资产（rel → Texture；srgb=true 表示颜色贴图）。引擎注入，未注入则无贴图 */
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
-  /** 材质挂载的着色器引用查询（自定义着色器取程序用；未注入/旧格式返回空串） */
+  /** 材质挂载的着色器引用查询（未注入/旧格式返回空串） */
   shaderFor?(rel: string): string;
-  /** 着色器程序查询（EditorEngine 注入 ShaderManager；未解析/非自定义返回 null → 占位程序） */
-  shaderProgramFor?(shaderRel: string): CustomShaderProgram | null;
-  /** 着色器属性表查询（自定义着色器参数取值/默认值用） */
-  shaderPropertiesFor?(shaderRel: string): ShaderPropertyDef[];
+  /** 着色器钩子数据查询（文档已解析且无错误时返回；注入用） */
+  shaderHooksFor?(shaderRel: string): ShaderHookData | null;
   /** 实例化模型资产（rel → 模型克隆；未就绪返回 null，调用方渲染占位体）。引擎注入 ModelManager */
   instantiateModel?(rel: string): THREE.Object3D | null;
   /** 模型是否已解析就绪（引擎注入 ModelManager；实例复用判断用） */
@@ -576,9 +574,9 @@ export class SceneSynchronizer {
 
   /**
    * 按材质引用路径把 three 材质对齐到资产（类型 + 参数）：
-   * 类型经工厂注册表解析（.mat 的 shader 引用解析结果），类型不符时重建材质实例，
-   * 参数应用规则由类型定义提供（MaterialTypeDef.apply）；
-   * 自定义着色器（custom）额外传入组装好的程序与属性表（ShaderManager 缓存）。
+   * 类型经工厂注册表解析（.mat 引用的 .shader 的 Base 声明结果），类型不符时重建
+   * 材质实例，参数应用规则由类型定义提供（MaterialTypeDef.apply）；
+   * 着色器的 Hook 片段与 Properties 值（.mat 的 props）一并交给类型定义注入。
    */
   private updateMeshMaterial(mesh: MeshNode, obj: THREE.Mesh): void {
     const rel = mesh.material;
@@ -593,8 +591,8 @@ export class SceneSynchronizer {
     }
     const shaderRel = this.lookup.shaderFor?.(rel) ?? "";
     const ctx = {
-      program: shaderRel ? (this.lookup.shaderProgramFor?.(shaderRel) ?? null) : null,
-      properties: shaderRel ? (this.lookup.shaderPropertiesFor?.(shaderRel) ?? []) : [],
+      hooks: shaderRel ? this.lookup.shaderHooksFor?.(shaderRel) ?? null : null,
+      props: params.props,
     };
     def.apply(mat, params, this.lookup, ctx);
     this.syncOutlineMesh(obj, def, params);

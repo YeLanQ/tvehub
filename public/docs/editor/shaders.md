@@ -1,127 +1,124 @@
-# 自定义着色器
+# 着色器与自定义效果
 
-自定义着色器（`.shader` 种类 = **自定义着色器**，kind `custom`）把源码真正编译成 GLSL 程序渲染网格，用来实现内置分支（PBR / Unlit / 卡通）覆盖不了的效果：菲涅尔边缘光、扫描线、溶解、UV 动画、顶点位移、自定义光照模型、双面半透明等。
+本引擎的渲染分支只有三个出口：**PBR / Unlit（无光照）/ 卡通**。着色器资产（`.shader`）是自定义着色效果的唯一载体，它同时做两件事：
 
-与内置分支的区别：内置分支源码**不被编译**，只按 `#pragma` 映射到 three 现成材质（类型在创建时固定）；自定义着色器源码**会被编译**，改源码即改渲染效果，并支持保存后即时热更新（编辑器视口与网页预览/构建产物同款渲染）。
+1. 用 `Base` 声明材质走哪个渲染分支；
+2. 用 `Hook` 块在该分支的着色阶段叠加自定义效果（菲涅尔边缘光、扫描线、溶解、UV 动画、顶点位移……）。
 
-## 创建与编辑
+内置的三份着色器（`PBR.shader` / `Unlit.shader` / `Toon.shader`）就是写效果的**模板**：新建着色器时选一个分支，模板里已写好 Base 与注释示例，改 Hook 即可。基础材质的光照、金属度/粗糙度、贴图、卡通分档全部保留。
 
-1. 资产面板右键（或空白处右键）→ **新建着色器 → 自定义着色器**（基名 `Custom`），生成可渲染的起步模板；
-2. 资产检查器中选中它 → **编辑源码** → Monaco 编辑器（GLSL 着色）→ **保存**（`Ctrl+S`）；
-3. 材质卡片 / 材质资产的「着色器」下拉里挂载它 → 参数分组自动切换为着色器暴露的 `Properties`。
+## 一、创建与挂载
 
-内置目录提供 `internal/shaders/Custom.shader` 示例（菲涅尔边缘光 + `_Time` 呼吸脉冲），可「复制到项目」后改写成自己的效果。自定义着色器的材质参数值存在 `.mat` 的 `props` 字段里（`{ "_Color": 16711808, "_Speed": 2.5 }`），随材质资产一起复制/导出。
+1. 资产面板右键 → **新建着色器** → 选渲染分支（PBR / Unlit / 卡通），生成对应模板；
+2. 编辑效果：资产检查器选中它 → **编辑源码**（Monaco GLSL）→ 保存（`Ctrl+S`），保存后立即重新解析并刷新引用它的网格；
+3. 材质卡片 / 材质资产的「着色器」下拉里挂载它 → 渲染分支与参数分组随之切换；
+4. 也可以从首页**创意工坊 → Effect** 复制现成示例（6 个内置效果）到项目后改成自己的。
 
-## 源文件结构
+着色器的 `Properties` 参数值存在材质资产里（`.mat` 的 `props` 字段，如 `{ "_RimPower": 3, "_RimColor": 16746496 }`），随材质一起复制/导出。
+
+## 二、源文件结构
 
 ```hlsl
-Shader "assets/shaders/MyEffect"      // 指令名 = 资产路径去扩展名（保存时自动同步）
+Shader "assets/shaders/MyEffect"             // 指令名 = 资产路径去扩展名（保存时自动同步）
 {
     Properties
     {
-        _Color ("Base Color", Color) = (1, 1, 1, 1)
-        _Speed ("Pulse Speed", Range(0, 4)) = 1
+        _RimColor ("Rim Color", Color) = (0.35, 0.65, 1, 1)
+        _RimPower ("Rim Power", Range(0.5, 8)) = 3
     }
-    SubShader
+    Base "PBR"                               // 渲染分支：PBR / Unlit / Toon
+
+    CGINCLUDE                                // 可选：共享工具函数（inline 到各钩子之前）
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    ENDCG
+
+    Hook "Emissive"                          // 钩子：注入到内置材质的自发光阶段
     {
-        Tags { "RenderType"="Opaque" }
-
-        CGINCLUDE                      // 共享代码：两个阶段都会拼入
-        varying vec2 vUv;
-        ENDCG
-
-        CGPROGRAM                      // 顶点块
-        #pragma vertex vert
-        void vert()
-        {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-        ENDCG
-
-        CGPROGRAM                      // 片元块
-        #pragma fragment frag
-        vec4 frag()
-        {
-            return texture2D(_MainTex, vUv) * _Color;
-        }
-        ENDCG
+        float rim = pow(1.0 - max(dot(normal, viewDir), 0.0), _RimPower);
+        emissive += rim * _RimColor.rgb;
     }
 }
 ```
 
-识别规则：源文件含 `CGINCLUDE` 块**或**至少两个 `CGPROGRAM` 块 → 判为自定义着色器（内置分支模板是单块顶点片元 / `#pragma surface`，不会误判）。
-
-### 三个代码块
-
 | 块 | 作用 |
 | --- | --- |
-| `CGINCLUDE … ENDCG` | 共享声明（`varying`、工具函数）。会拼进顶点与片元两个着色器，**不要在其中使用阶段专属内置变量**（如 `gl_Position`、顶点属性 `position`） |
-| `CGPROGRAM … ENDCG` + `#pragma vertex` | 顶点阶段：在入口函数里写 `gl_Position`（默认入口名 `vert`，可由 pragma 指定） |
-| `CGPROGRAM … ENDCG` + `#pragma fragment` | 片元阶段：入口函数返回 `vec4`（默认入口名 `frag`，返回 `void` 时自行写 `gl_FragColor`） |
+| `Properties` | 材质面板暴露的参数（每一项声明为 uniform，值存 `.mat` 的 `props`） |
+| `Base "…"` | 渲染分支：`PBR` / `Unlit` / `Toon`（大小写不敏感，`physical` 为 PBR 别名） |
+| `CGINCLUDE … ENDCG` | 共享代码（工具函数），inline 到每个钩子之前 |
+| `Hook "名" { … }` | 效果片段，注入到内置着色器的对应阶段；多个钩子按声明顺序注入 |
 
-入口函数由引擎包装成 `main()`；若块内自己定义了 `void main()`，引擎不再包装（高级用法）。
+`Base` 缺失或未知时：材质仍按默认分支（PBR）渲染，检查器会给出解析错误提示——不会渲染中断。
 
-## Properties：暴露给材质的参数
+## 三、钩子（Hook）与分支支持
 
-`Properties` 每一项会被**自动声明为 uniform**（值来自材质面板，写入 `.mat` 的 `props`），源码里**不要重复声明**；若确实手工声明了（`uniform vec4 _Color;`），引擎会跳过自动声明。
+| 钩子 | 注入位置 | 可修改变量 | 其他可用变量 | PBR | 卡通 | Unlit |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Vertex` | 顶点变换前（`#include <begin_vertex>` 之后） | `position`（物体空间位置） | `normal`、`uv`、`_Time` | ✓ | ✓ | ✓ |
+| `Normal` | 片元法线计算后 | `normal`（世界法线） | `viewDir`、`uv` | ✓ | ✓ | ✗ |
+| `Diffuse` | 漫反射颜色计算后 | `diffuseColor`（vec4） | `viewDir`、`uv`、`_Time` | ✓ | ✓ | ✓ |
+| `Emissive` | 自发光计算后 | `emissive`（vec3） | `normal`、`viewDir`、`uv`、`_Time` | ✓ | ✓ | ✗ |
+| `Fragment` | 最终片元输出前 | `fragColor`（= `gl_FragColor`） | `viewDir`、`uv`、`_Time` | ✓ | ✓ | ✓ |
 
-| 写法 | 自动声明 | 面板控件 | `.mat` 存储 |
+`Unlit`（three 的 MeshBasicMaterial）没有法线/自发光阶段，因此不支持 `Normal` / `Emissive`，片元阶段也没有 `viewDir` / `normal` —— 写到这些会在保存后的解析结果里报错并指出原因（不会静默失效）。
+
+一个着色器可以写多个 Hook（同名只取首个）。**每个 Hook 各自独立作用域**：局部变量（包括引擎注入的 `viewDir`）不会跨 Hook 冲突，也因此不共享——Hook 之间只通过端口变量（`diffuseColor` / `emissive` / `normal` / `position`）与 `CGINCLUDE` 里的工具函数协作（需要跨 Hook 复用逻辑就写成 `CGINCLUDE` 函数，或各自重算）。
+
+## 四、Properties：暴露给材质的参数
+
+| 写法 | 声明 | 面板控件 | `.mat` 存储 |
 | --- | --- | --- | --- |
-| `_Color ("文案", Color) = (1, 1, 1, 1)` | `uniform vec4` | 取色器 | RGB hex 数字（a 恒为 1） |
-| `_Speed ("文案", Range(0, 4)) = 1` | `uniform float` | 数值（带上下界） | 数字 |
-| `_Amount ("文案", Float) = 0.5` | `uniform float` | 数值（±10000） | 数字 |
-| `_Count ("文案", Int) = 3` | `uniform float` | 数值（取整） | 数字 |
-| `_Dir ("文案", Vector) = (0, 1, 0, 0)` | `uniform vec4` | 四个数值框 | `[x, y, z, w]` |
-| `_MainTex ("文案", 2D) = "white" {}` | `uniform sampler2D` | 贴图下拉（按 sRGB 加载） | 资产相对路径（空串 = 无贴图） |
+| `_Color ("文案", Color) = (1, 1, 1, 1)` | `vec4` | 取色器 | RGB hex 数字（a 恒为 1，sRGB→线性） |
+| `_Power ("文案", Range(0, 8)) = 3` | `float` | 数值（带上下界） | 数字 |
+| `_Amount ("文案", Float) = 0.5` | `float` | 数值（±10000） | 数字 |
+| `_Count ("文案", Int) = 3` | `float` | 数值（取整） | 数字 |
+| `_Dir ("文案", Vector) = (0, 1, 0, 0)` | `vec4` | 四个数值框 | `[x, y, z, w]` |
+| `_MainTex ("文案", 2D) = "white" {}` | `sampler2D` | 贴图下拉（按 sRGB 加载） | 资产相对路径（空串 = 无贴图） |
 
-自动声明是**按阶段**进行的：某个 uniform 只在片元块被引用，就只声明在片元着色器里（避免顶点阶段白白占用采样器单元）。未被引用的属性只是面板上多个控件，不影响编译。
+## 五、内置 uniform
 
-## 内置 uniform 与变量
+无需声明，直接使用：`_Time`（运行秒数：编辑器 = 引擎运行时长，产物 = 播放开始后的时长），以及 three 的标准量（`modelMatrix` / `modelViewMatrix` / `projectionMatrix` / `viewMatrix` / `normalMatrix` / `cameraPosition`）。
 
-无需声明，直接使用：
+## 六、与材质参数的分工
 
-| 名称 | 含义 |
-| --- | --- |
-| `_Time` | 运行秒数（编辑器为引擎运行时长，网页产物为播放开始后的时长），做循环动画用 |
-| `modelMatrix` / `modelViewMatrix` / `projectionMatrix` / `viewMatrix` / `normalMatrix` | 标准变换矩阵 |
-| `cameraPosition` | 相机世界坐标（两阶段都可用） |
-| `position` / `normal` / `uv` | 顶点属性（顶点阶段；`uv` 在片元阶段通过 `varying` 传递） |
+- 基础外观（基础色、金属度/粗糙度、贴图、卡通明暗、轮廓、不透明度）在材质卡片上按分支参数调，不用改着色器；
+- 着色器只负责"内置分支表达不了的效果"，自定义参数通过 `Properties` 暴露；
+- 换分支（PBR → Unlit/卡通）只需换材质挂载的着色器（或改它的 Base 后重新保存）。
 
-示例：菲涅尔边缘光的片元代码（`vNormalW`/`vViewDirW`/`vUv` 由 `CGINCLUDE` 声明、顶点块写入）：
+## 七、报错与回退
 
-```glsl
-float fres = pow(1.0 - max(dot(normalize(vNormalW), normalize(vViewDirW)), 0.0), 3.0);
-float pulse = 0.75 + 0.25 * sin(_Time * _Speed * 6.2831853);
-return vec4(c.rgb * pulse + _RimColor.rgb * _RimColor.a * fres, c.a);
-```
+- **解析错误**（未知钩子名 / Unlit 上用了不支持的钩子 / 缺 Base）：保存仍成功，资产检查器与材质卡片显示原因，材质**仍按 Base 分支渲染**，只是不叠加效果；
+- **GLSL 编译失败**（语法错误、未声明变量）：编辑器控制台输出编译日志摘要，视口不渲染该网格；
+- **着色器文件被删除**：材质回退默认分支（下拉显示「（缺失）」），不会中断渲染。
 
-## 输出阶段（颜色与亮度）
+## 八、WebGPU 后端（同一契约翻译为 TSL）
 
-引擎在包装入口函数时补上 three 的输出阶段（`#include <tonemapping_fragment>` + `#include <colorspace_fragment>`），
-自定义着色器因而与内置材质共用同一套颜色管线：面板取的色（sRGB）自动转线性使用、按项目设置做色调映射（HDR 工程的
-ACES 同样生效）、再转回输出色彩空间——同一个 `#ff8800` 在 PBR 材质与自定义着色器里看起来一致。
+WebGPU 后端下材质改用 three 的节点材质（MeshPhysical/Basic/Toon NodeMaterial），同一份 Hook 片段由 **GLSL→TSL 转译**接到对应端口槽位，`.shader` 不用改：
 
-入口函数返回的颜色是**线性空间**的值。若自己写 `void main()`（不走入口包装），输出阶段需自行处理
-（可自行加 `#include <colorspace_fragment>`）。
+| 端口（勾子） | WebGL 实现 | WebGPU 实现 |
+| --- | --- | --- |
+| Vertex | 注入 `#include <begin_vertex>` 后，写 `transformed` | `positionNode`（种子 = `positionLocal`） |
+| Diffuse | 注入 `#include <color_fragment>` 后，写 `diffuseColor` | `colorNode` + `opacityNode`（种子 = 基色×贴图 / 不透明度） |
+| Emissive | 注入 `#include <emissivemap_fragment>` 后，写 `totalEmissiveRadiance` | `emissiveNode`（种子 = 自发光×强度×贴图） |
+| Normal | 注入 `#include <normal_fragment_maps>` 后，写 `normal` | `normalNode`（种子 = 视空间法线） |
+| Fragment | 注入 `#include <dithering_fragment>` 前，写 `gl_FragColor` | **不支持**（节点材质下最终颜色由引擎内部合成，无法作为"当前值"喂给 Hook） |
 
-## 渲染状态（可选）
+- 只读变量同名同义：`normal`（视空间法线；Vertex 端口下为物体空间）、`viewDir`（视空间视线）、`uv`、`_Time`；`Properties` 同规则映射为 TSL uniform，`.mat` 的 `props` 照旧生效；
+- 翻译取的是**受控子集**（与编辑器内置转译器一致：局部变量、赋值、if/else、discard、常见内置函数、CGINCLUDE 工具函数 inline）。子集之外的写法（循环、数组、结构体、矩阵下标等）会让**该 Hook 不生效**，编辑器/播放器控制台会给出"转译为 TSL 失败"的原因，材质仍按 Base 分支渲染；
+- 因此**跨后端可移植的效果建议只用受控子集**；Fragment 端口只在 WebGL 下生效（需要跨后端就改用 Diffuse/Emissive 端口表达）。
 
-缺省 = 不透明、写深度、剔除背面。需要半透明/双面/叠加效果时在 `SubShader` 内声明（标签或指令行两种写法都接受）：
+## 八·补：渲染后端差异汇总
 
-| 声明 | 效果 |
-| --- | --- |
-| `Tags { "Queue"="Transparent" }` 或 `"RenderType"="Transparent"` | 半透明混合（片元返回的 alpha 参与混合） |
-| `Tags { "ZWrite"="Off" }` 或 `ZWrite Off` | 关闭深度写入（半透明、叠加、描边常用） |
-| `Tags { "Cull"="Off" }` 或 `Cull Off` | 双面渲染 |
-| `Cull Front` / `Cull Back` | 只渲染背面 / 只渲染正面（缺省） |
+| 能力 | WebGL | WebGPU |
+| --- | --- | --- |
+| 分支配方参数（金属度/卡通/贴图…） | ✓ | ✓（节点材质自带同名属性） |
+| Vertex / Diffuse / Emissive / Normal 端口 | ✓ | ✓（翻译为 TSL） |
+| Fragment 端口 | ✓ | ✗（显式告警） |
+| 受控子集外的 GLSL 写法 | 直接编译，可能通过 | 该 Hook 不生效（告警） |
 
-## 报错与回退
+## 九、天空程序（内置资产）
 
-- **组装失败**（缺顶点/片元块、找不到入口函数）：保存仍会成功，检查器与材质卡片显示原因，视口回退**洋红棋盘占位材质**，方便一眼定位；
-- **GLSL 编译失败**（语法错误、未声明变量）：编辑器控制台输出编译日志摘要（含拼接后的行号偏移提示），视口不渲染该网格；
-- 着色器文件被删除 / 引用丢失：材质回退占位材质，检查器的着色器下拉显示「（缺失）」。
+`internal/shaders/SkyProcedural.shader` / `SkyBox.shader` 是天空程序，由天空材质引用（按 `Tags` 里的 `"PreviewType"="Skybox"` 标记识别），**不参与效果着色器管线**（没有 Hook，也不出现在材质卡片的着色器下拉里）。
 
-## 与构建导出的关系
+## 十、与构建导出的关系
 
-导出产物内的网页运行时（`engine/runtime/shaderlab.mjs`）按**同一套规则**解析同一份 `.shader` 源码：属性表、程序组装、渲染状态、`_Time` 推进在编辑器与产物中行为一致；`.mat` 的 `props` 贴图引用会随构建打包（发布模式下随资产重命名一并改写）。
+导出产物内的网页运行时（`engine/runtime/shader.mjs` 解析 + `engine/runtime/shaderHooks.mjs` 注入）按**同一套规则**处理同一份 `.shader`：Base → 渲染分支、钩子注入位置与变量映射、属性表、`_Time` 推进在编辑器与产物中行为一致；`.mat` 的 `shader` 引用与 `props` 里的贴图引用都会随构建打包（发布模式下随资产重命名一并改写）。

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * 着色器源码编辑器（弹层；自定义着色器的 GLSL 顶点/片元 + 全部 ShaderLab 源文件）：
+ * 着色器源码编辑器（弹层；.shader 全文编辑）：
  * - Monaco 以 GLSL 语法着色（monaco-setup 注册的 tve-glsl），Ctrl+S 保存；
  * - 保存走后端 shader_write_source（Shader 指令跟随路径 + 解析校验 + 自动补 .meta），
- *   返回的文档（属性表/程序/组装错误）由调用方写引擎着色器缓存并刷新面板与视口；
- * - 组装错误（缺块/入口函数缺失）不阻断保存，仅提示，便于边写边改。
+ *   返回的文档（Base/钩子/属性表/解析错误）由调用方写引擎缓存并刷新面板与视口；
+ * - 解析错误（未知钩子/无 Hook 块）不阻断保存，仅提示，便于边写边改。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type * as MonacoApi from "monaco-editor/esm/vs/editor/editor.api";
@@ -28,7 +28,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  /** 保存成功（返回后端重新解析后的文档，含属性/程序/组装错误） */
+  /** 保存成功（返回后端重新解析后的文档，含 Base/钩子/属性/解析错误） */
   saved: [doc: ShaderDoc];
 }>();
 
@@ -40,8 +40,8 @@ const loading = ref(true);
 const saving = ref(false);
 /** 未保存标记（模型内容与初始源码不一致） */
 const dirty = ref(false);
-/** 上次保存返回的组装错误（null = 无错误） */
-const assemblyError = ref<string | null>(null);
+/** 上次保存返回的解析错误（null = 无错误） */
+const parseError = ref<string | null>(null);
 let editor: MonacoApi.editor.IStandaloneCodeEditor | null = null;
 let model: MonacoApi.editor.ITextModel | null = null;
 let contentDisposer: MonacoApi.IDisposable | null = null;
@@ -55,11 +55,13 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     const doc = await saveShaderSource(root, props.rel, model.getValue());
-    assemblyError.value = doc.error;
+    parseError.value = doc.error;
     dirty.value = false;
     logStore.log(
       "success",
-      `已保存着色器 ${props.rel}（${doc.kind}${doc.properties.length ? ` · ${doc.properties.length} 个属性` : ""}）`,
+      `已保存着色器 ${props.rel}（${doc.base} 分支 · ${doc.hooks.length} 个钩子${
+        doc.properties.length ? ` · ${doc.properties.length} 个属性` : ""
+      }）`,
       "engine",
     );
     emit("saved", doc);
@@ -172,8 +174,8 @@ watch(
         </button>
         <button class="shader-modal-close" title="关闭（Esc）" @click="emit('close')">✕</button>
       </div>
-      <div v-if="assemblyError" class="shader-modal-error">
-        组装失败（已保存，视口回退占位材质）：{{ assemblyError }}
+      <div v-if="parseError" class="shader-modal-error">
+        解析失败（已保存，材质仍按 Base 分支渲染，只是不叠加效果）：{{ parseError }}
       </div>
       <div class="shader-modal-body">
         <div ref="containerEl" class="shader-modal-editor"></div>
@@ -181,7 +183,7 @@ watch(
       </div>
       <div class="shader-modal-foot">
         Shader 指令名 = 资产路径去扩展名（保存时自动同步）；
-        Properties 项由引擎自动声明为 uniform，内置 <span class="mono">_Time</span> 为运行秒数。
+        Base 决定渲染分支（PBR/Unlit/卡通），Hook 块是叠加其上的效果片段；内置 <span class="mono">_Time</span> 为运行秒数。
       </div>
     </div>
   </div>

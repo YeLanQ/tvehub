@@ -107,8 +107,18 @@ export interface TslFnLib {
   Fn(body: (...args: unknown[]) => TslNode): TslNode;
   Return(node?: TslNode): TslNode;
   Discard(): TslNode;
-  // 内置节点（constant）
+  // 内置节点（constant / 访问器）
   positionLocal: TslNode;
+  /** 视空间位置（-positionView ≈ GL 的 vViewPosition） */
+  positionView: TslNode;
+  /** 基色 × 贴图（= GL 注入点 diffuseColor.rgb 的种子） */
+  materialColor: TslNode;
+  /** 当前不透明度（含 alphaMap；= diffuseColor.a 的种子） */
+  materialOpacity: TslNode;
+  /** 自发光 × 强度 × 贴图（= GL 的 totalEmissiveRadiance 种子） */
+  materialEmissive: TslNode;
+  /** 视空间法线（含法线贴图；= GL 片元阶段的 normal） */
+  normalView: TslNode;
   normalLocal: TslNode;
   positionWorld: TslNode;
   normalWorld: TslNode;
@@ -177,6 +187,9 @@ interface GenContext {
   timeNode: TslNode;
   /** 工具函数表（name → 声明），genCall 遇自定义函数时 inline 展开 */
   tools: Map<string, GlslFunction>;
+  /** 额外标识符 → 节点（优先级低于 locals/varyings/uniforms，高于内置表）：
+   *  Hook 端口语义里的 normal（视空间法线）/ viewDir（视空间视线）在此注入 */
+  idents?: Record<string, TslNode>;
 }
 
 /** 语句生成过程中的控制流状态（return 提前终止 + 返回值） */
@@ -184,6 +197,10 @@ interface GenState {
   earlyReturn: boolean;
   returnValue: TslNode | null;
 }
+
+/** 局部变量是否包成可写节点（.toVar()）：Hook 片段常常"声明后再赋值"
+ * （如 `float scan = sin(...); scan = scan * 0.5 + 0.5;`），必须可 assign */
+let varAsWritable = false;
 
 /**
  * 阶段源码 → TSL 节点：在 tsl.Fn 回调内执行语句生成（assign/If/Discard 等控制流
@@ -201,12 +218,13 @@ function compileStageNode(stage: StageParse, ctx: GenContext): TslNode {
   })();
 }
 
-/** 解析单个标识符到 TSL 节点（locals > varyings > uniforms > 内置；_Time 特判） */
+/** 解析单个标识符到 TSL 节点（locals > varyings > uniforms > idents > 内置；_Time 特判） */
 function resolveIdent(name: string, ctx: GenContext): TslNode {
   if (name === "_Time") return ctx.timeNode;
   if (ctx.locals.has(name)) return ctx.locals.get(name);
   if (ctx.varyings.has(name)) return ctx.varyings.get(name);
   if (name in ctx.uniforms) return ctx.uniforms[name];
+  if (ctx.idents && name in ctx.idents) return ctx.idents[name];
   if (name in BUILTIN_IDENT) return ctx.tsl[BUILTIN_IDENT[name]] as TslNode;
   if (name === "uv") return ctx.tsl.uv();
   if (name.startsWith("gl_")) {
@@ -310,8 +328,9 @@ function genStmts(node: Stmt, ctx: GenContext, state: GenState): void {
     }
     case "var": {
       const init = node.init ? genExpr(node.init, ctx) : null;
-      // 受控子集：局部变量按 SSA 处理（一次赋值）；无初始化则为占位零值
-      ctx.locals.set(node.name, init ?? zeroOf(node.type, ctx));
+      const value = init ?? zeroOf(node.type, ctx);
+      // Hook 片段里局部变量常被再次赋值（受控子集其它场景按 SSA 处理）
+      ctx.locals.set(node.name, varAsWritable ? value.toVar() : value);
       return;
     }
     case "assign": {
@@ -441,3 +460,70 @@ export function translateProgram(input: TranslateInput): TranslatedProgram {
 }
 
 export { TranslateError, parseStage as parseStageGlsl };
+
+// ---------------------------------------------------------------------------
+// Hook 片段 → TSL（WebGPU 后端用）
+//
+// 与"整程序转译"不同，Hook 只是效果片段：它读环境（normal/viewDir/uv/_Time 与
+// 着色器 Properties）、写**一个端口**（position / diffuseColor / emissive / normal），
+// 由引擎把端口接回内置材质的对应节点槽位（positionNode / colorNode / emissiveNode /
+// normalNode）。契约与 GL 侧的注入完全一致，只是端口在 GL 侧是 three 的着色器变量、
+// 在这里是节点。
+// ---------------------------------------------------------------------------
+
+/** Hook 编译输入：端口种子 + 只读环境 + Properties uniform */
+export interface HookCompileInput {
+  /** Hook 片段（语句块；由调用方拼好，无需 main/函数外壳） */
+  code: string;
+  /** CGINCLUDE 共享代码（工具函数，inline 到 Hook 里） */
+  include: string;
+  tsl: TslFnLib;
+  /** 端口：Hook 里可读写的变量名（如 emissive）与其种子节点（该端口在当前分支的初值） */
+  port: { name: string; seed: TslNode };
+  /** 只读环境标识符 → 节点（normal → 视空间法线、viewDir → 视空间视线方向等） */
+  idents?: Record<string, TslNode>;
+  /** 着色器 Properties 的 uniform 节点（属性名 → 节点） */
+  uniforms: Record<string, TslNode>;
+  /** _Time uniform 节点 */
+  timeNode: TslNode;
+}
+
+/**
+ * Hook 片段 → TSL 节点（返回修改后的端口值）。失败抛 TranslateError，由上层捕获
+ * 并按"该 Hook 不生效"降级（材质仍按分支渲染）。
+ */
+export function compileHookNode(input: HookCompileInput): TslNode {
+  const { tsl } = input;
+  // 用函数外壳解析片段：端口作为形参名出现在体内，返回值即端口本身
+  const source = `${input.include}\nvec4 __tve_hook__(vec4 ${input.port.name}) {\n${input.code}\nreturn ${input.port.name};\n}\n`;
+  const stage = parseStage(source);
+  if (stage.error) throw new TranslateError(stage.error);
+  if (!stage.entry) throw new TranslateError("Hook 片段为空或无法解析");
+
+  const tools = new Map<string, GlslFunction>();
+  for (const fn of stage.tools) tools.set(fn.name, fn);
+
+  const prevWritable = varAsWritable;
+  varAsWritable = true;
+  try {
+    return tsl.Fn(() => {
+      const locals = new Map<string, TslNode>();
+      // 端口 = 可写局部（Hook 里的 `emissive += …` / `position += …` 直接改它）
+      locals.set(input.port.name, input.port.seed.toVar());
+      const ctx: GenContext = {
+        tsl,
+        locals,
+        varyings: new Map(),
+        uniforms: input.uniforms,
+        timeNode: input.timeNode,
+        tools,
+        idents: input.idents,
+      };
+      const state: GenState = { earlyReturn: false, returnValue: null };
+      genStmts(stage.entry!.body, ctx, state);
+      return state.returnValue ?? locals.get(input.port.name);
+    })();
+  } finally {
+    varAsWritable = prevWritable;
+  }
+}

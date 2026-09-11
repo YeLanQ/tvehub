@@ -17,8 +17,8 @@ export interface GlslToken {
   pos: number;
 }
 
-/** 多字符运算符（按长度降序，先匹配长符号） */
-const MULTI_OPS = ["==", "!=", "<=", ">=", "&&", "||"];
+/** 多字符运算符（按长度降序，先匹配长符号；含复合赋值——效果片段里极常见） */
+const MULTI_OPS = ["+=", "-=", "*=", "/=", "==", "!=", "<=", ">=", "&&", "||"];
 const SINGLE_OPS = "+-*/=<>!(){}[].,;?:" as const;
 
 function isDigit(ch: string): boolean {

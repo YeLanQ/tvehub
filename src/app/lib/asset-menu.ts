@@ -16,7 +16,7 @@ export interface MenuShaderType {
 
 /**
  * 创意工坊菜单项（仓库文件 → 新建项目资产）：
- * kind = "script"（.ts 脚本，固定落盘 src/）| "shader"（.shader 资产，落盘右键目录）
+ * kind = "script"（.ts 脚本，固定落盘 src/）| "shader"（.shader 资产，落盘右键目录）。
  */
 export interface MenuWorkshopItem {
   /** 来源分类（repos 子目录名，如 "code" / "effect"） */
@@ -58,7 +58,7 @@ export interface AssetMenuApi {
   onNewScript: (dir: string) => void;
   /** 创意工坊分类清单（标签 + 内容；面板在右键时刷新缓存后提供） */
   workshops: () => MenuWorkshopCategory[];
-  /** 按创意工坊文件新建项目资产（脚本 → src/；效果 → 当前目录 .shader） */
+  /** 按创意工坊文件新建项目资产（脚本 → src/；效果 → 当前目录的 .shader） */
   onNewFromWorkshop: (dir: string, item: MenuWorkshopItem) => void;
   onNewFolder: (dir: string) => void;
   onNewMaterial: (dir: string) => void;

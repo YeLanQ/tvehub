@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
-// 着色器资产字段块（展示型，从 AssetInspector 抽出）：类型标签（创建时固定）+
-// 自定义着色器的渲染状态摘要、组装错误、暴露属性表（键 + 标签 · 类型）+
-// 「编辑源码」入口 + 源码全文展示（pre）+ 只读/种类说明。
-// 只展示与上抛：源码编辑器弹层与保存回写由父组件持有（保存后写引擎缓存并刷新本卡片）。
+// 着色器资产字段块（展示型，从 AssetInspector 抽出）：渲染分支（Base 声明，创建时
+// 由模板决定）+ 钩子清单（Hook 名 + 行数）+ 暴露属性表（键 + 标签 · 类型）+
+// 解析错误 + 「编辑源码」入口 + 源码全文展示（pre）。
+// 着色器是自定义着色效果的唯一载体：Base 选渲染分支（PBR/Unlit/卡通），Hook 是
+// 叠加在该分支上的效果片段，Properties 是材质卡片可调的参数。
+// 只展示与上抛：源码编辑器弹层与保存回写由父组件持有（保存后写引擎缓存并刷新）。
 // ---------------------------------------------------------------------------
 import { computed } from "vue";
 import {
@@ -24,7 +26,7 @@ const emit = defineEmits<{
   editSource: [];
 }>();
 
-/** 着色器属性类型显示名（属性表列表用） */
+/** 属性类型显示名（属性表列表用） */
 function propKindLabel(kind: ShaderPropertyKind): string {
   switch (kind) {
     case "color":
@@ -42,69 +44,62 @@ function propKindLabel(kind: ShaderPropertyKind): string {
   }
 }
 
-/** 渲染状态摘要（自定义着色器 Tags/ZWrite/Cull 声明） */
-const shaderStateText = computed(() => {
-  const program = props.doc.program;
-  if (!program) return "—";
-  const parts = [program.state.transparent ? "半透明" : "不透明"];
-  parts.push(program.state.depthWrite ? "写深度" : "不写深度");
-  parts.push(
-    program.state.side === "double"
-      ? "双面"
-      : program.state.side === "back"
-        ? "只渲染背面"
-        : "剔除背面",
-  );
-  return parts.join(" · ");
-});
+/** 是否天空程序（内置资产；不参与效果着色器管线） */
+const isSky = computed(() => !props.doc.base && props.doc.hooks.length === 0);
 </script>
 
 <template>
   <div class="field">
-    <label>着色器类型</label>
+    <label>渲染分支</label>
     <span class="type-tag">{{ shaderKindLabel(doc.kind) }}</span>
   </div>
-  <template v-if="doc.kind === 'custom'">
+  <template v-if="!isSky">
     <div class="field">
-      <label>渲染状态</label>
-      <span class="muted">{{ shaderStateText }}</span>
+      <label>Base 声明</label>
+      <span class="muted">{{ doc.base || "（未声明）" }}</span>
     </div>
     <div v-if="doc.error" class="hint hint-error">
-      组装失败，引用它的材质显示占位材质：{{ doc.error }}
+      解析失败（材质仍按 Base 分支渲染，只是不叠加效果）：{{ doc.error }}
+    </div>
+    <div class="field">
+      <label>钩子</label>
+      <span class="muted">{{ doc.hooks.length }} 个</span>
+    </div>
+    <div v-for="h in doc.hooks" :key="h.name" class="field shader-hook-row">
+      <span class="mono shader-hook-name">{{ h.name }}</span>
+      <span class="muted">{{ h.code.split("\n").length }} 行</span>
     </div>
     <div class="field">
       <label>暴露属性</label>
       <span class="muted">{{ doc.properties.length }} 项</span>
     </div>
-    <div
-      v-for="p in doc.properties"
-      :key="p.key"
-      class="field shader-prop-row"
-    >
+    <div v-for="p in doc.properties" :key="p.key" class="field shader-prop-row">
       <span class="mono shader-prop-key">{{ p.key }}</span>
       <span class="muted">{{ p.label }} · {{ propKindLabel(p.kind) }}</span>
     </div>
     <button
       v-if="!isInternal"
       class="shader-edit-btn"
-      title="打开源码编辑器（Monaco GLSL；Ctrl+S 保存并重新组装程序）"
+      title="打开源码编辑器（Monaco GLSL；Ctrl+S 保存并重新解析 Base/Hook/属性）"
       @click="emit('editSource')"
     >编辑源码</button>
   </template>
   <pre class="shader-source mono">{{ doc.source }}</pre>
   <div class="hint">
     {{ isInternal
-      ? "内置着色器只读；可「复制到项目」生成项目内副本，或由材质挂载引用。"
-      : doc.kind === "custom"
-        ? "自定义着色器：源码编译为 GLSL 程序渲染；Properties 即材质面板暴露的参数（值存 .mat）。"
-        : "类型在创建时固定，不可切换；材质在「着色器」下拉中挂载此程序，按该渲染分支渲染。" }}
+      ? "内置着色器只读；可「复制到项目」生成项目内副本，或作为新建着色器的模板。"
+      : isSky
+        ? "内置天空程序：由天空材质引用，无效果着色器入口。"
+        : "Base 决定材质走哪个渲染分支（PBR/Unlit/卡通），Hook 是在该分支上叠加的效果片段；Properties 即材质卡片暴露的参数（值存 .mat 的 props）。" }}
   </div>
 </template>
 
 <style scoped>
+.shader-hook-row,
 .shader-prop-row {
   gap: 6px;
 }
+.shader-hook-name,
 .shader-prop-key {
   flex: none;
   font-size: 11px;
@@ -124,7 +119,8 @@ const shaderStateText = computed(() => {
 .shader-edit-btn:hover {
   background: rgba(74, 158, 255, 0.12);
 }
-.shader-source {  margin: 2px 0 4px;
+.shader-source {
+  margin: 2px 0 4px;
   padding: 8px 10px;
   max-height: 280px;
   overflow: auto;

@@ -41,9 +41,9 @@ export interface AssetsStore {
   createShaderAsset: (
     root: string,
     destDir: string,
-    /** 着色器种类（physical/unlit/toon） */
+    /** 渲染分支（physical/unlit/toon/skyprocedural/skycube） */
     kind: string,
-    /** 显式指定名称；缺省按种类用 "PBR"/"Unlit"/"Toon"（资产面板「新建着色器」） */
+    /** 显式指定名称；缺省按种类用 "PBR"/"Unlit"/"Toon" 等（资产面板「新建着色器」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
   /** 按给定源码新建着色器资产（创意工坊效果原型 → 项目 .shader） */

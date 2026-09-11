@@ -3,26 +3,28 @@
 // 前端不再读文本/解析/序列化——读取（含 internal/项目路由与解析）、
 // 写入（序列化 + 落盘 + .meta 保障）、复制（internal → assets/materials）
 // 全部在后端完成，前端只收发结构化的 MaterialDoc / ShaderDoc。
-// 材质与着色器分离：.mat 的 shader 字段引用一份 .shader 资产（渲染程序），
-// material_read 负责解析出渲染分支 kind（旧 materialType 字段作回退）。
+// 材质与着色器分离：.mat 的 shader 字段引用一份 .shader 资产；着色器资产用
+// `Base` 声明渲染分支（PBR/Unlit/卡通），用 Hook 块叠加自定义效果（见 scene::shader）。
 // ---------------------------------------------------------------------------
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::migrate::{
-    material_params_from, parse_shader_doc, sanitize_asset_stem, serialize_material_file,
-    serialize_shader_file, suggest_material_rel, sync_shader_directive_text, write_material_asset,
-    MaterialParams, SHADER_EXT,
+    material_params_from, sanitize_asset_stem, serialize_material_file, suggest_material_rel,
+    write_material_asset, MaterialParams, SHADER_EXT,
 };
-use super::shader::{parse_custom_shader, CustomShaderProgram, ShaderPropertyDef};
+use super::shader::{
+    is_shader_doc, parse_shader, serialize_shader_file, shader_kind, shader_name,
+    sync_shader_directive_text, ShaderHook, ShaderPropertyDef,
+};
 
 /// 解析后的材质文档（前端 MaterialManager 缓存形态）
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MaterialDoc {
     pub name: String,
-    /// 渲染分支 key（shader 引用解析结果；旧格式 = materialType 字段）
+    /// 渲染分支 key（着色器 Base 的解析结果；旧格式 = materialType 字段）
     pub material_type: String,
     /// 引用的着色器资产相对路径（空串 = 旧格式无引用）
     pub shader: String,
@@ -34,33 +36,36 @@ pub struct MaterialDoc {
 #[serde(rename_all = "camelCase")]
 pub struct ShaderDoc {
     pub name: String,
+    /// 渲染分支 key（physical/unlit/toon/skyprocedural/skycube；由 Base 或天空标签判别）
     pub kind: String,
     /// 着色器源码全文（ShaderLab 风格；检查器/源码编辑器展示用）
     pub source: String,
-    /// 自定义着色器（kind=custom）暴露的属性（材质面板字段；其它种类为空表）
+    /// 渲染分支声明（PBR/Unlit/Toon；天空程序为空串）
+    pub base: String,
+    /// CGINCLUDE 共享代码（inline 到各钩子之前）
+    pub include: String,
+    /// 钩子列表（效果片段；无钩子 = 只选分支不叠效果）
+    pub hooks: Vec<ShaderHook>,
+    /// 暴露给材质面板的属性（值存 .mat 的 props；天空程序为空表）
     pub properties: Vec<ShaderPropertyDef>,
-    /// 自定义着色器组装后的程序（顶点/片元源码 + 渲染状态）；不可组装/非自定义时为 null
-    pub program: Option<CustomShaderProgram>,
-    /// 自定义着色器组装失败原因（null = 无错误；程序缺失时给面板与日志展示）
+    /// 解析错误（null = 无错误；非 null 时材质仍按 Base 分支渲染，只是不叠加效果）
     pub error: Option<String>,
 }
 
-/// 解析 .shader 文本 → 文档（含自定义着色器的属性与程序组装结果）
-fn shader_doc_from(text: String, rel: &str) -> Option<ShaderDoc> {
-    let (name, kind) = parse_shader_doc(&text)?;
-    let (properties, program, error) = if kind == "custom" {
-        let parsed = parse_custom_shader(&text, rel);
-        (parsed.properties, parsed.program, parsed.error)
-    } else {
-        (Vec::new(), None, None)
-    };
+/// 解析 .shader 文本 → 文档（渲染分支 + 钩子 + 属性表）
+fn shader_doc_from(text: String) -> Option<ShaderDoc> {
+    let name = shader_name(&text)?;
+    let parsed = parse_shader(&text);
+    let kind = shader_kind(&text).unwrap_or_else(|| "physical".to_string());
     Some(ShaderDoc {
         name,
         kind,
         source: text,
-        properties,
-        program,
-        error,
+        base: parsed.base,
+        include: parsed.include,
+        hooks: parsed.hooks,
+        properties: parsed.properties,
+        error: parsed.error,
     })
 }
 
@@ -123,13 +128,12 @@ fn parse_material_doc(text: &str) -> Option<MaterialDoc> {
 }
 
 /// 解析 .shader 引用 → 渲染分支 kind（缺失/损坏回退 legacy 或 physical）。
-/// 仅 .shader 资产引用可解析；天空材质等内置名（SkyBox…）不走材质管线。
+/// 着色器资产的 Base 声明（或天空标签）决定分支；不可解析时回退 legacy。
 fn resolve_shader_kind(root: &std::path::Path, shader: &str, legacy: &str) -> String {
-    if shader.ends_with(".shader") {
+    if shader.ends_with(SHADER_EXT) {
         let kind = read_material_text(root, shader)
             .ok()
-            .and_then(|t| parse_shader_doc(&t))
-            .map(|(_, k)| k);
+            .and_then(|t| shader_kind(&t));
         return kind.unwrap_or_else(|| legacy.to_string());
     }
     if legacy.is_empty() { "physical".to_string() } else { legacy.to_string() }
@@ -168,12 +172,13 @@ pub async fn material_write(
     write_material_asset(&std::path::PathBuf::from(&root), &rel, &content)
 }
 
-/// 读取并解析 .shader 着色器资产（源码全文 + 自定义着色器的属性/程序）；不存在/非着色器文档返回 null
+/// 读取并解析 .shader 着色器资产（源码全文 + 渲染分支 + 钩子 + 属性表）；
+/// 不存在/非着色器文档返回 null
 #[tauri::command]
 pub async fn shader_read(root: String, rel: String) -> Result<Option<ShaderDoc>, String> {
     let root = std::path::PathBuf::from(&root);
     match read_material_text(&root, &rel) {
-        Ok(text) => Ok(shader_doc_from(text, &rel)),
+        Ok(text) => Ok(shader_doc_from(text)),
         Err(_) => Ok(None),
     }
 }
@@ -187,7 +192,7 @@ pub async fn shader_write(root: String, rel: String, kind: String) -> Result<(),
 }
 
 /// 保存着色器源码（正文逻辑，便于测试）：守卫 → 校验 → 指令跟随路径 → 落盘 → 重解析。
-/// 供「着色器源码编辑器保存」与「创意工坊效果原型 → 项目 .shader 资产」共用。
+/// 供「着色器源码编辑器保存」与「创意工坊效果原型 → 项目资产」共用。
 pub(crate) fn write_shader_source(
     root: &std::path::Path,
     rel: &str,
@@ -199,7 +204,7 @@ pub(crate) fn write_shader_source(
     if !rel.to_ascii_lowercase().ends_with(SHADER_EXT) {
         return Err(format!("不是着色器资产: {rel}"));
     }
-    if parse_shader_doc(source).is_none() {
+    if !is_shader_doc(source) {
         return Err(
             "源码不是可解析的着色器文档（需包含 Shader \"名称\" 指令），已拒绝保存".to_string(),
         );
@@ -207,14 +212,14 @@ pub(crate) fn write_shader_source(
     // 指令跟随路径（无指令行/已一致时为 None，保持原文）
     let content = sync_shader_directive_text(source, rel).unwrap_or_else(|| source.to_string());
     write_material_asset(root, rel, &content)?;
-    shader_doc_from(content, rel).ok_or_else(|| format!("保存后解析失败: {rel}"))
+    shader_doc_from(content).ok_or_else(|| format!("保存后解析失败: {rel}"))
 }
 
-/// 保存着色器源码（源码编辑器保存路径 / 创意工坊效果原型落盘）：
+/// 保存着色器源码（源码编辑器保存路径）：
 /// - 仅项目内 .shader 可写（internal/ 内置只读）；
 /// - 保存前把 `Shader "…"` 指令同步为当前路径（改名/移动后仍与资产一致）；
 /// - 内容必须仍是可解析的着色器文档（否则拒绝覆盖，避免写坏资产）；
-/// - 返回重新解析后的文档（含组装报错，供面板展示）。
+/// - 返回重新解析后的文档（含 Base/钩子/属性表/解析错误，供面板展示）。
 #[tauri::command]
 pub async fn shader_write_source(
     root: String,
@@ -315,71 +320,78 @@ mod tests {
         assert!(parse_material_doc("not json").is_none());
     }
 
+    /// 着色器文档：模板序列化 → 解析回文档（Base 决定分支、指令名跟随路径、
+    /// 钩子与属性表随文档返回、天空程序不参与效果解析）
     #[test]
     fn shader_doc_roundtrip() {
-        // kind → 模板序列化，再从源码解析回来（name 取 Shader 指令末段、kind 按 pragma）。
-        // Shader 指令名 = 资产 rel 去扩展名，与路径一致。
-        let text = serialize_shader_file("assets/shaders/My Toon.shader", "toon");
-        assert!(text.contains("Shader \"assets/shaders/My Toon\""));
-        assert!(text.contains("#pragma surface surf Toon"));
-        let (name, kind) = parse_shader_doc(&text).unwrap();
-        assert_eq!(name, "My Toon");
-        assert_eq!(kind, "toon");
+        let rel = "assets/shaders/My Toon.shader";
+        let doc = shader_doc_from(serialize_shader_file(rel, "toon")).unwrap();
+        assert_eq!(doc.name, "My Toon");
+        assert_eq!(doc.kind, "toon");
+        assert_eq!(doc.base, "Toon");
+        assert!(doc.error.is_none());
+        assert!(doc.hooks.is_empty() && doc.properties.is_empty());
 
-        // unlit 模板是顶点片元（无 surface pragma）→ unlit
-        let (_, kind2) =
-            parse_shader_doc(&serialize_shader_file("assets/shaders/X.shader", "unlit")).unwrap();
-        assert_eq!(kind2, "unlit");
-        // 未知 kind 归一为 physical（surface Standard）
-        let (_, kind3) =
-            parse_shader_doc(&serialize_shader_file("assets/shaders/Y.shader", "whatever")).unwrap();
-        assert_eq!(kind3, "physical");
-        // 天空程序：PreviewType=Skybox 标签识别（_SUNDISK → 散射 / samplerCUBE → 立方体）
-        let (_, sky1) =
-            parse_shader_doc(&serialize_shader_file("internal/shaders/SkyProcedural.shader", "skyprocedural"))
-                .unwrap();
-        assert_eq!(sky1, "skyprocedural");
-        let (_, sky2) =
-            parse_shader_doc(&serialize_shader_file("internal/shaders/SkyBox.shader", "skycube"))
-                .unwrap();
-        assert_eq!(sky2, "skycube");
+        // 未知 kind 归一为 PBR 模板
+        let fallback = shader_doc_from(serialize_shader_file("assets/shaders/Y.shader", "whatever")).unwrap();
+        assert_eq!(fallback.kind, "physical");
+        assert_eq!(fallback.base, "PBR");
 
-        // 无 Shader 指令的文本拒绝
-        assert!(parse_shader_doc("not a shader").is_none());
-        assert!(parse_shader_doc("{\"$type\":\"material\"}").is_none());
-        // 旧版 JSON 格式（早期内部实现）兼容读取
-        let (n, k) = parse_shader_doc("{\"$type\":\"shader\",\"name\":\"Old\",\"kind\":\"unlit\"}").unwrap();
-        assert_eq!(n, "Old");
-        assert_eq!(k, "unlit");
+        // 天空程序：PreviewType=Skybox 标签识别（_SUNDISK → 散射 / samplerCUBE → 立方体），
+        // 不参与效果着色器解析（属性/钩子为空）
+        let sky1 = shader_doc_from(serialize_shader_file(
+            "internal/shaders/SkyProcedural.shader",
+            "skyprocedural",
+        ))
+        .unwrap();
+        assert_eq!(sky1.kind, "skyprocedural");
+        assert!(sky1.base.is_empty() && sky1.hooks.is_empty() && sky1.properties.is_empty());
+        let sky2 = shader_doc_from(serialize_shader_file("internal/shaders/SkyBox.shader", "skycube")).unwrap();
+        assert_eq!(sky2.kind, "skycube");
+
+        // 项目效果着色器：钩子 + 属性随文档返回
+        let effect = "Shader \"assets/shaders/Rim\"\n{\n    Properties\n    {\n        _RimColor (\"Rim Color\", Color) = (1, 1, 1, 1)\n    }\n    Base \"PBR\"\n    Hook \"Emissive\" { emissive += _RimColor.rgb; }\n}\n";
+        let doc2 = shader_doc_from(effect.to_string()).unwrap();
+        assert_eq!(doc2.kind, "physical");
+        assert_eq!(doc2.hooks.len(), 1);
+        assert_eq!(doc2.properties.len(), 1);
+        assert!(doc2.error.is_none());
+        // Base 缺失/未知 → 报错但文档仍可用（回退 PBR 分支渲染）
+        let bad = shader_doc_from("Shader \"x\"\n{\n    Hook \"Fragment\" { fragColor.rgb *= 0.5; }\n}\n".to_string()).unwrap();
+        assert_eq!(bad.kind, "physical");
+        assert!(bad.error.unwrap().contains("未声明 Base"));
+
+        // 非着色器文档拒绝
+        assert!(shader_doc_from("not a shader".to_string()).is_none());
+        assert!(shader_doc_from("{\"$type\":\"material\"}".to_string()).is_none());
     }
 
-    /// 保存/新建着色器源码（源码编辑器保存 与 创意工坊效果原型落盘共用）：
-    /// 指令跟随路径写入、可保存后重解析；内置目录/非 .shader/非法源码一律拒绝。
+    /// 保存/新建着色器源码：指令跟随路径写入、可保存后重解析；
+    /// 内置目录/非 .shader/非法源码一律拒绝。
     #[test]
     fn write_shader_source_roundtrip_and_guards() {
         let dir = std::env::temp_dir().join(format!("tve_shader_write_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // 创意工坊效果原型：源码里的指令名是仓库路径，落盘到项目后应同步为目标路径
-        let source = serialize_shader_file("effect/Hologram.shader", "custom");
-        let rel = "assets/shaders/Hologram.shader";
+        // 源码里的指令名是仓库路径，落盘到项目后应同步为目标路径
+        let source = serialize_shader_file("effect/Somewhere.shader", "toon");
+        let rel = "assets/shaders/Glow.shader";
         let doc = write_shader_source(&dir, rel, &source).unwrap();
-        assert_eq!(doc.kind, "custom");
-        assert_eq!(doc.name, "Hologram");
-        assert!(!doc.properties.is_empty());
+        assert_eq!(doc.kind, "toon");
+        assert_eq!(doc.name, "Glow");
         let written = std::fs::read_to_string(dir.join(rel)).unwrap();
         assert!(
-            written.contains("Shader \"assets/shaders/Hologram\""),
+            written.contains("Shader \"assets/shaders/Glow\""),
             "写入后 Shader 指令应跟随资产路径"
         );
         assert!(
-            !written.contains("Shader \"effect/Hologram\""),
+            !written.contains("Shader \"effect/Somewhere\""),
             "原仓库路径的指令名应已被替换"
         );
         // 落盘内容可再解析（重复保存幂等）
         let again = write_shader_source(&dir, rel, &written).unwrap();
-        assert_eq!(again.name, "Hologram");
+        assert_eq!(again.name, "Glow");
 
         // 守卫：内置只读 / 非 .shader / 非法源码
         assert!(write_shader_source(&dir, "internal/shaders/PBR.shader", &source).is_err());
@@ -388,41 +400,6 @@ mod tests {
         // 非法源码被拒绝时不覆盖已有文件
         assert!(std::fs::read_to_string(dir.join(rel)).unwrap().contains("Shader "));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// 自定义着色器文档：kind=custom 时随文档返回属性表与组装后的程序；
-    /// 其它种类不返回（空表/null），组装失败时给 error 说明。
-    #[test]
-    fn shader_doc_exposes_custom_program() {
-        let rel = "assets/shaders/Glow.shader";
-        let text = serialize_shader_file(rel, "custom");
-        let doc = shader_doc_from(text, rel).unwrap();
-        assert_eq!(doc.kind, "custom");
-        assert_eq!(doc.name, "Glow");
-        assert_eq!(doc.properties.len(), 3);
-        assert!(doc.error.is_none());
-        let prog = doc.program.expect("自定义程序应已组装");
-        assert!(prog.vertex.contains("void main() { vert(); }"));
-        assert!(prog.fragment.contains("gl_FragColor = frag();"));
-        assert_eq!(prog.side, "front");
-
-        // 内置分支：属性表为空、无程序（不参与自定义组装）
-        let pbr = shader_doc_from(
-            serialize_shader_file("internal/shaders/PBR.shader", "physical"),
-            "internal/shaders/PBR.shader",
-        )
-        .unwrap();
-        assert_eq!(pbr.kind, "physical");
-        assert!(pbr.properties.is_empty());
-        assert!(pbr.program.is_none());
-        assert!(pbr.error.is_none());
-
-        // 自定义但缺少片元块 → 程序为 null + error 文案
-        let bad = "Shader \"assets/shaders/Bad\"\n{\n SubShader\n {\n CGINCLUDE\n ENDCG\n CGPROGRAM\n void vert() { gl_Position = vec4(position, 1.0); }\n ENDCG\n }\n}\n";
-        let doc2 = shader_doc_from(bad.to_string(), "assets/shaders/Bad.shader").unwrap();
-        assert_eq!(doc2.kind, "custom");
-        assert!(doc2.program.is_none());
-        assert!(doc2.error.unwrap().contains("CGPROGRAM"));
     }
 
     /// 内置 .shader（public/internal/shaders，打包进 exe 的唯一事实源）必须与
@@ -436,7 +413,6 @@ mod tests {
             ("Toon", "toon"),
             ("SkyProcedural", "skyprocedural"),
             ("SkyBox", "skycube"),
-            ("Custom", "custom"),
         ] {
             let rel = format!("internal/shaders/{stem}.shader");
             let text = std::fs::read_to_string(dir.join(format!("{stem}.shader")))
@@ -495,17 +471,17 @@ mod tests {
 
     #[test]
     fn rewrite_shader_directive_follows_path() {
-        use crate::scene::migrate::rewrite_shader_directive;
+        use crate::scene::shader::rewrite_shader_directive;
         let dir = std::env::temp_dir().join(format!("tve_shader_rewrite_{}", std::process::id()));
-        // 文件：旧指令（如历史遗留 "Custom/T"）在复制/移动后跟随新路径
+        // 文件：旧指令（如历史遗留 "Old/Name"）在复制/移动后跟随新路径
         let rel = "assets/shaders/Copy.shader";
         let full = dir.join(rel);
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         std::fs::write(&full, serialize_shader_file("assets/shaders/Old.shader", "toon")).unwrap();
         rewrite_shader_directive(&dir, rel);
-        let (name, kind) = parse_shader_doc(&std::fs::read_to_string(&full).unwrap()).unwrap();
-        assert_eq!(name, "Copy");
-        assert_eq!(kind, "toon");
+        let doc = shader_doc_from(std::fs::read_to_string(&full).unwrap()).unwrap();
+        assert_eq!(doc.name, "Copy");
+        assert_eq!(doc.kind, "toon");
 
         // 目录：递归改写目录下全部 .shader
         let sub_rel = "assets/shaders/dir/Nested.shader";
@@ -513,8 +489,8 @@ mod tests {
         std::fs::create_dir_all(sub.parent().unwrap()).unwrap();
         std::fs::write(&sub, serialize_shader_file("assets/shaders/Other.shader", "unlit")).unwrap();
         rewrite_shader_directive(&dir, "assets/shaders/dir");
-        let (name2, _) = parse_shader_doc(&std::fs::read_to_string(&sub).unwrap()).unwrap();
-        assert_eq!(name2, "Nested");
+        let doc2 = shader_doc_from(std::fs::read_to_string(&sub).unwrap()).unwrap();
+        assert_eq!(doc2.name, "Nested");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

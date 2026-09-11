@@ -27,9 +27,9 @@ export type TextureParamKey =
   | "emissiveMap";
 
 /**
- * 自定义着色器参数值（.mat 的 props 字段；键 = 着色器 Properties 属性名）：
+ * 材质属性值（.mat 的 props 字段；键 = 着色器 Properties 属性名）：
  * - color → RGB hex 数字；range/float/int → 数字；vector → [x,y,z,w]；texture → 资产相对路径
- * 参数含义由挂载的 .shader 属性声明决定（见 framework/material/customShader.ts）。
+ * 参数含义由挂载的 .shader 属性声明决定（见 framework/material/shaderHooks.ts）。
  */
 export type MaterialPropValue = number | string | number[];
 
@@ -170,11 +170,12 @@ export interface MaterialParams {
   /** 自发光贴图（Emission） */
   emissiveMap: string;
   /**
-   * 自定义着色器参数（.mat 的 props 字段；仅 shader 为 kind=custom 时使用）：
-   * 键 = 着色器 Properties 的属性名，值按属性类型存储（颜色 hex / 数字 / 向量数组 / 贴图路径）。
-   * 内置渲染分支（physical/unlit/toon）忽略此字段。
+   * 着色器参数（挂载的 .shader 的 Properties 值；键 = 属性名）。
+   * 着色器 Hook 片段由引擎注入到其 Base 对应的渲染分支（值随材质资产存储）。
    */
   props: Record<string, MaterialPropValue>;
+
+
 }
 
 /** 材质资产文件扩展名 */
@@ -232,7 +233,7 @@ export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
   roughnessMap: "",
   normalMap: "",
   emissiveMap: "",
-  // 自定义着色器参数默认空（缺省值由所挂着色器的 Properties 声明提供）
+  // 着色器参数默认空（缺省值由所挂 .shader 的 Properties 声明提供）
   props: {},
 };
 
@@ -334,10 +335,11 @@ export function materialParamsFrom(v: unknown): MaterialParams {
     normalMap: typeof o.normalMap === "string" ? o.normalMap : "",
     emissiveMap: typeof o.emissiveMap === "string" ? o.emissiveMap : "",
     props: materialPropsFrom(o.props),
+
   };
 }
 
-/** 自定义着色器参数收敛：只保留可序列化的值（数字/字符串/数字数组），其余丢弃 */
+/** 扩展着色器参数收敛：只保留可序列化的值（数字/字符串/数字数组），其余丢弃 */
 export function materialPropsFrom(v: unknown): Record<string, MaterialPropValue> {
   const out: Record<string, MaterialPropValue> = {};
   if (!v || typeof v !== "object" || Array.isArray(v)) return out;

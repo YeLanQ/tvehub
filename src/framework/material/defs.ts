@@ -6,15 +6,15 @@ import type { MaterialEnableKey, MaterialParamKey } from "./types";
 export type MaterialParamKind = "number" | "color" | "bool" | "texture" | "vector";
 
 export interface MaterialParamDef {
-  /** 参数字段名：内置分支为 MaterialParamKey，自定义着色器为属性名（任意 _ 前缀标识符） */
+  /** 参数字段名：内置分支为 MaterialParamKey，扩展着色器为属性名（任意 _ 前缀标识符） */
   key: string;
-  /** 中文显示名（对应属性中文/习惯名；自定义着色器取 Properties 文案） */
+  /** 中文显示名（对应属性中文/习惯名；扩展着色器取 Properties 文案） */
   label: string;
   /** 英文属性名/属性键（提示） */
   en: string;
   kind: MaterialParamKind;
   step?: number;
-  /** 面板下界（缺省用材质参数默认收敛规则；自定义着色器取属性声明） */
+  /** 面板下界（缺省用材质参数默认收敛规则；扩展着色器取属性声明） */
   min?: number;
   /** 面板上界（同上） */
   max?: number;
@@ -160,7 +160,7 @@ const FLAT = MATERIAL_PARAM_GROUPS.flatMap((g) => g.defs).reduce(
   {} as Record<string, MaterialParamDef>,
 );
 
-/** 内置参数定义（自定义着色器属性无静态定义，由后端 shader_read 的属性表动态构造） */
+/** 内置参数定义（扩展着色器属性无静态定义，由后端 extension_read 的属性表动态构造） */
 export function materialParamDef(key: MaterialParamKey): MaterialParamDef {
   return FLAT[key];
 }

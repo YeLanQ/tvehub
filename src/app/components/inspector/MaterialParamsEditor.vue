@@ -3,7 +3,7 @@
  * 材质参数编辑器（数据驱动，按 MaterialParamGroup[] 渲染全部暴露参数）：
  * 从 MaterialSection 抽出共享——节点材质卡片与资产检查器的材质编辑共用同一份实现。
  * props.local 为展示镜像（调用方持有并在编辑时被就地更新），disabled 统一控制只读。
- * 参数字段名对内建分支为 MaterialParamKey，对自定义着色器为属性名（任意 _ 前缀标识符），
+ * 参数字段名对内建分支为 MaterialParamKey，对扩展着色器属性为属性名（任意 _ 前缀标识符），
  * 因此事件负载用 string；自定义属性自带上/下界（def.min/def.max），缺省走内置收敛规则。
  */
 import { computed } from "vue";
@@ -183,7 +183,7 @@ function onTextureEdit(def: MaterialParamDef, e: Event): void {
           @commit="(v) => onNumberEdit(def, v)"
         />
       </div>
-      <!-- 向量（四分量：自定义着色器 Vector 属性） -->
+      <!-- 向量（四分量：扩展着色器 Vector 属性） -->
       <div v-else-if="def.kind === 'vector'" class="field">
         <label :title="`${def.en}`">{{ def.label }}</label>
         <div class="vec-row">

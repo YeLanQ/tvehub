@@ -17,11 +17,16 @@ export interface WorkshopMenuApi {
 
 // —— 创意工坊菜单数据（右键菜单「创意工坊 ▸ 标签 ▸ 内容」；右键时刷新）——
 // 标签名与首页工坊一致（repos 子目录名首字母大写），数据来自 lib/repos。
-/** 可新建的项目资产类型：脚本（.ts）与着色器（.shader） */
+// 可新建的项目资产类型：脚本（.ts）与效果着色器（.shader）
 const WORKSHOP_ITEM_KINDS: Record<string, MenuWorkshopItem["kind"]> = {
   ts: "script",
   shader: "shader",
 };
+
+/** 分类原型扩展名 → 该分类下的原型文件（按文件名后缀匹配） */
+function matchesPrototype(file: string, ext: string): boolean {
+  return file.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
+}
 
 export function useWorkshopMenu(): WorkshopMenuApi {
   const workshopMenuCats = ref<MenuWorkshopCategory[]>([]);
@@ -33,9 +38,9 @@ export function useWorkshopMenu(): WorkshopMenuApi {
       .map((c) => {
         const ext = c.prototypeExt;
         const kind = ext ? WORKSHOP_ITEM_KINDS[ext] : undefined;
-        if (!kind) return null;
+        if (!kind || !ext) return null;
         const items = c.files
-          .filter((f) => f.ext === ext)
+          .filter((f) => matchesPrototype(f.file, ext))
           .map((f) => ({ category: c.id, file: f.file, name: f.name, kind }));
         return items.length ? ({ id: c.id, label: c.label, items } as MenuWorkshopCategory) : null;
       })
