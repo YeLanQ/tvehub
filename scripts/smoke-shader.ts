@@ -32,7 +32,7 @@ import {
   setNodeMaterialBackend,
   tickAllNodeHookTime,
 } from "../src/framework/material/nodeMaterialBackend";
-import type { ShaderDoc, ShaderPropertyDef } from "../src/framework/material";
+import { insertBaseDeclaration, type ShaderDoc, type ShaderPropertyDef } from "../src/framework/material";
 import { parseShader, shaderKind } from "../public/engine/runtime/shader.mjs";
 
 let passed = 0;
@@ -437,6 +437,40 @@ async function main(): Promise<void> {
       matD.customProgramCacheKey() !== keyB,
       "清除钩子后不再沿用钩子 key（材质回到默认程序缓存行为）",
     );
+  }
+
+  // —— 10. 旧版着色器（pragma 型）迁移：提示 + 一键补 Base ——
+  console.log("[10] 旧版着色器迁移（补 Base）");
+  {
+    const legacy = [
+      'Shader "assets/shaders/OldToon"',
+      "{",
+      "    SubShader",
+      "    {",
+      "        CGPROGRAM",
+      "        #pragma surface surf Toon",
+      "        ENDCG",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const parsed = parseShader(legacy);
+    ok(
+      (parsed.error ?? "").includes("旧版着色器") && (parsed.error ?? "").includes('Base "Toon"'),
+      `旧版文件给出可操作提示（${parsed.error ?? "无错误"}）`,
+    );
+    ok(shaderKind(legacy) === null, "旧版文件不解析出渲染分支（回退默认分支渲染）");
+    // 一键补 Base（与资产检查器同一 helper）后：可解析、分支正确、其余内容不变
+    const fixed = insertBaseDeclaration(legacy, "Toon");
+    ok(fixed !== null, "补 Base 声明（helper 返回新源码）");
+    const after = parseShader(fixed!);
+    ok(after.error === null, "补 Base 后解析无错误");
+    ok(after.base === "Toon" && shaderKind(fixed!) === "toon", "补 Base 后分支 = Toon");
+    ok(
+      fixed!.includes("#pragma surface surf Toon") && fixed!.includes('Shader "assets/shaders/OldToon"'),
+      "补 Base 只插入一行，其余内容原样保留",
+    );
+    ok(insertBaseDeclaration("not a shader", "PBR") === null, "非着色器源码 → 拒绝补 Base（返回 null）");
   }
 
   console.log(`\n结果：${passed} 通过，${failed} 失败`);

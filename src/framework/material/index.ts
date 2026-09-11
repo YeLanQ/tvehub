@@ -50,6 +50,7 @@ export {
   SHADER_HOOKS_BY_KIND,
   SHADER_KINDS,
   SHADER_KIND_STEMS,
+  insertBaseDeclaration,
   normalizeShaderKind,
   shaderFileStem,
   shaderKindLabel,

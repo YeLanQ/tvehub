@@ -248,8 +248,9 @@ function quotedValue(line, keyword) {
 
 /** 提取 Base 声明（未声明返回空串） */
 function extractBase(text) {
-  for (const line of String(text ?? "").split(/\r?\n/)) {
-    const v = quotedValue(stripComment(line).trim(), "Base");
+  const lines = String(text ?? "").split("\n");
+  for (const rawLine of lines) {
+    const v = quotedValue(stripComment(rawLine.replace(/\r$/, "")).trim(), "Base");
     if (v !== null) return v;
   }
   return "";
@@ -341,6 +342,26 @@ function extractHooks(base, text) {
   return { hooks, error: null };
 }
 
+/**
+ * 旧版着色器（重构前：按 pragma 判别的渲染分支程序，无 Base）→ 建议补的 Base。
+ * 只用于「缺 Base」时的迁移提示，不参与正常解析。
+ */
+export function legacyBase(text) {
+  const lines = String(text ?? "").split("\n");
+  for (const rawLine of lines) {
+    const t = stripComment(rawLine.replace(/\r$/, "")).trim();
+    if (!t.startsWith("#pragma")) continue;
+    const rest = t.slice("#pragma".length).trimStart();
+    if (rest.startsWith("surface")) {
+      const it = rest.split(/\s+/);
+      const model = (it[2] ?? "").toLowerCase();
+      return model === "toon" ? "Toon" : "PBR";
+    }
+    if (rest.startsWith("fragment") || rest.startsWith("vertex")) return "Unlit";
+  }
+  return "PBR";
+}
+
 /** 是否为天空程序（天空盒惯例 PreviewType=Skybox 标签） */
 export function isSkyProgram(text) {
   return String(text ?? "").includes('"PreviewType"="Skybox"');
@@ -361,7 +382,11 @@ export function parseShader(text) {
   let error = hookErr;
   if (!error) {
     if (!base.trim()) {
-      error = '未声明 Base：请在文件里写 Base "PBR"（或 "Unlit" / "Toon"），决定材质走哪个渲染分支';
+      const legacy = String(text).includes("#pragma");
+      const suggested = legacyBase(text);
+      error = legacy
+        ? `未声明 Base：本文件是旧版着色器（按旧规则识别为 ${suggested} 分支），请补一行 Base "${suggested}"（该行决定材质走哪个渲染分支；补上后即可用 Hook 叠加效果）`
+        : '未声明 Base：请在文件里补一行 Base "PBR"（或 "Unlit" / "Toon"），决定材质走哪个渲染分支';
     } else if (!baseKind(base)) {
       error = `未知 Base "${base}"：可用 PBR / Unlit / Toon`;
     }

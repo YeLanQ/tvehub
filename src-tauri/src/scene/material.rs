@@ -15,7 +15,7 @@ use super::migrate::{
     write_material_asset, MaterialParams, SHADER_EXT,
 };
 use super::shader::{
-    is_shader_doc, parse_shader, serialize_shader_file, shader_kind, shader_name,
+    is_shader_doc, is_sky_program, parse_shader, serialize_shader_file, shader_kind, shader_name,
     sync_shader_directive_text, ShaderHook, ShaderPropertyDef,
 };
 
@@ -50,6 +50,9 @@ pub struct ShaderDoc {
     pub properties: Vec<ShaderPropertyDef>,
     /// 解析错误（null = 无错误；非 null 时材质仍按 Base 分支渲染，只是不叠加效果）
     pub error: Option<String>,
+    /// 缺 Base 时的建议值（按旧版 pragma 推断；"空串" = 无需建议）——
+    /// 前端据此提供「补上 Base」一键迁移，避免旧着色器只能手动改
+    pub suggested_base: String,
 }
 
 /// 解析 .shader 文本 → 文档（渲染分支 + 钩子 + 属性表）
@@ -57,6 +60,12 @@ fn shader_doc_from(text: String) -> Option<ShaderDoc> {
     let name = shader_name(&text)?;
     let parsed = parse_shader(&text);
     let kind = shader_kind(&text).unwrap_or_else(|| "physical".to_string());
+    // 缺 Base 且非天空程序 → 给出建议值（旧版着色器可按 pragma 推断出原分支）
+    let suggested_base = if parsed.base.trim().is_empty() && !is_sky_program(&text) {
+        crate::scene::shader::legacy_base(&text).to_string()
+    } else {
+        String::new()
+    };
     Some(ShaderDoc {
         name,
         kind,
@@ -66,6 +75,7 @@ fn shader_doc_from(text: String) -> Option<ShaderDoc> {
         hooks: parsed.hooks,
         properties: parsed.properties,
         error: parsed.error,
+        suggested_base,
     })
 }
 

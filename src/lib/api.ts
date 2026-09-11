@@ -138,6 +138,7 @@ export const api = {
         default: number | number[] | string;
       }[];
       error: string | null;
+      suggestedBase: string;
     } | null>("shader_read", { root, rel }),
   /** 序列化并写着色器资产（后端持有 .shader 格式；Shader 指令名取 rel 去扩展名，
    *  与资产路径一致；自动补 .meta） */
@@ -162,6 +163,7 @@ export const api = {
         default: number | number[] | string;
       }[];
       error: string | null;
+      suggestedBase: string;
     }>("shader_write_source", { root, rel, source }),
   /** 复制材质为项目资产（internal → assets/materials；后端扫盘去重），返回新相对路径 */
   materialDuplicate: (root: string, srcRel: string, preferName: string) =>

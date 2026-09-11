@@ -20,6 +20,7 @@ import {
   DEFAULT_SHADER_REL,
   materialFileStem,
   materialTypeRegistry,
+  insertBaseDeclaration,
   shaderFileStem,
   shaderParamGroups,
   skyKindOfShaderRef,
@@ -34,7 +35,7 @@ import { getEditorStore } from "../../stores/editor";
 import { logStore } from "../../stores/log";
 import { assetService } from "../../services/assetService";
 import { saveMaterialParams } from "../../lib/materials";
-import { loadShaderDoc, loadShaderKind } from "../../lib/shaders";
+import { loadShaderDoc, loadShaderKind, saveShaderSource } from "../../lib/shaders";
 import { api } from "../../../lib/api";
 import { instantiatePrefabAsset } from "../../lib/prefabs";
 import {
@@ -154,6 +155,28 @@ function syncShaderProps(): void {
 
 // —— 着色器源码编辑器（.shader；弹层 Monaco GLSL）——
 const shaderEditorOpen = ref(false);
+
+/**
+ * 旧版着色器迁移（一键）：在 Shader 块的开括号后补一行 Base "…" 并保存。
+ * 只做最小的文本插入（不动其余内容），随后走与源码编辑器相同的保存/刷新链路。
+ */
+async function onShaderFixBase(): Promise<void> {
+  const rootPath = root.value;
+  const doc = shaderDoc.value;
+  if (!rootPath || !doc || isInternal.value || !doc.suggestedBase) return;
+  const fixed = insertBaseDeclaration(doc.source, doc.suggestedBase);
+  if (fixed === null) {
+    logStore.log("error", `补 Base 失败（未找到 Shader 块）: ${props.rel}`);
+    return;
+  }
+  try {
+    const saved = await saveShaderSource(rootPath, props.rel, fixed);
+    onShaderSaved(saved);
+    logStore.log("success", `已为旧版着色器补上 Base "${doc.suggestedBase}": ${props.rel}`);
+  } catch (e) {
+    logStore.log("error", `保存着色器 ${props.rel} 失败: ${e}`);
+  }
+}
 
 /** 源码保存完成：写引擎缓存（视口刷新 + 面板取新属性）并刷新本卡片文档 */
 function onShaderSaved(doc: ShaderDoc): void {
@@ -547,6 +570,7 @@ function onImgLoad(w: number, h: number): void {
         :doc="shaderDoc"
         :is-internal="isInternal"
         @editSource="shaderEditorOpen = true"
+        @fixBase="onShaderFixBase"
       />
       <div v-else class="hint">着色器读取中…</div>
     </template>

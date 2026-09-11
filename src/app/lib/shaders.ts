@@ -46,6 +46,7 @@ function toShaderDoc(doc: {
     default: number | number[] | string;
   }[];
   error?: string | null;
+  suggestedBase?: string;
 }): ShaderDoc {
   const properties: ShaderPropertyDef[] = (doc.properties ?? []).map((p) => ({
     key: p.key,
@@ -64,6 +65,7 @@ function toShaderDoc(doc: {
     hooks: (doc.hooks ?? []).map((h) => ({ name: h.name, code: h.code })),
     properties,
     error: doc.error ?? null,
+    suggestedBase: doc.suggestedBase ?? "",
   };
 }
 

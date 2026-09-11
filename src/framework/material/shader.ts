@@ -96,6 +96,8 @@ export interface ShaderDoc {
   properties: ShaderPropertyDef[];
   /** 解析错误（null = 无错误；非 null 时仍按 Base 分支渲染，只是不叠效果） */
   error: string | null;
+  /** 缺 Base 时的建议值（按旧版 pragma 推断；空串 = 无需建议）——「补上 Base」一键迁移用 */
+  suggestedBase: string;
 }
 
 /** 各渲染分支支持的钩子（three 内置着色器的注入点差异；与后端 hook_support 一致） */
@@ -157,4 +159,22 @@ export function skyKindOfShaderRef(shader: string): SkyMaterialKind | null {
 /** 着色器资产相对路径 → 文件名（去扩展名） */
 export function shaderFileStem(rel: string): string {
   return materialFileStem(rel);
+}
+
+/**
+ * 旧版着色器迁移（纯文本手术）：在 Shader 块的开括号后插入一行 `Base "…"`，
+ * 其余内容原样保留。用于「补上 Base」一键迁移——旧版（pragma 型）着色器缺少
+ * Base 声明，补上后即可继续渲染原分支并在其上叠加 Hook。
+ * 找不到 Shader 块/开括号时返回 null（调用方提示失败，不写盘）。
+ */
+export function insertBaseDeclaration(source: string, base: string): string | null {
+  const value = base.trim();
+  if (!value) return null;
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const braceAt = lines.findIndex((l) => l.trim() === "{");
+  const shaderAt = lines.findIndex((l) => l.trim().startsWith("Shader "));
+  const at = braceAt >= 0 ? braceAt + 1 : shaderAt + 1;
+  if (at <= 0 || at > lines.length) return null;
+  lines.splice(at, 0, `    Base "${value}"`);
+  return lines.join("\n");
 }

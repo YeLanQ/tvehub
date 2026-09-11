@@ -24,6 +24,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 打开源码编辑器（弹层由父组件持有） */
   editSource: [];
+  /** 一键迁移：给旧版着色器补上 Base 声明（由父组件写盘并重新解析） */
+  fixBase: [];
 }>();
 
 /** 属性类型显示名（属性表列表用） */
@@ -61,6 +63,12 @@ const isSky = computed(() => !props.doc.base && props.doc.hooks.length === 0);
     <div v-if="doc.error" class="hint hint-error">
       解析失败（材质仍按 Base 分支渲染，只是不叠加效果）：{{ doc.error }}
     </div>
+    <button
+      v-if="!isInternal && doc.suggestedBase"
+      class="shader-edit-btn"
+      :title="`旧版着色器迁移：在源码里补一行 Base &quot;${doc.suggestedBase}&quot; 并保存（不改动其余内容）`"
+      @click="emit('fixBase')"
+    >补上 Base "{{ doc.suggestedBase }}"</button>
     <div class="field">
       <label>钩子</label>
       <span class="muted">{{ doc.hooks.length }} 个</span>

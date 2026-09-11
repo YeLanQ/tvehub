@@ -348,6 +348,31 @@ fn extract_base(text: &str) -> String {
     String::new()
 }
 
+/// 旧版着色器（重构前：按 pragma 判别的渲染分支程序，无 Base 声明）→ 建议补的 Base。
+/// 只用于「缺 Base」时的迁移提示与建议值，不参与正常解析：
+///   `#pragma surface surf Toon` → Toon；其余 surface → PBR；
+///   仅顶点片元 pragma（无 surface）→ Unlit；无法判别 → PBR。
+pub fn legacy_base(text: &str) -> &'static str {
+    for line in text.lines() {
+        let t = strip_comment(line).trim();
+        let Some(rest) = t.strip_prefix("#pragma") else { continue };
+        let rest = rest.trim_start();
+        if let Some(rest) = rest.strip_prefix("surface") {
+            let mut it = rest.split_whitespace();
+            let _func = it.next();
+            return if it.next().unwrap_or("").eq_ignore_ascii_case("toon") {
+                BASE_TOON
+            } else {
+                BASE_PBR
+            };
+        }
+        if rest.starts_with("fragment") || rest.starts_with("vertex") {
+            return BASE_UNLIT;
+        }
+    }
+    BASE_PBR
+}
+
 /// 提取 CGINCLUDE 块内容（ENDCG 结束）
 fn extract_include(text: &str) -> String {
     let mut include = String::new();
@@ -486,10 +511,19 @@ pub fn parse_shader(text: &str) -> ShaderParse {
 
     let error = hook_err.or_else(|| {
         if base.trim().is_empty() {
-            Some(format!(
-                "未声明 Base：请在文件里写 Base \"{}\"（或 \"{}\" / \"{}\"），决定材质走哪个渲染分支",
-                BASE_PBR, BASE_UNLIT, BASE_TOON
-            ))
+            // 区分「旧版着色器迁移」与「手写漏写」：前者给出按 pragma 推断的建议 Base
+            let legacy = text.contains("#pragma");
+            let suggested = legacy_base(text);
+            Some(if legacy {
+                format!(
+                    "未声明 Base：本文件是旧版着色器（按旧规则识别为 {suggested} 分支），请补一行 Base \"{suggested}\"（该行决定材质走哪个渲染分支；补上后即可用 Hook 叠加效果）"
+                )
+            } else {
+                format!(
+                    "未声明 Base：请在文件里补一行 Base \"{}\"（或 \"{}\" / \"{}\"），决定材质走哪个渲染分支",
+                    BASE_PBR, BASE_UNLIT, BASE_TOON
+                )
+            })
         } else if base_kind(&base).is_none() {
             Some(format!(
                 "未知 Base \"{base}\"：可用 {} / {} / {}",
@@ -1065,3 +1099,40 @@ Shader "assets/shaders/Dissolve"
     }
 }
 
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+
+    /// 旧版着色器（pragma 型，无 Base）：按 pragma 推断出建议 Base，并给出可操作的迁移提示
+    #[test]
+    fn legacy_shader_suggests_base() {
+        let cases = [
+            (
+                "Shader \"assets/shaders/Old\"\n{\n    SubShader\n    {\n        CGPROGRAM\n        #pragma surface surf Standard\n        ENDCG\n    }\n}\n",
+                "PBR",
+            ),
+            (
+                "Shader \"assets/shaders/OldToon\"\n{\n    SubShader\n    {\n        CGPROGRAM\n        #pragma surface surf Toon\n        ENDCG\n    }\n}\n",
+                "Toon",
+            ),
+            (
+                "Shader \"assets/shaders/OldUnlit\"\n{\n    SubShader\n    {\n        CGPROGRAM\n        #pragma vertex vert\n        #pragma fragment frag\n        ENDCG\n    }\n}\n",
+                "Unlit",
+            ),
+        ];
+        for (src, base) in cases {
+            assert_eq!(legacy_base(src), base, "旧版 pragma 推断 Base");
+            let parsed = parse_shader(src);
+            let err = parsed.error.expect("缺 Base 应报错");
+            assert!(err.contains("旧版着色器"), "{err}");
+            assert!(err.contains(&format!("Base \"{base}\"")), "{err}");
+            assert_eq!(shader_kind(src), None, "旧版文件不解析出渲染分支（调用方回退默认）");
+        }
+        // 手写文件（无 pragma）：给通用提示，不含「旧版」措辞
+        let handwritten = "Shader \"x\"\n{\n    Hook \"Fragment\" { fragColor.rgb *= 0.5; }\n}\n";
+        let err = parse_shader(handwritten).error.unwrap();
+        assert!(err.contains("请在文件里补一行 Base"), "{err}");
+        assert!(!err.contains("旧版"), "{err}");
+    }
+}
