@@ -358,8 +358,12 @@ function genStmts(node: Stmt, ctx: GenContext, state: GenState): void {
       const cond = genExpr(node.cond, ctx);
       const thenStmts = node.then;
       const elseStmts = node.else;
-      const thenFn = () => genStmts(thenStmts, ctx, state);
-      const elseFn = elseStmts ? () => genStmts(elseStmts, ctx, state) : undefined;
+      // 分支体由 three 在材质构建期回调执行（惰性），必须使用**独立的分支 state**：
+      // 共享 state 时，钩子模板末尾的 return 会提前把 earlyReturn 置真，分支回调
+      // 执行时被整段跳过（镂空丢失）；分支内的 return 也不应泄漏回外层语句流。
+      const branchState = (): GenState => ({ earlyReturn: false, returnValue: null });
+      const thenFn = () => genStmts(thenStmts, ctx, branchState());
+      const elseFn = elseStmts ? () => genStmts(elseStmts, ctx, branchState()) : undefined;
       ctx.tsl.If(cond, thenFn, elseFn);
       return;
     }
