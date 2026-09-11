@@ -44,7 +44,8 @@ const LIGHT_NODE_TYPES = new Set([
  *   每帧推进与按节点 id 寻址控制）；
  * - nodes：全部节点列表（{ json, obj }，供脚本宿主/tve SDK 寻址；
  *   节点对象打 userData.nodeId/nodeTag 标记，灯光实例等内部子对象不带标记）。
- * ctx = { materialParams, models }：.mat 参数表 + 模型实例化缓存。
+ * ctx = { materialParams, models, particleMaterial }：.mat 参数表 + 模型实例化缓存 +
+ * 粒子材质工厂（按渲染后端注入：WebGPU 传 TSL 工厂，缺省 GLSL）。
  */
 export function buildSceneTree(rootJson, scene, ctx) {
   const cameras = [];
@@ -73,10 +74,11 @@ export function buildSceneTree(rootJson, scene, ctx) {
     }
   }
 
-  /** 粒子系统节点：Group 承载节点变换，粒子 Points 挂其下（与编辑器同结构） */
+  /** 粒子系统节点：Group 承载节点变换，粒子实例网格挂其下（与编辑器同结构） */
   function wrapParticles(json) {
     const group = new THREE.Group();
-    const emitter = createParticleEmitter(json.particles);
+    // 材质工厂按渲染后端注入（WebGPU → TSL；缺省 GLSL）
+    const emitter = createParticleEmitter(json.particles, ctx.particleMaterial);
     group.add(emitter.object);
     particles.push({ json, obj: group, emitter });
     return group;

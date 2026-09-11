@@ -154,14 +154,29 @@ export function findSkyNode(json) {
   return null;
 }
 
+/**
+ * 纹理垂直朝向（按渲染后端设置；player 在创建渲染器后调用一次）。
+ *
+ * 背景：立方体贴图采样在 WebGL（GL 约定）与 WebGPU（D3D/WebGPU 约定）之间 Y 轴相反；
+ * 且 three 的 WebGPU 后端对立方体贴图**没有** flipY 机制（它只对 2D 纹理做着色器 UV
+ * 翻转），所以六面图必须按后端选择是否预翻转，否则天空盒上下颠倒：
+ * - WebGL：预翻转（ImageBitmap 上传忽略 UNPACK_FLIP_Y_WEBGL，必须自己翻）→ "flipY"
+ * - WebGPU：不翻转（该约定下的自然朝向才是正的）→ "none"
+ */
+let imageOrientation = "flipY";
+
+/** 按渲染后端设置纹理翻转（player 在 createRenderer 之后调用） */
+export function configureSkyOrientation(backend) {
+  imageOrientation = backend === "webgpu" ? "none" : "flipY";
+}
+
 /** fetch 相对路径 → ImageBitmap（失败返回 null；归档/磁盘资产统一走 fetch 拦截）。
- * imageOrientation: "flipY" 必须显式指定——WebGL 对 ImageBitmap 上传忽略
- * UNPACK_FLIP_Y_WEBGL，不预翻转会导致纹理（天空全景/六面）垂直颠倒。 */
+ * 是否预翻转由 configureSkyOrientation 按后端决定（见上）。 */
 async function fetchImageBitmap(rel) {
   try {
     const r = await fetch(rel);
     if (!r.ok) return null;
-    return await createImageBitmap(await r.blob(), { imageOrientation: "flipY" });
+    return await createImageBitmap(await r.blob(), { imageOrientation });
   } catch {
     return null;
   }
@@ -659,6 +674,8 @@ export async function loadSkyTexCube(rel) {
     if (!bmp) return null;
     const tex = new THREE.Texture(bmp);
     tex.mapping = THREE.EquirectangularReflectionMapping;
+    // WebGPU 后端用着色器 UV 翻转实现 flipY：位图已按后端朝向取用，这里关掉避免二次翻转
+    if (imageOrientation === "none") tex.flipY = false;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;

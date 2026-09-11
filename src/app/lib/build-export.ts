@@ -11,6 +11,7 @@ import {
   fetchWebPreviewRuntimeTexts,
   configUsesPhysics,
   configPhysicsBackend,
+  configUsesWebgpu,
   withHtmlTitle,
 } from "./web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "./script-compile";
@@ -209,7 +210,8 @@ export async function runBuild(opts: {
   // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
   await getScriptsStore().saveAll();
 
-  // 物理启用状态与后端在项目配置中：启用时仅打包配置的后端运行时（体积大，按需包含）
+  // 物理启用状态与后端、渲染后端（WebGPU 运行时）都在项目配置中：
+  // 体积大的可选运行时按需包含（物理后端 / three 的 WebGPU 构建）
   let physicsConfigText: string | null = null;
   try {
     physicsConfigText = await api.readText(opts.root, "project.config.json");
@@ -219,6 +221,7 @@ export async function runBuild(opts: {
   const runtime = await fetchWebPreviewRuntimeTexts({
     includePhysics: configUsesPhysics(physicsConfigText),
     physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
+    includeWebgpu: configUsesWebgpu(physicsConfigText),
   });
   // 用户脚本编译产物（src/**.js）并入运行时文件：Rust 端按运行时代码处理
   // （多文件落盘 / 单页进内联代码表 / gzip 进归档 / 发布模式参与压缩）

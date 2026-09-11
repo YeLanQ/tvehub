@@ -27,7 +27,8 @@ import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
-import { createStage } from "../engine/runtime/stage.mjs";
+import { createRenderer, createStage } from "../engine/runtime/stage.mjs";
+import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
 import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
 
@@ -160,6 +161,30 @@ async function main() {
   // 发布构建（debug=false）关闭日志转发（编辑器内嵌预览默认转发）
   if (cfg.debug === false) setLogForwarding(false);
 
+  // 渲染后端（项目设置 renderer）在建场景树之前确定：粒子在场景树构建时即创建
+  // 发射器，其材质实现是后端相关的（GLSL / TSL 节点材质）。渲染器挂载到舞台
+  // 推迟到相机就绪之后（createStage）。
+  const { renderer, backend } = await createRenderer(cfg);
+  // 立方体贴图采样约定按后端不同（GL vs D3D）：天空纹理翻转策略随之后定（见 sky.mjs）
+  configureSkyOrientation(backend);
+  if (backend === "webgpu") {
+    postLog("info", "渲染后端: WebGPU（不可用时自动回退 WebGL2）");
+  }
+  // 粒子材质工厂：WebGPU 用 TSL 节点材质（GLSL ShaderMaterial 在该后端不参与渲染），
+  // 该模块静态依赖 three 的 WebGPU 构建，故仅在 WebGPU 后端下动态引入
+  let particleMaterialFactory;
+  if (backend === "webgpu") {
+    try {
+      const mod = await import("../engine/core/particleNodeMaterial.mjs");
+      particleMaterialFactory = mod.createNodeParticleMaterialFactory() ?? undefined;
+      if (!particleMaterialFactory) postLog("warn", "粒子 TSL 材质不可用，粒子将不参与渲染");
+    } catch (e) {
+      postLog("warn", `粒子 TSL 材质加载失败（${e?.message ?? e}），粒子将不参与渲染`);
+    }
+    // GLSL 自定义着色器（.shader）在 WebGPU 下无法执行（three 无 GLSL→WGSL 通路）
+    postLog("warn", "WebGPU 后端不支持 GLSL 自定义着色器（.shader）：引用它的材质不参与渲染");
+  }
+
   // 资产来源优先级：内联 gzip 包（单页+gzip）→ 内联资产表（单页）→
   // assets.gzip 归档（多文件+gzip）→ 磁盘文件（多文件/编辑器预览）。
   // 归档命中后安装 fetch 拦截，场景/材质/贴图/模型仍按相对路径 fetch。
@@ -215,7 +240,11 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes, audios, clips, particles, nodes } = buildSceneTree(rootJson, scene, { materialParams, models });
+  const { cameras, meshes, audios, clips, particles, nodes } = buildSceneTree(rootJson, scene, {
+    materialParams,
+    models,
+    particleMaterial: particleMaterialFactory,
+  });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
@@ -345,12 +374,13 @@ async function main() {
     orthoSkyQuad.material.uniforms.tSkyCube.value = isCube ? skyTexture : null;
   }
 
-  // 渲染器 + 舞台缩放适配（按设计分辨率/缩放模式取景并适配 iframe）
-  const renderer = createStage(app, cfg, applyProjection);
+  // 舞台缩放适配（渲染器已在入口处按后端创建：按设计分辨率/缩放模式适配 iframe）
+  createStage(app, cfg, applyProjection, renderer);
 
-  // 程序化天空材质：Nishita 大气散射。需要渲染上下文，
-  // 渲染器就绪后生成并覆盖渐变兜底；强度经背景属性与正交面 uniform 同步生效
-  if (activeSkyKind === "procedural" && skyMatParams) {
+  // 程序化天空材质：Nishita 大气散射。需要 WebGL 渲染上下文（离屏 LUT 预计算），
+  // 渲染器就绪后生成并覆盖渐变兜底；强度经背景属性与正交面 uniform 同步生效。
+  // WebGPU 后端同编辑器策略：保留渐变兜底（不做示意性替换）
+  if (activeSkyKind === "procedural" && skyMatParams && backend === "webgl") {
     try {
       const nishita = makeNishitaSkyEquirect(renderer, skyMatParams);
       scene.background = nishita;
@@ -367,6 +397,8 @@ async function main() {
     } catch (e) {
       postLog("error", `程序化天空生成失败: ${e?.message ?? e}`);
     }
+  } else if (activeSkyKind === "procedural" && skyMatParams) {
+    postLog("info", "WebGPU 后端下程序化天空使用渐变兜底（与编辑器一致）");
   }
 
   // 相机清除标志：每帧渲染前应用（与编辑器预览渲染规则一致）
@@ -419,11 +451,16 @@ async function main() {
   // autoplay 绑定在用户首次交互解锁 AudioContext 后自动起播）
   const audiosApi = createAudios(audios, cam);
 
-  // 粒子系统（粒子节点 CPU 模拟 + Points 渲染；每帧渲染前推进，
+  // 粒子系统（粒子节点 CPU 模拟 + 实例化四边形渲染；每帧渲染前推进，
   // 脚本经 engine.particles / ParticleSystemNode 控制播放）。
-  // 粒子贴图走与网格贴图同一 fetch + ImageBitmap 链路（颜色贴图 sRGB），异步到位后热替换
+  // 粒子贴图走与网格贴图同一 fetch + ImageBitmap 链路（颜色贴图 sRGB），异步到位后热替换；
+  // 材质工厂在建场景树之前按后端选定（见入口处），此处透传给运行时的重建/add 路径
   const particleTexCache = new Map();
-  const particlesApi = createParticles(particles, (rel) => loadImageTex(particleTexCache, rel, true));
+  const particlesApi = createParticles(
+    particles,
+    (rel) => loadImageTex(particleTexCache, rel, true),
+    particleMaterialFactory,
+  );
 
   // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
   // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。

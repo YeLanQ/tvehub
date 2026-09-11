@@ -11,6 +11,8 @@
 import type * as THREE from "three";
 import { clampLayerIndex } from "../layers";
 import { ParticleEmitter, PARTICLES_CHILD_NAME } from "./ParticleEmitter";
+import { createGlslParticleMaterial, type ParticleMaterialFactory } from "./particleMaterial";
+import { cloneParticleSystemSettings } from "./types";
 import type { ParticleRuntimeState, ParticleSystemSettings } from "./types";
 
 /** syncNode 需要的节点形状（避免依赖具体节点类；ParticleSystemNode 结构满足） */
@@ -39,6 +41,8 @@ export class ParticleSystem {
   private bindings = new Map<string, Binding>();
   private listeners = new Set<ParticleChangeListener>();
   private textureLoader: ParticleTextureLoader | null = null;
+  /** 材质实现（经典 WebGL 用 GLSL；WebGPU 由引擎注入 TSL 工厂） */
+  private materialFactory: ParticleMaterialFactory = createGlslParticleMaterial;
 
   /** 注入贴图加载器（应用层/引擎按项目根封装；null = 断开，全部回内置软圆点） */
   setTextureLoader(fn: ParticleTextureLoader | null): void {
@@ -46,6 +50,30 @@ export class ParticleSystem {
     // 加载器变化（项目切换）后已绑定发射器按新加载器重取贴图
     this.bindings.forEach((b) => {
       const rel = b.textureRel;
+      b.textureRel = "\u0000";
+      this.syncTexture(b, rel);
+    });
+  }
+
+  /**
+   * 注入粒子材质工厂（按渲染后端选择：经典 WebGL → GLSL，WebGPU → TSL 节点材质）。
+   * 后端在渲染器挂载后确定、运行期不可切换；工厂变化时已绑定发射器整体重建
+   * （几何与模拟参数不变，只换材质实现，粒子的设置/贴图引用一并迁移）。
+   */
+  setMaterialFactory(f: ParticleMaterialFactory): void {
+    if (this.materialFactory === f) return;
+    this.materialFactory = f;
+    this.bindings.forEach((b) => {
+      const settings = cloneParticleSystemSettings(b.emitter.current);
+      const host = b.host;
+      const layerMask = b.emitter.object.layers.mask;
+      const rel = b.textureRel;
+      b.textureSeq++; // 在途贴图结果作废（新材质需要重新写入贴图）
+      b.emitter.dispose();
+      const next = new ParticleEmitter(settings, this.materialFactory);
+      next.object.layers.mask = layerMask;
+      host.add(next.object);
+      b.emitter = next;
       b.textureRel = "\u0000";
       this.syncTexture(b, rel);
     });
@@ -76,10 +104,10 @@ export class ParticleSystem {
       b = undefined;
     }
     if (!b) {
-      // 同一对象上可能残留旧 Points（对象复用场景）：先清掉
+      // 同一对象上可能残留旧实例网格（对象复用场景）：先清掉
       const stale = obj.children.filter((c) => c.name === PARTICLES_CHILD_NAME);
       for (const c of stale) obj.remove(c);
-      const emitter = new ParticleEmitter(s);
+      const emitter = new ParticleEmitter(s, this.materialFactory);
       obj.add(emitter.object);
       b = { emitter, host: obj, textureRel: "", textureSeq: 0 };
       this.bindings.set(node.id, b);

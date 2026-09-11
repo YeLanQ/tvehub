@@ -9,15 +9,18 @@
 import {
   WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND,
   WEB_PREVIEW_RUNTIME_FILES,
+  WEB_PREVIEW_WEBGPU_FILES,
 } from "../../generated/web-preview-files";
 
-export { WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND, WEB_PREVIEW_RUNTIME_FILES };
+export { WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND, WEB_PREVIEW_RUNTIME_FILES, WEB_PREVIEW_WEBGPU_FILES };
 
 export interface WebPreviewRuntimeOptions {
   /** 场景启用了物理 → 物理运行时随导出（缺省 false） */
   includePhysics?: boolean;
   /** 物理后端 id（physics.backend；缺省/未知回退 rapier） */
   physicsBackend?: string;
+  /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出（缺省 false） */
+  includeWebgpu?: boolean;
 }
 
 /** 读取网页运行产物文本：index.html/player.mjs 相对 public/web-preview，
@@ -25,14 +28,15 @@ export interface WebPreviewRuntimeOptions {
 export async function fetchWebPreviewRuntimeTexts(
   opts?: WebPreviewRuntimeOptions,
 ): Promise<Record<string, string>> {
-  const list = opts?.includePhysics
-    ? [
-        ...WEB_PREVIEW_RUNTIME_FILES,
-        ...(WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND[opts.physicsBackend ?? ""] ??
-          WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND.rapier ??
-          []),
-      ]
-    : WEB_PREVIEW_RUNTIME_FILES;
+  const list = [
+    ...WEB_PREVIEW_RUNTIME_FILES,
+    ...(opts?.includePhysics
+      ? (WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND[opts.physicsBackend ?? ""] ??
+        WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND.rapier ??
+        [])
+      : []),
+    ...(opts?.includeWebgpu ? WEB_PREVIEW_WEBGPU_FILES : []),
+  ];
   const files: Record<string, string> = {};
   for (const rel of list) {
     const url = rel.startsWith("engine/") ? `/${rel}` : `/web-preview/${rel}`;
@@ -55,6 +59,21 @@ export function configUsesPhysics(configText: string | null | undefined): boolea
 export function configPhysicsBackend(configText: string | null | undefined): string | null {
   const { enabled, backend } = readPhysicsConfig(configText);
   return enabled ? backend : null;
+}
+
+/**
+ * 解析项目配置的渲染后端是否需要 WebGPU 运行时（three 的 WebGPU 构建 + 粒子 TSL 材质）。
+ * 配置读取失败/解析失败一律视为不需要（产物按 WebGL 处理；播放器端仍会在 WebGPU
+ * 不可用时回退，故 false 只代表"不随产物多带 ~670KB"）。
+ */
+export function configUsesWebgpu(configText: string | null | undefined): boolean {
+  if (!configText) return false;
+  try {
+    const cfg = JSON.parse(configText) as { renderer?: unknown };
+    return cfg.renderer === "webgpu" || cfg.renderer === "auto";
+  } catch {
+    return false;
+  }
 }
 
 function readPhysicsConfig(configText: string | null | undefined): {

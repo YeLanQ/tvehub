@@ -49,3 +49,7 @@ export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = {
     "engine/runtime/physics-engines/rapier.mjs"
   ]
 };
+export const WEB_PREVIEW_WEBGPU_FILES: string[] = [
+  "engine/core/three.webgpu.min.js",
+  "engine/core/particleNodeMaterial.mjs"
+];

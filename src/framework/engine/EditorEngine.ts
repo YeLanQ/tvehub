@@ -48,7 +48,7 @@ import { tickShaderTime } from "../material/customShader";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
-import { ParticleSystem } from "../particles";
+import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
 import { PhysicsSystem } from "../physics";
 
 /**
@@ -381,6 +381,9 @@ export class EditorEngine {
     // 此时渲染器已释放，直接终止后续初始化，避免在已销毁的引擎上补建 gizmo/监听。
     if (this.disposed) return;
     this.initGizmo();
+    // WebGPU 后端：GLSL ShaderMaterial 不参与渲染（WGSL 需要节点材质），
+    // 粒子改注入 TSL 节点材质工厂；自定义着色器无法在 WebGPU 下运行，给出明确告警
+    void this.applyBackendMaterialPolicy();
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
     this.renderer.setRenderCb(() => {
@@ -456,6 +459,25 @@ export class EditorEngine {
   /** gizmo 是否正在拖动（变换过程中）——其它交互可用此状态判断是否需要忽略 */
   get isGizmoDragging(): boolean {
     return this.gizmo ? this.gizmo.isDragging() : false;
+  }
+
+  /**
+   * 按渲染后端应用材质策略（挂载后调用一次；后端运行期不可切换）：
+   * - 经典 WebGLRenderer：粒子用 GLSL ShaderMaterial（默认路径，无需处理）；
+   * - WebGPURenderer：粒子改注入 TSL 节点材质工厂（three/webgpu + three/tsl 动态加载，
+   *   未选 WebGPU 的产物不加载它们）；内置材质由 three 自动转换，表现不变。
+   * 注：GLSL 自定义着色器（.shader）在 WebGPU 下无法执行（three 无 GLSL→WGSL 通路），
+   * 该限制见 docs/editor/projects.md。
+   */
+  private async applyBackendMaterialPolicy(): Promise<void> {
+    if (this.renderer.activeBackend !== "webgpu") return;
+    const factory = await loadParticleNodeMaterialFactory();
+    if (this.disposed) return;
+    if (factory) {
+      this.particles.setMaterialFactory(factory);
+    } else {
+      logger.warn("[particles] WebGPU 后端下未能加载 TSL 粒子材质，粒子将不参与渲染");
+    }
   }
 
   /** 引擎是否已销毁（mount 流程与 store 层用它判断是否中止后续初始化/装载） */
@@ -1239,7 +1261,11 @@ export class EditorEngine {
       if (!url) return null;
       const doc = await fetchTexCubeDoc(url);
       if (!doc) return null;
-      const res = await loadTexCubeTexture(doc, resolver);
+      const res = await loadTexCubeTexture(
+        doc,
+        resolver,
+        this.renderer.activeBackend === "webgpu",
+      );
       return res?.texture ?? null;
     })().catch((e) => {
       console.warn(`[sky] TextureCube 加载失败 '${rel}': ${String(e)}`);

@@ -320,6 +320,12 @@ export async function fetchTexCubeDoc(url: string): Promise<TexCubeDoc | null> {
 export async function loadTexCubeTexture(
   doc: TexCubeDoc,
   resolveUrl: (rel: string) => string | null,
+  /**
+   * 后端朝向：WebGPU 的立方体贴图采样是 D3D 约定（与 GL 在 Y 轴相反），且 three 的
+   * WebGPU 后端对立方体贴图**没有** flipY 机制 —— 故该后端下六面图要预翻转才与 WebGL
+   * 表现一致（WebGL 侧由 CubeTextureLoader 的 flipY 上传翻转完成）。
+   */
+  flipFacesForWebgpu = false,
 ): Promise<{ texture: THREE.Texture; isCube: boolean } | null> {
   if (doc.source === "faces") {
     const urls = TEXCUBE_FACE_KEYS.map((k) => {
@@ -327,6 +333,25 @@ export async function loadTexCubeTexture(
       return rel ? resolveUrl(rel) : null;
     });
     if (urls.some((u) => !u)) return null;
+    if (flipFacesForWebgpu) {
+      // WebGPU：自行加载并垂直翻转六面（ImageBitmap 预翻转；WebGPU 上传按原样取用）
+      const imgs = await Promise.all(
+        (urls as string[]).map(async (url) => {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            return await createImageBitmap(await res.blob(), { imageOrientation: "flipY" });
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (imgs.some((i) => !i)) return null;
+      const cube = new THREE.CubeTexture(imgs as ImageBitmap[]);
+      cube.colorSpace = THREE.SRGBColorSpace;
+      cube.needsUpdate = true;
+      return { texture: cube, isCube: true };
+    }
     const cube = await new THREE.CubeTextureLoader().loadAsync(urls as string[]);
     cube.colorSpace = THREE.SRGBColorSpace;
     return { texture: cube, isCube: true };

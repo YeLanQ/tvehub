@@ -18,6 +18,7 @@ import {
   fetchWebPreviewRuntimeTexts,
   configUsesPhysics,
   configPhysicsBackend,
+  configUsesWebgpu,
 } from "../lib/web-preview-runtime";
 import { ensureEntryScript } from "../lib/script-compile";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
@@ -44,7 +45,8 @@ const previewUrl = computed(() =>
 async function buildExportFiles(): Promise<Record<string, string>> {
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
-  // 项目配置：物理启用状态（磁盘上的 config）决定引擎运行时是否随导出（按需打包）
+  // 项目配置：物理启用状态与渲染后端（磁盘上的 config）决定体积大的可选运行时
+  // 是否随产物（按需打包）
   let configText = "{}";
   try {
     configText = await api.readText(root, "project.config.json");
@@ -55,6 +57,7 @@ async function buildExportFiles(): Promise<Record<string, string>> {
   const files = await fetchWebPreviewRuntimeTexts({
     includePhysics,
     physicsBackend: configPhysicsBackend(configText) ?? undefined,
+    includeWebgpu: configUsesWebgpu(configText),
   });
   files["config.json"] = configText;
   // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警

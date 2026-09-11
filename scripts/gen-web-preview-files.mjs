@@ -1,9 +1,11 @@
 // 网页运行产物清单生成器（单一事实来源）。
 //
 // 扫描 public/web-preview（入口 index.html / player.mjs）与 public/engine（运行时
-// 全部模块）生成 src/generated/web-preview-files.ts；物理引擎（physics-engines/）
-// 体积大且按需打包，单独按后端分组。运行时目录里新增/删除文件后清单自动跟上，
-// 不再手工维护列表（曾因漏登记 layerpass.mjs 导致预览 404）。
+// 全部模块）生成 src/generated/web-preview-files.ts；两类文件体积大且按需打包，
+// 各自单独分组：物理引擎（physics-engines/）按后端分组；WebGPU 运行时
+// （three 的 WebGPU 构建 + 粒子 TSL 材质）按项目渲染后端决定是否随产物。
+// 运行时目录里新增/删除文件后清单自动跟上，不再手工维护列表
+// （曾因漏登记 layerpass.mjs 导致预览 404）。
 //
 // 两处调用，保证任何入口都拿到最新清单：
 // - vite.config.ts 的索引插件：dev 启动 / 构建 / 运行时文件增删时重建；
@@ -28,6 +30,16 @@ export const RUNTIME_FILES_PATH = "src/generated/web-preview-files.ts";
 /** 物理引擎在清单键里的前缀（体积大，按后端分组按需打包） */
 const PHYSICS_PREFIX = "engine/runtime/physics-engines/";
 
+/**
+ * WebGPU 运行时文件（体积大：three 的 WebGPU 构建 ~670KB + 粒子/自定义着色器的
+ * 节点材质实现）：仅在项目渲染后端为 webgpu / auto 时随产物（与物理引擎同一
+ * "按需包含"策略），其余情况播放器走 WebGL 构建，不会请求这些文件。
+ */
+const WEBGPU_FILES = [
+  "engine/core/three.webgpu.min.js",
+  "engine/core/particleNodeMaterial.mjs",
+];
+
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {
   const abs = path.join(ROOT, rel);
@@ -51,8 +63,11 @@ export function generateWebPreviewFiles() {
     .map((f) => f.replace(/^public\/web-preview\//, ""))
     .concat(listFilesRecursive("public/engine").map((f) => f.replace(/^public\//, "")));
 
-  // 基础清单：web-preview 入口 + engine 运行时（物理引擎单独分组，见下）
-  const base = entries.filter((f) => !f.startsWith(PHYSICS_PREFIX)).sort();
+  // 基础清单：web-preview 入口 + engine 运行时
+  // （物理引擎按后端分组、WebGPU 运行时按渲染后端，两者单独分组见下）
+  const base = entries
+    .filter((f) => !f.startsWith(PHYSICS_PREFIX) && !WEBGPU_FILES.includes(f))
+    .sort();
 
   const byBackend = {};
   for (const f of entries) {
@@ -65,11 +80,14 @@ export function generateWebPreviewFiles() {
   }
   for (const k of Object.keys(byBackend)) byBackend[k].sort();
 
+  const webgpu = WEBGPU_FILES.filter((f) => entries.includes(f));
+
   const content =
     `// 由 scripts/gen-web-preview-files.mjs 自动生成（vite 启动/构建与 pnpm build\n` +
     `// 时重建；请勿手动编辑）\n` +
     `export const WEB_PREVIEW_RUNTIME_FILES: string[] = ${JSON.stringify(base, null, 2)};\n` +
-    `export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = ${JSON.stringify(byBackend, null, 2)};\n`;
+    `export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = ${JSON.stringify(byBackend, null, 2)};\n` +
+    `export const WEB_PREVIEW_WEBGPU_FILES: string[] = ${JSON.stringify(webgpu, null, 2)};\n`;
   const target = path.join(ROOT, RUNTIME_FILES_PATH);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, content);

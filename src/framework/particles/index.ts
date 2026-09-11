@@ -1,11 +1,16 @@
 export { ParticleSystem } from "./ParticleSystem";
 export type { ParticleEmitterNode, ParticleTextureLoader } from "./ParticleSystem";
+export { ParticleEmitter, MAX_STEP, PARTICLES_CHILD_NAME } from "./ParticleEmitter";
 export {
-  ParticleEmitter,
-  PARTICLES_CHILD_NAME,
+  FADE_OUT_FRACTION,
   PARTICLE_GRAVITY,
+  createGlslParticleMaterial,
+  createQuadGeometry,
   getParticleSpriteTexture,
-} from "./ParticleEmitter";
+  particleBlendingOf,
+} from "./particleMaterial";
+export type { ParticleMaterial, ParticleMaterialFactory } from "./particleMaterial";
+export { loadParticleNodeMaterialFactory } from "./particleNodeMaterial";
 export {
   DEFAULT_PARTICLE_SETTINGS,
   PARTICLE_LIMITS,

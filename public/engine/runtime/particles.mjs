@@ -7,13 +7,16 @@ import { createParticleEmitter } from "../core/particles.mjs";
 /**
  * particles 为 buildSceneTree 收集的粒子节点列表（{ json, obj, emitter }）；
  * loadTexture(rel) → Promise<Texture|null> 为贴图加载器（player 注入 textures.mjs
- * 的 fetch + ImageBitmap 链路；缺省则一律内置软圆点）。
+ * 的 fetch + ImageBitmap 链路；缺省则一律内置软圆点）；
+ * materialFactory(settings) → 粒子材质句柄为**后端相关**实现（player 按渲染后端注入：
+ * 经典 WebGL 用 GLSL 缺省值，WebGPU 用 core/particleNodeMaterial.mjs 的 TSL 工厂）。
  * 返回 { update(dt), play/pause/stop/restart/clear(nodeId), infoOf(nodeId),
  * settingsOf(nodeId), updateSettings(nodeId, patch), add(json, obj) }。
  */
-export function createParticles(particles, loadTexture) {
+export function createParticles(particles, loadTexture, materialFactory) {
   const byId = new Map();
   const loader = typeof loadTexture === "function" ? loadTexture : null;
+  const factory = typeof materialFactory === "function" ? materialFactory : undefined;
 
   /**
    * 贴图同步（与编辑器 ParticleSystem.syncTexture 同语义）：引用未变不动；空串立即回
@@ -129,7 +132,7 @@ export function createParticles(particles, loadTexture) {
       const layerMask = b.emitter.object.layers.mask;
       b.textureSeq++; // 在途贴图结果作废（新发射器重新请求）
       b.emitter.dispose();
-      const next = createParticleEmitter(merged);
+      const next = createParticleEmitter(merged, factory);
       next.object.layers.mask = layerMask;
       host.add(next.object);
       b.emitter = next;
@@ -141,7 +144,7 @@ export function createParticles(particles, loadTexture) {
     add(json, obj) {
       const id = typeof json?.id === "string" ? json.id : "";
       if (!id || !obj) return null;
-      const emitter = createParticleEmitter(json.particles);
+      const emitter = createParticleEmitter(json.particles, factory);
       emitter.object.layers.mask = obj.layers.mask;
       obj.add(emitter.object);
       bind(id, emitter, obj);

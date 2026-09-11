@@ -26,6 +26,7 @@ import {
   ParticleEmitter,
   ParticleSystem,
   cloneParticleSystemSettings,
+  createGlslParticleMaterial,
   getParticleSpriteTexture,
   isParticleTextureRel,
   parseParticleSystemSettings,
@@ -66,7 +67,7 @@ function settings(patch: Partial<ParticleSystemSettings>): ParticleSystemSetting
 
 /** 读取缓冲里第 i 个粒子的位置 */
 function bufPos(em: ParticleEmitter, i: number): THREE.Vector3 {
-  const a = em.object.geometry.getAttribute("position") as THREE.BufferAttribute;
+  const a = em.object.geometry.getAttribute("iPos") as THREE.BufferAttribute;
   return new THREE.Vector3(a.getX(i), a.getY(i), a.getZ(i));
 }
 
@@ -187,7 +188,7 @@ console.log("[3] 发射器模拟");
     advance(em, 2);
     // 稳态 ≈ rate × lifetime = 60
     check("稳态存活 ≈ rate×lifetime", em.aliveCount >= 57 && em.aliveCount <= 61, String(em.aliveCount));
-    check("drawRange 跟随存活数", em.object.geometry.drawRange.count === em.aliveCount);
+    check("instanceCount 跟随存活数（逐实例绘制数量）", em.object.geometry.instanceCount === em.aliveCount);
     em.dispose();
   }
   // —— 容量上限 ——
@@ -195,7 +196,7 @@ console.log("[3] 发射器模拟");
     const em = new ParticleEmitter(settings({ emissionRate: 5000, startLifetime: 10, maxParticles: 50 }));
     advance(em, 1);
     check("maxParticles 封顶", em.aliveCount === 50, String(em.aliveCount));
-    check("超容量不影响缓冲长度", (em.object.geometry.getAttribute("position") as THREE.BufferAttribute).count === 50);
+    check("超容量不影响缓冲长度", (em.object.geometry.getAttribute("iPos") as THREE.BufferAttribute).count === 50);
     em.dispose();
   }
   // —— 圆锥方向（半角 0 = 沿本地 -Z 直射；出生点在底圆内） ——
@@ -338,46 +339,166 @@ console.log("[3] 发射器模拟");
     warm.dispose();
     noLoop.dispose();
   }
-  // —— 随寿命颜色 / 尺寸写缓冲 ——
+  // —— 随寿命颜色 / 尺寸：逐粒子只上传 iT，插值在着色器（端点色与开关走 uniform）——
   {
     const em = new ParticleEmitter(
       settings({ emissionRate: 200, startLifetime: 1, startSize: 2, startColor: 0xff0000, endColor: 0x0000ff, colorOverLifetime: true, sizeOverLifetime: true, maxParticles: 500 }),
     );
     advance(em, 0.9);
-    const color = em.object.geometry.getAttribute("aColor") as THREE.BufferAttribute;
-    const size = em.object.geometry.getAttribute("aSize") as THREE.BufferAttribute;
-    let okColor = true;
-    let okSize = true;
-    let sawFade = false;
-    let sawShrunk = false;
+    const tAttr = em.object.geometry.getAttribute("iT") as THREE.BufferAttribute;
+    let okRange = em.aliveCount > 0;
+    let minT = Infinity;
+    let maxT = -Infinity;
     for (let i = 0; i < em.aliveCount; i++) {
-      const r = color.getX(i);
-      const b = color.getZ(i);
-      const a = color.getW(i);
-      // 红 → 蓝插值：r+b ≈ 1；alpha 在 [0,1]
-      if (!approx(r + b, 1, 1e-3) || a < 0 || a > 1) okColor = false;
-      if (a < 0.99) sawFade = true;
-      const s = size.getX(i);
-      if (s < 0 || s > 2 + 1e-6) okSize = false;
-      if (s < 1.9) sawShrunk = true;
+      const v = tAttr.getX(i);
+      if (v < 0 || v > 1) okRange = false;
+      minT = Math.min(minT, v);
+      maxT = Math.max(maxT, v);
     }
-    check("colorOverLifetime：start→end 插值且 alpha ∈ [0,1]", okColor && em.aliveCount > 0);
-    check("colorOverLifetime：末段出现淡出", sawFade);
-    check("sizeOverLifetime：尺寸在 (0, startSize] 且出现缩小", okSize && sawShrunk);
+    check("iT 为归一化寿命且落在 [0,1]", okRange);
+    check("iT 随年龄铺开（同帧粒子进度不同）", maxT - minT > 0.5, `${minT.toFixed(2)}~${maxT.toFixed(2)}`);
+    const u = em.object.material.uniforms;
+    check(
+      "逐粒子不再上传颜色/尺寸（端点色与开关走 uniform）",
+      !em.object.geometry.getAttribute("aColor") &&
+        !em.object.geometry.getAttribute("aSize") &&
+        (u.uStartColor.value as THREE.Color).getHex() === 0xff0000 &&
+        (u.uEndColor.value as THREE.Color).getHex() === 0x0000ff &&
+        u.uStartSize.value === 2 &&
+        u.uColorOverLifetime.value === 1 &&
+        u.uSizeOverLifetime.value === 1,
+    );
+    const sc = u.uStartColor.value as THREE.Color;
+    check(
+      "端点色写入线性空间（与 PBR 管线一致）",
+      approx(sc.r, 1, 1e-3) && approx(sc.g, 0, 1e-3) && approx(sc.b, 0, 1e-3),
+    );
     em.dispose();
 
-    const flat = new ParticleEmitter(
-      settings({ emissionRate: 200, startLifetime: 1, startSize: 2, startColor: 0x00ff00, colorOverLifetime: false, sizeOverLifetime: false, maxParticles: 500 }),
+    const flat = new ParticleEmitter(settings({ colorOverLifetime: false, sizeOverLifetime: false }));
+    const fu = flat.object.material.uniforms;
+    check(
+      "关闭随寿期 → 开关 uniform 为 0（着色器取恒定色与全尺寸）",
+      fu.uColorOverLifetime.value === 0 && fu.uSizeOverLifetime.value === 0,
     );
-    advance(flat, 0.9);
-    const fc = flat.object.geometry.getAttribute("aColor") as THREE.BufferAttribute;
-    const fs = flat.object.geometry.getAttribute("aSize") as THREE.BufferAttribute;
-    let okFlat = flat.aliveCount > 0;
-    for (let i = 0; i < flat.aliveCount; i++) {
-      if (!approx(fc.getY(i), 1) || !approx(fc.getW(i), 1) || !approx(fs.getX(i), 2)) okFlat = false;
-    }
-    check("关闭随寿期：颜色/alpha/尺寸恒定", okFlat);
     flat.dispose();
+  }
+  // —— 缓冲上传：只上传存活区间（addUpdateRange），且范围不逐帧累积 ——
+  {
+    const em = new ParticleEmitter(settings({ emissionRate: 60, startLifetime: 1, maxParticles: 500 }));
+    advance(em, 0.4);
+    const iPos = em.object.geometry.getAttribute("iPos") as THREE.InstancedBufferAttribute;
+    const iT = em.object.geometry.getAttribute("iT") as THREE.InstancedBufferAttribute;
+    check(
+      "稀疏系统只登记存活区间（容量 500 / 存活 ~24）",
+      iPos.updateRanges.length === 1 &&
+        iPos.updateRanges[0].start === 0 &&
+        iPos.updateRanges[0].count === em.aliveCount * 3 &&
+        iT.updateRanges.length === 1 &&
+        iT.updateRanges[0].count === em.aliveCount,
+    );
+    advance(em, 0.4);
+    check("多帧后区间不累积（每帧登记前先清空）", iPos.updateRanges.length === 1);
+    const full = new ParticleEmitter(settings({ emissionRate: 5000, startLifetime: 10, maxParticles: 40 }));
+    advance(full, 1);
+    check(
+      "满容量走整段上传（不登记区间）",
+      full.aliveCount === 40 &&
+        (full.object.geometry.getAttribute("iPos") as THREE.InstancedBufferAttribute).updateRanges.length === 0,
+    );
+    em.dispose();
+    full.dispose();
+  }
+  // —— 零拷贝：local 空间模拟数组即渲染缓冲；world 空间每帧回写 ——
+  {
+    const opts = {
+      emissionRate: 100,
+      startLifetime: 5,
+      startSpeed: 0,
+      shape: "box" as const,
+      shapeRadius: 0,
+      gravityModifier: 0,
+      maxParticles: 8,
+    };
+    const local = new ParticleEmitter(settings({ ...opts, simulationSpace: "local" }));
+    local.update(1 / 60);
+    const arrL = (local.object.geometry.getAttribute("iPos") as THREE.BufferAttribute).array as Float32Array;
+    arrL[0] = 7;
+    local.update(1 / 60);
+    check("local 空间：模拟数组即 iPos 缓冲（写入不被回写覆盖 = 零拷贝）", arrL[0] === 7);
+    local.dispose();
+
+    const world = new ParticleEmitter(settings({ ...opts, simulationSpace: "world" }));
+    const hostW = new THREE.Group();
+    hostW.add(world.object);
+    world.update(1 / 60, hostW);
+    const arrW = (world.object.geometry.getAttribute("iPos") as THREE.BufferAttribute).array as Float32Array;
+    arrW[0] = 7;
+    world.update(1 / 60, hostW);
+    check("world 空间：每帧按世界坐标回写本地坐标（与模拟数组分离）", arrW[0] !== 7);
+    world.dispose();
+  }
+  // —— 满容量：轮转覆盖最旧（新粒子不被丢弃） ——
+  {
+    const em = new ParticleEmitter(
+      settings({ emissionRate: 1000, startLifetime: 10, maxParticles: 20, shape: "box", shapeRadius: 0, startSpeed: 0, gravityModifier: 0 }),
+    );
+    advance(em, 1);
+    const tAttr = em.object.geometry.getAttribute("iT") as THREE.BufferAttribute;
+    let maxT = 0;
+    for (let i = 0; i < em.aliveCount; i++) maxT = Math.max(maxT, tAttr.getX(i));
+    // 1000/s 发射 1 秒 = 1000 个粒子进 20 槽；若满池即丢弃则粒子会老化到 iT≈0.1，
+    // 实为持续覆盖 → 全部是刚发射的新粒子（iT 极小）
+    check("满容量持续覆盖最旧（完全不断流）", em.aliveCount === 20 && maxT < 0.01, `maxT=${maxT.toFixed(4)}`);
+    em.dispose();
+  }
+  // —— 包围球：按存活粒子重算（视锥剔除可用） ——
+  {
+    const em = new ParticleEmitter(
+      settings({ emissionRate: 200, startLifetime: 5, startSpeed: 5, shape: "box", shapeRadius: 0, maxParticles: 200 }),
+    );
+    check("空系统包围球半径 0", em.object.geometry.boundingSphere?.radius === 0);
+    advance(em, 0.5);
+    const sphere = em.object.geometry.boundingSphere as THREE.Sphere;
+    let inside = true;
+    for (let i = 0; i < em.aliveCount; i++) {
+      if (bufPos(em, i).distanceTo(sphere.center) > sphere.radius + 1e-6) inside = false;
+    }
+    check(
+      "包围球覆盖全部存活粒子（含粒子半径余量）",
+      inside && sphere.radius > 0 && em.object.frustumCulled === true,
+    );
+    em.dispose();
+    // 多发射器各自独占包围球实例：共用同一个 Sphere 会让后更新者的范围覆盖其余
+    // 发射器（三个渲染时读的是各 geometry.boundingSphere），视锥剔除随之出错
+    const a = new ParticleEmitter(settings({ emissionRate: 200, startLifetime: 5, maxParticles: 200 }));
+    const b = new ParticleEmitter(settings({ emissionRate: 200, startLifetime: 5, maxParticles: 200 }));
+    advance(a, 0.3);
+    advance(b, 0.3);
+    check(
+      "每个发射器独占包围球实例（互不覆盖）",
+      a.object.geometry.boundingSphere !== b.object.geometry.boundingSphere,
+    );
+    a.dispose();
+    b.dispose();
+  }
+  // —— 材质工厂注入（后端选择：GLSL / TSL 由工厂决定） ——
+  {
+    let made = 0;
+    const em = new ParticleEmitter(settings({}), (s) => {
+      made++;
+      return createGlslParticleMaterial(s);
+    });
+    check("按注入的材质工厂创建材质", made === 1);
+    check(
+      "四边形基础几何：4 顶点 + 2 三角 + 逐实例属性 iPos/iT",
+      (em.object.geometry.getAttribute("position") as THREE.BufferAttribute).count === 4 &&
+        em.object.geometry.index?.count === 6 &&
+        (em.object.geometry.getAttribute("iPos") as THREE.BufferAttribute).isInstancedBufferAttribute === true &&
+        (em.object.geometry.getAttribute("iT") as THREE.BufferAttribute).isInstancedBufferAttribute === true &&
+        em.object.geometry.isInstancedBufferGeometry === true,
+    );
+    em.dispose();
   }
   // —— world 模拟空间：旧粒子留在世界，缓冲按宿主逆矩阵回本地 ——
   {
@@ -446,8 +567,8 @@ console.log("[3] 发射器模拟");
     check("normal 混合 → NormalBlending", normal.object.material.blending === THREE.NormalBlending);
     const additive = new ParticleEmitter(settings({ blending: "additive" }));
     check("additive 混合 → AdditiveBlending", additive.object.material.blending === THREE.AdditiveBlending);
-    check("材质透明 + 不写深度 + 关视锥剔除", additive.object.material.transparent && !additive.object.material.depthWrite && !additive.object.frustumCulled);
-    check("Points 命名 __particles 且 userData 指回发射器", additive.object.name === PARTICLES_CHILD_NAME && additive.object.userData.particleEmitter === additive);
+    check("材质透明 + 不写深度 + 开启视锥剔除", additive.object.material.transparent && !additive.object.material.depthWrite && additive.object.frustumCulled === true);
+    check("实例网格命名 __particles 且 userData 指回发射器", additive.object.name === PARTICLES_CHILD_NAME && additive.object.userData.particleEmitter === additive);
     normal.dispose();
     additive.dispose();
   }
@@ -474,8 +595,13 @@ console.log("[3] 发射器模拟");
     check("setTexture(null) 回内置软圆点", em.texture === sprite);
     const fs = em.object.material.fragmentShader;
     check(
-      "片元着色器：翻转 gl_PointCoord.y（用户贴图不倒置）并把贴图 RGB 乘进颜色",
-      /1\.0 - gl_PointCoord\.y/.test(fs) && /vColor\.rgb \* t\.rgb/.test(fs),
+      "片元着色器：按 UV 采样贴图并把贴图 RGB 乘进粒子颜色",
+      /texture2D\( uMap, vUv \)/.test(fs) && /vColor\.rgb \* texel\.rgb/.test(fs),
+    );
+    const vs = em.object.material.vertexShader;
+    check(
+      "顶点着色器：视空间 billboard（无需点尺寸换算、不受点尺寸上限裁剪）",
+      /mv\.xy \+= position\.xy \* size/.test(vs) && !/gl_PointSize/.test(vs),
     );
     em.dispose();
   }
@@ -516,7 +642,7 @@ console.log("[4] 同步器 + ParticleSystem 运行时");
 
   runtime.syncNode(ps, obj);
   const points = obj.children.find((c) => c.name === PARTICLES_CHILD_NAME) as THREE.Points | undefined;
-  check("syncNode 挂 __particles Points", !!points && (points as THREE.Points).isPoints === true);
+  check("syncNode 挂 __particles 实例网格", !!points && (points as THREE.Mesh).isMesh === true);
   check("Points 跟随节点层（layer 3）", !!points && points.layers.mask === 1 << 3, String(points?.layers.mask));
   check("stateFor 返回运行态", runtime.stateFor(ps.id)?.alive === 0 && runtime.stateFor(ps.id)?.playing === true);
   check("未绑定节点 stateFor → null", runtime.stateFor("nope") === null);
@@ -539,7 +665,7 @@ console.log("[4] 同步器 + ParticleSystem 运行时");
   const em2 = runtime.emitterOf(ps.id);
   check("结构参数变更 → 发射器重建", em2 !== em1 && em2 !== null);
   check("重建后旧 Points 已摘除，仅剩一个", obj.children.filter((c) => c.name === PARTICLES_CHILD_NAME).length === 1);
-  check("重建后容量生效", (em2!.object.geometry.getAttribute("position") as THREE.BufferAttribute).count === 77);
+  check("重建后容量生效", (em2!.object.geometry.getAttribute("iPos") as THREE.BufferAttribute).count === 77);
 
   // 层变更：同步器 applyNodeLayer 同步到 Points
   ps.layer = 5;
@@ -559,9 +685,34 @@ console.log("[4] 同步器 + ParticleSystem 运行时");
   runtime.syncNode(ps, obj2);
   check("宿主对象变化 → 重挂到新对象", obj2.children.some((c) => c.name === PARTICLES_CHILD_NAME) && !obj.children.some((c) => c.name === PARTICLES_CHILD_NAME));
 
+  // 后端切换（材质工厂变化，如切到 WebGPU）→ 已绑定发射器重建并保留设置/层/贴图引用
+  {
+    runtime.update(1 / 30);
+    const before = runtime.emitterOf(ps.id);
+    ps.particles.emissionRate = 7;
+    runtime.syncNode(ps, obj2);
+    let madeByFactory = 0;
+    runtime.setMaterialFactory((s) => {
+      madeByFactory++;
+      return createGlslParticleMaterial(s);
+    });
+    const after = runtime.emitterOf(ps.id);
+    const mesh = obj2.children.find((c) => c.name === PARTICLES_CHILD_NAME)!;
+    check(
+      "材质工厂变化 → 发射器重建并沿用设置/层/单一子对象",
+      after !== null &&
+        after !== before &&
+        madeByFactory === 1 &&
+        after.current.emissionRate === 7 &&
+        after.object.layers.mask === (1 << 5) &&
+        obj2.children.filter((c) => c.name === PARTICLES_CHILD_NAME).length === 1 &&
+        mesh === after.object,
+    );
+  }
+
   // 解绑
   runtime.unbind(ps.id);
-  check("unbind 摘除 Points", !obj2.children.some((c) => c.name === PARTICLES_CHILD_NAME) && runtime.emitterOf(ps.id) === null);
+  check("unbind 摘除实例网格", !obj2.children.some((c) => c.name === PARTICLES_CHILD_NAME) && runtime.emitterOf(ps.id) === null);
   runtime.syncNode(ps, obj2);
   runtime.unbindAll();
   check("unbindAll 清空", runtime.stateFor(ps.id) === null);
@@ -586,7 +737,7 @@ console.log("[5] 脚本 SDK 契约（tve.d.ts ↔ tve.mjs 镜像）");
   check("d.ts：ParticleSettings / ParticleSystemNode 声明 texture", (dts.match(/^\s+texture: string;/gm) ?? []).length >= 2);
   check("mjs：ParticleSystemNode 属性表含 texture", /"blending",\s*"texture",/.test(mjs));
   const player = readFileSync(resolve(process.cwd(), "public/web-preview/player.mjs"), "utf8");
-  check("player：接线 createParticles 并每帧推进", /createParticles\(particles/.test(player) && /particlesApi\.update\(dt\)/.test(player));
+  check("player：接线 createParticles 并每帧推进", /createParticles\(\s*particles/.test(player) && /particlesApi\.update\(dt\)/.test(player));
   check("player：粒子控制传入脚本宿主", /particles:\s*particlesApi/.test(player));
   check("player：粒子贴图走 textures.mjs 的 loadImageTex（sRGB）", /loadImageTex\(particleTexCache, rel, true\)/.test(player));
   const texSrc = readFileSync(resolve(process.cwd(), "public/engine/runtime/textures.mjs"), "utf8");
@@ -602,6 +753,88 @@ console.log("[5] 脚本 SDK 契约（tve.d.ts ↔ tve.mjs 镜像）");
 /** 等待异步贴图链路（catch + then 两级微任务）落定 */
 function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
+}
+
+// ===========================================================================
+async function previewPackagingSection(): Promise<void> {
+  console.log("[7] 预览/导出打包：WebGPU 运行时按项目后端按需包含");
+  const {
+    configUsesWebgpu,
+    WEB_PREVIEW_RUNTIME_FILES,
+    WEB_PREVIEW_WEBGPU_FILES,
+  } = await import("../src/app/lib/web-preview-runtime");
+
+  // 清单：WebGPU 运行时单独分组，不进基础清单（WebGL 项目不多带 ~670KB）
+  check(
+    "WebGPU 运行时分组含 three 的 WebGPU 构建与粒子 TSL 材质",
+    WEB_PREVIEW_WEBGPU_FILES.includes("engine/core/three.webgpu.min.js") &&
+      WEB_PREVIEW_WEBGPU_FILES.includes("engine/core/particleNodeMaterial.mjs"),
+    WEB_PREVIEW_WEBGPU_FILES.join(", "),
+  );
+  check(
+    "基础清单不含 WebGPU 构建（按需包含）",
+    !WEB_PREVIEW_RUNTIME_FILES.some((f) => f.includes("three.webgpu")),
+  );
+  check(
+    "基础清单仍含 WebGL 构建与粒子运行时",
+    WEB_PREVIEW_RUNTIME_FILES.includes("engine/core/three.module.min.js") &&
+      WEB_PREVIEW_RUNTIME_FILES.includes("engine/core/particles.mjs"),
+  );
+
+  // 项目配置 → 是否随产物（webgl 不随；webgpu/auto 随；缺失/损坏按不随）
+  check("renderer=webgl → 不带 WebGPU 运行时", !configUsesWebgpu('{"renderer":"webgl"}'));
+  check("renderer=webgpu → 带 WebGPU 运行时", configUsesWebgpu('{"renderer":"webgpu"}'));
+  check("renderer=auto → 带 WebGPU 运行时", configUsesWebgpu('{"renderer":"auto"}'));
+  check(
+    "配置缺失/损坏/未知值 → 不带（产物按 WebGL，播放器仍可回退）",
+    !configUsesWebgpu(null) &&
+      !configUsesWebgpu("") &&
+      !configUsesWebgpu("{ not json") &&
+      !configUsesWebgpu("{}") &&
+      !configUsesWebgpu('{"renderer":"vulkan"}'),
+  );
+
+  // 播放器与舞台：后端选择 / 动态加载 / 回退 / TSL 注入
+  const player = readFileSync(resolve("public/web-preview/player.mjs"), "utf8");
+  check(
+    "播放器按项目设置创建渲染后端并把 TSL 工厂注入粒子",
+    /await createRenderer\(cfg\)/.test(player) &&
+      /backend === "webgpu"/.test(player) &&
+      /createNodeParticleMaterialFactory\(\)/.test(player) &&
+      /particleMaterialFactory/.test(player),
+  );
+  check("播放器在 WebGPU 下告警自定义着色器不参与渲染", /WebGPU 后端不支持 GLSL 自定义着色器/.test(player));
+  const stage = readFileSync(resolve("public/engine/runtime/stage.mjs"), "utf8");
+  check(
+    "舞台层动态加载 WebGPU 构建并在失败时回退 WebGL",
+    /export async function createRenderer/.test(stage) &&
+      /import\("\.\.\/core\/three\.webgpu\.min\.js"\)/.test(stage) &&
+      /已回退 WebGL/.test(stage),
+  );
+  check("舞台按后端返回 backend 标识（供后端相关材质选择）", /backend: "webgpu"/.test(stage) && /backend: "webgl"/.test(stage));
+
+  // WebGPU 构建无裸导入（预览运行时无打包器，浏览器直载）
+  const webgpuSrc = readFileSync(resolve("public/engine/core/three.webgpu.min.js"), "utf8");
+  const deps = [...webgpuSrc.matchAll(/from\s*"([^"]+)"/g)].map((m) => m[1]);
+  check(
+    "WebGPU 构建仅依赖 three.core.min.js（与 WebGL 构建共享核心类）",
+    deps.length > 0 && deps.every((d) => d === "./three.core.min.js"),
+    deps.join(", "),
+  );
+
+  // 运行时粒子系统：三条创建路径（结构重建 / 运行期新增 / 场景树构建）都透传材质工厂
+  const rs = readFileSync(resolve("public/engine/runtime/particles.mjs"), "utf8");
+  const nodesSrc = readFileSync(resolve("public/engine/runtime/nodes.mjs"), "utf8");
+  const withFactory =
+    (rs.match(/createParticleEmitter\([^)]*factory\)/g) ?? []).length +
+    (nodesSrc.match(/createParticleEmitter\([^)]*ctx\.particleMaterial\)/g) ?? []).length;
+  check("粒子系统三条创建路径都透传材质工厂（重建/新增/场景树）", withFactory >= 3, `${withFactory} 处`);
+  const core = readFileSync(resolve("public/engine/core/particles.mjs"), "utf8");
+  check(
+    "运行时导出 GLSL 材质工厂并支持注入（句柄接口与编辑器一致）",
+    /export function createGlslParticleMaterial/.test(core) &&
+      /materialFactory \?\? createGlslParticleMaterial/.test(core),
+  );
 }
 
 // ===========================================================================
@@ -696,7 +929,8 @@ async function textureSection(): Promise<void> {
   runtime.dispose();
 }
 
-void textureSection().then(() => {
+void textureSection().then(async () => {
+  await previewPackagingSection();
   console.log(failed ? `\n粒子系统冒烟：${failed} 项失败` : "\n粒子系统冒烟：全部通过");
   process.exitCode = failed > 0 ? 1 : 0;
 });

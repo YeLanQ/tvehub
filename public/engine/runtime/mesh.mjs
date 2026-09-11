@@ -56,6 +56,19 @@ function customUniformValue(prop, props) {
   }
 }
 
+/** 材质解析失败的告警去重（同一引用只报一次，避免逐网格刷屏） */
+const warnedMissingMaterials = new Set();
+
+/**
+ * 引用了未随产物的材质（.mat 缺失/解析失败）→ 回退默认材质，但必须**可见地**告警：
+ * 否则表现为"材质变成一块纯灰"，容易误判成渲染后端或着色器的问题。
+ */
+function warnMissingMaterial(rel, nodeName) {
+  if (warnedMissingMaterials.has(rel)) return;
+  warnedMissingMaterials.add(rel);
+  console.warn("[tve] 材质未解析，已回退默认材质: " + rel + "（首个引用它的网格: " + (nodeName || "?") + "）");
+}
+
 /** 自定义着色器 → ShaderMaterial（uniforms = 属性 + _Time；渲染状态取自 Tags 声明） */
 function createCustomMaterial(m) {
   const program = m.program ?? null;
@@ -130,14 +143,18 @@ function buildMeshNode(json, ctx) {
   else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
   else geom = new THREE.BoxGeometry(x, y, z);
 
-  const m = ctx.materialParams.get(json.material) || MAT_DEFAULTS;
+  // 材质解析：引用缺失（.mat 未随产物/解析失败）时回退默认材质 —— 但必须**可见地**告警，
+  // 否则表现为"材质变成一块纯灰"，让人误以为是渲染后端或着色器的问题
+  const resolved = ctx.materialParams.get(json.material);
+  if (!resolved && json.material) warnMissingMaterial(json.material, json.name);
+  const m = resolved || MAT_DEFAULTS;
   const f = {
     transparent: m.opacity < 0.999 || (!!m.map && !(m.alphaClipThreshold > 0.0001)),
     alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
     wireframe: m.wireframe === true,
   };
   if (m.type === "custom") {
-    // Custom → ShaderMaterial（GLSL 顶点/片元程序 + 属性 uniform；贴图由 textures.mjs 回填）
+    // Custom → GLSL ShaderMaterial（程序 + 属性 uniform；贴图由 textures.mjs 回填）
     return new THREE.Mesh(geom, createCustomMaterial(m));
   }
   if (m.type === "toon") {

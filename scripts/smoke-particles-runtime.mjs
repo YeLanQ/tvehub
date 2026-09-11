@@ -1,18 +1,19 @@
 // ---------------------------------------------------------------------------
 // 粒子系统「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 用 scene.json 片段喂给 public/engine/runtime 的场景树构建链路，验证
-//   ① particleSystemNode 建为 Group + __particles Points 子对象，收集到 particles 列表，
-//      节点层同步到 Points，userData 标记完整；
+//   ① particleSystemNode 建为 Group + __particles 实例网格子对象，收集到 particles 列表，
+//      节点层同步到网格，userData 标记完整；
 //   ② 设置收敛与编辑器同语义（缺失/越界/枚举回退）；
 //   ③ createParticles 每帧推进：发射速率、容量封顶、不可见宿主不推进、非循环播完、
 //      预热首帧接近稳态、world 空间粒子留在原地；
 //   ④ 按节点 id 的运行时控制（play/pause/stop/restart/clear/infoOf/updateSettings：
 //      非结构参数原地更新、结构参数重建并保留层）；
 //   ⑤ 脚本 SDK：tve.mjs 导出 ParticleSystemNode 且 KIND_CLASSES/engine.particles 接线；
-//      scripts.mjs 把 particles 注入宿主。
+//      scripts.mjs 把 particles 注入宿主；
+//   ⑥ 性能相关行为：只上传存活区间、local 空间零拷贝、满容量覆盖最旧、包围球重算。
 // 运行：npm run smoke:particles-runtime
 // ---------------------------------------------------------------------------
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
@@ -35,7 +36,7 @@ const core = (rel) => pathToFileURL(resolve(root, "public/engine/core", rel)).hr
 
 const { buildSceneTree } = await import(runtime("nodes.mjs"));
 const { createParticles } = await import(runtime("particles.mjs"));
-const { createParticleEmitter, parseParticleSettings, PARTICLES_CHILD_NAME, getParticleSpriteTexture } = await import(
+const { createParticleEmitter, createGlslParticleMaterial, parseParticleSettings, PARTICLES_CHILD_NAME, getParticleSpriteTexture } = await import(
   core("particles.mjs")
 );
 const THREE = await import(core("three.module.min.js"));
@@ -86,13 +87,15 @@ ok(entry.obj.userData.nodeId === "ps1" && entry.obj.userData.nodeKind === "parti
 ok(entry.obj.userData.nodeTag === "fx", "userData.nodeTag 标记");
 ok(approx(entry.obj.position.x, 1) && approx(entry.obj.position.y, 2) && approx(entry.obj.position.z, 3), "节点变换落位");
 const points = entry.obj.children.find((c) => c.name === PARTICLES_CHILD_NAME);
-ok(!!points && points.isPoints === true, "Group 下挂 __particles Points");
+ok(!!points && points.isMesh === true, "Group 下挂 __particles 实例网格");
 ok(points.layers.mask === 1 << 4, "Points 跟随节点层（layer 4）");
 ok(entry.emitter && entry.emitter.object === points, "collector 条目携带发射器句柄");
 ok(points.material.blending === THREE.NormalBlending, "blending=normal → NormalBlending");
 ok(points.material.transparent === true && points.material.depthWrite === false, "材质透明 + 不写深度");
-ok(points.frustumCulled === false, "关闭视锥剔除");
-ok(points.geometry.getAttribute("position").count === 300, "缓冲容量 = maxParticles");
+ok(points.frustumCulled === true, "开启视锥剔除（包围球逐帧按存活粒子重算）");
+ok(points.geometry.getAttribute("iPos").count === 300, "逐实例缓冲容量 = maxParticles");
+ok(points.geometry.isInstancedBufferGeometry === true && points.geometry.index.count === 6 && points.geometry.getAttribute("position").count === 4, "基础几何为 4 顶点单位四边形（实例化绘制）");
+ok(points.geometry.getAttribute("iT").isInstancedBufferAttribute === true, "逐实例属性 iPos/iT");
 const legacy = built.particles.find((p) => p.json.id === "ps-legacy");
 ok(legacy.emitter.settings.emissionRate === 20 && legacy.emitter.settings.shape === "cone", "旧场景无 particles → 默认设置");
 
@@ -130,7 +133,7 @@ advance(api, 0.5);
   const st = api.infoOf("ps1");
   ok(st && st.alive >= 58 && st.alive <= 61, `0.5s 后约 60 粒子（120/s）: ${st?.alive}`);
   ok(st.playing === true && st.paused === false && st.finished === false, "运行态：播放中");
-  ok(points.geometry.drawRange.count === st.alive, "drawRange 跟随存活数");
+  ok(points.geometry.instanceCount === st.alive, "instanceCount 跟随存活数");
 }
 advance(api, 2);
 {
@@ -183,7 +186,7 @@ advance(api, 2);
   host.add(em.object);
   const a5 = createParticles([{ json: { id: "w" }, obj: host, emitter: em }]);
   a5.update(1 / 60);
-  const pa = em.object.geometry.getAttribute("position");
+  const pa = em.object.geometry.getAttribute("iPos");
   ok(approx(pa.getX(0), 0, 1e-4), "world 空间：缓冲为本地坐标（出生点本地 ≈ 0）");
   host.position.set(20, 0, 0);
   a5.update(0);
@@ -192,11 +195,12 @@ advance(api, 2);
 {
   // 重力
   const host = new THREE.Group();
-  const em = createParticleEmitter({ emissionRate: 100, startLifetime: 10, startSpeed: 0, shape: "box", shapeRadius: 0, gravityModifier: 1, maxParticles: 100 });
+  // maxParticles 取大：1 秒内不满池，0 号粒子不会被"覆盖最旧"轮转到（专测重力积分）
+  const em = createParticleEmitter({ emissionRate: 100, startLifetime: 10, startSpeed: 0, shape: "box", shapeRadius: 0, gravityModifier: 1, maxParticles: 500 });
   host.add(em.object);
   const a6 = createParticles([{ json: { id: "g" }, obj: host, emitter: em }]);
   a6.update(1 / 60);
-  const pa = em.object.geometry.getAttribute("position");
+  const pa = em.object.geometry.getAttribute("iPos");
   const y0 = pa.getY(0);
   advance(a6, 1);
   ok(pa.getY(0) < y0 - 3, "gravityModifier=1 → 下落");
@@ -229,7 +233,7 @@ console.log("[4] 按节点 id 的运行时控制");
   // 结构参数 → 重建并保留层
   ok(api.updateSettings("ps1", { maxParticles: 55 }) === true, "结构参数 updateSettings");
   const objAfter = entry.obj.children.find((c) => c.name === PARTICLES_CHILD_NAME);
-  ok(objAfter !== objBefore && objAfter.geometry.getAttribute("position").count === 55, "结构参数 → Points 重建且容量生效");
+  ok(objAfter !== objBefore && objAfter.geometry.getAttribute("iPos").count === 55, "结构参数 → 实例网格重建且容量生效");
   ok(objAfter.layers.mask === 1 << 4, "重建后保留节点层");
   ok(entry.obj.children.filter((c) => c.name === PARTICLES_CHILD_NAME).length === 1, "重建后旧 Points 已摘除");
   ok(api.updateSettings("nope", { emissionRate: 1 }) === false, "未知 id updateSettings → false");
@@ -330,6 +334,116 @@ console.log("[6] 贴图异步加载（加载器注入 / 热替换 / 过期丢弃
   const noLoader = createParticles([{ json: { id: "x" }, obj: new THREE.Group(), emitter: createParticleEmitter({ texture: "b.png" }) }]);
   await tick();
   ok(noLoader.settingsOf("x").texture === "b.png" && noLoader.infoOf("x") !== null, "无加载器时不报错（保持内置软圆点）");
+}
+
+console.log("[7] 性能相关行为（部分上传 / 零拷贝 / 覆盖最旧 / 包围球）");
+{
+  // 只上传存活区间：稀疏系统登记 [0, alive) 区间，且不逐帧累积
+  const host = new THREE.Group();
+  const em = createParticleEmitter({ emissionRate: 60, startLifetime: 1, maxParticles: 500 });
+  host.add(em.object);
+  const api = createParticles([{ json: { id: "perf" }, obj: host, emitter: em }]);
+  advance(api, 0.4);
+  const iPos = em.object.geometry.getAttribute("iPos");
+  const iT = em.object.geometry.getAttribute("iT");
+  ok(
+    iPos.updateRanges.length === 1 && iPos.updateRanges[0].count === api.infoOf("perf").alive * 3 && iT.updateRanges.length === 1,
+    "稀疏系统只登记存活区间（addUpdateRange）",
+  );
+  advance(api, 0.4);
+  ok(iPos.updateRanges.length === 1, "多帧后区间不累积（登记前先清空）");
+
+  // 满容量走整段上传
+  const full = createParticleEmitter({ emissionRate: 5000, startLifetime: 10, maxParticles: 40 });
+  const hostF = new THREE.Group();
+  hostF.add(full.object);
+  const apiF = createParticles([{ json: { id: "full" }, obj: hostF, emitter: full }]);
+  advance(apiF, 1);
+  ok(
+    apiF.infoOf("full").alive === 40 && full.object.geometry.getAttribute("iPos").updateRanges.length === 0,
+    "满容量走整段上传（不登记区间）",
+  );
+
+  // 满容量持续覆盖最旧：粒子始终是"刚发射"的（不被丢弃）
+  const tArr = full.object.geometry.getAttribute("iT");
+  let maxT = 0;
+  for (let i = 0; i < apiF.infoOf("full").alive; i++) maxT = Math.max(maxT, tArr.getX(i));
+  ok(maxT < 0.01, `满容量持续覆盖最旧（不断流，maxT=${maxT.toFixed(4)}）`);
+
+  // 零拷贝：local 空间写入 iPos 不被回写覆盖；world 空间每帧回写
+  const opts = { emissionRate: 100, startLifetime: 5, startSpeed: 0, shape: "box", shapeRadius: 0, gravityModifier: 0, maxParticles: 8 };
+  const localHost = new THREE.Group();
+  const local = createParticleEmitter({ ...opts, simulationSpace: "local" });
+  localHost.add(local.object);
+  const apiL = createParticles([{ json: { id: "l" }, obj: localHost, emitter: local }]);
+  apiL.update(1 / 60);
+  const arrL = local.object.geometry.getAttribute("iPos").array;
+  arrL[0] = 7;
+  apiL.update(1 / 60);
+  ok(arrL[0] === 7, "local 空间：模拟数组即 iPos 缓冲（零拷贝）");
+
+  const worldHost = new THREE.Group();
+  const world = createParticleEmitter({ ...opts, simulationSpace: "world" });
+  worldHost.add(world.object);
+  const apiW = createParticles([{ json: { id: "w2" }, obj: worldHost, emitter: world }]);
+  apiW.update(1 / 60);
+  const arrW = world.object.geometry.getAttribute("iPos").array;
+  arrW[0] = 7;
+  apiW.update(1 / 60);
+  ok(arrW[0] !== 7, "world 空间：每帧按世界坐标回写本地坐标");
+
+  // 包围球：空系统半径 0；有粒子时覆盖全部存活粒子
+  const bHost = new THREE.Group();
+  const bounds = createParticleEmitter({ emissionRate: 200, startLifetime: 5, startSpeed: 5, shape: "box", shapeRadius: 0, maxParticles: 200 });
+  bHost.add(bounds.object);
+  const apiB = createParticles([{ json: { id: "b" }, obj: bHost, emitter: bounds }]);
+  ok(bounds.object.geometry.boundingSphere.radius === 0, "空系统包围球半径 0");
+  advance(apiB, 0.5);
+  const sphere = bounds.object.geometry.boundingSphere;
+  const pa = bounds.object.geometry.getAttribute("iPos");
+  let inside = true;
+  for (let i = 0; i < apiB.infoOf("b").alive; i++) {
+    const d = Math.hypot(pa.getX(i) - sphere.center.x, pa.getY(i) - sphere.center.y, pa.getZ(i) - sphere.center.z);
+    if (d > sphere.radius + 1e-6) inside = false;
+  }
+  ok(inside && sphere.radius > 0 && bounds.object.frustumCulled === true, "包围球覆盖全部存活粒子且开启视锥剔除");
+
+  // 顶点着色器：视空间 billboard（与编辑器同一算法，无点尺寸换算）
+  const vs = bounds.object.material.vertexShader;
+  ok(
+    /mv\.xy \+= position\.xy \* size/.test(vs) && !/gl_PointSize/.test(vs),
+    "顶点着色器为视空间 billboard（不受点尺寸上限裁剪）",
+  );
+  ok(
+    !bounds.object.geometry.getAttribute("aColor") && !bounds.object.geometry.getAttribute("aSize"),
+    "逐粒子不上传颜色/尺寸（走 uniform 与 iT）",
+  );
+}
+
+console.log("[8] 后端相关材质与预览/导出的 WebGPU 运行时");
+{
+  // 材质工厂注入：调用方（player）按后端选择 GLSL / TSL 实现
+  let factoryCalls = 0;
+  const custom = createParticleEmitter({ maxParticles: 8 }, (s) => {
+    factoryCalls++;
+    return createGlslParticleMaterial(s);
+  });
+  ok(factoryCalls === 1 && !!custom.object.material, "运行时可注入粒子材质工厂（后端相关材质选择）");
+  custom.dispose();
+
+  // 预览/导出的 WebGPU 运行时文件已在 engine/core 内（vendor 自 three 构建）
+  ok(existsSync(resolve(root, "public/engine/core/three.webgpu.min.js")), "engine/core 含 three 的 WebGPU 构建");
+  ok(existsSync(resolve(root, "public/engine/core/particleNodeMaterial.mjs")), "engine/core 含粒子 TSL 材质模块");
+  const stageSrc = readFileSync(resolve(root, "public/engine/runtime/stage.mjs"), "utf8");
+  ok(
+    /export async function createRenderer/.test(stageSrc) && /backend: "webgpu"/.test(stageSrc),
+    "舞台层按项目设置选择渲染后端并回报 backend",
+  );
+  const nodesSrc = readFileSync(resolve(root, "public/engine/runtime/nodes.mjs"), "utf8");
+  ok(
+    /createParticleEmitter\(json\.particles, ctx\.particleMaterial\)/.test(nodesSrc),
+    "场景树构建把材质工厂传给粒子发射器",
+  );
 }
 
 console.log(`\n粒子运行时冒烟：${passed} 通过，${failed} 失败`);

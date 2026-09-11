@@ -1,11 +1,13 @@
 // ---------------------------------------------------------------------------
-// 把 three 的模型加载器（GLTF/FBX/OBJ）及其依赖 vendor 进网页预览运行时
-// public/engine/runtime/loaders/（离线可用；与手动 vendor 的
-// three.module.min.js / three.core.min.js 同一套来源）。
+// 把 three 的运行时构建与模型加载器（GLTF/FBX/OBJ）vendor 进网页预览运行时：
+// - three 构建 → public/engine/core/（three.module.min.js = WebGL 渲染器 +
+//   three.core.min.js 共享核心；three.webgpu.min.js = WebGPU 渲染器，同样依赖
+//   three.core.min.js，故两套渲染器共享同一份核心类，场景对象可互用）；
+// - 模型加载器 → public/engine/runtime/loaders/（离线可用）。
 //
 // 用法：node scripts/vendor-preview-loaders.mjs
-// 升级 three 后重跑即可同步；若上游出现新的未知 import 会直接报错退出，
-// 避免静默产出缺依赖的文件。
+// 升级 three 后重跑即可同步（含 WebGPU 构建）；若上游出现新的未知 import
+// 会直接报错退出，避免静默产出缺依赖的文件。
 // ---------------------------------------------------------------------------
 import { copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,8 +16,12 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const threeDir = join(root, "node_modules", "three");
 const outDir = join(root, "public", "engine", "runtime", "loaders");
+const coreDir = join(root, "public", "engine", "core");
 
 const threeVersion = JSON.parse(readFileSync(join(threeDir, "package.json"), "utf8")).version;
+
+/** three 运行时构建（public/engine/core/）：字节与 npm 包一致，不改写 */
+const THREE_BUILDS = ["three.core.min.js", "three.module.min.js", "three.webgpu.min.js"];
 
 // 源路径（相对 examples/jsm）→ 目标文件名 + 相对 import 重写规则
 const FILES = [
@@ -56,3 +62,17 @@ for (const { src, rewrites } of FILES) {
 }
 // fflate 无 import，复制即用（上面已覆盖；此处仅提示来源一致）
 console.log(`已 vendor ${rewritten.length} 个文件到 public/engine/runtime/loaders/（three@${threeVersion}）`);
+
+// three 运行时构建：字节复制（不改写），含 WebGPU 构建供预览/导出的 WebGPU 后端使用
+mkdirSync(coreDir, { recursive: true });
+for (const name of THREE_BUILDS) {
+  copyFileSync(join(threeDir, "build", name), join(coreDir, name));
+  // 依赖校验：构建只允许依赖同目录的 three.core.min.js（无裸导入，浏览器可直接加载）
+  const deps = [...readFileSync(join(coreDir, name), "utf8").matchAll(/from\s*"([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((s) => s !== "./three.core.min.js");
+  if (deps.length) {
+    throw new Error(`${name} 存在未预期的依赖: ${deps.join(", ")}（预览运行时无打包器，不能有裸导入）`);
+  }
+}
+console.log(`已 vendor ${THREE_BUILDS.length} 个 three 构建到 public/engine/core/（three@${threeVersion}）`);
