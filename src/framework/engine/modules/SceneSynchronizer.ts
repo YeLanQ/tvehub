@@ -1016,6 +1016,8 @@ export class SceneSynchronizer {
 
   /**
    * UI 画布刷新（Canvas-Widget 的 Canvas）：打标注供运行期系统使用 ——
+   * - uiNodeVisible：节点自身显隐（UISystem 每帧据此接管根对象可见性：
+   *   场景视图整体隐藏，布局视图按此显示）；
    * - uiCanvasSort：画布级 SortOrder（UISystem 每帧据此合成子树渲染序）；
    * - uiOnlyFirstPass：分层多 pass 渲染时画布只在首个 pass 绘制（避免半透明
    *   UI 在后续叠加 pass 重复绘制变浓；layerPass 按该标注隐藏）。
@@ -1023,6 +1025,7 @@ export class SceneSynchronizer {
    */
   private refreshUICanvas(node: UICanvasNode, obj: THREE.Object3D): void {
     obj.userData.uiCanvas = true;
+    obj.userData.uiNodeVisible = node.visible && node.active;
     obj.userData.uiCanvasSort = node.sortOrder;
     obj.userData.uiOnlyFirstPass = true;
   }

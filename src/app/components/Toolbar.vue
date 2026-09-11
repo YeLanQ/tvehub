@@ -12,6 +12,11 @@ const { state } = store;
 const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
   { key: "scene", label: "场景", title: "场景编辑" },
   {
+    key: "layout",
+    label: "布局",
+    title: "UI 布局：显示并编辑 UI 画布（Canvas-Widget，屏幕叠加）；选中画布节点自动切换",
+  },
+  {
     key: "preview",
     label: "预览",
     title: "网页预览：导出当前场景为独立网页并在编辑器内嵌预览",

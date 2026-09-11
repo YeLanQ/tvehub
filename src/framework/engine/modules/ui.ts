@@ -11,8 +11,10 @@
 // - Widget（uiImageNode/uiTextNode/uiButtonNode）材质统一：透明 + 关深度测试 +
 //   不写深度 + frustumCulled 关；渲染序 = UI_RENDER_ORDER_BASE + 画布 sortOrder×1e4
 //   + Widget sortOrder —— SortOrder 决定画布上 UI 节点的叠加顺序（大者在上）。
-// - 分层多 pass（Culling Mask）：标记 uiCanvasRoot 的画布根只在首个 pass 绘制
-//   （layerPass 后续 pass 隐藏，避免半透明 UI 重复叠加变浓）。
+// - 编辑视口两种形态（运行时导出物恒为"场景 + UI 叠加"）：
+//   - 场景视图：画布整体隐藏（点选同规则）；
+//   - 布局视图：UI 独占渲染——除画布祖先链与 gizmo 外的顶层子树临时隐藏，
+//     布局视口只显示 Canvas 下的节点（beginSolo/endSolo）。
 // ---------------------------------------------------------------------------
 import * as THREE from "three";
 import {
@@ -165,50 +167,67 @@ function hasCanvasAncestor(obj: THREE.Object3D): boolean {
 }
 
 /**
- * UI 系统运行态：每帧渲染前把画布根贴合活动相机、按 SortOrder 合成 Widget 渲染序；
- * 并实现「专属叠加 pass」的两段钩子 —— beginRender 在主渲染（含分层多 pass）前
- * 隐藏全部顶层画布根（UI 不参与主渲染，避免被后续 pass 的对象踩掉），endRender
- * 恢复可见后只保留画布祖先链可见、其余顶层子树（网格/gizmo/辅助物）临时隐藏，
- * 做一次不清屏的叠加渲染（RendererManager.renderOverlayPass）。
+ * UI 系统运行态：
+ * - 可见性开关（setVisible）：场景视图关（画布整体隐藏，渲染与视口点选同规则——
+ *   拾取按祖先可见性过滤，隐藏的画布不可点选）；布局视图开（UI 独占渲染）。
+ *   导出运行时（player.mjs + ui.mjs）不受此开关影响，恒显示 UI 且叠加在场景之上。
+ * - 每帧渲染前把画布根贴合活动相机、按 SortOrder 合成 Widget 渲染序。
+ * - 布局视图独占渲染（beginSolo/endSolo）：主渲染前隐藏画布子树与 gizmo 之外的
+ *   全部场景渲染内容（网格/灯光/辅助线/天空面），使布局视口只显示 Canvas 下的
+ *   节点；渲染结束恢复。灯光随场景内容隐藏 → 分层多 pass 自然退化为单 pass。
  */
 export class UISystem {
   private glueMatrix = new THREE.Matrix4();
   private camMatrix = new THREE.Matrix4();
+  /** UI 画布在编辑视口中是否显示（布局视图 true；场景视图 false；默认关） */
+  private uiVisible = false;
   /** 场景根（attach 注入；顶层子树隐藏用） */
   private scene: THREE.Scene | null = null;
-  /** 叠加渲染回调（EditorEngine 注入 RendererManager.renderOverlayPass） */
-  private renderOverlay: ((cam: THREE.Camera) => void) | null = null;
-  /** 本帧隐藏的顶层画布根（begin/end 之间） */
-  private hiddenRoots: THREE.Object3D[] = [];
-  /** 本帧 update() 识别的顶层画布根（嵌套画布除外；供 beginRender 隐藏） */
+  /** 独占渲染时保持可见的编辑辅助（gizmo 等，顶层对象） */
+  private exempt: THREE.Object3D[] = [];
+  /** 本帧隐藏的顶层子树（beginSolo/endSolo 之间） */
+  private hiddenSolo: THREE.Object3D[] = [];
+  /** 本帧 update() 识别的顶层画布根（嵌套画布除外） */
   private frameTopRoots: THREE.Object3D[] = [];
 
-  /** 注入场景根与叠加渲染回调（引擎 mount 后调用一次） */
-  attach(scene: THREE.Scene, renderOverlay: (cam: THREE.Camera) => void): void {
+  /** 注入场景根与独占渲染豁免对象（引擎 mount 后调用一次） */
+  attach(scene: THREE.Scene, exempt: THREE.Object3D[]): void {
     this.scene = scene;
-    this.renderOverlay = renderOverlay;
+    this.exempt = exempt;
+  }
+
+  /** 编辑视口 UI 显示开关（布局视图开；场景视图关。根对象可见性由 update 每帧接管） */
+  setVisible(visible: boolean): void {
+    this.uiVisible = visible;
+  }
+
+  isVisible(): boolean {
+    return this.uiVisible;
   }
 
   update(cam: THREE.Camera | null, objects: Map<string, THREE.Object3D>): void {
-    if (!cam) return;
+    this.frameTopRoots.length = 0;
     // 相机不在场景图内（预览相机）或本帧渲染尚未推进 matrixWorld 时需手动刷新，
     // 否则采到上一帧位姿（与 updateOrthoSkyQuad 同一处理）
-    cam.updateMatrixWorld();
-    this.camMatrix.copy(cam.matrixWorld);
-    this.frameTopRoots.length = 0;
+    cam?.updateMatrixWorld();
+    this.camMatrix.copy(cam?.matrixWorld ?? this.camMatrix);
+    for (const obj of objects.values()) {
+      if ((obj.userData?.nodeKind as string | undefined) !== "uiCanvasNode") continue;
+      const top = !hasCanvasAncestor(obj);
+      obj.userData.uiCanvasRoot = top;
+      obj.matrixAutoUpdate = false;
+      if (!top) continue;
+      this.frameTopRoots.push(obj);
+      // 画布根可见性由本系统接管：场景视图整体隐藏（点选同规则），布局视图按节点状态显示
+      obj.visible = this.uiVisible && obj.userData?.uiNodeVisible !== false;
+      if (!this.uiVisible || !obj.visible || !cam) continue;
+      uiGlueMatrixForCamera(cam, this.glueMatrix);
+      obj.matrix.multiplyMatrices(this.camMatrix, this.glueMatrix);
+      obj.matrixWorldNeedsUpdate = true;
+    }
+    if (!this.uiVisible) return;
     for (const obj of objects.values()) {
       switch (obj.userData?.nodeKind as string | undefined) {
-        case "uiCanvasNode": {
-          const top = !hasCanvasAncestor(obj);
-          obj.userData.uiCanvasRoot = top;
-          obj.matrixAutoUpdate = false;
-          if (!top) break;
-          if (obj.visible) this.frameTopRoots.push(obj);
-          uiGlueMatrixForCamera(cam, this.glueMatrix);
-          obj.matrix.multiplyMatrices(this.camMatrix, this.glueMatrix);
-          obj.matrixWorldNeedsUpdate = true;
-          break;
-        }
         case "uiImageNode":
         case "uiTextNode":
         case "uiButtonNode":
@@ -219,51 +238,44 @@ export class UISystem {
   }
 
   /**
-   * 主渲染前：隐藏全部顶层画布根（返回隐藏数量；0 = 场景无 UI，调用方跳过 end）。
-   * 只隐藏「当前可见」的根，end 按记录精确恢复（不覆盖节点自身的显隐状态）。
+   * 布局视图主渲染前：隐藏画布祖先链与豁免对象（gizmo）之外的渲染内容
+   * （返回隐藏数量；0 = 非 solo，调用方跳过 endSolo）。
+   * keep = 画布整棵子树 + 画布祖先链 + 豁免对象整棵子树；对每个 keep 对象，
+   * 其不在 keep 中的直接子对象整棵隐藏（场景节点都挂在场景根节点对象下，
+   * 不能只扫 scene.children）。只隐藏「当前可见」的子树，endSolo 精确恢复。
    */
-  beginRender(): number {
-    this.hiddenRoots.length = 0;
-    for (const root of this.frameTopRoots) {
-      if (root.visible) {
-        this.hiddenRoots.push(root);
-        root.visible = false;
-      }
-    }
-    return this.hiddenRoots.length;
-  }
-
-  /**
-   * 主渲染后：恢复画布根可见；本帧确有 UI 时做专属叠加渲染 ——
-   * 只保留画布根的祖先链可见（画布根已恢复），其余顶层子树临时隐藏，
-   * 使叠加 pass 只画 UI（gizmo/网格/辅助物不重画、不踩 UI）。
-   */
-  endRender(cam: THREE.Camera): void {
-    const roots = this.hiddenRoots;
-    this.hiddenRoots = [];
-    if (roots.length === 0) return;
-    for (const root of roots) root.visible = true;
-    if (!this.scene || !this.renderOverlay) return;
+  beginSolo(): number {
+    this.hiddenSolo.length = 0;
+    if (!this.uiVisible || !this.scene) return 0;
     const keep = new Set<THREE.Object3D>();
-    for (const root of roots) {
-      let cur: THREE.Object3D | null = root;
+    for (const root of this.frameTopRoots) {
+      root.traverse((d) => keep.add(d));
+      let cur: THREE.Object3D | null = root.parent;
       while (cur) {
         keep.add(cur);
         cur = cur.parent;
       }
     }
-    const hiddenOthers: THREE.Object3D[] = [];
-    for (const child of this.scene.children) {
-      if (!keep.has(child) && child.visible) {
-        hiddenOthers.push(child);
-        child.visible = false;
+    for (const obj of this.exempt) {
+      obj.traverse((d) => keep.add(d));
+      keep.add(obj);
+    }
+    for (const owner of [...keep]) {
+      for (const child of owner.children) {
+        if (!keep.has(child) && child.visible) {
+          this.hiddenSolo.push(child);
+          child.visible = false;
+        }
       }
     }
-    try {
-      this.renderOverlay(cam);
-    } finally {
-      for (const child of hiddenOthers) child.visible = true;
-    }
+    return this.hiddenSolo.length;
+  }
+
+  /** 布局视图主渲染后：恢复被隐藏的顶层子树 */
+  endSolo(): void {
+    const hidden = this.hiddenSolo;
+    this.hiddenSolo = [];
+    for (const child of hidden) child.visible = true;
   }
 
   /** 合成渲染序：画布 sortOrder（父链最近画布根上标注）×1e4 + Widget sortOrder */

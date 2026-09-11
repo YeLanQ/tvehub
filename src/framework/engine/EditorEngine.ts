@@ -401,11 +401,12 @@ export class EditorEngine {
     await this.applyBackendMaterialPolicy();
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
-    // UI 叠加 pass：UISystem 在主渲染前隐藏画布、主渲染后做专属叠加渲染
-    this.uiSystem.attach(this.renderer.scene, (cam) => this.renderer.renderOverlayPass(cam));
-    this.renderer.setUiOverlayCb({
-      begin: () => this.uiSystem.beginRender(),
-      end: (cam) => this.uiSystem.endRender(cam),
+    // UI 布局视图独占渲染：隐藏画布祖先链与 gizmo 之外的顶层子树，
+    // 布局视口只显示 Canvas 下的节点
+    this.uiSystem.attach(this.renderer.scene, [this.gizmo.getGizmoHelper()]);
+    this.renderer.setUiSoloCb({
+      begin: () => this.uiSystem.beginSolo(),
+      end: () => this.uiSystem.endSolo(),
     });
     this.renderer.setRenderCb(() => {
       // 帧间隔（Timer.update 每帧一次；getDelta 取值在本帧内多次调用结果一致）
@@ -698,6 +699,19 @@ export class EditorEngine {
     this.graph.add(node);
     this.select(node.id);
     return node;
+  }
+
+  /**
+   * 编辑视口 UI 显示开关：布局视图开（画布贴合相机叠加显示，可点选/Gizmo 编辑），
+   * 场景视图关（画布整体隐藏，视口点选同规则不可选中）。导出运行时不受影响（恒显示）。
+   */
+  setUIViewVisible(visible: boolean): void {
+    this.uiSystem.setVisible(visible);
+  }
+
+  /** UI 画布当前是否在编辑视口显示（布局视图 = true） */
+  get uiViewVisible(): boolean {
+    return this.uiSystem.isVisible();
   }
 
   addEmptyGroup(parentId?: string): Node {
@@ -1683,6 +1697,9 @@ export class EditorEngine {
    * 有相机节点时按节点清除标志决定清屏方式与背景内容。
    */
   private resolveClearState(cam?: THREE.Camera): CameraClearState | null {
+    // 布局视图与场景视图同一背景规则：存在天空盒节点（启用且可见）时绘制天空，
+    // 手动隐藏/停用后回退编辑器底色（全局背景由 applySkyFromGraph 维护，
+    // 布局视图的独占渲染只隐藏场景内容，不影响背景）
     const node = this.previewMode ? this.previewNode : null;
     if (!node) return null;
     switch (node.clearFlags) {
@@ -1867,7 +1884,19 @@ export class EditorEngine {
   private isSelectableInViewport(nodeId: string): boolean {
     const node = this.graph.get(nodeId);
     if (!node) return false;
+    // 布局视图只显示 Canvas 子树：非 UI 子树的节点不可点选（渲染隐藏，点选同规则）
+    if (this.uiViewVisible && !this.isInUICanvasSubtree(node)) return false;
     return node.isEffectivelyVisibleIn((id) => this.graph.get(id));
+  }
+
+  /** 节点（含自身）是否在某个 UI 画布子树内 */
+  private isInUICanvasSubtree(node: Node): boolean {
+    let cur: Node | undefined = node;
+    while (cur) {
+      if (cur.typeKey === "uiCanvasNode") return true;
+      cur = cur.parentId ? this.graph.get(cur.parentId) : undefined;
+    }
+    return false;
   }
 }
 

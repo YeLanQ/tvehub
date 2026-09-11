@@ -63,8 +63,8 @@ export class RendererManager {
   private clearProvider: ((cam: THREE.Camera) => CameraClearState | null) | null = null;
   /** 着色器编译失败回调（three 的 program 报错 → 引擎事件 → 编辑器控制台） */
   private shaderErrorCb: ((message: string) => void) | null = null;
-  /** UI 叠加 pass 钩子（begin 隐藏画布返回数量；end 恢复并做专属叠加渲染；null = 无 UI） */
-  private uiOverlayCb: { begin(): number; end(cam: THREE.Camera): void } | null = null;
+  /** UI 布局视图独占渲染钩子（begin 隐藏非画布子树返回数量；end 恢复；null = 无 UI） */
+  private uiSoloCb: { begin(): number; end(): void } | null = null;
 
   /** 所有需要随视口比例更新的相机（编辑器相机 + 预览相机等，透视/正交） */
   private cameras = new Set<THREE.Camera>();
@@ -187,25 +187,9 @@ export class RendererManager {
     this.clearProvider = provider;
   }
 
-  /** 注入 UI 叠加 pass 钩子（UISystem；场景无 UI 画布时可不注入，零开销） */
-  setUiOverlayCb(cb: { begin(): number; end(cam: THREE.Camera): void } | null): void {
-    this.uiOverlayCb = cb;
-  }
-
-  /** UI 专属叠加渲染：不清屏、不画背景，直接叠加绘制当前场景可见内容 */
-  renderOverlayPass(cam: THREE.Camera): void {
-    const r = this.renderer;
-    if (!r) return;
-    const prevBg = this.scene.background;
-    const prevClearColor = r.autoClearColor;
-    const prevClearDepth = r.autoClearDepth;
-    this.scene.background = null;
-    r.autoClearColor = false;
-    r.autoClearDepth = false;
-    r.render(this.scene, cam);
-    this.scene.background = prevBg;
-    r.autoClearColor = prevClearColor;
-    r.autoClearDepth = prevClearDepth;
+  /** 注入 UI 布局视图独占渲染钩子（UISystem；场景视图/无画布时 begin 返回 0 零开销） */
+  setUiSoloCb(cb: { begin(): number; end(): void } | null): void {
+    this.uiSoloCb = cb;
   }
 
   /**
@@ -309,10 +293,10 @@ export class RendererManager {
    */
   private renderActive(): void {
     const cam = this.activeCamera ?? this.camera;
-    // UI（Canvas-Widget）画布在主渲染各 pass 中隐藏，主渲染完成后由专属叠加
-    // pass 绘制（end 内恢复并叠加渲染）——分层多 pass 的后续 pass 会在不清屏的
-    // 情况下重画其它层的对象，UI 若混在主 pass 里会被它们踩掉
-    const uiHidden = this.uiOverlayCb ? this.uiOverlayCb.begin() : 0;
+    // 布局视图（UI 独占）：隐藏画布祖先链与 gizmo 之外的顶层子树后再渲染，
+    // 布局视口只显示 Canvas 下的节点；灯光随场景子树隐藏 → 分层多 pass 自然
+    // 退化为单 pass。场景视图 begin 返回 0，行为与旧渲染路径完全一致。
+    const solo = this.uiSoloCb ? this.uiSoloCb.begin() : 0;
     this.applyClearState(cam);
     const bits = layerPassBits(this.scene, cam);
     if (!bits) {
@@ -320,7 +304,7 @@ export class RendererManager {
     } else {
       renderLayerPasses(this.renderer, this.scene, cam, bits);
     }
-    if (this.uiOverlayCb && uiHidden > 0) this.uiOverlayCb.end(cam);
+    if (this.uiSoloCb && solo > 0) this.uiSoloCb.end();
   }
 
   get domElement(): HTMLElement {

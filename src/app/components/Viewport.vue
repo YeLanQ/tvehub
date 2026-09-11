@@ -18,8 +18,12 @@ function setSpace(space: "local" | "world"): void {
   engine.setGizmoSpace(space);
 }
 
+function isEditMode(): boolean {
+  return state.viewMode === "scene" || state.viewMode === "layout";
+}
+
 function onDragOver(e: DragEvent): void {
-  if (state.viewMode !== "scene") return;
+  if (!isEditMode()) return;
   if (!e.dataTransfer) return;
   if (e.dataTransfer.types.includes("application/x-editor-asset")) {
     e.preventDefault();
@@ -28,7 +32,7 @@ function onDragOver(e: DragEvent): void {
 }
 
 function onDrop(e: DragEvent): void {
-  if (state.viewMode !== "scene") return;
+  if (!isEditMode()) return;
   if (!e.dataTransfer) return;
   const data = e.dataTransfer.getData("application/x-editor-asset");
   if (!data) return;
@@ -82,8 +86,8 @@ onBeforeUnmount(() => {
 
     <!-- 动画聚焦编辑的压暗在材质层完成（anim-edit-mode），视口无 DOM 蒙版 -->
 
-    <!-- 视口顶部悬浮工具栏：仅编辑场景模式下显示 -->
-    <div v-if="state.viewMode === 'scene'" class="overlay top">
+    <!-- 视口顶部悬浮工具栏：场景/布局编辑模式下显示 -->
+    <div v-if="isEditMode()" class="overlay top">
       <div class="tool-group" title="变换工具">
         <button
           class="mini"
@@ -131,7 +135,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="state.viewMode === 'scene'" class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
+    <div v-if="isEditMode()" class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
     <div v-else class="viewport__hint mono">预览渲染 · 使用场景相机视角</div>
   </div>
 </template>

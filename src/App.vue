@@ -170,8 +170,10 @@ onUnmounted(() => {
         ></div>
 
         <main class="center">
-          <!-- 场景编辑：编辑器画布 -->
-          <Viewport v-show="editorStore.state.viewMode === 'scene'" />
+          <!-- 场景/布局编辑：编辑器画布（布局视图额外显示 UI 画布） -->
+          <Viewport
+            v-show="editorStore.state.viewMode === 'scene' || editorStore.state.viewMode === 'layout'"
+          />
           <!-- 网页预览：内嵌独立网页运行当前场景（导出 + 本地静态服务 + iframe） -->
           <WebPreviewPanel
             v-if="editorStore.state.viewMode === 'preview'"

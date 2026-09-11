@@ -38,6 +38,11 @@ export class GizmoController {
     scene.add(this.gizmoHelper);
   }
 
+  /** gizmo 顶层渲染对象（UI 布局视图独占渲染时保持可见的编辑辅助） */
+  getGizmoHelper(): THREE.Object3D {
+    return this.gizmoHelper;
+  }
+
   detachFromScene(scene: THREE.Scene): void {
     scene.remove(this.gizmoHelper);
   }

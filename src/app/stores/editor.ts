@@ -3,7 +3,7 @@ import { EditorEngine } from "../../framework/engine/EditorEngine";
 import type { Node } from "../../framework/prototype/Node";
 import { logStore } from "./log";
 
-export type ViewMode = "scene" | "preview" | "script";
+export type ViewMode = "scene" | "layout" | "preview" | "script";
 
 export interface EditorStore {
   engine: EditorEngine;
@@ -108,6 +108,16 @@ export function getEditorStore(): EditorStore {
     if (state.mounted) state.dirty = true;
   });
 
+  // 选中 UI 节点（画布/Widget）→ 自动切到布局视图：场景视图不显示 UI，
+  // 选中即视为进入 UI 编辑（预览/脚本工作台激活时不抢焦点）
+  engine.events.on("select:changed", () => {
+    if (state.viewMode !== "scene") return;
+    const id = engine.selectedId;
+    if (!id) return;
+    const node = engine.graph.get(id);
+    if (node && node.typeKey.startsWith("ui")) applyViewMode("layout");
+  });
+
   // 场景图变化 → 控制台日志（框架层不依赖 app，日志桥接只在 app 层）
   engine.events.on("graph:changed", (c) => {
     const node = engine.graph.get(c.nodeId);
@@ -136,6 +146,19 @@ export function getEditorStore(): EditorStore {
   });
   const revision = computed(() => state.revision);
 
+  /** 视图模式落地：布局/场景共用引擎编辑渲染路径，差异只在 UI 画布显隐 */
+  function applyViewMode(mode: ViewMode): void {
+    if (mode === "scene" || mode === "layout") {
+      engine.setViewMode("scene");
+      engine.setRenderingActive(true);
+      engine.setUIViewVisible(mode === "layout");
+    } else {
+      // 预览/脚本工作台由中央区域独立面板接管，暂停后台渲染省资源
+      engine.setRenderingActive(false);
+    }
+    state.viewMode = mode;
+  }
+
   const store: EditorStore = {
     engine,
     revision: () => revision.value,
@@ -150,15 +173,7 @@ export function getEditorStore(): EditorStore {
     },
     state: readonly(state) as unknown as EditorStore["state"],
     setViewMode: (mode) => {
-      // 预览页签由中央区域的独立"网页预览"面板（WebPreviewPanel iframe）接管，
-      // 编辑器画布不再做引擎内相机预览渲染；脚本/预览期间暂停后台渲染省资源。
-      if (mode === "scene") {
-        engine.setViewMode("scene");
-        engine.setRenderingActive(true);
-      } else {
-        engine.setRenderingActive(false);
-      }
-      state.viewMode = mode;
+      applyViewMode(mode);
     },
     markMounted: () => {
       state.mounted = true;
