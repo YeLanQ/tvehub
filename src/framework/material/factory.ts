@@ -37,6 +37,13 @@ import {
 /** 默认材质类型 key（.mat 缺失/未知 materialType 时的回退） */
 export const DEFAULT_MATERIAL_TYPE = "physical";
 
+/**
+ * alphaTest 裁剪阈值上限（<1）：three 的 WebGL alphaTest 是"alpha < 阈值才 discard"
+ * （不透明片元 alpha=1 恒通过），WebGPU 节点路径是小于等于语义——阈值取 1 会把
+ * 不透明片元全部 discard，整块网格在 WebGPU 下消失。钳到 0.999 保证两后端一致。
+ */
+export const ALPHA_TEST_MAX = 0.999;
+
 /** 贴图异步装载器（应用层注入，同引擎 loadTexture） */
 export interface MaterialTextureLoader {
   loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
@@ -166,8 +173,12 @@ function applyPhysical(
   // 有贴图但阈值为 0 → 贴图 alpha 走混合透明
   m.transparent =
     params.opacity < 0.999 || (params.map !== "" && params.alphaClipThreshold <= 0.0001);
+  // 阈值钳到 <1：three 的 WebGL alphaTest 是严格小于（alpha=1 恒通过），
+  // WebGPU 节点路径是小于等于（阈值 1 会把不透明片元全部 discard → 整块消失）
   m.alphaTest =
-    params.map !== "" && params.alphaClipThreshold > 0.0001 ? params.alphaClipThreshold : 0;
+    params.map !== "" && params.alphaClipThreshold > 0.0001
+      ? Math.min(params.alphaClipThreshold, ALPHA_TEST_MAX)
+      : 0;
   m.wireframe = params.wireframe;
   m.needsUpdate = true;
   // 贴图通道（异步加载后赋值）
@@ -294,7 +305,9 @@ function applyUnlit(
   m.transparent =
     params.opacity < 0.999 || (params.map !== "" && params.alphaClipThreshold <= 0.0001);
   m.alphaTest =
-    params.map !== "" && params.alphaClipThreshold > 0.0001 ? params.alphaClipThreshold : 0;
+    params.map !== "" && params.alphaClipThreshold > 0.0001
+      ? Math.min(params.alphaClipThreshold, ALPHA_TEST_MAX)
+      : 0;
   m.wireframe = params.wireframe;
   m.needsUpdate = true;
   attachTextureChannel(loader, params, "map", true, (t) => {

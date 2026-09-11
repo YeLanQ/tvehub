@@ -106,7 +106,11 @@ function buildMeshNode(json, ctx) {
   const m = resolved || MAT_DEFAULTS;
   const f = {
     transparent: m.opacity < 0.999 || (!!m.map && !(m.alphaClipThreshold > 0.0001)),
-    alphaTest: m.map && m.alphaClipThreshold > 0.0001 ? m.alphaClipThreshold : 0,
+    // 裁剪阈值钳到 <1：three 的 WebGL alphaTest 是"alpha < 阈值才 discard"（alpha=1
+    // 恒通过），WebGPU 节点路径是小于等于语义——阈值取 1 会把不透明片元全部
+    // discard，网格在 WebGPU 下整块消失
+    alphaTest:
+      m.map && m.alphaClipThreshold > 0.0001 ? Math.min(m.alphaClipThreshold, 0.999) : 0,
     wireframe: m.wireframe === true,
   };
   if (m.type === "toon") {
