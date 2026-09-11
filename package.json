@@ -15,6 +15,7 @@
     "smoke:components": "vite build --ssr scripts/smoke-components.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-components.js",
     "smoke:shader": "vite build --ssr scripts/smoke-shader.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shader.js",
     "smoke:shader-runtime": "node scripts/smoke-shader-runtime.mjs",
+    "smoke:shader-tsl": "vite build --ssr scripts/smoke-shader-tsl.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shader-tsl.js",
     "smoke:shadow": "vite build --ssr scripts/smoke-shadow.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shadow.js",
     "smoke:shadow-runtime": "node scripts/smoke-shadow-runtime.mjs",
     "smoke:node-menu": "vite build --ssr scripts/smoke-node-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-node-menu.js",

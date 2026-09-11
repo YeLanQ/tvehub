@@ -51,5 +51,7 @@ export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = {
 };
 export const WEB_PREVIEW_WEBGPU_FILES: string[] = [
   "engine/core/three.webgpu.min.js",
-  "engine/core/particleNodeMaterial.mjs"
+  "engine/core/particleNodeMaterial.mjs",
+  "engine/core/glslToTsl.mjs",
+  "engine/core/customNodeMaterial.mjs"
 ];

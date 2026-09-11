@@ -44,7 +44,8 @@ import {
 import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { MaterialManager } from "../material/MaterialManager";
 import { ShaderManager } from "../material/ShaderManager";
-import { tickShaderTime } from "../material/customShader";
+import { tickCustomShaderTime, setCustomBackend } from "../material/customBackend";
+import { loadTslCustomBackend } from "../material/customNodeMaterial";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
@@ -382,8 +383,8 @@ export class EditorEngine {
     if (this.disposed) return;
     this.initGizmo();
     // WebGPU 后端：GLSL ShaderMaterial 不参与渲染（WGSL 需要节点材质），
-    // 粒子改注入 TSL 节点材质工厂；自定义着色器无法在 WebGPU 下运行，给出明确告警
-    void this.applyBackendMaterialPolicy();
+    // 粒子与自定义着色器改注入 TSL 节点材质工厂（等待就绪后再装载场景）
+    await this.applyBackendMaterialPolicy();
     // 着色器编译失败 → 引擎事件（应用层桥接到编辑器控制台）
     this.renderer.setShaderErrorCb((message) => this.events.emit("shader:error", { message }));
     this.renderer.setRenderCb(() => {
@@ -397,7 +398,7 @@ export class EditorEngine {
       this.particles.update(dt);
       // 自定义着色器时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
       this.shaderTime += dt;
-      tickShaderTime(this.shaderTime);
+      tickCustomShaderTime(this.shaderTime);
       // 音频：监听器随活动渲染相机 + 可见性自动暂停（Web Audio 自走时钟）
       const activeCam = this.renderer.getActiveCamera();
       if (activeCam) this.audio.attachListener(activeCam);
@@ -465,18 +466,31 @@ export class EditorEngine {
    * 按渲染后端应用材质策略（挂载后调用一次；后端运行期不可切换）：
    * - 经典 WebGLRenderer：粒子用 GLSL ShaderMaterial（默认路径，无需处理）；
    * - WebGPURenderer：粒子改注入 TSL 节点材质工厂（three/webgpu + three/tsl 动态加载，
-   *   未选 WebGPU 的产物不加载它们）；内置材质由 three 自动转换，表现不变。
-   * 注：GLSL 自定义着色器（.shader）在 WebGPU 下无法执行（three 无 GLSL→WGSL 通路），
-   * 该限制见 docs/editor/projects.md。
+   *   未选 WebGPU 的产物不加载它们）；自定义着色器（GLSL ShaderMaterial）改注入
+   *   TSL 转译后端（glslToTsl → NodeMaterial），使之在 WGSL 下可渲染。
+   * 内置材质由 three 自动转换，表现不变。
    */
   private async applyBackendMaterialPolicy(): Promise<void> {
-    if (this.renderer.activeBackend !== "webgpu") return;
-    const factory = await loadParticleNodeMaterialFactory();
+    if (this.renderer.activeBackend !== "webgpu") {
+      setCustomBackend(null);
+      return;
+    }
+    const [particleFactory, customBackend] = await Promise.all([
+      loadParticleNodeMaterialFactory(),
+      loadTslCustomBackend(),
+    ]);
     if (this.disposed) return;
-    if (factory) {
-      this.particles.setMaterialFactory(factory);
+    if (particleFactory) {
+      this.particles.setMaterialFactory(particleFactory);
     } else {
       logger.warn("[particles] WebGPU 后端下未能加载 TSL 粒子材质，粒子将不参与渲染");
+    }
+    if (customBackend) {
+      setCustomBackend(customBackend);
+    } else {
+      logger.warn(
+        "[material] WebGPU 后端下未能加载 TSL 自定义着色器后端，自定义着色器将不参与渲染",
+      );
     }
   }
 

@@ -25,7 +25,7 @@ import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
-import { tickShaderTime } from "../engine/runtime/mesh.mjs";
+import { tickShaderTime, setCustomMaterialFactory } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createRenderer, createStage } from "../engine/runtime/stage.mjs";
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
@@ -181,8 +181,16 @@ async function main() {
     } catch (e) {
       postLog("warn", `粒子 TSL 材质加载失败（${e?.message ?? e}），粒子将不参与渲染`);
     }
-    // GLSL 自定义着色器（.shader）在 WebGPU 下无法执行（three 无 GLSL→WGSL 通路）
-    postLog("warn", "WebGPU 后端不支持 GLSL 自定义着色器（.shader）：引用它的材质不参与渲染");
+    // 自定义着色器（.shader）在 WebGPU 下经 GLSL→TSL 转译为 NodeMaterial 渲染
+    // （GLSL ShaderMaterial 在该后端不参与渲染）；模块静态依赖 three 的 WebGPU 构建
+    try {
+      const mod = await import("../engine/core/customNodeMaterial.mjs");
+      const factory = mod.createNodeCustomMaterialFactory();
+      if (factory) setCustomMaterialFactory(factory);
+      else postLog("warn", "自定义着色器 TSL 后端不可用，自定义着色器将不参与渲染");
+    } catch (e) {
+      postLog("warn", `自定义着色器 TSL 后端加载失败（${e?.message ?? e}），自定义着色器将不参与渲染`);
+    }
   }
 
   // 资产来源优先级：内联 gzip 包（单页+gzip）→ 内联资产表（单页）→

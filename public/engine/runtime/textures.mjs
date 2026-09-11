@@ -43,7 +43,7 @@ export async function applyMeshTextures(meshes, materialParams) {
     if (!mat) continue;
     const m = materialParams.get(entry.json.material);
     if (!m) continue;
-    if (mat.isShaderMaterial && Array.isArray(mat.userData.customProperties)) {
+    if (Array.isArray(mat.userData?.customProperties)) {
       const props = m.props || {};
       for (const prop of mat.userData.customProperties) {
         if (prop.kind !== "texture") continue;

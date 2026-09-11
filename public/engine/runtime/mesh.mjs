@@ -25,8 +25,17 @@ void main() {
 /** 在册自定义材质（每帧推进 _Time；材质释放时自动出册） */
 const timeMaterials = new Set();
 
-/** 渲染循环推进：设置全部在册自定义材质的 _Time（秒） */
+/** 自定义材质 TSL 后端工厂（WebGPU 时由 player 注入；null = 走 GLSL ShaderMaterial） */
+let customMaterialFactory = null;
+
+/** 注入自定义材质 TSL 后端（WebGPU）；null 恢复 GLSL 默认 */
+export function setCustomMaterialFactory(factory) {
+  customMaterialFactory = factory ?? null;
+}
+
+/** 渲染循环推进：设置全部在册自定义材质的 _Time（秒；GLSL 与 TSL 两条路径各走各的） */
 export function tickShaderTime(seconds) {
+  if (customMaterialFactory) customMaterialFactory.tick(seconds);
   if (timeMaterials.size === 0) return;
   for (const mat of timeMaterials) {
     const uniform = mat.uniforms?._Time;
@@ -71,6 +80,11 @@ function warnMissingMaterial(rel, nodeName) {
 
 /** 自定义着色器 → ShaderMaterial（uniforms = 属性 + _Time；渲染状态取自 Tags 声明） */
 function createCustomMaterial(m) {
+  // WebGPU 后端：委托 TSL NodeMaterial 工厂（GLSL ShaderMaterial 在该后端不参与渲染）
+  if (customMaterialFactory) {
+    const nodeMat = customMaterialFactory.create(m);
+    if (nodeMat) return nodeMat;
+  }
   const program = m.program ?? null;
   const properties = m.properties ?? [];
   const uniforms = {};

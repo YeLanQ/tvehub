@@ -23,11 +23,8 @@ import {
 } from "./defs";
 import {
   CUSTOM_SHADER_KIND,
-  applyCustomProgram,
-  applyCustomTextures,
-  buildCustomUniforms,
-  registerCustomMaterial,
 } from "./customShader";
+import { getCustomBackend } from "./customBackend";
 import type { CustomShaderProgram, ShaderPropertyDef } from "./shader";
 
 /** 默认材质类型 key（.mat 缺失/未知 materialType 时的回退） */
@@ -434,19 +431,11 @@ const TOON_DEF: MaterialTypeDef = {
 const CUSTOM_DEF: MaterialTypeDef = {
   key: CUSTOM_SHADER_KIND,
   label: "Custom",
-  create: () => new THREE.ShaderMaterial({ uniforms: {} }),
-  matches: (mat) => mat instanceof THREE.ShaderMaterial,
+  create: () => getCustomBackend().create(),
+  matches: (mat) => getCustomBackend().matches(mat),
   paramGroups: [],
   defaultParams: () => ({ ...DEFAULT_MATERIAL_PARAMS, props: {} }),
-  apply: (mat, params, loader, ctx) => {
-    const m = mat as THREE.ShaderMaterial;
-    const program = ctx?.program ?? null;
-    const properties = ctx?.properties ?? [];
-    m.uniforms = buildCustomUniforms(properties, params, m.uniforms);
-    applyCustomProgram(m, program);
-    applyCustomTextures(properties, params, m.uniforms, loader);
-    registerCustomMaterial(m);
-  },
+  apply: (mat, params, loader, ctx) => getCustomBackend().apply(mat, params, loader, ctx),
 };
 
 /** 默认材质类型注册表（physical + unlit + toon + custom；新类型在此追加一行 register） */

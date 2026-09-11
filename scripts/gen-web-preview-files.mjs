@@ -38,6 +38,8 @@ const PHYSICS_PREFIX = "engine/runtime/physics-engines/";
 const WEBGPU_FILES = [
   "engine/core/three.webgpu.min.js",
   "engine/core/particleNodeMaterial.mjs",
+  "engine/core/glslToTsl.mjs",
+  "engine/core/customNodeMaterial.mjs",
 ];
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
