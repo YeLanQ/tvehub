@@ -185,6 +185,24 @@ const mat = mesh.material;
 ok(mat.isMeshPhysicalMaterial === true, "网格构建内置 PBR 材质（无独立自定义材质分支）");
 ok(mat.isShaderMaterial !== true, "不再构建 ShaderMaterial");
 ok(hasShaderHooks(mat) === true, "材质已挂载着色器钩子");
+// 不同 Hook 集合必须命中不同 program：否则 three 复用同一条 program，
+// 两个网格会渲染成同一个效果（曾表现为"溶解 + 顶点波动 都显示溶解"）
+{
+  const otherNode = node("m1b", "assets/materials/Scan.mat");
+  const otherParams = await loadMaterialParams(otherNode);
+  const otherMat = createMesh(otherNode, { materialParams: otherParams, models: new Map() }).material;
+  ok(
+    mat.customProgramCacheKey() !== otherMat.customProgramCacheKey(),
+    "不同 Hook 集合的程序缓存 key 不同（program 不复用）",
+  );
+  const sameNode = node("m1c", "assets/materials/Rim.mat");
+  const sameParams = await loadMaterialParams(sameNode);
+  const sameMat = createMesh(sameNode, { materialParams: sameParams, models: new Map() }).material;
+  ok(
+    mat.customProgramCacheKey() === sameMat.customProgramCacheKey(),
+    "同一份 Hook 的材质 key 一致（program 仍可复用）",
+  );
+}
 const shader = stubShader();
 mat.onBeforeCompile(shader);
 ok(

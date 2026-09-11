@@ -392,6 +392,53 @@ async function main(): Promise<void> {
     );
   }
 
+  // —— 9. 回归：不同 Hook 集合必须命中不同 program ——
+  // 曾经的缺陷：注入函数对所有材质源码文本相同，three 默认用 onBeforeCompile.toString()
+  // 当程序缓存 key → 两个网格（一个溶解、一个顶点波动）复用同一条 program，
+  // 表现为"两个网格都显示溶解"。
+  console.log("[9] 程序缓存 key（不同效果不得复用同一条 program）");
+  {
+    const dissolveData = dataOf(examples.find((e) => e.file.startsWith("DissolveExt"))!.text);
+    const waveData = dataOf(examples.find((e) => e.file.startsWith("VertexWave"))!.text);
+    const matA = new THREE.MeshPhysicalMaterial();
+    const matB = new THREE.MeshPhysicalMaterial();
+    applyShaderHooks(matA, dissolveData, {});
+    applyShaderHooks(matB, waveData, {});
+    const keyA = matA.customProgramCacheKey();
+    const keyB = matB.customProgramCacheKey();
+    ok(!!keyA && !!keyB, "挂 Hook 的材质自带程序缓存 key（不再回退 onBeforeCompile.toString()）");
+    ok(keyA !== keyB, `溶解与顶点波动 key 不同（${keyA} ≠ ${keyB}）`);
+    // 同一份钩子（同效果的两个材质）应共享 key（缓存仍可复用）
+    const matC = new THREE.MeshPhysicalMaterial();
+    applyShaderHooks(matC, dissolveData, {});
+    ok(matC.customProgramCacheKey() === keyA, "同一份 Hook 的材质 key 一致（program 可复用）");
+    // 内容敏感：同长度改钩子代码也要换 key（否则改效果不重编）
+    const editedData: ShaderHookData = {
+      ...waveData,
+      hooks: waveData.hooks.map((h) => ({
+        name: h.name,
+        code: h.code.replace("* _WaveAmplitude", "/ _WaveAmplitude"), // 同长度、仅运算符不同
+      })),
+    };
+    ok(
+      editedData.hooks[0].code.length === waveData.hooks[0].code.length,
+      "测试用例：两次钩子代码长度相同（只为验证内容敏感）",
+    );
+    const matD = new THREE.MeshPhysicalMaterial();
+    applyShaderHooks(matD, editedData, {});
+    ok(matD.customProgramCacheKey() !== keyB, "同长度改代码 → key 变化（内容敏感）");
+    // 参数值变化不应换 key（值走 uniform，不该触发重编）
+    const matE = new THREE.MeshPhysicalMaterial();
+    applyShaderHooks(matE, dissolveData, { _Threshold: 0.9 });
+    ok(matE.customProgramCacheKey() === keyA, "只改参数值 → key 不变（不触发重编）");
+    // 清除钩子 → 交还默认实现
+    applyShaderHooks(matD, hookDataOf(plainDoc()), {});
+    ok(
+      matD.customProgramCacheKey() !== keyB,
+      "清除钩子后不再沿用钩子 key（材质回到默认程序缓存行为）",
+    );
+  }
+
   console.log(`\n结果：${passed} 通过，${failed} 失败`);
   if (failed > 0) process.exit(1);
 }

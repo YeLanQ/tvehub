@@ -186,12 +186,29 @@ function remapVars(code: string, varMap: Record<string, string>): string {
   return result;
 }
 
-/** 钩子签名（检测变更：钩子代码 + include + 属性表） */
+/** 轻量文本哈希（djb2；只用于变更检测与程序缓存 key，不要求抗碰撞） */
+function hashText(text: string): number {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) {
+    h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * 注入内容签名：钩子全文（哈希）+ CGINCLUDE + 属性集合（键 + 类型）。
+ * 两个用途，必须内容敏感：
+ * - 变更检测：同长度改代码也要重建注入；
+ * - 程序缓存 key（customProgramCacheKey）：不同钩子集合必须命中不同的 program
+ *   ——否则 three 会按 onBeforeCompile.toString() 复用同一条 program，让后一个
+ *   材质渲染出前一个材质的效果（两个网格都变成同一个效果）。
+ * 属性「值」不参与：值走 uniform，改值不应触发重编。
+ */
 function hookSignature(hooks: ShaderHookData | null): string {
   if (!hooks) return "";
-  const hookSig = hooks.hooks.map((h) => `${h.name}:${h.code.length}`).join("|");
-  const propSig = hooks.properties.map((p) => p.key).join(",");
-  return `${hooks.base}#${hookSig}#${propSig}#${hooks.include.length}`;
+  const hookSig = hooks.hooks.map((h) => `${h.name}:${hashText(h.code)}`).join("|");
+  const propSig = hooks.properties.map((p) => `${p.key}:${p.kind}`).join(",");
+  return `${hooks.base}#${hookSig}#${propSig}#${hashText(hooks.include)}`;
 }
 
 /** 属性 → uniform 初始值 */
@@ -427,16 +444,22 @@ export function applyShaderHooks(
       delete ud[HOOK_SIG_KEY];
       delete ud[HOOK_UNIFORMS_KEY];
       mat.onBeforeCompile = () => {};
+      // 交还程序缓存 key 的默认实现（onBeforeCompile.toString()）
+      delete (mat as unknown as { customProgramCacheKey?: unknown }).customProgramCacheKey;
       mat.needsUpdate = true;
       unregisterHookMaterial(mat);
     }
     return;
   }
 
-  // 钩子变更 → 重建 onBeforeCompile
+  // 注入内容变化 → 重建 onBeforeCompile + 程序缓存 key
   if (ud[HOOK_SIG_KEY] !== sig) {
     ud[HOOK_SIG_KEY] = sig;
     mat.onBeforeCompile = buildOnBeforeCompile(hooks, mat);
+    // 必须自带 cache key：注入函数对所有材质源码文本相同，three 默认取
+    // onBeforeCompile.toString() 会算出同一个 key，导致不同钩子集合复用同一条
+    // program（后一个材质渲染出前一个材质的效果）。
+    mat.customProgramCacheKey = () => sig;
     mat.needsUpdate = true;
     registerHookMaterial(mat);
   }

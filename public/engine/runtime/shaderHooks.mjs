@@ -55,11 +55,27 @@ function remapVars(code, varMap) {
   return result;
 }
 
+/** 轻量文本哈希（djb2；只用于变更检测与程序缓存 key） */
+function hashText(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) {
+    h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * 注入内容签名：钩子全文（哈希）+ CGINCLUDE + 属性集合（键 + 类型）。
+ * 内容敏感是必需的：它同时用于变更检测与 customProgramCacheKey——注入函数对所有
+ * 材质源码文本相同，three 默认取 onBeforeCompile.toString() 会算出同一个 key，
+ * 不同钩子集合会复用同一条 program（后一个材质渲染出前一个材质的效果）。
+ * 属性「值」不参与：值走 uniform，改值不应触发重编。
+ */
 function hookSignature(ext) {
   if (!ext) return "";
-  const hookSig = ext.hooks.map((h) => `${h.name}:${h.code.length}`).join("|");
-  const propSig = ext.properties.map((p) => p.key).join(",");
-  return `${ext.base}#${hookSig}#${propSig}#${ext.include.length}`;
+  const hookSig = ext.hooks.map((h) => `${h.name}:${hashText(h.code)}`).join("|");
+  const propSig = ext.properties.map((p) => `${p.key}:${p.kind}`).join(",");
+  return `${ext.base}#${hookSig}#${propSig}#${hashText(ext.include)}`;
 }
 
 function uniformInitialValue(prop) {
@@ -249,6 +265,8 @@ export function applyShaderHooks(mat, ext, props, loader) {
       delete ud[HOOK_SIG_KEY];
       delete ud[HOOK_UNIFORMS_KEY];
       mat.onBeforeCompile = () => {};
+      // 交还程序缓存 key 的默认实现（onBeforeCompile.toString()）
+      delete mat.customProgramCacheKey;
       mat.needsUpdate = true;
       unregisterHookMaterial(mat);
     }
@@ -258,6 +276,10 @@ export function applyShaderHooks(mat, ext, props, loader) {
   if (ud[HOOK_SIG_KEY] !== sig) {
     ud[HOOK_SIG_KEY] = sig;
     mat.onBeforeCompile = buildOnBeforeCompile(ext, mat);
+    // 必须自带 cache key：注入函数对所有材质源码文本相同，three 默认取
+    // onBeforeCompile.toString() 会算出同一个 key，导致不同钩子集合复用同一条
+    // program（后一个材质渲染出前一个材质的效果）。
+    mat.customProgramCacheKey = () => sig;
     mat.needsUpdate = true;
     registerHookMaterial(mat);
   }

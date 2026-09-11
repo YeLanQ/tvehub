@@ -169,11 +169,24 @@ function writeUniformValue(
   }
 }
 
-/** 端口签名（Hook 集合 + 属性集合 + 分支；变化时重建节点图） */
-function hookSignature(kind: string, hooks: ShaderHookData, props: ShaderProps): string {
-  const hookSig = hooks.hooks.map((h) => `${h.name}:${h.code.length}`).join("|");
-  const propSig = hooks.properties.map((p) => `${p.key}:${JSON.stringify(props[p.key] ?? p.default)}`).join(",");
-  return `${kind}#${hooks.base}#${hookSig}#${hooks.include.length}#${propSig}`;
+/** 轻量文本哈希（djb2；只用于节点图重建判定，不要求抗碰撞） */
+function hashText(text: string): number {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) {
+    h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * 端口接线签名：钩子全文（哈希）+ CGINCLUDE + 属性集合（键 + 类型）+ 分支。
+ * 与 GL 侧 hookSignature 同口径：内容敏感（同长度改代码也要重建节点图），
+ * 但**不含属性值**——值只写 uniform，改值不必重建节点图。
+ */
+function hookSignature(kind: string, hooks: ShaderHookData): string {
+  const hookSig = hooks.hooks.map((h) => `${h.name}:${hashText(h.code)}`).join("|");
+  const propSig = hooks.properties.map((p) => `${p.key}:${p.kind}`).join(",");
+  return `${kind}#${hooks.base}#${hookSig}#${propSig}#${hashText(hooks.include)}`;
 }
 
 /**
@@ -257,7 +270,7 @@ class WebGpuMaterialBackend implements NodeMaterialBackend {
     this.applyTextures(hooks, props, state.uniforms, loader);
 
     // 端口接线（节点图变化才重建：Hook 集合/属性值/分支任一变化）
-    const sig = hookSignature(kind, hooks, props);
+    const sig = hookSignature(kind, hooks);
     const errors: string[] = [];
     if (state.sig !== sig) {
       state.sig = sig;
