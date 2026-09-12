@@ -18,6 +18,8 @@ import {
   UITextNode,
 } from "../../prototype/derived/Primitives";
 import {
+  pxToUnits,
+  UI_RENDER_ORDER_BASE,
   uiRenderOrder,
   type Vec2,
 } from "../../prototype/nodes/ui-shared";
@@ -117,6 +119,9 @@ const UI_IS_POSITION_MANAGED = new Set<string>([...UI_IS_WIDGET_KINDS, "uiLayout
 
 /** UI 布局容器编辑器辅助体子对象名（边框线 + 拾取面；运行时无此对象） */
 const UI_LAYOUT_HELPER_NAME = "__uiLayoutHelper";
+
+/** UI 画布设计矩形辅助线框子对象名（编辑器专用；运行时无此对象） */
+const UI_CANVAS_HELPER_NAME = "__uiCanvasHelper";
 
 /** UI 材质标记（区分 three Mesh 自带的默认材质与自建叠加材质） */
 function isOwnUIMaterial(mat: THREE.Material | THREE.Material[] | undefined): boolean {
@@ -424,6 +429,9 @@ export class SceneSynchronizer {
       } else if (c.name === UI_LAYOUT_HELPER_NAME) {
         // UI 布局容器辅助体（边框/拾取面）：跟随节点层（视口点选按层过滤射线）
         c.traverse((d) => d.layers.set(layer));
+      } else if (c.name === UI_CANVAS_HELPER_NAME) {
+        // UI 画布设计线框：跟随节点层（渲染裁剪同画布根）
+        c.layers.set(layer);
       }
     });
   }
@@ -1083,6 +1091,45 @@ export class SceneSynchronizer {
     obj.userData.uiDesignH = node.designHeight;
     obj.userData.uiScaleMode = node.scaleMode;
     obj.userData.uiOnlyFirstPass = true;
+
+    // 设计矩形辅助线框（编辑器专用；画布根在场景视图整体隐藏 → 线框随之只在
+    // 布局视图可见）。尺寸 = 设计分辨率/100（UI_PPU），随设计尺寸变化重建；
+    // renderOrder 压过所有 Widget（线框恒可见），关射线避免抢走视口点选。
+    const w = pxToUnits(node.designWidth);
+    const h = pxToUnits(node.designHeight);
+    const sig = `${w}|${h}`;
+    let helper = obj.children.find((c) => c.name === UI_CANVAS_HELPER_NAME) as THREE.LineSegments | null;
+    if (!helper) {
+      helper = new THREE.LineSegments(
+        uiRectOutlineGeometry(),
+        new THREE.LineBasicMaterial({
+          color: 0xf4a261,
+          transparent: true,
+          opacity: 0.7,
+          depthTest: false,
+          toneMapped: false,
+        }),
+      );
+      helper.name = UI_CANVAS_HELPER_NAME;
+      helper.position.z = 0.01;
+      helper.frustumCulled = false;
+      helper.raycast = () => {};
+      helper.renderOrder = UI_RENDER_ORDER_BASE + 6000000; // 高于 Widget 上限（BASE + 500×1e4 + 999）
+      helper.userData.uiRenderable = true;
+      obj.add(helper);
+      // applyNodeLayer 在本函数之前跑（首刷时线框还不存在），这里直接补层
+      helper.layers.set(clampLayerIndex(node.layer));
+    }
+    if (helper.userData.uiSizeSig !== sig) {
+      helper.geometry?.dispose();
+      helper.geometry = uiRectOutlineGeometry(w, h);
+      helper.userData.uiSizeSig = sig;
+    }
+    // 填充类缩放模式下画布边与屏幕边重合（NDC ±1）会被整行裁掉：该轴微内缩
+    // 保证线框可见（几何仍为精确设计尺寸，仅缩放微调；非填充轴保持精确）
+    const fillsX = node.scaleMode !== "noscale" && node.scaleMode !== "fixedheight";
+    const fillsY = node.scaleMode !== "noscale" && node.scaleMode !== "fixedwidth";
+    helper.scale.set(fillsX ? (w - 0.3) / w : 1, fillsY ? (h - 0.3) / h : 1, 1);
   }
 
   /** 锚点字段 → 每帧布局解析用标注（UISystem.update 读取；拷贝防共享可变） */
@@ -1200,7 +1247,8 @@ export class SceneSynchronizer {
       pickPlane.frustumCulled = false;
       pickPlane.userData.uiRenderable = true;
       // 边框线（z 略浮向相机，避免与子 Widget 深度打架——材质都关了深度测试，
-      // renderOrder 相同时按提交序绘制）
+      // renderOrder 相同时按提交序绘制）；关射线：Line 默认命中阈值大，会抢走
+      // 视口对边框附近子 Widget 的点选
       const border = new THREE.LineSegments(
         uiRectOutlineGeometry(),
         new THREE.LineBasicMaterial({
@@ -1213,6 +1261,7 @@ export class SceneSynchronizer {
       );
       border.position.z = 0.005;
       border.frustumCulled = false;
+      border.raycast = () => {};
       border.userData.uiRenderable = true;
       helper.add(pickPlane, border);
       obj.add(helper);
