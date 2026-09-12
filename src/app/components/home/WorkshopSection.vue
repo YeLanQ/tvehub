@@ -14,7 +14,7 @@ import { isTauri } from "../../../lib/tauri-env";
 import {
   cachedRepoCategories,
   deleteRepoFile,
-  formatRepoSize,
+
   listRepoCategories,
   loadRepoCategoryTexts,
   writeRepoFile,
@@ -236,16 +236,9 @@ onMounted(() => {
 
           <div v-if="activeFiles.length" class="proto-grid">
             <div v-for="f in activeFiles" :key="f.file" class="proto-card">
-              <div class="proto-head">
-                <span class="proto-name">{{ f.name }}</span>
-                <span class="proto-file">
-                  {{ f.file }}
-                  <template v-if="formatRepoSize(f.size)"> · {{ formatRepoSize(f.size) }}</template>
-                </span>
-              </div>
+              <span class="proto-name">{{ f.name }}</span>
               <p class="proto-desc">{{ f.description || "（无描述）" }}</p>
-              <pre v-if="f.text" class="proto-code">{{ f.code || "（空内容）" }}</pre>
-              <p v-else class="proto-binary">二进制文件（.{{ f.ext }}）：工坊不预览内容</p>
+
               <div v-if="canEditActiveCategory" class="proto-actions">
                 <button @click="openProtoForm(f)">编辑</button>
                 <button @click="removeProtoFile(f)">删除</button>

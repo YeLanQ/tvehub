@@ -616,36 +616,23 @@
 // ========== 代码工坊（脚本原型卡片） ==========
 .proto-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, 240px);
+  gap: 12px;
 }
 
 .proto-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  gap: 6px;
+  padding: 12px;
   border-radius: 10px;
   background: var(--bg-panel);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.proto-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .proto-name {
   font-weight: 600;
   font-size: 14px;
-}
-
-.proto-file {
-  font-size: 11px;
-  font-family: ui-monospace, Consolas, monospace;
-  color: var(--text-dim);
 }
 
 .proto-desc {
@@ -654,18 +641,6 @@
   color: var(--text-dim);
 }
 
-.proto-code {
-  margin: 0;
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  max-height: 150px;
-  overflow: auto;
-  white-space: pre;
-}
 
 .proto-actions {
   display: flex;
@@ -928,11 +903,6 @@
   color: var(--text);
 }
 
-.proto-binary {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
 
 // ---------------------------------------------------------------------------
 // 内嵌文档查看器（public/docs 静态页；文档与资源「打开」弹层）
