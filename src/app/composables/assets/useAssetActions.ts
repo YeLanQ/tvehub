@@ -11,6 +11,7 @@ import { getProjectStore } from "../../stores/project";
 import { getScriptsStore } from "../../stores/scripts";
 import { logStore } from "../../stores/log";
 import { prompt } from "../../lib/prompt";
+import { normalizeShaderKind, SHADER_KIND_STEMS } from "../../../framework/material";
 import { type ScriptPrototype } from "../../lib/script-prototypes";
 import { readRepoFile } from "../../lib/repos";
 import type { MenuWorkshopItem } from "../../lib/asset-menu";
@@ -176,7 +177,7 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
     await assetsStore.createAnimAsset(root, dir, name.trim());
   }
 
-  /** 新建材质资产（到 dir；材质与着色器分离，默认挂内置 PBR 着色器；按名去重，无需弹窗） */
+  /** 新建材质资产（到 dir；材质与着色器分离，默认挂内置 PBR 着色器；弹窗命名，重名自动去重） */
   async function doNewMaterial(dir: string): Promise<void> {
     const root = projectStore.currentPath;
     if (!root) return;
@@ -186,10 +187,17 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
         : "内置目录只读，不允许新建材质");
       return;
     }
-    await assetsStore.createMaterialAsset(root, dir);
+    const name = await prompt({
+      title: "新建材质",
+      label: dir || "项目根",
+      initial: "NewMaterial",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createMaterialAsset(root, dir, name.trim());
   }
 
-  /** 新建着色器资产（.shader；PBR/Unlit/卡通三种渲染程序；按种类基名去重，无需弹窗） */
+  /** 新建着色器资产（.shader；PBR/Unlit/卡通等渲染程序；弹窗命名，重名自动去重） */
   async function doNewShader(dir: string, kind: string): Promise<void> {
     const root = projectStore.currentPath;
     if (!root) return;
@@ -199,10 +207,17 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
         : "内置目录只读，不允许新建着色器");
       return;
     }
-    await assetsStore.createShaderAsset(root, dir, kind);
+    const name = await prompt({
+      title: "新建着色器",
+      label: dir || "项目根",
+      initial: SHADER_KIND_STEMS[normalizeShaderKind(kind)] ?? "NewShader",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createShaderAsset(root, dir, kind, name.trim());
   }
 
-  /** 新建天空盒材质资产（.mat；程序化/立方体两种；按类型基名去重，无需弹窗） */
+  /** 新建天空盒材质资产（.mat；程序化/立方体两种；弹窗命名，重名自动去重） */
   async function doNewSkybox(dir: string, kind: "procedural" | "cube"): Promise<void> {
     const root = projectStore.currentPath;
     if (!root) return;
@@ -212,10 +227,17 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
         : "内置目录只读，不允许新建天空盒");
       return;
     }
-    await assetsStore.createSkyboxAsset(root, dir, kind);
+    const name = await prompt({
+      title: "新建天空盒",
+      label: dir || "项目根",
+      initial: kind === "procedural" ? "ProceduralSky" : "SkyBox",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createSkyboxAsset(root, dir, kind, name.trim());
   }
 
-  /** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；按名去重无需弹窗） */
+  /** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；弹窗命名，重名自动去重） */
   async function doNewTextureCube(dir: string): Promise<void> {
     const root = projectStore.currentPath;
     if (!root) return;
@@ -225,7 +247,14 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
         : "内置目录只读，不允许新建 TextureCube");
       return;
     }
-    await assetsStore.createTextureCubeAsset(root, dir);
+    const name = await prompt({
+      title: "新建 TextureCube",
+      label: dir || "项目根",
+      initial: "NewTextureCube",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createTextureCubeAsset(root, dir, name.trim());
   }
 
   /** 导入按钮：打开多文件选择对话框，导入到目标目录 */
