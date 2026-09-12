@@ -106,7 +106,7 @@ function canvasModeScale(mode, screenW, screenH, canvasW, canvasH) {
     case "fixedwidth": return { sx: screenW / cw, sy: screenW / cw };
     case "fixedheight": return { sx: screenH / ch, sy: screenH / ch };
     case "full": {
-      const s = Math.max(screenW / cw, screenH / ch);
+      const s = Math.min(screenW / cw, screenH / ch);
       return { sx: s, sy: s };
     }
     default: {
@@ -537,6 +537,20 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
       const cw = num(c.json.designWidth, 1280) / UI_PPU;
       const ch = num(c.json.designHeight, 720) / UI_PPU;
       const rootRect = { cx: 0, cy: 0, w: cw, h: ch };
+      if (uiScaleMode === "full") {
+        // full：等比包含缩放（min），但锚点解析在屏幕尺寸矩形内进行
+        //（rootRect = screenRect / s，经 glue 缩放 s 后覆盖满视野 → 画布铺满屏幕）
+        const camAspect = cam.isOrthographicCamera === true
+          ? (Math.abs(cam.top - cam.bottom) > 1e-6
+              ? Math.abs(cam.right - cam.left) / Math.abs(cam.top - cam.bottom)
+              : 1)
+          : (cam.aspect > 0 ? cam.aspect : 1);
+        const sw = UI_HALF_HEIGHT * 2 * camAspect;
+        const sh = UI_HALF_HEIGHT * 2;
+        const s = Math.min(sw / cw, sh / ch);
+        rootRect.w = sw / s;
+        rootRect.h = sh / s;
+      }
       c.obj.userData.uiRect = rootRect;
       resolveSubtree(c.obj, rootRect, false);
     }
