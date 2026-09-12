@@ -231,11 +231,12 @@ export class UISystem {
     this.viewZoom = z1;
   }
 
-  /** 平移（拖拽内容跟手：内容右移 = pan.x 减小；屏幕像素 → UI 单位在此换算） */
+  /** 平移（抓取语义：内容跟随光标。固定点渲染位置 q = zoom×(c+pan)，拖拽 Δq →
+   *  pan += Δq/zoom：拖右内容右移、拖下内容下移；屏幕像素 → UI 单位在此换算） */
   panByPixels(dxPx: number, dyPx: number, viewportW: number, viewportH: number, aspect: number): void {
     const z = this.viewZoom;
-    this.viewPan.x -= (dxPx * 10 * aspect) / (viewportW * z);
-    this.viewPan.y += (dyPx * 10) / (viewportH * z);
+    this.viewPan.x += (dxPx * 10 * aspect) / (viewportW * z);
+    this.viewPan.y -= (dyPx * 10) / (viewportH * z);
   }
 
   /** 复位布局视图（1:1、无平移） */
