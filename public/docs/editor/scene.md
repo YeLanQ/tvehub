@@ -26,6 +26,7 @@
 | 空组 | Group |
 | 音频 | Audio Source |
 | 粒子 | Particle System（粒子发射器，见下文） |
+| UI | UI Canvas / Text / Image / Button / Layout（见 [UI 系统](ui.md)） |
 | 天空盒 | Procedural Skybox（程序化天空）/ Cube Skybox（立方体贴图） |
 | 脚本节点 | 由脚本 `@nodeType` 声明的类型（有声明时出现） |
 

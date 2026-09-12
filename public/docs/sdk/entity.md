@@ -40,8 +40,9 @@ entity.find(nameOrPath: string);// 子树内查找："父/子/孙" 名称路径�
 | `CameraNode` | 相机节点 |
 | `SkyboxNode` | 天空盒节点 |
 | `ParticleSystemNode` | 粒子系统节点（额外提供播放控制与发射参数读写，见下） |
+| `UICanvasNode` / `UIImageNode` / `UITextNode` / `UIButtonNode` / `UILayoutNode` | UI 画布与 Widget 节点（字段见 [UI](ui.md)） |
 
-小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` / `particleSystemNode` 同样导出。
+小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` / `particleSystemNode` / `uiCanvasNode` / `uiImageNode` / `uiTextNode` / `uiButtonNode` / `uiLayoutNode` 同样导出。
 
 ### ParticleSystemNode
 

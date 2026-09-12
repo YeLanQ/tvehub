@@ -1,6 +1,6 @@
 # engine 入口
 
-`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 物理 / 日志）。
+`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 日志）。
 
 ## 时间：engine.time
 
@@ -87,6 +87,17 @@ engine.physics.setGravity(0, -9.81, 0);         // 世界重力（影响全部�
 ```
 
 `RigidBody` 门面上有绑定本实体的同名接口（`setLinearVelocity` / `applyImpulse` / `setGravityScale` / `wakeUp` 等），见[内置组件门面](components.md)。
+
+## UI：engine.ui
+
+按实体寻址；画布与 Widget（图片/文本/按钮/布局容器）设置 + 按钮点击订阅。节点类字段与示例详见 [UI](ui.md)。
+
+```ts
+engine.ui.set(entity, { text: "New", color: 0x66ccff }); // 合并设置（子集；运行态生效，不落盘）
+engine.ui.get(entity);           // 当前设置快照（非 UI 节点返回 null）
+const off = engine.ui.onClick(entity, () => { /* 按钮被点击 */ }); // 仅 uiButtonNode 且 interactable
+engine.ui.offClick(entity, cb);  // 解除订阅（或调用 onClick 返回的解绑函数）
+```
 
 ## 日志：engine.log / warn / error
 

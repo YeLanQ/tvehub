@@ -89,7 +89,16 @@ export interface ScenePrototypeDoc {
    */
   nodes: {
     /** 节点类型标识 */
-    type: "node" | "meshNode" | "lightNode" | "cameraNode";
+    type:
+      | "node"
+      | "meshNode"
+      | "lightNode"
+      | "cameraNode"
+      | "uiCanvasNode"
+      | "uiImageNode"
+      | "uiTextNode"
+      | "uiButtonNode"
+      | "uiLayoutNode";
     /** 唯一ID */
     id: string;
     /** 显示名称 */
@@ -144,12 +153,23 @@ export interface NodePrototypeDoc {
    * - "meshNode": 网格节点
    * - "lightNode": 灯光节点
    * - "cameraNode": 相机节点
+   * - "uiCanvasNode": UI 画布节点
+   * - "uiImageNode" / "uiTextNode" / "uiButtonNode" / "uiLayoutNode": UI Widget 节点
    */
-  type: "node" | "meshNode" | "lightNode" | "cameraNode";
+  type:
+    | "node"
+    | "meshNode"
+    | "lightNode"
+    | "cameraNode"
+    | "uiCanvasNode"
+    | "uiImageNode"
+    | "uiTextNode"
+    | "uiButtonNode"
+    | "uiLayoutNode";
 
   /**
    * 唯一标识符
-   * 
+   *
    * 自动生成，格式：{type}_{timestamp}_{random}
    */
   id: string;
@@ -358,10 +378,288 @@ export interface CameraNodePrototypeDoc extends NodePrototypeDoc {
 
   /**
    * 是否为主相机
-   * 
+   *
    * 只有一个主相机
    */
   isPrimary: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// UI 系统（Canvas-Widget）：画布容器 + 图片/文本/按钮/布局容器 Widget。
+//
+// 2D 设计标准：100 设计像素 = 1 UI 单位（UI_PPU），2D 字段（size/anchoredPosition/
+// offset 等）序列化均为 UI 单位，检查器按像素显示换算；坐标 y 向上。
+// 定位：Widget 位置由锚点系统在每帧布局解析中推导（ui-shared resolveUIRect），
+// 画布子树内节点的 transform.position 不直接生效（旧数据迁移：无锚点字段时取原
+// transform.position 作中心锚点下的 anchoredPosition，视觉位置不变）。
+// 排序：渲染序 = 画布 sortOrder（×1e7）+ Widget sortOrder（×1e4）+ 树序 rank，
+// 材质统一关深度测试，按渲染序从小到大叠加（大 SortOrder 在上层）。
+// ---------------------------------------------------------------------------
+
+/** UI 缩放模式（画布设计矩形映射到屏幕矩形的适配策略；与项目设置 scaleMode 同名集） */
+export type UIScaleModeDoc = "noscale" | "fixedwidth" | "fixedheight" | "fixedauto" | "full";
+
+/**
+ * UI 锚点字段集文档（Canvas-Widget 锚点系统，Unity uGUI 同语义）。
+ * 全部为归一化 0..1 锚点/枢轴 + UI 单位偏移，坐标 y 向上：
+ * - 某轴 anchorMin == anchorMax 为**点锚点**：该轴位置由 anchoredPosition 给出
+ *   （枢轴相对锚点的偏移），尺寸取 size；
+ * - 某轴 anchorMin < anchorMax 为**拉伸锚点**：该轴矩形 = 父矩形上两锚线之间
+ *   收进 offsetMin/offsetMax 边距（尺寸随父矩形推导，屏幕适配时跟随）。
+ */
+export interface UIAnchorFieldsDoc {
+  /** 归一化锚点下限（父矩形 0..1） */
+  anchorMin: { x: number; y: number };
+  /** 归一化锚点上限（min<max 该轴为拉伸锚点） */
+  anchorMax: { x: number; y: number };
+  /** 归一化枢轴（Widget 自身 0..1；点锚点定位与旋转基准） */
+  pivot: { x: number; y: number };
+  /** 点锚点轴：枢轴相对锚点的偏移（UI 单位） */
+  anchoredPosition: { x: number; y: number };
+  /** 拉伸轴边距：相对下/左锚线（UI 单位） */
+  offsetMin: { x: number; y: number };
+  /** 拉伸轴边距：相对上/右锚线（UI 单位） */
+  offsetMax: { x: number; y: number };
+}
+
+/**
+ * UI 画布节点原型文档
+ *
+ * 继承自 Node，是 UI Widget 的容器根（Canvas-Widget 的 Canvas）。
+ * 渲染为屏幕叠加：画布空间每帧贴合活动渲染相机（原点 = 屏幕中心，+x 右 +y 上），
+ * 画布自身变换不参与取景；子节点经锚点系统相对画布矩形定位。
+ *
+ * 结构：
+ * ```
+ * UICanvasNode extends Node {
+ *   renderMode: "overlay"    // 渲染模式（当前仅屏幕叠加）
+ *   sortOrder: number        // 画布整体排序（多画布叠加时大者在上）
+ *   designWidth: number      // 设计宽度（设计像素，100px = 1 UI 单位）
+ *   designHeight: number     // 设计高度（设计像素）
+ *   scaleMode: UIScaleModeDoc // 屏幕适配方案（仅预览/构建运行时生效）
+ * }
+ * ```
+ */
+export interface UICanvasNodePrototypeDoc extends NodePrototypeDoc {
+  type: "uiCanvasNode";
+
+  /**
+   * 渲染模式
+   * - "overlay": 屏幕叠加（相机叠加；保留字段给未来的世界空间画布）
+   */
+  renderMode: "overlay";
+
+  /**
+   * 画布整体排序（-500..500）
+   *
+   * 多画布叠加时先按此比较（大者在上），再比画布内 Widget 的 sortOrder
+   */
+  sortOrder: number;
+
+  /**
+   * 设计宽度（设计像素，1..16384）
+   *
+   * 画布渲染尺寸 = 设计分辨率 / 100（UI 单位）；新建画布默认取项目设置的设计分辨率
+   */
+  designWidth: number;
+
+  /** 设计高度（设计像素，1..16384） */
+  designHeight: number;
+
+  /**
+   * 屏幕适配方案（仅预览/构建产物运行时生效；编辑器布局视图恒按设计尺寸 1:1 显示）：
+   * - "noscale": 不缩放，画布按设计尺寸原样显示；
+   * - "fixedwidth": 固定宽度，宽度铺满屏幕的等比缩放；
+   * - "fixedheight": 固定高度，高度铺满屏幕的等比缩放；
+   * - "fixedauto": 固定宽高比（cover），取较大缩放比铺满屏幕，超出部分裁切；
+   * - "full": 等比包含（contain），取较小缩放比完整显示不裁切。
+   *
+   * 缩放模式由项目设置统一控制（画布可覆盖，新建画布取项目设置值）
+   */
+  scaleMode: UIScaleModeDoc;
+}
+
+/**
+ * UI Widget 基类原型文档（抽象）
+ *
+ * 画布上 UI 元素（图片/文本/按钮/布局容器）的共有字段：叠加序 + 设计尺寸 + 锚点集。
+ * size 为设计尺寸（UI 单位，100px = 1 单位）；位置由锚点系统每帧解析推导。
+ *
+ * 结构：
+ * ```
+ * UIWidgetNode extends Node {
+ *   sortOrder: number        // 画布内叠加序（-999..999；大者在上）
+ *   size: Vec2               // 设计尺寸（UI 单位；点锚点轴生效）
+ *   + UIAnchorFieldsDoc      // 锚点字段集
+ * }
+ * ```
+ */
+export interface UIWidgetPrototypeDoc extends NodePrototypeDoc, UIAnchorFieldsDoc {
+  type: "uiImageNode" | "uiTextNode" | "uiButtonNode" | "uiLayoutNode";
+
+  /**
+   * 画布内叠加序（-999..999）
+   *
+   * 同一画布内 sortOrder 大的 Widget 叠在上层（点击命中也取最上层）；
+   * 同 SortOrder 按画布下节点顺序（树序）稳定细分，越靠后越在上层
+   */
+  sortOrder: number;
+
+  /** 矩形设计尺寸（UI 单位；拉伸锚点轴由父矩形与边距推导，size 不生效） */
+  size: { x: number; y: number };
+}
+
+/**
+ * UI 图片 Widget 原型文档
+ *
+ * 画布上的矩形图片（或纯色块）。图片资产引用按导出产物相对路径解析
+ * （与粒子贴图同一打包链路）；无图片时渲染 color 纯色矩形。
+ *
+ * 结构：
+ * ```
+ * UIImageNode extends UIWidgetNode {
+ *   image: string    // 图片资产相对路径（空串 = 纯色矩形）
+ *   color: number    // 着色（int24 RGB hex；与图片相乘，无图片时即矩形底色）
+ * }
+ * ```
+ */
+export interface UIImageNodePrototypeDoc extends UIWidgetPrototypeDoc {
+  type: "uiImageNode";
+
+  /** 图片资产相对路径（png/jpg/webp/…；空串 = 纯色矩形） */
+  image: string;
+
+  /** 着色（int24 RGB hex，如 0xffffff；与图片相乘） */
+  color: number;
+}
+
+/**
+ * UI 文本 Widget 原型文档
+ *
+ * 2D 画布光栅化的多行文本（逐字符断行自动换行，中文友好），三种字族。
+ * 字号按设计像素解释（100px = 1 UI 单位），与屏幕比例无关。
+ *
+ * 结构：
+ * ```
+ * UITextNode extends UIWidgetNode {
+ *   text: string          // 文本内容（\n 分行，超界自动换行）
+ *   fontSize: number      // 字号（设计像素，4..512）
+ *   color: number         // 文本颜色（int24 RGB hex）
+ *   bold: boolean         // 粗体
+ *   italic: boolean       // 斜体
+ *   fontFamily: string    // "system" 系统无衬线 | "serif" 衬线 | "mono" 等宽
+ *   align: string         // 多行文本水平对齐："left" | "center" | "right"
+ * }
+ * ```
+ */
+export interface UITextNodePrototypeDoc extends UIWidgetPrototypeDoc {
+  type: "uiTextNode";
+
+  /** 文本内容（\n 分行；超界自动换行） */
+  text: string;
+
+  /** 字号（设计像素，4..512；100px = 1 UI 单位） */
+  fontSize: number;
+
+  /** 文本颜色（int24 RGB hex） */
+  color: number;
+
+  /** 粗体 */
+  bold: boolean;
+
+  /** 斜体 */
+  italic: boolean;
+
+  /** 字族："system" 系统无衬线 | "serif" 衬线 | "mono" 等宽 */
+  fontFamily: "system" | "serif" | "mono";
+
+  /** 相对 Widget 矩形的水平对齐："left" | "center" | "right" */
+  align: "left" | "center" | "right";
+}
+
+/**
+ * UI 按钮 Widget 原型文档
+ *
+ * 背景（图片或纯色）+ 居中标签，运行时可点击：点击命中在画布空间做反投影 +
+ * 矩形命中测试（按渲染序取最上层）；脚本经 engine.ui.onClick(entity, cb) 订阅。
+ *
+ * 结构：
+ * ```
+ * UIButtonNode extends UIWidgetNode {
+ *   image: string         // 背景图片资产相对路径（空串 = 纯色背景）
+ *   color: number         // 背景着色（int24 RGB hex）
+ *   label: string         // 标签文本
+ *   labelColor: number    // 标签颜色（int24 RGB hex）
+ *   fontSize: number      // 标签字号（设计像素，4..512）
+ *   labelBold: boolean    // 标签粗体
+ *   interactable: boolean // 可交互（false 时仅展示，不参与点击命中）
+ * }
+ * ```
+ */
+export interface UIButtonNodePrototypeDoc extends UIWidgetPrototypeDoc {
+  type: "uiButtonNode";
+
+  /** 背景图片资产相对路径（空串 = 纯色背景） */
+  image: string;
+
+  /** 背景着色（int24 RGB hex；无图片时即底色） */
+  color: number;
+
+  /** 标签文本 */
+  label: string;
+
+  /** 标签颜色（int24 RGB hex） */
+  labelColor: number;
+
+  /** 标签字号（设计像素，4..512；与文本 Widget 同一语义） */
+  fontSize: number;
+
+  /** 标签粗体 */
+  labelBold: boolean;
+
+  /** 可交互：运行时参与指针点击命中（false 时仅展示） */
+  interactable: boolean;
+}
+
+/**
+ * UI 布局容器原型文档（Layout Group）
+ *
+ * 按横向/竖向/网格排列其直接子 UI 节点。自身是一个"无形 Widget"：有 size/锚点/
+ * sortOrder（可被父布局排列、参与锚点定位），但不渲染内容；子元素位置由本容器在
+ * 每帧布局解析中接管（resolveUILayoutCenters），子元素的 anchoredPosition 被忽略
+ * （与 Unity Layout Group 同语义）；layoutMode=none 时子元素回归锚点定位。
+ * 排列顺序 = 层级子节点顺序；子元素在槽位/格子内居中。
+ *
+ * 结构：
+ * ```
+ * UILayoutNode extends UIWidgetNode {
+ *   layoutMode: string      // "none" | "horizontal" | "vertical" | "grid"
+ *   padding: UIPaddingDoc   // 内容区内边距（UI 单位）
+ *   spacing: Vec2           // 子元素间距（UI 单位；x 横向 / y 纵向）
+ *   gridColumns: number     // 网格列数（grid 模式；行数由子元素数量推导）
+ * }
+ * ```
+ */
+export interface UILayoutNodePrototypeDoc extends UIWidgetPrototypeDoc {
+  type: "uiLayoutNode";
+
+  /**
+   * 排列模式：
+   * - "none": 不排列（纯容器，子元素走锚点定位）
+   * - "horizontal": 横向一行（从内容区左缘起向右排，垂直居中）
+   * - "vertical": 竖向一列（从内容区顶缘起向下排，水平居中）
+   * - "grid": 网格（格子尺寸 = 子元素最大宽高，行从上往下）
+   */
+  layoutMode: "none" | "horizontal" | "vertical" | "grid";
+
+  /** 内容区内边距（UI 单位；内容区 = 容器矩形收进四边） */
+  padding: { left: number; right: number; top: number; bottom: number };
+
+  /** 子元素间距（UI 单位；x 横向 / y 纵向） */
+  spacing: { x: number; y: number };
+
+  /** 网格列数（grid 模式，≥1；行数由子元素数量推导） */
+  gridColumns: number;
 }
 
 /**
@@ -422,7 +720,7 @@ export interface TransformPrototypeDoc {
 
 /**
  * 原型类型映射
- * 
+ *
  * 用于编辑器根据类型标识创建对应的原型实例
  */
 export interface PrototypeTypeMap {
@@ -430,13 +728,18 @@ export interface PrototypeTypeMap {
   meshNode: MeshNodePrototypeDoc;
   lightNode: LightNodePrototypeDoc;
   cameraNode: CameraNodePrototypeDoc;
+  uiCanvasNode: UICanvasNodePrototypeDoc;
+  uiImageNode: UIImageNodePrototypeDoc;
+  uiTextNode: UITextNodePrototypeDoc;
+  uiButtonNode: UIButtonNodePrototypeDoc;
+  uiLayoutNode: UILayoutNodePrototypeDoc;
   transform: TransformPrototypeDoc;
   anchoredTransform: TransformPrototypeDoc;
 }
 
 /**
  * 原型文档完整结构
- * 
+ *
  * 包含所有原型类型的文档定义
  */
 export interface PrototypeDocumentation {
@@ -450,6 +753,18 @@ export interface PrototypeDocumentation {
   lightNode: LightNodePrototypeDoc;
   /** 相机节点原型文档 */
   cameraNode: CameraNodePrototypeDoc;
+  /** UI 画布节点原型文档 */
+  uiCanvasNode: UICanvasNodePrototypeDoc;
+  /** UI Widget 基类原型文档（图片/文本/按钮/布局容器的共有字段） */
+  uiWidget: UIWidgetPrototypeDoc;
+  /** UI 图片节点原型文档 */
+  uiImageNode: UIImageNodePrototypeDoc;
+  /** UI 文本节点原型文档 */
+  uiTextNode: UITextNodePrototypeDoc;
+  /** UI 按钮节点原型文档 */
+  uiButtonNode: UIButtonNodePrototypeDoc;
+  /** UI 布局容器节点原型文档 */
+  uiLayoutNode: UILayoutNodePrototypeDoc;
   /** 变换原型文档 */
   transform: TransformPrototypeDoc;
 }
