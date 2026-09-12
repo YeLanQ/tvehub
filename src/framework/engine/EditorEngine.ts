@@ -792,6 +792,8 @@ export class EditorEngine {
    */
   setUIViewVisible(visible: boolean): void {
     this.uiSystem.setVisible(visible);
+    // 布局视口变换工具按 UI 2D 语义显示（平移/缩放 = X/Y 轴，旋转 = Z 轴，加大手柄）
+    this.gizmo?.setUI2DMode(visible);
   }
 
   /** UI 画布当前是否在编辑视口显示（布局视图 = true） */

@@ -19,6 +19,8 @@ export class GizmoController {
 
   private onDraggingChangedCb?: (val: boolean) => void;
   private onGizmoObjectChangeCb?: () => void;
+  /** UI 2D 模式（布局视口）：变换工具只显示 UI 语义轴（见 setUI2DMode） */
+  private ui2d = false;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.gizmo = new TransformControls(camera, domElement);
@@ -73,6 +75,45 @@ export class GizmoController {
   setMode(mode: GizmoMode): void {
     this.mode = mode;
     this.gizmo.setMode(mode);
+    // UI 2D 模式下模式切换后重取轴（平移/缩放 = X/Y，旋转 = Z）
+    this.applyUI2DAxes();
+  }
+
+  /**
+   * UI 2D 模式（布局视口）：变换工具按 UI 语义显示——平移/缩放只显示 X/Y 轴
+   * （UI 上下左右定位），旋转只显示 Z 轴（UI 旋转即绕 Z），全部平面手柄关闭
+   * （叠在 Widget 中心的方块很杂乱），手柄加大便于点抓；退出恢复 3D 全轴。
+   */
+  setUI2DMode(active: boolean): void {
+    if (this.ui2d === active) return;
+    this.ui2d = active;
+    this.gizmo.setSize(active ? 1.2 : 0.7);
+    this.applyUI2DAxes();
+  }
+
+  private applyUI2DAxes(): void {
+    const g = this.gizmo as unknown as Record<string, boolean>;
+    if (!this.ui2d) {
+      g.showX = true;
+      g.showY = true;
+      g.showZ = true;
+      g.showXY = true;
+      g.showYZ = true;
+      g.showXZ = true;
+      return;
+    }
+    if (this.mode === "rotate") {
+      g.showX = false;
+      g.showY = false;
+      g.showZ = true;
+    } else {
+      g.showX = true;
+      g.showY = true;
+      g.showZ = false;
+    }
+    g.showXY = false;
+    g.showYZ = false;
+    g.showXZ = false;
   }
 
   /** 预览等编辑器场景下禁用并隐藏变换工具 */
