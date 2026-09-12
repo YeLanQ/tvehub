@@ -27,8 +27,24 @@ export class GizmoController {
     this.gizmo.setSize(0.7);
     this.gizmo.setSpace(this.space);
     this.gizmoHelper = this.resolveGizmoHelper();
+    this.hideAxisHelperLines();
     this.gizmo.addEventListener("dragging-changed", this.onDraggingChanged);
     this.gizmo.addEventListener("objectChange", this.onGizmoObjectChange);
+  }
+
+  /** 隐藏选中/悬停轴时出现的无限长辅助直线：three 的 updateMatrixWorld 每帧重算
+   *  这些手柄的 object.visible（tag=helper 的 Line），但不会改 material.visible——
+   *  给它们换上自身可见性关闭的材质克隆即可永久隐藏；轴高亮只原地改材质的
+   *  color/opacity，不会还原材质的 visible。 */
+  private hideAxisHelperLines(): void {
+    this.gizmoHelper.traverse((o) => {
+      const line = o as THREE.Line & { tag?: string };
+      if (line.tag === "helper" && line.isLine) {
+        const mat = line.material as THREE.Material;
+        line.material = mat.clone();
+        line.material.visible = false;
+      }
+    });
   }
 
   private resolveGizmoHelper(): THREE.Object3D {
