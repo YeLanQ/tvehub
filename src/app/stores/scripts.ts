@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
 // 脚本 store（脚本模式工作台的状态中枢）：
 // - 文件缓存（源码 + 脏标记 + props 声明 + 编译诊断）与打开标签页管理；
+//   工作台同时承载 ts 脚本与 .shader 着色器资产（后者保存走 shader_write_source
+//   解析组装 + 引擎缓存刷新，无 TS 编译）；
 // - 保存 = 写盘 + 内存编译（诊断反馈）+ props 声明解析（检查器控件刷新）；
 // - 新建/重命名/删除脚本（经 assets store 落盘），并把场景内组件引用同步改写/
 //   移除（engine.patchNode，可撤销）。
@@ -21,15 +23,25 @@ import {
   type ScriptPropDef,
   type ScriptNodeType,
 } from "../lib/script-compile";
+import { saveShaderSource } from "../lib/shaders";
 import type { JsonRecord } from "../../framework/prototype/types";
 
+/** 工作台标签页文件类别：ts 脚本（保存 = 编译）/ .shader 着色器（保存 = 解析组装） */
+type WorkbenchFileKind = "script" | "shader";
+
+export function isShaderSource(rel: string): boolean {
+  return rel.endsWith(".shader");
+}
+
 interface ScriptFileState {
+  /** 文件类别（打开时按扩展名判定） */
+  kind: WorkbenchFileKind;
   /** 磁盘上的源码（保存后更新） */
   source: string;
   dirty: boolean;
-  /** 编译诊断（保存时刷新；null = 无错误） */
+  /** 编译/解析诊断（保存时刷新；null = 无错误。着色器 = 解析错误） */
   compileError: string | null;
-  /** props 声明（null = 未声明/无法解析） */
+  /** props 声明（null = 未声明/无法解析；着色器恒 null） */
   propsSchema: ScriptPropDef[] | null;
   /** 节点类型声明（static nodeType；null = 普通脚本组件） */
   nodeType: ScriptNodeType | null;
@@ -83,11 +95,16 @@ export function getScriptsStore(): ScriptsStore {
     try {
       const source = await api.readText(root, rel);
       if (source == null) return null;
-      const meta = await parseScriptClassMeta(source).catch(() => ({
-        props: null as ScriptPropDef[] | null,
-        nodeType: null as ScriptNodeType | null,
-      }));
+      const kind: WorkbenchFileKind = isShaderSource(rel) ? "shader" : "script";
+      // 着色器不是 TS：跳过脚本元数据解析
+      const meta = kind === "shader"
+        ? { props: null as ScriptPropDef[] | null, nodeType: null as ScriptNodeType | null }
+        : await parseScriptClassMeta(source).catch(() => ({
+            props: null as ScriptPropDef[] | null,
+            nodeType: null as ScriptNodeType | null,
+          }));
       const st: ScriptFileState = {
+        kind,
         source,
         dirty: false,
         compileError: null,
@@ -122,7 +139,8 @@ export function getScriptsStore(): ScriptsStore {
       return state.files.get(rel)?.dirty === true;
     },
     async openScript(rel) {
-      if (!isScriptSource(rel)) return;
+      // 工作台可编辑：ts 脚本（src/ 内）与 .shader 着色器资产
+      if (!isScriptSource(rel) && !isShaderSource(rel)) return;
       const st = await ensureLoaded(rel);
       if (!st) return;
       if (!state.tabs.includes(rel)) state.tabs.push(rel);
@@ -151,6 +169,21 @@ export function getScriptsStore(): ScriptsStore {
       if (!st || !root) return false;
       state.busy = true;
       try {
+        // 着色器：走 shader_write_source（指令跟随路径 + 解析校验 + 自动补 .meta），
+        // 返回文档写引擎缓存（视口刷新 + 材质面板取新属性）；解析错误不阻断保存
+        if (st.kind === "shader") {
+          const doc = await saveShaderSource(root, rel, st.source);
+          st.compileError = doc.error || null;
+          st.dirty = false;
+          // 写引擎着色器缓存：视口即刻按新源码重组程序，材质面板取新属性表
+          getEditorStore().engine.shaders.cachePut(rel, doc);
+          if (doc.error) {
+            logStore.log("error", `着色器解析失败 ${rel}: ${doc.error}（材质按 Base 分支渲染）`, "script");
+          } else {
+            logStore.log("success", `已保存着色器 ${rel}（${doc.base} 分支 · ${doc.hooks.length} 个钩子）`, "script");
+          }
+          return !doc.error;
+        }
         await api.writeText(root, rel, st.source);
         const [compiled, meta] = await Promise.all([
           compileScript(st.source, rel),

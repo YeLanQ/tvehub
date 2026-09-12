@@ -162,9 +162,12 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   if (item.kind === "prefab") {
     items.push({ label: "实例化到场景", onClick: () => api.onInstantiatePrefab(item) });
   }
-  // 脚本资产：打开脚本工作台编辑
+  // 脚本/着色器资产：打开脚本工作台编辑
   if (item.kind === "ts") {
     items.push({ label: "打开脚本", onClick: () => api.onOpenScript(item) });
+  }
+  if (item.kind === "shader") {
+    items.push({ label: "打开着色器", onClick: () => api.onOpenScript(item) });
   }
 
   if (isProtected) {

@@ -126,6 +126,8 @@ export function loadMonaco(): Promise<MonacoNamespace> {
     }
 
     registerDarkPlusTheme(monaco);
+    // 诊断句柄（devtools/自动化测试用）：monaco 是惰性聚合入口，无全局暴露
+    ;(window as unknown as Record<string, unknown>).__tveMonaco = monaco;
     return monaco;
   })();
   return monacoPromise;
@@ -136,7 +138,8 @@ export function scriptModelUri(monaco: MonacoNamespace, rel: string) {
   return monaco.Uri.parse("file:///" + rel);
 }
 
-/** 取或建脚本模型（同一脚本恒返回同一模型，随编辑器实例存活） */
+/** 取或建脚本模型（同一脚本恒返回同一模型，随编辑器实例存活）。
+ *  语言按扩展名选择：.shader → tve-glsl（着色器语法），其余 → typescript。 */
 export function ensureScriptModel(
   monaco: MonacoNamespace,
   rel: string,
@@ -145,7 +148,10 @@ export function ensureScriptModel(
   const uri = scriptModelUri(monaco, rel);
   let model = monaco.editor.getModel(uri);
   if (!model) {
-    model = monaco.editor.createModel(source, "typescript", uri);
+    const language = rel.endsWith(".shader")
+      ? (registerGlslLanguage(monaco), GLSL_LANGUAGE_ID)
+      : "typescript";
+    model = monaco.editor.createModel(source, language, uri);
   }
   return model;
 }
@@ -225,10 +231,5 @@ export function ensureShaderModel(
   rel: string,
   source: string,
 ): MonacoApi.editor.ITextModel {
-  const uri = monaco.Uri.parse("file:///" + rel);
-  let model = monaco.editor.getModel(uri);
-  if (!model) {
-    model = monaco.editor.createModel(source, GLSL_LANGUAGE_ID, uri);
-  }
-  return model;
+  return ensureScriptModel(monaco, rel, source);
 }

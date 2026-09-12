@@ -23,6 +23,8 @@ const active = computed(() => scriptsStore.active);
 const activeState = computed(() =>
   active.value ? scriptsStore.fileState(active.value) : undefined,
 );
+/** 当前激活页类别：.shader = 着色器（保存走解析组装），其余 = ts 脚本 */
+const activeIsShader = computed(() => active.value?.endsWith(".shader") ?? false);
 
 function baseName(rel: string): string {
   return rel.slice(rel.lastIndexOf("/") + 1);
@@ -144,8 +146,16 @@ const statusText = computed(() => {
   if (!rel) return "未打开脚本";
   const st = scriptsStore.fileState(rel);
   if (!st) return rel;
-  if (st.compileError) return `编译失败：${st.compileError}`;
-  return st.dirty ? "有未保存的修改（Ctrl+S 保存并编译）" : "已保存 · 编译通过";
+  if (st.compileError) {
+    return activeIsShader.value ? `解析失败：${st.compileError}` : `编译失败：${st.compileError}`;
+  }
+  return st.dirty
+    ? activeIsShader.value
+      ? "有未保存的修改（Ctrl+S 保存）"
+      : "有未保存的修改（Ctrl+S 保存并编译）"
+    : activeIsShader.value
+      ? "已保存"
+      : "已保存 · 编译通过";
 });
 </script>
 
@@ -164,7 +174,7 @@ const statusText = computed(() => {
           <span v-if="scriptsStore.isDirty(rel)" class="dirty-dot"></span>
           <button class="tab-close" title="关闭" @click.stop="closeTab(rel)">×</button>
         </div>
-        <div v-if="!tabs.length" class="script-tabs-empty muted">打开脚本：在资产面板双击 .ts 文件</div>
+        <div v-if="!tabs.length" class="script-tabs-empty muted">打开文件：在资产面板双击 .ts 脚本或 .shader 着色器</div>
       </div>
 
       <div class="monaco-host">
@@ -180,7 +190,9 @@ const statusText = computed(() => {
         <span class="status-state" :class="{ error: !!activeState?.compileError }">
           {{ statusText }}
         </span>
-        <button class="status-save" :disabled="!active" @click="saveActive">保存并编译</button>
+        <button class="status-save" :disabled="!active" @click="saveActive">
+          {{ activeIsShader ? "保存" : "保存并编译" }}
+        </button>
       </footer>
     </section>
   </div>

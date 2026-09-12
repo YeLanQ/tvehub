@@ -94,8 +94,8 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
       addAudioToScene(item);
       return;
     }
-    // 双击 .ts 脚本：切到脚本工作台打开编辑
-    if (item.kind === "ts") {
+    // 双击 .ts 脚本 / .shader 着色器：切到脚本工作台打开编辑
+    if (item.kind === "ts" || item.kind === "shader") {
       openScriptAsset(item);
       return;
     }
