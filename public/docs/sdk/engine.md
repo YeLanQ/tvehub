@@ -97,6 +97,9 @@ engine.ui.set(entity, { text: "New", color: 0x66ccff }); // 合并设置（子�
 engine.ui.get(entity);           // 当前设置快照（非 UI 节点返回 null）
 const off = engine.ui.onClick(entity, () => { /* 按钮被点击 */ }); // 仅 uiButtonNode 且 interactable
 engine.ui.offClick(entity, cb);  // 解除订阅（或调用 onClick 返回的解绑函数）
+engine.ui.rectOf(entity);        // 解析矩形（画布局部空间，锚点/布局解析后的实际矩形）
+engine.ui.metricsOf(entity);     // 所在画布屏幕度量（px ↔ UI 单位换算）
+engine.ui.screenToUi(entity, x, y); // 屏幕像素坐标 → 画布局部 UI 坐标
 ```
 
 ## 补间动画：engine.tween

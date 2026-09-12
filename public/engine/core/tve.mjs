@@ -2111,6 +2111,92 @@ const particlesApi = {
 };
 
 /** UI 运行期控制（按实体寻址；画布/Widget 设置 + 按钮点击订阅，经 engine.ui 调用） */
+
+// UI 布局/坐标查询（rectOf/metricsOf/screenToUi）——数据来自 ui.mjs 逐帧解析并缓存在
+// 节点 userData.uiRect 的渲染矩形与画布根矩形（rootRect = 屏幕尺寸的 UI 单位数）。
+// 空间约定：画布局部空间，原点 = 画布中心，y 向上，单位 = UI 单位。
+
+const UI_WIDGET_CLASSES = [UICanvasNode, UIImageNode, UITextNode, UIButtonNode, UILayoutNode];
+
+/** 实体所在 UI 画布（沿父链向上；不在画布子树内返回 null） */
+function uiCanvasEntityOf(entity) {
+  let cur = entity ?? null;
+  while (cur) {
+    if (cur instanceof UICanvasNode) return cur;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+/** 画布屏幕度量（渲染画布 CSS 尺寸 ↔ rootRect；布局未就绪返回 null） */
+function uiMetricsOfCanvas(canvasEntity) {
+  const rootRect = canvasEntity?.__obj?.userData?.uiRect;
+  if (!rootRect || !(rootRect.w > 0) || !(rootRect.h > 0)) return null;
+  const cvs = typeof document !== "undefined" ? document.querySelector?.("canvas") : null;
+  const width =
+    cvs && cvs.clientWidth > 0
+      ? cvs.clientWidth
+      : typeof window !== "undefined"
+        ? window.innerWidth || 0
+        : 0;
+  const height =
+    cvs && cvs.clientHeight > 0
+      ? cvs.clientHeight
+      : typeof window !== "undefined"
+        ? window.innerHeight || 0
+        : 0;
+  const settings = host?.ui?.settingsOf(canvasEntity.id) ?? null;
+  return {
+    width,
+    height,
+    rootWidth: rootRect.w,
+    rootHeight: rootRect.h,
+    pxPerUnitX: width / rootRect.w,
+    pxPerUnitY: height / rootRect.h,
+    scaleMode: settings?.scaleMode ?? "fixedauto",
+    designWidth: numOr(settings?.designWidth, 1280),
+    designHeight: numOr(settings?.designHeight, 720),
+  };
+}
+
+/**
+ * UI 节点的解析矩形（画布局部空间）：叶子 uiRect 缓存于父 UI 容器局部空间，
+ * 逐级 UI 容器加上其中心偏移合成到画布空间；非 UI 中间容器的偏移在 ui.mjs
+ * 解析时已烘入子级坐标系（跳过）。画布自身返回根矩形。
+ */
+function uiRectOfEntity(entity) {
+  if (!entity || typeof entity.id !== "string") return null;
+  const chain = [];
+  let cur = entity;
+  let canvas = null;
+  while (cur) {
+    if (cur instanceof UICanvasNode) {
+      canvas = cur;
+      break;
+    }
+    chain.unshift(cur);
+    cur = cur.parent;
+  }
+  if (!canvas) return null;
+  const rootRect = canvas.__obj?.userData?.uiRect;
+  if (!rootRect) return null;
+  if (entity === canvas) {
+    return { cx: rootRect.cx, cy: rootRect.cy, w: rootRect.w, h: rootRect.h };
+  }
+  const leafRect = entity.__obj?.userData?.uiRect;
+  if (!leafRect) return null;
+  const rect = { cx: leafRect.cx, cy: leafRect.cy, w: leafRect.w, h: leafRect.h };
+  for (let i = chain.length - 1; i >= 1; i--) {
+    const anc = chain[i];
+    if (!UI_WIDGET_CLASSES.some((c) => anc instanceof c)) continue;
+    const ar = anc.__obj?.userData?.uiRect;
+    if (!ar) return null;
+    rect.cx += ar.cx;
+    rect.cy += ar.cy;
+  }
+  return rect;
+}
+
 const uiApi = {
   /** 合并 Widget/画布设置（子集；运行态生效，不回写场景文件） */
   set(entity, patch) {
@@ -2128,6 +2214,23 @@ const uiApi = {
   /** 解除按钮点击订阅 */
   offClick(entity, cb) {
     host?.ui?.offClick(entity?.id, cb);
+  },
+  /** UI 节点的解析矩形（画布局部空间；非 UI 节点/未就绪返回 null） */
+  rectOf(entity) {
+    return uiRectOfEntity(entity);
+  },
+  /** 实体所在画布的屏幕度量（px ↔ UI 单位换算；非 UI 节点返回 null） */
+  metricsOf(entity) {
+    const canvas = uiCanvasEntityOf(entity);
+    return canvas ? uiMetricsOfCanvas(canvas) : null;
+  },
+  /** 屏幕像素坐标 → 画布局部 UI 坐标（原点 = 画布中心，y 向上；非 UI 节点返回 null） */
+  screenToUi(entity, x, y) {
+    const canvas = uiCanvasEntityOf(entity);
+    if (!canvas) return null;
+    const m = uiMetricsOfCanvas(canvas);
+    if (!m) return null;
+    return { x: (x - m.width / 2) / m.pxPerUnitX, y: -(y - m.height / 2) / m.pxPerUnitY };
   },
 };
 
@@ -2384,6 +2487,56 @@ const math = {
     const x = numv(a), y = numv(b);
     const e = numOr(eps, EPS);
     return Math.abs(x.x - y.x) <= e && Math.abs(x.y - y.y) <= e && Math.abs(x.z - y.z) <= e;
+  },
+
+  /** 标量钳制（结果落在 [min, max]） */
+  clamp(v, min, max) {
+    const x = numOr(v, 0);
+    return Math.min(numOr(max, x), Math.max(numOr(min, x), x));
+  },
+
+  /** XZ 平面投影（返回 y = 0 的副本；把方向约束到水平面） */
+  projectXZ(v) {
+    const c = numv(v);
+    return { x: c.x, y: 0, z: c.z };
+  },
+
+  /** 角度差（度）= target − current 的最短有符号差（结果 ∈ [-180, 180]） */
+  deltaAngle(current, target) {
+    let d = (numOr(target, 0) - numOr(current, 0)) % 360;
+    if (d < -180) d += 360;
+    else if (d >= 180) d -= 360;
+    return d;
+  },
+
+  /** 角度移近（度）：从 current 沿最短路径向 target 移动最多 maxDelta（Infinity = 立即到达） */
+  moveTowardsAngle(current, target, maxDelta) {
+    const t = numOr(target, 0);
+    if (maxDelta === Infinity) return t;
+    const d = this.deltaAngle(current, t);
+    const step = numOr(maxDelta, 0);
+    if (Math.abs(d) <= step) return t;
+    return numOr(current, 0) + Math.sign(d) * step;
+  },
+
+  /** 模拟输入死区（线性重映射）：|v| ≤ deadZone 归零，其余按符号缩放回 0..1 满量程 */
+  deadZone(v, deadZone) {
+    const x = numOr(v, 0);
+    const dz = Math.max(0, numOr(deadZone, 0));
+    const mag = Math.abs(x);
+    if (mag <= dz || dz >= 1) return 0;
+    const scaled = (mag - dz) / (1 - dz);
+    return x < 0 ? -scaled : scaled;
+  },
+
+  /** 度 → 弧度 */
+  degToRad(deg) {
+    return numOr(deg, 0) * D2R;
+  },
+
+  /** 弧度 → 度 */
+  radToDeg(rad) {
+    return numOr(rad, 0) * R2D;
   },
 };
 

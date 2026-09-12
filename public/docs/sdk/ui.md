@@ -90,6 +90,44 @@ engine.ui.offClick(entity, cb); // 解除点击订阅
 - `set` 只需传要改的字段（子集合并），字段名与上表一致；
 - `onClick` 的回调在点击命中该按钮时触发（按渲染序取最上层可交互按钮）；请在 `onDisable`/`onDestroy` 中调用返回的解绑函数（或 `offClick`）以免悬挂。
 
+## engine.ui 布局与坐标查询
+
+把屏幕像素坐标与 UI 节点的实际渲染矩形暴露给脚本——虚拟摇杆、点击区域判定、跟随指针的 UI 等交互的基础。三个接口共用同一空间约定：**画布局部空间，原点 = 画布中心，y 向上，单位 = UI 单位**（与锚点系统一致）。
+
+```ts
+// ① 解析矩形：锚点/拉伸/布局容器解析后的实际渲染矩形
+const rect = engine.ui.rectOf(joyBase);
+// rect = { cx, cy, w, h }（画布局部空间；非 UI 节点/未就绪返回 null）
+
+// ② 屏幕度量：px ↔ UI 单位换算（随窗口与缩放模式变化，建议每帧读取）
+const m = engine.ui.metricsOf(joyBase);
+// m = { width, height,                    // 渲染画布 CSS 尺寸（与 engine.input.pointer 同一空间）
+//       rootWidth, rootHeight,            // 屏幕矩形在 UI 单位下的尺寸
+//       pxPerUnitX, pxPerUnitY,           // 每单位像素数（= width/rootWidth …）
+//       scaleMode, designWidth, designHeight }
+
+// ③ 屏幕像素 → 画布局部 UI 坐标（可直接与 rectOf 结果做包含/距离判定）
+const p = engine.ui.screenToUi(joyBase, engine.input.pointer.x, engine.input.pointer.y);
+// p = { x, y }
+```
+
+典型用法——判断指针是否落在某个 Widget 内（虚拟摇杆抓取就是这一套）：
+
+```ts
+const rect = engine.ui.rectOf(btn);
+const p = engine.ui.screenToUi(btn, engine.input.pointer.x, engine.input.pointer.y);
+if (rect && p && Math.hypot(p.x - rect.cx, p.y - rect.cy) <= Math.min(rect.w, rect.h) / 2) {
+  // 指针在按钮圆形范围内
+}
+```
+
+说明：
+
+- `rectOf` 对布局容器的直接子节点返回布局槽位矩形（`anchoredPosition` 不参与定位）；
+- `rectOf`/`metricsOf` 定位画布的方式是沿父链向上找 `uiCanvasNode`，传任意 UI 子节点等价；
+- 三个接口在非 UI 节点、不在画布子树内或首帧布局解析未完成时返回 `null`；
+- `screenToUi` 的入参 x/y 与 `engine.input.pointer` 同一空间（画布内 CSS 像素），换算已含缩放模式的全部数学。
+
 ## 示例：开始界面按钮 + 计分文本
 
 ```ts

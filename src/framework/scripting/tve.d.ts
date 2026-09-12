@@ -805,6 +805,30 @@ export interface MathApi {
   moveTowards(a: Vec3, b: Vec3, maxDelta: number): Vec3;
   /** 近似相等（逐分量误差 ≤ eps，缺省 1e-6） */
   equals(a: Vec3, b: Vec3, eps?: number): boolean;
+
+  /** 标量钳制（结果落在 [min, max]） */
+  clamp(v: number, min: number, max: number): number;
+  /** XZ 平面投影（返回 y = 0 的副本；把方向约束到水平面） */
+  projectXZ(v: Vec3): Vec3;
+  /**
+   * 角度差（度）= target − current 的最短有符号差（结果 ∈ [-180, 180]）。
+   * 角度约定与 Entity.rotation 一致（度制欧拉角）；多圈差值自动归一化。
+   */
+  deltaAngle(current: number, target: number): number;
+  /**
+   * 角度移近（度）：从 current 沿最短路径向 target 移动最多 maxDelta
+   * （配合 delta = 转速×帧间隔 即帧率无关的平滑转身）。
+   */
+  moveTowardsAngle(current: number, target: number, maxDelta: number): number;
+  /**
+   * 模拟输入死区（线性重映射）：|v| ≤ deadZone 归零，其余按符号缩放回 0..1 满量程
+   * （摇杆/扳机等模拟量的标准滤抖处理）。
+   */
+  deadZone(v: number, deadZone: number): number;
+  /** 度 → 弧度（角度约定与 Entity.rotation 一致） */
+  degToRad(degrees: number): number;
+  /** 弧度 → 度 */
+  radToDeg(radians: number): number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1668,7 +1692,41 @@ export interface PhysicsApi {
   setGravity(x: number, y: number, z: number): void;
 }
 
-/** UI 运行期控制（画布叠加序读写 + 按钮点击订阅；按实体寻址） */
+/** UI 画布屏幕度量（屏幕像素 ↔ UI 单位换算用；随窗口尺寸/缩放模式变化，建议每帧读取） */
+export interface UIScreenMetrics {
+  /** 渲染画布 CSS 尺寸（屏幕像素；与 engine.input.pointer 同一空间） */
+  width: number;
+  height: number;
+  /** 屏幕矩形在 UI 单位下的尺寸（由缩放模式与窗口比例决定） */
+  rootWidth: number;
+  rootHeight: number;
+  /** 每单位像素数（= width/rootWidth、height/rootHeight） */
+  pxPerUnitX: number;
+  pxPerUnitY: number;
+  /** 画布缩放模式 */
+  scaleMode: UIScaleMode;
+  /** 设计尺寸（设计像素，100px = 1 UI 单位） */
+  designWidth: number;
+  designHeight: number;
+}
+
+/** UI 矩形（画布局部空间：原点 = 画布中心，y 向上；单位 = UI 单位） */
+export interface UIRect {
+  /** 中心（画布局部） */
+  cx: number;
+  cy: number;
+  /** 宽高（UI 单位） */
+  w: number;
+  h: number;
+}
+
+/** 二维坐标（画布局部空间：原点 = 画布中心，y 向上；单位 = UI 单位） */
+export interface UIPoint {
+  x: number;
+  y: number;
+}
+
+/** UI 运行期控制（画布叠加序读写 + 按钮点击订阅 + 布局/坐标查询；按实体寻址） */
 export interface UIApi {
   /** 合并 Widget/画布设置（子集；运行态生效，不回写场景文件） */
   set(entity: Entity, patch: Record<string, unknown>): void;
@@ -1678,6 +1736,24 @@ export interface UIApi {
   onClick(entity: Entity, cb: () => void): () => void;
   /** 解除按钮点击订阅 */
   offClick(entity: Entity, cb: () => void): void;
+  /**
+   * UI 节点的解析矩形（画布局部空间）：锚点/拉伸/布局容器解析后的实际渲染矩形。
+   * 沿途经过的布局容器（横/竖/网格排列）子节点返回的是布局槽位矩形。
+   * 非 UI 节点、不在画布子树内或首帧布局解析未完成时返回 null。
+   */
+  rectOf(entity: Entity): UIRect | null;
+  /**
+   * 实体所在 UI 画布（沿父链向上）的屏幕度量。
+   * 屏幕像素 → UI 单位：ui = (px - width/2) / pxPerUnitX（y 轴取反）；
+   * 非 UI 节点返回 null。
+   */
+  metricsOf(entity: Entity): UIScreenMetrics | null;
+  /**
+   * 屏幕像素坐标 → 画布局部 UI 坐标（x/y 与 engine.input.pointer 同一空间；
+   * 结果原点 = 画布中心，y 向上，可直接与 rectOf 结果做包含/距离判定）。
+   * entity 用于定位所在画布；非 UI 节点返回 null。
+   */
+  screenToUi(entity: Entity, x: number, y: number): UIPoint | null;
 }
 
 /** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志） */
