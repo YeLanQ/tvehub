@@ -269,6 +269,10 @@ export class SceneSynchronizer {
         break;
       case "reparent":
         if (node) this.remount(node);
+        // 同父内重排序：attachParent 对未换父的节点不做任何事，Object3D 子序保持
+        // 陈旧——渲染排序的树序 rank 依赖该顺序（此前层级拖拽调整 UI 顺序需重开
+        // 项目才生效）；把父对象的子对象顺序同步为图 childIds
+        this.syncChildOrder(graph);
         // 结构变化 → 画布布局版本全量递增（树序 rank / 布局随之重算）
         this.bumpAllUILayoutRevs();
         break;
@@ -355,6 +359,33 @@ export class SceneSynchronizer {
   private remount(node: Node): void {
     this.attachParent(node);
     this.renameObject(node);
+  }
+
+  /** 同步父对象的子节点顺序与图 childIds 一致：同父内拖拽重排序时 attachParent
+   *  不会改变 Object3D 子序，渲染排序的树序 rank 依赖该顺序。仅重排映射到节点
+   *  的子对象——add 对已在场的子对象是「移到末尾」，按 childIds 顺序依次追加
+   *  即得目标顺序；未映射的内部子对象（图标/辅助体等）保持在前、相对顺序不变。 */
+  private syncChildOrder(graph: GraphLike): void {
+    for (const obj of this.objectMap.values()) {
+      const nodeId = obj.userData?.nodeId as string | undefined;
+      const node = nodeId ? graph.get(nodeId) : undefined;
+      if (!node || node.childIds.length === 0) continue;
+      // 目标顺序里必须都是本父对象的直接子对象（跨父移动分事件到达时跳过本轮）
+      const target = node.childIds
+        .map((cid) => this.objectMap.get(cid))
+        .filter((c): c is THREE.Object3D => !!c && c.parent === obj);
+      const mapped = obj.children.filter((c) => typeof c.userData?.nodeId === "string");
+      if (target.length !== mapped.length) continue;
+      let same = true;
+      for (let i = 0; i < target.length; i++) {
+        if (mapped[i] !== target[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) continue;
+      for (const c of target) obj.add(c);
+    }
   }
 
   private renameObject(node: Node): void {
