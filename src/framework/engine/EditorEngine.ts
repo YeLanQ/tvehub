@@ -1015,6 +1015,26 @@ export class EditorEngine {
   }
 
   /**
+   * 复制节点子树（一次撤销）：序列化原子树 → 实例化全新节点树 → 挂到原节点父级下
+   * 作为兄弟节点。新根节点名加 " Copy" 后缀；prefab 实例复制后仍保留来源引用。
+   * 根场景节点不可复制。返回新根节点 id（失败返回 null）。
+   */
+  duplicateNode(nodeId: string): string | null {
+    const node = this.graph.get(nodeId);
+    if (!node || node.isRoot) return null;
+    const doc = serializePrefabTree(
+      node,
+      (id) => this.graph.childrenOf(id),
+      { forAsset: false },
+    );
+    const { root, nodes } = instantiatePrefabTree(doc, this.factory);
+    root.name = `${node.name} Copy`;
+    this.graph.addTree(root, nodes, node.parentId, `复制 ${node.name}`);
+    this.select(root.id);
+    return root.id;
+  }
+
+  /**
    * 材质资产参数保存后：刷新引用该材质的所有网格外观并广播 material:changed。
    * rel 为空时刷新全部网格材质（装载/迁移后兜底用）。
    */

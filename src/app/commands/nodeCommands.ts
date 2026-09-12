@@ -210,6 +210,52 @@ registerCommand({
 });
 
 registerCommand({
+  id: "node.duplicate",
+  label: "复制节点",
+  group: "节点",
+  expose: true,
+  description: "复制节点子树（id/ids：节点 id 或 id 数组；缺省 = 当前选中节点；根场景节点不可复制；一次撤销）",
+  canRun: (ctx) => {
+    if (ctx.view !== "editor") return false;
+    const s = editor();
+    if (!s.state.mounted) return false;
+    return !!s.state.selectedId;
+  },
+  run: (_ctx, args: any) => {
+    const raw = args?.ids ?? (args?.id ? [args.id] : []);
+    let ids = (Array.isArray(raw) ? raw : [raw])
+      .map((v: unknown) => String(v))
+      .filter(Boolean);
+    // 缺省：复制当前选中节点（Ctrl+D 快捷键路径）
+    if (!ids.length) {
+      ids = [...engine().selectionIds];
+    }
+    const root = graph().root;
+    let targets = ids.filter((id) => {
+      const n = graph().get(id);
+      return !!n && n.id !== root?.id;
+    });
+    if (targets.length > 1) {
+      // 剔除互为子孙的冗余项，只保留顶层，避免父复制后子再复制的重复
+      targets = targets.filter(
+        (tid) => !targets.some((other) => other !== tid && graph().isDescendant(other, tid)),
+      );
+    }
+    if (!targets.length) {
+      console.warn("根场景节点不可复制");
+      return { duplicated: [] };
+    }
+    const newIds: string[] = [];
+    for (const id of targets) {
+      const newId = engine().duplicateNode(id);
+      if (newId) newIds.push(newId);
+    }
+    if (newIds.length) engine().setSelection(newIds);
+    return { duplicated: newIds };
+  },
+});
+
+registerCommand({
   id: "node.reparent",
   label: "移动节点",
   group: "节点",

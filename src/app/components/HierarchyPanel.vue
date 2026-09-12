@@ -262,6 +262,10 @@ function deleteNodes(targetIds: string[]): void {
   void dispatchCommand("node.delete", { ids: targetIds });
 }
 
+function duplicateNodes(targetIds: string[]): void {
+  void dispatchCommand("node.duplicate", { ids: targetIds });
+}
+
 /** 存储节点子树为预制体资产（弹名输入；assets/prefabs/ 下去重） */
 async function doSaveAsPrefab(nodeId: string): Promise<void> {
   const node = engine.graph.get(nodeId);
@@ -288,6 +292,14 @@ function createItems(parentId: string): CtxMenuItem[] {
     },
   });
   const isRoot = engine.graph.root?.id === parentId;
+  items.push({
+    label: "复制",
+    disabled: isRoot,
+    onClick: () => {
+      const multi = state.selectionIds.length > 1 && state.selectionIds.includes(parentId);
+      duplicateNodes(multi ? [...state.selectionIds] : [parentId]);
+    },
+  });
   // 相机节点：把位姿与取景参数对齐到当前编辑器视口（Align With View）
   if (engine.graph.get(parentId)?.typeKey === "cameraNode") {
     items.push({

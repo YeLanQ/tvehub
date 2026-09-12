@@ -119,6 +119,10 @@ function onWindowKeyDown(e: KeyboardEvent): void {
   } else if (key === "w") {
     e.preventDefault();
     void dispatchCommand("editor.close");
+  } else if (key === "d" && !isEditingText()) {
+    // Ctrl+D：复制当前选中节点（层级面板/视口共用；文本焦点下让位）
+    e.preventDefault();
+    void dispatchCommand("node.duplicate");
   }
 }
 
