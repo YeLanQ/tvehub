@@ -344,9 +344,12 @@ export class EditorEngine {
       onDraggingChanged: (val) => {
         // 布局视图用 2D 设计视图导航（轨道相机禁用），拖拽结束后也不恢复轨道
         this.renderer.orbitControls.enabled = !val && !this.uiSystem.isVisible();
-        // UI 锚点托管节点：拖拽起点快照整节点 JSON（提交走 commitPatch 一次撤销）
-        this.uiDragBeforeJSON = null;
         if (val) {
+          // UI 锚点托管节点：拖拽起点快照整节点 JSON（提交走 commitPatch 一次撤销）。
+          // 注意只能在拖拽开始时捕获/清空——释放时本回调先于 GizmoController.commitDrag
+          // 运行，若在此处清空快照，提交会落入 transform-only 路径（后端 setTransform
+          // 事件回灌丢失 anchoredPosition → 松手回弹）；清空由 onCommitTransform 消费完成
+          this.uiDragBeforeJSON = null;
           const id = this.selectedId;
           const node = id ? this.graph.get(id) : undefined;
           if (node && id && this.isUIPositionManaged(id)) this.uiDragBeforeJSON = node.toJSON() as JsonRecord;
