@@ -211,6 +211,9 @@ export class UISystem {
   /** 胶合矩阵 × 缩放/平移 的每帧合成结果（避免每画布重算） */
   private glueView = new THREE.Matrix4();
   private zoomMat = new THREE.Matrix4();
+  /** 布局解析版本缓存（画布根 → 已解析的 uiLayoutRev；渲染成本优化：
+   *  静态 UI 每帧零解析——只在标注/结构变化或 gizmo 拖拽时重算） */
+  private resolvedRev = new Map<THREE.Object3D, number>();
 
   /** 布局视图当前缩放（gizmo 手柄尺寸补偿用） */
   get zoom(): number {
@@ -288,6 +291,26 @@ export class UISystem {
       obj.matrixWorldNeedsUpdate = true;
     }
     if (!this.uiVisible) return;
+    // 布局解析（版本缓存）：锚点矩形 + 布局容器排列。仅在画布标注/结构版本变化
+    // （SceneSynchronizer 戳 uiLayoutRev）或 gizmo 拖拽时重算——静态 UI 每帧
+    // 零解析成本（渲染成本优化）；子节点 transform.position 由本系统接管，
+    // applyTransform 对画布子树内的托管类型只同步旋转（见 SceneSynchronizer）。
+    // 解析同时编树序 rank（先序），渲染序在其后合成（首帧即带 rank）
+    for (const root of this.frameTopRoots) {
+      if (!root.visible) continue;
+      const rev = numOf(root.userData?.uiLayoutRev, 0);
+      if (dragOverride === null && this.resolvedRev.get(root) === rev) continue;
+      this.resolvedRev.set(root, rev);
+      const cw = pxToUnits(numOf(root.userData?.uiDesignW, 1280));
+      const ch = pxToUnits(numOf(root.userData?.uiDesignH, 720));
+      const rect: UIRect = { cx: 0, cy: 0, w: cw, h: ch };
+      root.userData.uiRect = rect;
+      this.resolveSubtree(root, rect, dragOverride, false, { i: 0 });
+    }
+    // 清理已移除画布的缓存条目
+    for (const key of [...this.resolvedRev.keys()]) {
+      if (!this.frameTopRoots.includes(key)) this.resolvedRev.delete(key);
+    }
     for (const obj of objects.values()) {
       switch (obj.userData?.nodeKind as string | undefined) {
         case "uiImageNode":
@@ -297,16 +320,6 @@ export class UISystem {
           this.applyRenderOrder(obj);
           break;
       }
-    }
-    // 每帧布局解析：锚点矩形 + 布局容器排列（子节点 transform.position 由本系统
-    // 接管；applyTransform 对画布子树内的托管类型只同步旋转，见 SceneSynchronizer）
-    for (const root of this.frameTopRoots) {
-      if (!root.visible) continue;
-      const cw = pxToUnits(numOf(root.userData?.uiDesignW, 1280));
-      const ch = pxToUnits(numOf(root.userData?.uiDesignH, 720));
-      const rect: UIRect = { cx: 0, cy: 0, w: cw, h: ch };
-      root.userData.uiRect = rect;
-      this.resolveSubtree(root, rect, dragOverride, false);
     }
   }
 
@@ -319,13 +332,15 @@ export class UISystem {
    *   与 Unity Layout Group 同语义），只按「本地位置 + 设计尺寸」落矩形标注；
    * - 普通容器（Group/嵌套画布）：矩形按其 transform.position 平移后下传（自身
    *   位置仍走 3D 变换）；
-   * - gizmo 拖拽中的子树整体跳过（提交后由下一帧解析接管，避免拖拽中被拉回）。
+   * - gizmo 拖拽中的子树整体跳过（提交后由下一帧解析接管，避免拖拽中被拉回）；
+   * - rank 计数器按先序遍历给托管节点编树序（渲染序的稳定细分，越靠后越大）。
    */
   private resolveSubtree(
     owner: THREE.Object3D,
     rect: UIRect,
     dragOverride: THREE.Object3D | null,
     ownerIsLayout: boolean,
+    rank: { i: number },
   ): void {
     for (const child of owner.children) {
       if (typeof (child.userData as Record<string, unknown> | undefined)?.nodeId !== "string") continue;
@@ -338,9 +353,12 @@ export class UISystem {
           { cx: rect.cx - child.position.x, cy: rect.cy - child.position.y, w: rect.w, h: rect.h },
           dragOverride,
           false,
+          rank,
         );
         continue;
       }
+      // 树序（先序）：渲染序同 SortOrder 时的稳定细分（越靠后越在上层）
+      child.userData.uiTreeRank = rank.i++;
       if (this.inDragSubtree(child, dragOverride)) continue;
       const u = child.userData;
       const design = (u.uiSize ?? { x: 1, y: 1 }) as Vec2;
@@ -371,7 +389,7 @@ export class UISystem {
       }
       u.uiRect = r;
       if (kind === "uiLayoutNode") this.applyLayout(child, r, dragOverride);
-      this.resolveSubtree(child, { cx: 0, cy: 0, w: r.w, h: r.h }, dragOverride, kind === "uiLayoutNode");
+      this.resolveSubtree(child, { cx: 0, cy: 0, w: r.w, h: r.h }, dragOverride, kind === "uiLayoutNode", rank);
     }
   }
 
@@ -460,12 +478,14 @@ export class UISystem {
     for (const child of hidden) child.visible = true;
   }
 
-  /** 合成渲染序：画布 sortOrder（父链最近画布根上标注）×1e4 + Widget sortOrder */
+  /** 合成渲染序：画布 sortOrder（父链最近画布根上标注）×1e7 + Widget sortOrder×1e4
+   *  + 树序 rank（布局解析时先序编排；同 SortOrder 越靠后越在上层） */
   private applyRenderOrder(widget: THREE.Object3D): void {
     const canvas = nearestUICanvasRoot(widget);
     const canvasSort = typeof canvas?.userData?.uiCanvasSort === "number" ? canvas.userData.uiCanvasSort : 0;
     const sort = typeof widget.userData?.uiSort === "number" ? widget.userData.uiSort : 0;
-    const order = uiRenderOrder(canvasSort, sort);
+    const rank = typeof widget.userData?.uiTreeRank === "number" ? widget.userData.uiTreeRank : 0;
+    const order = uiRenderOrder(canvasSort, sort, rank);
     widget.renderOrder = order;
     // Widget 的内部渲染子对象（按钮标签等）随主对象同序
     for (const child of widget.children) {

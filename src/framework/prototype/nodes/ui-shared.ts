@@ -2,7 +2,8 @@
 // - UI 空间：画布原点在屏幕中心，+x 右 +y 上，纵向可见范围恒为 [-UI_HALF_HEIGHT, +UI_HALF_HEIGHT]
 //   （透视相机按 fov 推距离、正交相机按缩放对齐，编辑器与运行时同一套数学，见 engine/modules/ui.ts）；
 // - 排序：Widget 的 sortOrder 与画布级 sortOrder 合成渲染序（renderOrder），
-//   画布整体先比、画布内 Widget 再比；都关深度测试按序叠加。
+//   画布整体先比、画布内 Widget 再比；同 SortOrder 按 Canvas 下节点顺序
+//   （树序 rank）稳定细分，越靠后的越在上层；都关深度测试按序叠加。
 
 /** UI 空间半高（UI 单位；屏幕纵向可见 10 个 UI 单位） */
 export const UI_HALF_HEIGHT = 5;
@@ -39,9 +40,17 @@ export function clampUICanvasSortOrder(v: unknown, fallback = 0): number {
   return Math.min(500, Math.max(-500, n));
 }
 
-/** 合成渲染序：画布序（权重 1e4）优先，画布内 Widget 序次之 */
-export function uiRenderOrder(canvasSortOrder: number, widgetSortOrder: number): number {
-  return UI_RENDER_ORDER_BASE + canvasSortOrder * 10000 + widgetSortOrder;
+/** 合成渲染序：
+ *  画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档）→ 树序 rank（同 SortOrder
+ *  时按 Canvas 下的节点顺序，越靠后 rank 越大 → 越晚绘制 → 越在上层）。
+ *  档位间距保证互不侵占：|widgetSort|×1e4+999 < 1e7。 */
+export function uiRenderOrder(canvasSortOrder: number, widgetSortOrder: number, treeRank = 0): number {
+  return (
+    UI_RENDER_ORDER_BASE +
+    clampUICanvasSortOrder(canvasSortOrder) * 1e7 +
+    clampUISortOrder(widgetSortOrder) * 1e4 +
+    Math.min(999, Math.max(0, Math.round(treeRank)))
+  );
 }
 
 /** UI 二维尺寸（UI 单位；Widget 几何按此构建，变换 scale 再叠加） */

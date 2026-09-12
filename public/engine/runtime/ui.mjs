@@ -50,9 +50,15 @@ function clampCanvasSort(v, fallback = 0) {
   return Math.min(500, Math.max(-500, n));
 }
 
-/** 合成渲染序：画布序（权重 1e4）优先，画布内 Widget 序次之 */
-export function uiRenderOrder(canvasSortOrder, widgetSortOrder) {
-  return UI_RENDER_ORDER_BASE + canvasSortOrder * 10000 + widgetSortOrder;
+/** 合成渲染序：画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档）→ 树序 rank
+ *  （同 SortOrder 按 Canvas 下节点顺序，越靠后越在上层）——与编辑器同公式 */
+export function uiRenderOrder(canvasSortOrder, widgetSortOrder, treeRank = 0) {
+  return (
+    UI_RENDER_ORDER_BASE +
+    clampCanvasSort(canvasSortOrder) * 1e7 +
+    clampSort(widgetSortOrder) * 1e4 +
+    Math.min(999, Math.max(0, Math.round(treeRank || 0)))
+  );
 }
 
 function vec2Of(v, fx, fy) {
@@ -427,7 +433,7 @@ export function buildUILayout() {
  */
 export function createUI({ nodes, canvas, scene, render }) {
   const texCache = new Map();
-  const canvases = []; // { json, obj, sort, top, cw, ch }
+  const canvases = []; // { json, obj, sort, top, cw, ch, layoutRev, resolvedRev }
   const widgets = []; // { json, obj, root }（Widget + 布局容器，锚点/布局解析对象）
   const byId = new Map();
   const clickHandlers = new Map(); // 按钮节点 id → Set<cb>
@@ -438,13 +444,13 @@ export function createUI({ nodes, canvas, scene, render }) {
     const { json, obj } = entry;
     byId.set(json.id, entry);
     if (json.type === "uiCanvasNode") {
-      canvases.push({ json, obj, sort: clampCanvasSort(json.sortOrder, 0), top: false });
+      canvases.push({ json, obj, sort: clampCanvasSort(json.sortOrder, 0), top: false, layoutRev: 1, resolvedRev: 0 });
     } else if (UI_POSITION_KINDS.has(json.type)) {
       widgets.push({ json, obj, root: null });
     }
   }
 
-  // 画布：顶层判定（父链无其它画布即顶层根）+ 排序/首 pass 标注
+  // 画布：顶层判定（父链无其它画布即顶层根）+ 排序/首 pass 标注 + 树序 rank
   for (const c of canvases) {
     let top = true;
     let p = c.obj.parent;
@@ -459,7 +465,18 @@ export function createUI({ nodes, canvas, scene, render }) {
     c.obj.userData.uiCanvasRoot = top;
     c.obj.userData.uiCanvasSort = c.sort;
     c.obj.userData.uiOnlyFirstPass = true;
-    if (top) topRoots.push(c);
+    if (top) {
+      topRoots.push(c);
+      // 树序（先序）：渲染序同 SortOrder 时的稳定细分（越靠后越在上层）
+      let rank = 0;
+      const walk = (o) => {
+        for (const child of o.children) {
+          if (UI_POSITION_KINDS.has(child.userData?.nodeKind)) child.userData.uiTreeRank = rank++;
+          walk(child);
+        }
+      };
+      walk(c.obj);
+    }
   }
 
   /** 父链最近的画布顶层根（无则 null；画布外 Widget 不参与叠加序合成） */
@@ -475,7 +492,11 @@ export function createUI({ nodes, canvas, scene, render }) {
   function applyOrder(w) {
     const root = nearestRoot(w.obj);
     w.root = root;
-    const order = uiRenderOrder(root ? root.userData.uiCanvasSort : 0, clampSort(w.json.sortOrder, 0));
+    const order = uiRenderOrder(
+      root ? root.userData.uiCanvasSort : 0,
+      clampSort(w.json.sortOrder, 0),
+      w.obj.userData?.uiTreeRank ?? 0,
+    );
     w.obj.renderOrder = order;
     for (const ch of w.obj.children) {
       if (ch.userData?.uiRenderable === true) ch.renderOrder = order;
@@ -483,7 +504,8 @@ export function createUI({ nodes, canvas, scene, render }) {
   }
   widgets.forEach(applyOrder);
 
-  /** 每帧（渲染前）：画布根贴合相机 + 锚点/布局解析（脚本/动画已更新相机位姿之后调用） */
+  /** 每帧（渲染前）：画布根贴合相机 + 锚点/布局解析（脚本/动画已更新相机位姿之后调用）。
+   *  解析按版本缓存（layoutRev，updateSettings 触发递增）——静态 UI 每帧零解析成本 */
   function update(cam) {
     if (!cam) return;
     lastCam = cam;
@@ -498,9 +520,11 @@ export function createUI({ nodes, canvas, scene, render }) {
       c.obj.matrix.multiplyMatrices(_camMat, _m);
       c.obj.matrixWorldNeedsUpdate = true;
     }
-    // 每帧布局解析：锚点矩形 + 布局容器排列（与编辑器 UISystem.update 同语义）
+    // 锚点矩形 + 布局容器排列（仅版本变化时重算；与编辑器 UISystem.update 同语义）
     for (const c of canvases) {
       if (!c.top || !c.obj.visible) continue;
+      if (c.layoutRev === c.resolvedRev) continue;
+      c.resolvedRev = c.layoutRev;
       const cw = num(c.json.designWidth, 1280) / UI_PPU;
       const ch = num(c.json.designHeight, 720) / UI_PPU;
       const rootRect = { cx: 0, cy: 0, w: cw, h: ch };
@@ -735,9 +759,21 @@ export function createUI({ nodes, canvas, scene, render }) {
     else w.obj.userData.uiTextSig = uiTextSignature(style, vec2Of(size, 4, 1));
   }
 
+  /** Widget/容器所属的顶层画布条目（布局版本递增用） */
+  function topCanvasOf(obj) {
+    let cur = obj;
+    while (cur) {
+      const c = canvases.find((x) => x.obj === cur);
+      if (c && c.top) return c;
+      cur = cur.parent;
+    }
+    return null;
+  }
+
   /** 画布设置合并（运行态生效，不回写场景文件） */
   function updateCanvasSettings(c, patch) {
     const j = c.json;
+    let layoutChanged = false;
     for (const [k, v] of Object.entries(patch)) {
       if (k === "sortOrder" && typeof v === "number" && clampSort(v) !== c.sort) {
         c.sort = clampSort(v);
@@ -745,12 +781,16 @@ export function createUI({ nodes, canvas, scene, render }) {
         c.obj.userData.uiCanvasSort = c.sort;
       } else if (k === "designWidth" && typeof v === "number" && Number.isFinite(v)) {
         j.designWidth = Math.min(16384, Math.max(1, Math.round(v)));
+        layoutChanged = true;
       } else if (k === "designHeight" && typeof v === "number" && Number.isFinite(v)) {
         j.designHeight = Math.min(16384, Math.max(1, Math.round(v)));
+        layoutChanged = true;
       } else if (k === "scaleMode" && typeof v === "string" && v) {
         j.scaleMode = v;
       }
     }
+    // 设计尺寸变化影响子树布局（根矩形）→ 递增布局版本
+    if (layoutChanged) c.layoutRev++;
   }
 
   /**
@@ -774,6 +814,7 @@ export function createUI({ nodes, canvas, scene, render }) {
     let sizeChanged = false;
     let orderChanged = false;
     let imageChanged = false;
+    let layoutChanged = false;
     for (const [k, v] of Object.entries(patch)) {
       switch (k) {
         case "sortOrder":
@@ -788,39 +829,56 @@ export function createUI({ nodes, canvas, scene, render }) {
           if (next.x !== cur.x || next.y !== cur.y) {
             j.size = next;
             sizeChanged = true;
+            layoutChanged = true;
           }
           break;
         }
         case "anchorMin":
           j.anchorMin = unitVec2Of(v, 0.5, 0.5);
+          layoutChanged = true;
           break;
         case "anchorMax":
           j.anchorMax = unitVec2Of(v, 0.5, 0.5);
+          layoutChanged = true;
           break;
         case "pivot":
           j.pivot = unitVec2Of(v, 0.5, 0.5);
+          layoutChanged = true;
           break;
         case "anchoredPosition":
           j.anchoredPosition = freeVec2Of(v, 0, 0);
+          layoutChanged = true;
           break;
         case "offsetMin":
           j.offsetMin = freeVec2Of(v, 0, 0);
+          layoutChanged = true;
           break;
         case "offsetMax":
           j.offsetMax = freeVec2Of(v, 0, 0);
+          layoutChanged = true;
           break;
         case "layoutMode":
-          if (j.type === "uiLayoutNode") j.layoutMode = layoutModeOf(v);
+          if (j.type === "uiLayoutNode") {
+            j.layoutMode = layoutModeOf(v);
+            layoutChanged = true;
+          }
           break;
         case "padding":
-          if (j.type === "uiLayoutNode") j.padding = paddingOf(v);
+          if (j.type === "uiLayoutNode") {
+            j.padding = paddingOf(v);
+            layoutChanged = true;
+          }
           break;
         case "spacing":
-          if (j.type === "uiLayoutNode") j.spacing = freeVec2Of(v, 0, 0);
+          if (j.type === "uiLayoutNode") {
+            j.spacing = freeVec2Of(v, 0, 0);
+            layoutChanged = true;
+          }
           break;
         case "gridColumns":
           if (j.type === "uiLayoutNode" && typeof v === "number" && Number.isFinite(v)) {
             j.gridColumns = Math.max(1, Math.round(v));
+            layoutChanged = true;
           }
           break;
         case "image":
@@ -895,6 +953,11 @@ export function createUI({ nodes, canvas, scene, render }) {
       }
     }
     if (sizeChanged && j.type !== "uiLayoutNode") rebuildGeometry(w, vec2Of(j.size, 2, 2));
+    // 布局相关字段变化 → 递增所属画布布局版本（下一帧重新解析；渲染成本优化的失效信号）
+    if (layoutChanged) {
+      const top = topCanvasOf(w.obj);
+      if (top) top.layoutRev++;
+    }
     if (Object.keys(restyleText).length > 0) {
       const isLabel = j.type === "uiButtonNode";
       rebuildText(w, textStyleOf(j, isLabel), vec2Of(j.size, 2, 2));

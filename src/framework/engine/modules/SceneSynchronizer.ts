@@ -269,6 +269,8 @@ export class SceneSynchronizer {
         break;
       case "reparent":
         if (node) this.remount(node);
+        // 结构变化 → 画布布局版本全量递增（树序 rank / 布局随之重算）
+        this.bumpAllUILayoutRevs();
         break;
       case "transform":
         if (node) {
@@ -283,6 +285,10 @@ export class SceneSynchronizer {
         break;
       case "properties":
         if (node) this.refreshNode(node);
+        break;
+      case "remove":
+        this.disposeMapped(c.nodeId, graph);
+        this.bumpAllUILayoutRevs();
         break;
     }
   }
@@ -1140,6 +1146,30 @@ export class SceneSynchronizer {
     obj.userData.uiOffsetMax = { ...node.offsetMax };
     obj.userData.uiSize = { ...node.size };
     obj.userData.uiScale2D = { x: transformScale.x, y: transformScale.y };
+    this.bumpUILayoutRev(obj);
+  }
+
+  /** UI 标注/结构变化 → 递增所属画布根的布局版本（UISystem 据此缓存布局解析，
+   *  渲染成本优化：静态 UI 每帧零解析）。画布根尚未标注（首次刷新）时不递增，
+   *  版本缺省 0 与空缓存不同，首次 update 必然解析。 */
+  private bumpUILayoutRev(obj: THREE.Object3D): void {
+    let cur: THREE.Object3D | null = obj;
+    while (cur) {
+      if (cur.userData?.uiCanvasRoot === true) {
+        cur.userData.uiLayoutRev = ((cur.userData.uiLayoutRev as number | undefined) ?? 0) + 1;
+        return;
+      }
+      cur = cur.parent;
+    }
+  }
+
+  /** 结构变化（增删/移动）→ 递增全部画布的布局版本（画布数量少，全量兜底最稳） */
+  bumpAllUILayoutRevs(): void {
+    for (const obj of this.objectMap.values()) {
+      if ((obj.userData?.nodeKind as string | undefined) === "uiCanvasNode") {
+        obj.userData.uiLayoutRev = ((obj.userData.uiLayoutRev as number | undefined) ?? 0) + 1;
+      }
+    }
   }
 
   /**
