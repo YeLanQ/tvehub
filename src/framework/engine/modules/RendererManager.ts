@@ -257,11 +257,17 @@ export class RendererManager {
     }
   }
 
-  /** ResizeObserver 回调：只记录目标尺寸，不在布局阶段触碰 WebGL 缓冲 */
+  /** ResizeObserver 回调：只记录目标尺寸，不在布局阶段触碰 WebGL 缓冲。
+   *  容器不可见（display:none 时 clientWidth/Height 为 0）不产生目标尺寸：
+   *  若缩到 1×1，恢复显示的首帧会把 1 像素缓冲拉伸铺满视口（闪色块）——
+   *  保持上一个有效尺寸渲染 1-2 帧，等容器拿到真实尺寸再正常缩放。 */
   private scheduleResize = (): void => {
     if (!this.container) return;
-    this.targetW = Math.max(1, this.container.clientWidth || 1);
-    this.targetH = Math.max(1, this.container.clientHeight || 1);
+    const cw = this.container.clientWidth;
+    const ch = this.container.clientHeight;
+    if (cw <= 0 || ch <= 0) return;
+    this.targetW = Math.max(1, cw);
+    this.targetH = Math.max(1, ch);
   };
 
   /** 渲染循环内应用尺寸：改缓冲 + 更新所有相机宽高比后同帧立即渲染，避免黑闪 */
