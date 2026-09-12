@@ -1078,7 +1078,7 @@ export class SceneSynchronizer {
    *   场景视图整体隐藏，布局视图按此显示）；
    * - uiCanvasSort：画布级 SortOrder（UISystem 每帧据此合成子树渲染序）；
    * - uiDesignW/H + uiScaleMode：画布渲染尺寸（设计像素）与屏幕适配方案
-   *   （UISystem 每帧据此合成贴合矩阵：100px = 1 UI 单位 + 缩放模式映射）；
+   *   （缩放模式仅运行时生效；编辑器布局视图恒按设计尺寸 1:1 显示）；
    * - uiOnlyFirstPass：分层多 pass 渲染时画布只在首个 pass 绘制（避免半透明
    *   UI 在后续叠加 pass 重复绘制变浓；layerPass 按该标注隐藏）。
    * 画布根矩阵由 UISystem 每帧覆写（matrixAutoUpdate=false，节点变换不参与取景）。
@@ -1125,11 +1125,6 @@ export class SceneSynchronizer {
       helper.geometry = uiRectOutlineGeometry(w, h);
       helper.userData.uiSizeSig = sig;
     }
-    // 填充类缩放模式下画布边与屏幕边重合（NDC ±1）会被整行裁掉：该轴微内缩
-    // 保证线框可见（几何仍为精确设计尺寸，仅缩放微调；非填充轴保持精确）
-    const fillsX = node.scaleMode !== "noscale" && node.scaleMode !== "fixedheight";
-    const fillsY = node.scaleMode !== "noscale" && node.scaleMode !== "fixedwidth";
-    helper.scale.set(fillsX ? (w - 0.3) / w : 1, fillsY ? (h - 0.3) / h : 1, 1);
   }
 
   /** 锚点字段 → 每帧布局解析用标注（UISystem.update 读取；拷贝防共享可变） */

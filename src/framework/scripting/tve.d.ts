@@ -602,7 +602,7 @@ export class UICanvasNode extends Entity {
   designWidth: number;
   /** 设计高度（设计像素） */
   designHeight: number;
-  /** 屏幕适配方案（运行时舞台按设计分辨率取景，等比模式收敛为精确铺满） */
+  /** 屏幕适配方案（仅预览/构建产物运行时生效；编辑器布局视图恒按设计尺寸 1:1 显示） */
   scaleMode: UIScaleMode;
 }
 

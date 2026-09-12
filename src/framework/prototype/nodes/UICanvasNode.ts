@@ -14,7 +14,8 @@ export interface UICanvasNodeInit extends NodeInit {
   designWidth?: number;
   /** 设计高度（设计像素；默认取项目设置设计分辨率） */
   designHeight?: number;
-  /** 屏幕适配方案（与项目设置缩放模式同一名集；默认 fixedauto 等比铺满裁切） */
+  /** 屏幕适配方案（与项目设置缩放模式同一名集；仅预览/构建产物运行时生效，
+   *  编辑器布局视图恒按设计尺寸 1:1 显示；默认 fixedauto 等比铺满裁切） */
   scaleMode?: UIScaleMode;
 }
 

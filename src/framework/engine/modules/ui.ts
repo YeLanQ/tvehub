@@ -6,10 +6,8 @@
 //   - 透视相机：画布平面放在相机前方 d = UI_HALF_HEIGHT / tan(fov/2) 处，
 //     使纵向可见范围恰为 2×UI_HALF_HEIGHT 个 UI 单位（与 fov 无关的恒定标尺）；
 //   - 正交相机：按缩放 s = orthoTop / UI_HALF_HEIGHT 对齐（平面深度取视轴中点）；
-//   - 画布渲染尺寸 = 设计分辨率/100（UI_PPU 设计标准），按画布 scaleMode 把
-//     设计矩形映射到屏幕矩形（noscale/fixedwidth/fixedheight/fixedauto/full）；
-//     运行时舞台固定按设计分辨率取景（aspect = 设计比例），各等比模式收敛为
-//     精确铺满——模式差异只在编辑器布局视口（视口比例 ≠ 设计比例）可视化。
+//   - 画布设计矩形按 1:1 设计单位显示（设计分辨率/100，UI_PPU 标准）。画布的
+//     缩放模式（scaleMode）是运行时屏幕适配方案，编辑器布局视图不参与映射。
 //   画布根对象 matrixAutoUpdate 关闭、矩阵每帧覆写，节点自身变换不参与取景。
 // - 定位：Widget/布局容器的位置由锚点系统每帧解析（resolveUIRect：点锚点用
 //   anchoredPosition、拉伸锚点用 offset 边距；布局容器再按 horizontal/vertical/
@@ -27,12 +25,9 @@ import {
   UI_HALF_HEIGHT,
   uiFontSizeToUnits,
   uiRenderOrder,
-  parseUIScaleMode,
   pxToUnits,
   resolveUIRect,
   resolveUILayoutCenters,
-  uiCanvasModeScale,
-  type UIScaleMode,
   type UIAlign,
   type UIFontFamily,
   type UIRect,
@@ -71,35 +66,23 @@ function numOf(v: unknown, fallback: number): number {
 /**
  * 相机叠加贴合矩阵 M：camSpace = M × uiSpace。
  * 透视 → 平移 (0,0,-d)（d 使画布平面纵向可见 2×UI_HALF_HEIGHT 单位）；正交 →
- * 平移 (0,0,-d) 后按 s0 = |top|/UI_HALF_HEIGHT 对齐。在此标尺上再按画布设计
- * 尺寸（UI 单位）与缩放模式把设计矩形映射到屏幕矩形（this = T·S，作用为先
- * 缩放 UI 坐标再放深度 d）。与相机的 worldMatrix 相乘后即画布根矩阵。
+ * 平移 (0,0,-d) 后按 s0 = |top|/UI_HALF_HEIGHT 对齐。画布设计矩形按 1:1 设计
+ * 单位置于该空间——缩放模式（scaleMode）是运行时屏幕适配方案，编辑器布局
+ * 视图不参与映射（恒按设计尺寸显示）。与相机 worldMatrix 相乘即画布根矩阵。
  */
-export function uiGlueMatrixForCamera(
-  cam: THREE.Camera,
-  out: THREE.Matrix4,
-  canvasW = UI_HALF_HEIGHT * 2,
-  canvasH = UI_HALF_HEIGHT * 2,
-  mode: UIScaleMode = "fixedauto",
-): THREE.Matrix4 {
+export function uiGlueMatrixForCamera(cam: THREE.Camera, out: THREE.Matrix4): THREE.Matrix4 {
   if ((cam as THREE.OrthographicCamera).isOrthographicCamera === true) {
     const oc = cam as THREE.OrthographicCamera;
     const halfH = Math.abs(oc.top) > 1e-6 ? Math.abs(oc.top) : 1;
     const s0 = halfH / UI_HALF_HEIGHT;
-    const aspect =
-      Math.abs(oc.top - oc.bottom) > 1e-6 ? Math.abs(oc.right - oc.left) / Math.abs(oc.top - oc.bottom) : 1;
-    const s = uiCanvasModeScale(mode, UI_HALF_HEIGHT * 2 * aspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
     out.makeTranslation(0, 0, -(oc.near + oc.far) / 2);
-    out.scale(_scaleVec.set(s0 * s.sx, s0 * s.sy, s0));
+    out.scale(_scaleVec.set(s0, s0, s0));
     return out;
   }
   const pc = cam as THREE.PerspectiveCamera;
   const fovDeg = pc.fov > 0 ? pc.fov : 50;
   const d = UI_HALF_HEIGHT / Math.tan((fovDeg * Math.PI) / 360);
-  const aspect = pc.aspect > 0 ? pc.aspect : 1;
-  const s = uiCanvasModeScale(mode, UI_HALF_HEIGHT * 2 * aspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
   out.makeTranslation(0, 0, -d);
-  out.scale(_scaleVec.set(s.sx, s.sy, 1));
   return out;
 }
 
@@ -253,11 +236,9 @@ export class UISystem {
       // 画布根可见性由本系统接管：场景视图整体隐藏（点选同规则），布局视图按节点状态显示
       obj.visible = this.uiVisible && obj.userData?.uiNodeVisible !== false;
       if (!this.uiVisible || !obj.visible || !cam) continue;
-      // 画布渲染尺寸（设计像素 → UI 单位，100px = 1 单位）按缩放模式映射到屏幕
-      const cw = pxToUnits(numOf(obj.userData?.uiDesignW, 1280));
-      const ch = pxToUnits(numOf(obj.userData?.uiDesignH, 720));
-      const mode = parseUIScaleMode(obj.userData?.uiScaleMode);
-      uiGlueMatrixForCamera(cam, this.glueMatrix, cw, ch, mode);
+      // 布局视图恒按设计尺寸 1:1 显示（设计像素/100 = UI 单位）；
+      // 缩放模式是运行时适配方案，编辑器不参与映射
+      uiGlueMatrixForCamera(cam, this.glueMatrix);
       obj.matrix.multiplyMatrices(this.camMatrix, this.glueMatrix);
       obj.matrixWorldNeedsUpdate = true;
     }

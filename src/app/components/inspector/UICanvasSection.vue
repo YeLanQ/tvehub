@@ -23,6 +23,7 @@ const SCALE_MODES: { value: string; label: string; title: string }[] = [
   { value: "fixedauto", label: "等比铺满", title: "保持设计比例占满屏幕（超出部分居中裁切）" },
   { value: "full", label: "全屏拉伸", title: "拉伸铺满屏幕（不保持比例）" },
 ];
+// 缩放模式仅预览/构建产物运行时生效；编辑器布局视图恒按设计尺寸 1:1 显示
 
 /** 以 rev 为失效信号（节点是普通类实例，非响应式） */
 const sortOrder = computed(() => {
@@ -83,7 +84,7 @@ function onScaleModeChange(e: Event): void {
       />
     </div>
     <div class="field">
-      <label for="ui-canvas-scale" title="屏幕适配：画布矩形映射到屏幕的方式（与项目设置缩放模式同语义）">缩放模式</label>
+      <label for="ui-canvas-scale" title="屏幕适配（仅预览/构建产物运行时生效；布局视图恒按设计尺寸 1:1 显示）">缩放模式</label>
       <select id="ui-canvas-scale" :value="node.scaleMode" @change="onScaleModeChange">
         <option v-for="m in SCALE_MODES" :key="m.value" :value="m.value" :title="m.title">{{ m.label }}</option>
       </select>
