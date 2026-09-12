@@ -39,7 +39,7 @@ export type EditorNodeType =
 export interface UICanvasDefaults {
   designWidth: number;
   designHeight: number;
-  scaleMode: UIScaleMode;
+  scaleMode?: UIScaleMode;
 }
 
 export interface CreateOptions {
@@ -152,8 +152,8 @@ export class NodeFactory {
 
   /**
    * 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
-   * defaults：项目设置默认值（设计分辨率按屏幕方向定向 + 缩放模式）；
-   * 缺省回退 1280×720 / fixedauto。
+   * defaults：项目设置默认值（设计分辨率按屏幕方向定向）；
+   * 缩放模式由项目设置统一控制，不在画布上单独配置；缺省回退 1280×720。
    */
   createUICanvas(opts: CreateOptions = {}, defaults?: UICanvasDefaults): UICanvasNode {
     const node = this.registry.create("uiCanvasNode") as UICanvasNode;
@@ -161,7 +161,7 @@ export class NodeFactory {
     if (defaults) {
       node.designWidth = defaults.designWidth;
       node.designHeight = defaults.designHeight;
-      node.scaleMode = defaults.scaleMode;
+      if (defaults.scaleMode) node.scaleMode = defaults.scaleMode;
     }
     this.decorate(node, { ...opts, name: undefined });
     return node;

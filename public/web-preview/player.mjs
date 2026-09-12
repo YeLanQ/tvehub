@@ -273,7 +273,7 @@ async function main() {
     renderer.autoClearColor = prevClearColor;
     renderer.autoClearDepth = prevClearDepth;
   }
-  const uiApi = createUI({ nodes, canvas: renderer.domElement, scene, render: renderOverlayPass });
+  const uiApi = createUI({ nodes, canvas: renderer.domElement, scene, render: renderOverlayPass, scaleMode: cfg.scaleMode });
 
   // 天空盒：场景里有 启用且可见 的 skyboxNode → 覆盖背景（与编辑器场景背景规则一致）；
   // 立方体天空盒优先消费天空材质（.mat）绑定的 TextureCube（材质 cubeMap 优先，
@@ -415,7 +415,7 @@ async function main() {
     orthoSkyQuad.material.uniforms.tSkyCube.value = isCube ? skyTexture : null;
   }
 
-  // 舞台缩放适配（渲染器已在入口处按后端创建：按设计分辨率/缩放模式适配 iframe）
+  // 舞台尺寸适配（场景始终按窗口尺寸渲染铺满；缩放模式由 UI 系统消费）
   createStage(app, cfg, applyProjection, renderer);
 
   // 程序化天空材质：Nishita 大气散射。需要 WebGL 渲染上下文（离屏 LUT 预计算），

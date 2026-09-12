@@ -10,7 +10,7 @@ import { registerCommand } from "./registry";
 import { isEditingText } from "./context";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
 import type { JsonRecord } from "../../framework/prototype/types";
-import { parseUIScaleMode } from "../../framework/prototype/nodes/ui-shared";
+
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
@@ -105,7 +105,7 @@ registerCommand({
         const uiKind = kind === "ui" ? (subtype ?? "canvas") : kind.startsWith("ui") ? kind.slice(2) : (subtype ?? "canvas");
         switch (uiKind) {
           case "canvas": {
-            // 画布渲染尺寸默认取项目设置（设计分辨率按屏幕方向定向 + 缩放模式）
+            // 画布渲染尺寸默认取项目设置（设计分辨率按屏幕方向定向）
             const ps = getProjectStore();
             let w = Math.max(1, Math.round(ps.designWidth));
             let h = Math.max(1, Math.round(ps.designHeight));
@@ -114,7 +114,6 @@ registerCommand({
             node = engine().addUICanvas(parentId, {
               designWidth: w,
               designHeight: h,
-              scaleMode: parseUIScaleMode(ps.scaleMode),
             });
             break;
           }

@@ -5,8 +5,8 @@
 // - 画布（uiCanvasNode）空间每帧贴合渲染相机：
 //   - 透视：画布平面放相机前方 d = UI_HALF_HEIGHT / tan(fov/2)，纵向可见范围
 //     恒为 2×UI_HALF_HEIGHT 个 UI 单位；正交：缩放 s = orthoTop / UI_HALF_HEIGHT。
-//   - 画布渲染尺寸 = 设计分辨率/100（UI_PPU 设计标准，100px = 1 单位），按画布
-//     的 scaleMode 映射到屏幕（缩放模式仅运行时生效；编辑器布局视图恒 1:1）。
+//   - 画布渲染尺寸 = 设计分辨率/100（UI_PPU 设计标准，100px = 1 单位），按项目设置
+//     的统一 scaleMode 映射到相机满视野（缩放模式仅运行时生效；编辑器布局视图恒 1:1）。
 //   - 画布根矩阵每帧覆写（matrixAutoUpdate=false），画布自身变换不参与取景。
 // - 定位：Widget/布局容器位置由锚点系统每帧解析（点锚点 anchoredPosition、
 //   拉伸锚点 offset 边距；布局容器按 horizontal/vertical/grid 排列直接子节点）
@@ -435,7 +435,7 @@ export function buildUILayout() {
  *          专属叠加渲染；applyTextures 贴图异步回填；settingsOf/updateSettings/
  *          onClick/offClick 供 tve SDK 转发）
  */
-export function createUI({ nodes, canvas, scene, render }) {
+export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleMode = "fixedauto" }) {
   const texCache = new Map();
   const canvases = []; // { json, obj, sort, top, cw, ch, layoutRev, resolvedRev }
   const widgets = []; // { json, obj, root }（Widget + 布局容器，锚点/布局解析对象）
@@ -443,6 +443,8 @@ export function createUI({ nodes, canvas, scene, render }) {
   const clickHandlers = new Map(); // 按钮节点 id → Set<cb>
   const topRoots = []; // 顶层画布根（主渲染隐藏；endRender 恢复 + 叠加渲染）
   let lastCam = null;
+  // 统一缩放模式（来自项目设置；所有画布共用，不再逐画布独立）
+  const uiScaleMode = scaleModeOf(globalScaleMode);
 
   for (const entry of nodes) {
     const { json, obj } = entry;
@@ -520,7 +522,7 @@ export function createUI({ nodes, canvas, scene, render }) {
       if (!c.top || !c.obj.visible) continue;
       const cw = num(c.json.designWidth, 1280) / UI_PPU;
       const ch = num(c.json.designHeight, 720) / UI_PPU;
-      glueMatrixForCamera(cam, _m, cw, ch, scaleModeOf(c.json.scaleMode));
+      glueMatrixForCamera(cam, _m, cw, ch, uiScaleMode);
       c.obj.matrix.multiplyMatrices(_camMat, _m);
       c.obj.matrixWorldNeedsUpdate = true;
     }
@@ -1028,7 +1030,7 @@ export function createUI({ nodes, canvas, scene, render }) {
     const c = canvases.find((x) => x.obj === root);
     const cw = c ? num(c.json.designWidth, 1280) / UI_PPU : UI_HALF_HEIGHT * 2;
     const ch = c ? num(c.json.designHeight, 720) / UI_PPU : UI_HALF_HEIGHT * 2;
-    const mode = c ? scaleModeOf(c.json.scaleMode) : "fixedauto";
+    const mode = uiScaleMode;
     let wx; let wy;
     if (cam.isOrthographicCamera === true) {
       const s0 = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) / UI_HALF_HEIGHT : 1;

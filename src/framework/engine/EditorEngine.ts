@@ -749,7 +749,7 @@ export class EditorEngine {
 
   /** 添加 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
    *  defaults：项目设置默认值（设计分辨率/缩放模式），缺省 1280×720 / fixedauto */
-  addUICanvas(parentId?: string, defaults?: { designWidth: number; designHeight: number; scaleMode: UIScaleMode }): UICanvasNode {
+  addUICanvas(parentId?: string, defaults?: { designWidth: number; designHeight: number; scaleMode?: UIScaleMode }): UICanvasNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createUICanvas({ parentId: parent?.id ?? null }, defaults);
     this.graph.add(node);
