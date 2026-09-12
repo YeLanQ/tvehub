@@ -135,7 +135,13 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="isEditMode()" class="viewport__hint mono">左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具</div>
+    <div v-if="isEditMode()" class="viewport__hint mono">
+      {{
+        store.state.viewMode === "layout"
+          ? "左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具 · 滚轮缩放 · 右键拖拽平移"
+          : "左键选择 · 拖拽 Gizmo 变换 · W/E/R 切换工具"
+      }}
+    </div>
     <div v-else class="viewport__hint mono">预览渲染 · 使用场景相机视角</div>
   </div>
 </template>

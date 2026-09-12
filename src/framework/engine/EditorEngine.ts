@@ -342,7 +342,8 @@ export class EditorEngine {
     this.gizmo = new GizmoController(this.renderer.camera, this.renderer.domElement);
     this.gizmo.setCallbacks({
       onDraggingChanged: (val) => {
-        this.renderer.orbitControls.enabled = !val;
+        // 布局视图用 2D 设计视图导航（轨道相机禁用），拖拽结束后也不恢复轨道
+        this.renderer.orbitControls.enabled = !val && !this.uiSystem.isVisible();
         // UI 锚点托管节点：拖拽起点快照整节点 JSON（提交走 commitPatch 一次撤销）
         this.uiDragBeforeJSON = null;
         if (val) {
@@ -517,6 +518,8 @@ export class EditorEngine {
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
     this.setupViewportClickHandler();
+    // 布局视图 2D 导航：滚轮缩放（指针锚点）+ 右/中键拖拽平移 + 右键菜单抑制
+    this.setupLayoutNavigation();
     // gizmo 拖动期间：捕获阶段拦截其它鼠标按下与键位输入（独占变换操作）
     window.addEventListener("pointerdown", this.onCapturePointerDown, true);
     window.addEventListener("keydown", this.onCaptureKeyDown, true);
@@ -558,6 +561,7 @@ export class EditorEngine {
     this.shaders?.clear();
     this.models?.clear();
     this.removeViewportClickHandler();
+    this.removeLayoutNavigation();
   }
 
   /** gizmo 是否正在拖动（变换过程中）——其它交互可用此状态判断是否需要忽略 */
@@ -792,8 +796,12 @@ export class EditorEngine {
    */
   setUIViewVisible(visible: boolean): void {
     this.uiSystem.setVisible(visible);
-    // 布局视口变换工具按 UI 2D 语义显示（平移/缩放 = X/Y 轴，旋转 = Z 轴，加大手柄）
+    // 布局视口：变换工具按 UI 2D 语义显示（平移/缩放 = X/Y 轴，旋转 = Z 轴）；
+    // 导航切 2D 设计视图（滚轮缩放/右中键平移），禁用轨道相机（旋转/推拉对
+    // 贴合相机的 UI 无视觉效果的无效操作）
     this.gizmo?.setUI2DMode(visible);
+    if (this.gizmo) this.renderer.orbitControls.enabled = !visible;
+    if (!visible) this.uiSystem.resetView();
   }
 
   /** UI 画布当前是否在编辑视口显示（布局视图 = true） */
@@ -1826,7 +1834,9 @@ export class EditorEngine {
       this.previewNode = null;
       this.overlayVisible = true;
       this.renderer.setActiveCamera(this.renderer.camera);
-      this.renderer.orbitControls.enabled = true;
+      // 布局视图用 2D 设计视图导航（滚轮缩放/右中键平移），轨道相机保持禁用
+      //（场景图任何变化都会走到这里，不能无条件重启轨道）
+      this.renderer.orbitControls.enabled = !this.uiSystem.isVisible();
       this.applyOverlayVisibility();
       return;
     }
@@ -1911,6 +1921,93 @@ export class EditorEngine {
   }
 
   _viewportClickHandler: ((e: MouseEvent) => void) | null = null;
+
+  // ---------------- 布局视口 2D 设计视图导航（滚轮缩放 / 右中键平移） ----------------
+
+  /** 正在右/中键平移 */
+  private layoutPanning = false;
+  private layoutPanLast = { x: 0, y: 0 };
+
+  private ndcFromEvent(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -(((e.clientY - rect.top) / rect.height) * 2 - 1),
+    };
+  }
+
+  /** 活动相机宽高比（缩放锚点换算用；正交按取景框，透视按 projection.aspect） */
+  private activeCameraAspect(): number {
+    const cam = this.renderer.getActiveCamera();
+    if (!cam) return 1;
+    const oc = cam as THREE.OrthographicCamera;
+    if (oc.isOrthographicCamera === true) {
+      return Math.abs(oc.top - oc.bottom) > 1e-6 ? Math.abs(oc.right - oc.left) / Math.abs(oc.top - oc.bottom) : 1;
+    }
+    const pc = cam as THREE.PerspectiveCamera;
+    return pc.aspect > 0 ? pc.aspect : 1;
+  }
+
+  private onLayoutWheel = (e: WheelEvent): void => {
+    if (!this.uiSystem.isVisible() || this.gizmo?.isDragging()) return;
+    // 布局视图接管滚轮（页面/轨道均不滚动）；场景视图放行给轨道相机推拉
+    e.preventDefault();
+    e.stopPropagation();
+    const ndc = this.ndcFromEvent(e);
+    if (!ndc) return;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    this.uiSystem.zoomAt(factor, ndc.x, ndc.y, this.activeCameraAspect());
+    this.gizmo.setUI2DZoom(this.uiSystem.zoom);
+  };
+
+  private onLayoutPointerDown = (e: PointerEvent): void => {
+    if (!this.uiSystem.isVisible() || this.gizmo?.isDragging()) return;
+    // 右键/中键拖拽平移；左键留给选择与 Gizmo
+    if (e.button !== 1 && e.button !== 2) return;
+    e.preventDefault();
+    this.layoutPanning = true;
+    this.layoutPanLast = { x: e.clientX, y: e.clientY };
+  };
+
+  private onLayoutPointerMove = (e: PointerEvent): void => {
+    if (!this.layoutPanning) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.uiSystem.panByPixels(
+      e.clientX - this.layoutPanLast.x,
+      e.clientY - this.layoutPanLast.y,
+      rect.width,
+      rect.height,
+      this.activeCameraAspect(),
+    );
+    this.layoutPanLast = { x: e.clientX, y: e.clientY };
+  };
+
+  private onLayoutPointerUp = (): void => {
+    this.layoutPanning = false;
+  };
+
+  private onLayoutContextMenu = (e: MouseEvent): void => {
+    if (this.uiSystem.isVisible()) e.preventDefault();
+  };
+
+  private setupLayoutNavigation(): void {
+    const dom = this.renderer.domElement;
+    dom.addEventListener("wheel", this.onLayoutWheel, { passive: false });
+    dom.addEventListener("pointerdown", this.onLayoutPointerDown);
+    window.addEventListener("pointermove", this.onLayoutPointerMove);
+    window.addEventListener("pointerup", this.onLayoutPointerUp);
+    dom.addEventListener("contextmenu", this.onLayoutContextMenu);
+  }
+
+  private removeLayoutNavigation(): void {
+    const dom = this.renderer.domElement;
+    dom.removeEventListener("wheel", this.onLayoutWheel);
+    dom.removeEventListener("pointerdown", this.onLayoutPointerDown);
+    window.removeEventListener("pointermove", this.onLayoutPointerMove);
+    window.removeEventListener("pointerup", this.onLayoutPointerUp);
+    dom.removeEventListener("contextmenu", this.onLayoutContextMenu);
+  }
 
   private onViewportMouseDown(e: MouseEvent): void {
     // Only handle left-click (button 0) and only when not dragging in orbit/gizmo

@@ -204,6 +204,45 @@ export class UISystem {
   private hiddenSolo: THREE.Object3D[] = [];
   /** 本帧 update() 识别的顶层画布根（嵌套画布除外） */
   private frameTopRoots: THREE.Object3D[] = [];
+  /** 布局视图缩放（1 = 1:1 设计尺寸；2D 设计视图导航） */
+  private viewZoom = 1;
+  /** 布局视图平移（UI 单位；2D 设计视图导航） */
+  private viewPan = new THREE.Vector2();
+  /** 胶合矩阵 × 缩放/平移 的每帧合成结果（避免每画布重算） */
+  private glueView = new THREE.Matrix4();
+  private zoomMat = new THREE.Matrix4();
+
+  /** 布局视图当前缩放（gizmo 手柄尺寸补偿用） */
+  get zoom(): number {
+    return this.viewZoom;
+  }
+
+  /**
+   * 滚轮缩放（锚点 = 指针处的画布点不动）。
+   * 屏幕 UI 点 q = zoom × (c + pan)（q.x = ndc.x×5×aspect，q.y = ndc.y×5，
+   * 透视/正交同式）；锚点 c 不动 → pan += q × (1/z' − 1/z)。
+   */
+  zoomAt(factor: number, ndcX: number, ndcY: number, aspect: number): void {
+    const z0 = this.viewZoom;
+    const z1 = Math.min(8, Math.max(0.2, z0 * factor));
+    if (z1 === z0) return;
+    this.viewPan.x += ndcX * UI_HALF_HEIGHT * aspect * (1 / z1 - 1 / z0);
+    this.viewPan.y += ndcY * UI_HALF_HEIGHT * (1 / z1 - 1 / z0);
+    this.viewZoom = z1;
+  }
+
+  /** 平移（拖拽内容跟手：内容右移 = pan.x 减小；屏幕像素 → UI 单位在此换算） */
+  panByPixels(dxPx: number, dyPx: number, viewportW: number, viewportH: number, aspect: number): void {
+    const z = this.viewZoom;
+    this.viewPan.x -= (dxPx * 10 * aspect) / (viewportW * z);
+    this.viewPan.y += (dyPx * 10) / (viewportH * z);
+  }
+
+  /** 复位布局视图（1:1、无平移） */
+  resetView(): void {
+    this.viewZoom = 1;
+    this.viewPan.set(0, 0);
+  }
 
   /** 注入场景根与独占渲染豁免对象（引擎 mount 后调用一次） */
   attach(scene: THREE.Scene, exempt: THREE.Object3D[]): void {
@@ -237,9 +276,14 @@ export class UISystem {
       obj.visible = this.uiVisible && obj.userData?.uiNodeVisible !== false;
       if (!this.uiVisible || !obj.visible || !cam) continue;
       // 布局视图恒按设计尺寸 1:1 显示（设计像素/100 = UI 单位）；
-      // 缩放模式是运行时适配方案，编辑器不参与映射
+      // 缩放模式是运行时适配方案，编辑器不参与映射。
+      // 2D 设计视图导航：glue × S(zoom) × T(pan)（S 后 setPosition = 先平移后缩放）
       uiGlueMatrixForCamera(cam, this.glueMatrix);
-      obj.matrix.multiplyMatrices(this.camMatrix, this.glueMatrix);
+      this.glueView.multiplyMatrices(
+        this.glueMatrix,
+        this.zoomMat.makeScale(this.viewZoom, this.viewZoom, 1).setPosition(this.viewPan.x, this.viewPan.y, 0),
+      );
+      obj.matrix.multiplyMatrices(this.camMatrix, this.glueView);
       obj.matrixWorldNeedsUpdate = true;
     }
     if (!this.uiVisible) return;

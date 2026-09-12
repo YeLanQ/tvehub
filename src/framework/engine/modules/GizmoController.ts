@@ -91,6 +91,13 @@ export class GizmoController {
     this.applyUI2DAxes();
   }
 
+  /** UI 2D 模式下随视图缩放补偿手柄尺寸（除以 zoom，保持屏幕大小恒定） */
+  setUI2DZoom(zoom: number): void {
+    if (!this.ui2d) return;
+    const z = Math.min(8, Math.max(0.2, zoom));
+    this.gizmo.setSize(Math.min(4, Math.max(0.25, 1.2 / z)));
+  }
+
   private applyUI2DAxes(): void {
     const g = this.gizmo as unknown as Record<string, boolean>;
     if (!this.ui2d) {
