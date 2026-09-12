@@ -54,11 +54,11 @@ const emitUnits = (label: string, px: number): void => emit("update", label, pxT
         <NumberField :model-value="sizeH" :step="10" :min="1" title="设计尺寸 H（100px = 1 单位；拉伸轴由边距推导）" @commit="(v) => emitUnits('size.y', v)" />
       </div>
     </div>
+    <div class="field">
+      <label title="旋转（度，绕 Z 轴）">旋转</label>
+      <NumberField :model-value="rotZ" :step="5" title="绕 Z 轴旋转角度（度）" @commit="(v) => emit('update', 'rotZ', v)" />
+    </div>
     <div class="field-row">
-      <div class="field">
-        <label title="旋转（度，绕 Z 轴）">旋转</label>
-        <NumberField :model-value="rotZ" :step="5" title="绕 Z 轴旋转角度（度）" @commit="(v) => emit('update', 'rotZ', v)" />
-      </div>
       <div class="field">
         <label title="缩放 X">缩放 X</label>
         <NumberField :model-value="scaleX" :step="0.1" :min="0.01" title="2D 缩放 X" @commit="(v) => emit('update', 'scale.x', v)" />
