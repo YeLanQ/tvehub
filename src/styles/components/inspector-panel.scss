@@ -220,6 +220,41 @@
   flex: none;
 }
 
+/* ---------- UI 卡片成对数值行（2D Transform / Anchor / Layout 的 field-row）----------
+   不能沿用全局 .field-row（68px 定宽 label + 不收缩）：塞两个/三个 .field 进窄
+   面板会把输入框挤成负宽，内容被裁剪。这里按 auto-fit 网格自适应分列（2 项一行
+   两列、3 项一行三列，放不下自动换行），label 收窄不换行、控件 min-width 0。 */
+.inspector .ui-section .field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 4px 10px;
+  padding: 2px 0;
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+
+    label {
+      width: auto;
+      min-width: 0;
+      flex-shrink: 0;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    input:not([type="checkbox"]),
+    select {
+      flex: 1;
+      min-width: 0;
+      height: 22px;
+      padding: 0 4px;
+      font-size: 11px;
+    }
+  }
+}
+
 /* 字段输入框公共样式（.field 的 input/select 与 .nf-input 共享基础外观） */
 .inspector .field input[type="text"],
 .inspector .field input[type="number"],
