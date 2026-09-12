@@ -233,7 +233,7 @@ onMounted(async () => {
                   <option value="fixedwidth">固定宽度</option>
                   <option value="fixedheight">固定高度</option>
                   <option value="fixedauto">固定宽高比</option>
-                  <option value="full">等比包含</option>
+                  <option value="full">等比铺满</option>
                 </select>
               </div>
               <div class="ps-field">

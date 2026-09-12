@@ -140,7 +140,7 @@ export function uiCanvasModeScale(
     case "fixedheight":
       return { sx: screenH / ch, sy: screenH / ch };
     case "full": {
-      const s = Math.min(screenW / cw, screenH / ch);
+      const s = Math.max(screenW / cw, screenH / ch);
       return { sx: s, sy: s };
     }
     case "fixedauto":

@@ -106,7 +106,7 @@ function canvasModeScale(mode, screenW, screenH, canvasW, canvasH) {
     case "fixedwidth": return { sx: screenW / cw, sy: screenW / cw };
     case "fixedheight": return { sx: screenH / ch, sy: screenH / ch };
     case "full": {
-      const s = Math.min(screenW / cw, screenH / ch);
+      const s = Math.max(screenW / cw, screenH / ch);
       return { sx: s, sy: s };
     }
     default: {
