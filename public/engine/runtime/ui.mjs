@@ -231,14 +231,18 @@ function scaleModeOf(v) {
   return v === "noscale" || v === "fixedwidth" || v === "fixedheight" || v === "full" ? v : "fixedauto";
 }
 
-/** 画布贴合缩放（UI 单位 → 相机平面世界单位；正交含基础对齐缩放；按画布缩放模式） */
+/** 画布贴合缩放（UI 单位 → 相机平面世界单位；正交含基础对齐缩放；按画布缩放模式）。
+ *  相机空间的「满视野」矩形（高 UI_HALF_HEIGHT*2、宽 UI_HALF_HEIGHT*2×camAspect）经舞台
+ *  CSS 缩放后恒占满屏幕，因此画布 design 矩形直接按 scaleMode 映射到该满视野矩形即可
+ *  （归一化 NDC 与 CSS 拉伸线性无关，无需求实际屏幕比例）；等比模式下 sx=sy 保持等比，
+ *  锚点定位的 Widget 随之等比缩放、不被非等比拉伸。 */
 function glueScaleForCamera(cam, canvasW, canvasH, mode) {
-  const aspect = cam.isOrthographicCamera === true
+  const camAspect = cam.isOrthographicCamera === true
     ? (Math.abs(cam.top - cam.bottom) > 1e-6
         ? Math.abs(cam.right - cam.left) / Math.abs(cam.top - cam.bottom)
         : 1)
     : (cam.aspect > 0 ? cam.aspect : 1);
-  const s = canvasModeScale(mode, UI_HALF_HEIGHT * 2 * aspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
+  const s = canvasModeScale(mode, UI_HALF_HEIGHT * 2 * camAspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
   if (cam.isOrthographicCamera === true) {
     const halfH = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) : 1;
     const s0 = halfH / UI_HALF_HEIGHT;
@@ -250,7 +254,7 @@ function glueScaleForCamera(cam, canvasW, canvasH, mode) {
 /**
  * 相机叠加贴合矩阵 M：camSpace = M × uiSpace（透视平移 / 正交平移后缩放）。
  * 与编辑器 uiGlueMatrixForCamera 同一基础数学，再按画布 scaleMode 把设计矩形
- * 映射到屏幕（缩放模式仅运行时生效——编辑器布局视图恒按设计尺寸 1:1）。
+ * 映射到相机满视野（缩放模式仅运行时生效——编辑器布局视图恒按设计尺寸 1:1）。
  */
 export function glueMatrixForCamera(cam, out, canvasW = UI_HALF_HEIGHT * 2, canvasH = UI_HALF_HEIGHT * 2, mode = "fixedauto") {
   const s = glueScaleForCamera(cam, canvasW, canvasH, mode);
@@ -1025,7 +1029,6 @@ export function createUI({ nodes, canvas, scene, render }) {
     const cw = c ? num(c.json.designWidth, 1280) / UI_PPU : UI_HALF_HEIGHT * 2;
     const ch = c ? num(c.json.designHeight, 720) / UI_PPU : UI_HALF_HEIGHT * 2;
     const mode = c ? scaleModeOf(c.json.scaleMode) : "fixedauto";
-    const aspect = canvas.clientWidth > 0 ? canvas.clientWidth / canvas.clientHeight : 1;
     let wx; let wy;
     if (cam.isOrthographicCamera === true) {
       const s0 = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) / UI_HALF_HEIGHT : 1;
@@ -1035,10 +1038,10 @@ export function createUI({ nodes, canvas, scene, render }) {
       const fovDeg = cam.fov > 0 ? cam.fov : 50;
       const tanHalf = Math.tan((fovDeg * Math.PI) / 360);
       const d = UI_HALF_HEIGHT / tanHalf;
-      wx = ndc.x * tanHalf * aspect * d;
+      wx = ndc.x * tanHalf * (cam.aspect > 0 ? cam.aspect : 1) * d;
       wy = ndc.y * tanHalf * d;
     }
-    // 画布贴合缩放（含缩放模式）：世界标尺 → 画布本地坐标
+    // 画布贴合缩放（含缩放模式）：世界标尺 → 画布本地坐标（与 update 的 glue 同一数学）
     const s = glueScaleForCamera(cam, cw, ch, mode);
     return { x: wx / s.sx, y: wy / s.sy };
   }
