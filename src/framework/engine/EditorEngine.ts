@@ -802,6 +802,11 @@ export class EditorEngine {
     this.gizmo?.setUI2DMode(visible);
     if (this.gizmo) this.renderer.orbitControls.enabled = !visible;
     if (!visible) this.uiSystem.resetView();
+    // 切换后的视口选不中的对象（布局视图的 3D 残留选中 / 场景视图的 UI 选中）
+    // 一并取消选中：隐藏对象仍挂着可拖拽的 Gizmo 会造成「能选中」的错觉
+    if (this.selectedId && !this.isSelectableInViewport(this.selectedId)) {
+      this.clearSelection();
+    }
   }
 
   /** UI 画布当前是否在编辑视口显示（布局视图 = true） */
@@ -2068,8 +2073,15 @@ export class EditorEngine {
   private isSelectableInViewport(nodeId: string): boolean {
     const node = this.graph.get(nodeId);
     if (!node) return false;
+    const inCanvas = this.isInUICanvasSubtree(node);
     // 布局视图只显示 Canvas 子树：非 UI 子树的节点不可点选（渲染隐藏，点选同规则）
-    if (this.uiViewVisible && !this.isInUICanvasSubtree(node)) return false;
+    if (this.uiViewVisible) {
+      if (!inCanvas) return false;
+    } else if (inCanvas) {
+      // 场景视图 UI 整体隐藏（对象级 visible 由 UISystem 接管，节点数据仍 visible，
+      // 射线也不检查可见性）：UI 节点不可点选，且不拦截其身后 3D 对象的点击
+      return false;
+    }
     return node.isEffectivelyVisibleIn((id) => this.graph.get(id));
   }
 
@@ -2097,3 +2109,4 @@ function mixHexColor(a: number, b: number, t: number): number {
   const bl = Math.round(ab + (bb - ab) * t);
   return ((r & 255) << 16) | ((g & 255) << 8) | (bl & 255);
 }
+

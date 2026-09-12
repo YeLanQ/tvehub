@@ -145,3 +145,4 @@ onBeforeUnmount(() => {
     <div v-else class="viewport__hint mono">预览渲染 · 使用场景相机视角</div>
   </div>
 </template>
+
