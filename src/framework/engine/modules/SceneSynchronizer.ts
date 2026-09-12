@@ -266,6 +266,8 @@ export class SceneSynchronizer {
         break;
       case "remove":
         this.disposeMapped(c.nodeId, graph);
+        // 结构变化 → 画布布局版本全量递增（删除节点后树序 rank / 布局随之重算）
+        this.bumpAllUILayoutRevs();
         break;
       case "reparent":
         if (node) this.remount(node);
@@ -290,10 +292,7 @@ export class SceneSynchronizer {
       case "properties":
         if (node) this.refreshNode(node);
         break;
-      case "remove":
-        this.disposeMapped(c.nodeId, graph);
-        this.bumpAllUILayoutRevs();
-        break;
+
     }
   }
 
