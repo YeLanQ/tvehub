@@ -24,6 +24,7 @@
     "smoke:layers-runtime": "node scripts/smoke-layers-runtime.mjs",
     "smoke:particles": "vite build --ssr scripts/smoke-particles.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-particles.js",
     "smoke:particles-runtime": "node scripts/smoke-particles-runtime.mjs",
+    "smoke:tween-runtime": "node scripts/smoke-tween-runtime.mjs",
     "smoke:runtime-modules": "node scripts/smoke-runtime-modules.mjs",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs"
   },

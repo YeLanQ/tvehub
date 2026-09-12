@@ -808,6 +808,164 @@ export interface MathApi {
 }
 
 // ---------------------------------------------------------------------------
+// tween —— 补间动画系统
+// 驱动方式：由引擎每帧自动推进（脚本 onUpdate 前），创建即开始播放；
+// 无需手动驱动。全部 tween 可链式配置并在任意时刻 stop/pause/resume。
+// ---------------------------------------------------------------------------
+
+/**
+ * 缓动函数名（Robert Penner 标准族；"linear" 无方向后缀）。
+ * In = 加速起步，Out = 减速收尾，InOut = 两端缓入缓出。
+ */
+export type EaseName =
+  | "linear"
+  | "quadIn" | "quadOut" | "quadInOut"
+  | "cubicIn" | "cubicOut" | "cubicInOut"
+  | "quartIn" | "quartOut" | "quartInOut"
+  | "quintIn" | "quintOut" | "quintInOut"
+  | "sineIn" | "sineOut" | "sineInOut"
+  | "expoIn" | "expoOut" | "expoInOut"
+  | "circIn" | "circOut" | "circInOut"
+  | "backIn" | "backOut" | "backInOut"
+  | "elasticIn" | "elasticOut" | "elasticInOut"
+  | "bounceIn" | "bounceOut" | "bounceInOut";
+
+/** 缓动函数表：名称 → 插值函数（t 0..1 → eased；back/elastic 中间超调出界） */
+export const easing: Readonly<Record<EaseName, (t: number) => number>>;
+
+/**
+ * 可插值目标值：数字，或数值字段对象——{x,y,z} 向量 / {x,y}（size、
+ * anchoredPosition、pivot、spacing）/ {left,right,top,bottom}（padding）等，
+ * 允许部分字段（缺省分量保持不动）。
+ */
+export type TweenValue = number | Partial<Vec3> & Record<string, number | undefined>;
+
+/**
+ * 补间句柄：链式配置 + 播放控制。由 tween 工厂创建（创建即自动播放，
+ * 同一语句内的链式配置全部生效），脚本不要直接 new。
+ *
+ * ```ts
+ * import { tween, Component } from "tve";
+ *
+ * export default class Punch extends Component {
+ *   onStart() {
+ *     tween.position(this.entity, { x: 5, y: 0, z: 0 }, 1)
+ *       .easing("quadOut")
+ *       .onComplete(() => engine.log("到位"));
+ *   }
+ * }
+ * ```
+ */
+export class Tween {
+  /** @internal 由 tween 工厂创建，脚本不要直接 new */
+  constructor();
+
+  /** 缓动：名称（EaseName）或自定义函数 (t 0..1) => eased */
+  easing(nameOrFn: EaseName | ((t: number) => number)): this;
+
+  /** 开始前延时（秒；多次调用取最后一次） */
+  delay(seconds: number): this;
+
+  /** 循环次数：1 = 单次（缺省）；n = n 次；-1 = 无限循环 */
+  loop(count: number): this;
+
+  /** 往返：偶数次循环反向插值（终点 → 起点；对 sequence/parallel 组无效） */
+  yoyo(on?: boolean): this;
+
+  /** 开始回调（delay 结束、首轮插值前触发一次） */
+  onStart(cb: () => void): this;
+
+  /**
+   * 每帧回调。value = 插值输出（tween.value/tween.color 为插值结果，
+   * 其余为系数）；t = easing 后的插值系数 0..1。
+   */
+  onUpdate(cb: (value: number, t: number) => void): this;
+
+  /** 完成回调（循环计满触发一次；stop(true) 快进完成同样触发） */
+  onComplete(cb: () => void): this;
+
+  /**
+   * 串接：本 tween 完成后自动启动 next（next 无需手动 start）。
+   * 返回 next 以便继续链式配置。
+   */
+  then(next: Tween): Tween;
+
+  /**
+   * 停止：移出推进列表不再恢复。
+   * complete = true 时先快进到最终落点并触发 onComplete（不启动 then 链）。
+   */
+  stop(complete?: boolean): this;
+
+  /** 暂停（保留进度） */
+  pause(): this;
+
+  /** 从暂停处继续 */
+  resume(): this;
+
+  /** 是否正在推进（不含暂停） */
+  readonly playing: boolean;
+  /** 是否处于暂停态 */
+  readonly paused: boolean;
+  /** 是否已完成（自然播完或 stop(true)） */
+  readonly completed: boolean;
+  /** 配置的时长（秒） */
+  readonly duration: number;
+  /** 累计活跃播放时长（秒；不含 delay） */
+  readonly elapsed: number;
+  /** 当前循环进度 0..1（easing 前） */
+  readonly progress: number;
+  /** 已完成的循环数 */
+  readonly loopsDone: number;
+}
+
+/** 补间动画 API（`tween` 顶层导出与 `engine.tween` 同一对象） */
+export interface TweenApi {
+  /**
+   * 数值/向量属性插值：目标可以是 Entity（position/rotation/scale 变换、
+   * fontSize/sortOrder 等数字字段）、UI Widget 字段（anchoredPosition/size 等
+   * {x,y} 对象）或任意带同名字段的普通对象；创建即开始播放。
+   *
+   * ```ts
+   * tween.to(this.entity, { position: { x: 5 }, scale: { y: 2 } }, 1.5);
+   * ```
+   */
+  to(target: object, props: Record<string, TweenValue>, duration: number): Tween;
+  /** 反向插值：props 为起点，渐变回开始时的当前值（常用作入场动画） */
+  from(target: object, props: Record<string, TweenValue>, duration: number): Tween;
+  /** 数值插值（onUpdate 收插值结果） */
+  value(from: number, to: number, duration: number): Tween;
+  /** 0xRRGGBB 颜色插值（RGB 通道各自线性；onUpdate 收 0xRRGGBB） */
+  color(from: number, to: number, duration: number): Tween;
+  /** 实体本地位置补间（= to(entity, { position: to }, duration)） */
+  position(entity: Entity, to: TweenValue, duration: number): Tween;
+  /** 实体本地旋转补间（度制欧拉角） */
+  rotation(entity: Entity, toDeg: TweenValue, duration: number): Tween;
+  /** 实体本地缩放补间 */
+  scale(entity: Entity, to: TweenValue, duration: number): Tween;
+  /** 串行组：依次播放子 tween（空数组立即完成）；组级 delay/loop 可用 */
+  sequence(tweens: Tween[]): Tween;
+  /** 并行组：同时播放子 tween（空数组立即完成）；组级 delay/loop 可用 */
+  parallel(tweens: Tween[]): Tween;
+  /** 纯延时占位（sequence / then 链用） */
+  delay(seconds: number): Tween;
+  /** 立即回调占位：下一帧触发 cb（sequence / then 链用） */
+  call(cb: () => void): Tween;
+  /** 停止全部活动 tween（complete = true 先快进终点并触发 onComplete） */
+  killAll(complete?: boolean): void;
+  /** 暂停全部活动 tween */
+  pauseAll(): void;
+  /** 恢复全部暂停中的 tween */
+  resumeAll(): void;
+  /** 活动 tween 数（含暂停中的） */
+  readonly activeCount: number;
+  /** 全局时间缩放（0 = 冻结全部 tween；负数按 0） */
+  timeScale: number;
+}
+
+/** 补间动画系统（与 engine.tween 同一对象） */
+export const tween: TweenApi;
+
+// ---------------------------------------------------------------------------
 // 脚本通用系统：委托（多播事件）与对象池。两者均为纯脚本设施，与引擎接线无关，
 // 在预览/发布产物中行为一致。
 // ---------------------------------------------------------------------------
@@ -1522,7 +1680,7 @@ export interface UIApi {
   offClick(entity: Entity, cb: () => void): void;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 日志） */
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
@@ -1532,6 +1690,8 @@ export interface EngineApi {
   readonly particles: ParticlesApi;
   readonly physics: PhysicsApi;
   readonly ui: UIApi;
+  /** 补间动画（与顶层导出 tween 同一对象，详见 {@link TweenApi}） */
+  readonly tween: TweenApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */
   log(...args: unknown[]): void;
   warn(...args: unknown[]): void;

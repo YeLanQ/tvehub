@@ -1,6 +1,6 @@
 # engine 入口
 
-`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 日志）。
+`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志）。
 
 ## 时间：engine.time
 
@@ -99,6 +99,14 @@ const off = engine.ui.onClick(entity, () => { /* 按钮被点击 */ }); // 仅 u
 engine.ui.offClick(entity, cb);  // 解除订阅（或调用 onClick 返回的解绑函数）
 ```
 
+## 补间动画：engine.tween
+
+与顶层导出 `tween` 是同一对象：创建即自动播放的补间动画（实体变换、UI 字段、数值/颜色插值、序列/并行组）。详见[补间动画](tween.md)。
+
+```ts
+tween.position(entity, { x: 5 }, 1).easing("quadOut");
+```
+
 ## 日志：engine.log / warn / error
 
 ```ts
@@ -112,6 +120,7 @@ engine.error("非法状态", entity);
 | 导出 | 说明 |
 | --- | --- |
 | `math` | 向量数学库，见 [math](math.md) |
+| `tween` / `easing` / `Tween` | 补间动画系统，见 [tween](tween.md) |
 | `Delegate` / `Pool` / `DataCenter` / `dataCenter` | 脚本通用设施，见 [通用设施](utils.md) |
 | `VERSION` | SDK 版本字符串 |
 | `Component` / `Entity` / 各节点类与门面类 | 见前述章节 |

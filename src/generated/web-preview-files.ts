@@ -8,6 +8,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/core/three.core.min.js",
   "engine/core/three.module.min.js",
   "engine/core/tve.mjs",
+  "engine/core/tween.mjs",
   "engine/core/utils.mjs",
   "engine/runtime/animation.mjs",
   "engine/runtime/animclip.mjs",

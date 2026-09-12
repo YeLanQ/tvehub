@@ -30,4 +30,5 @@ tve（three-visual-editor）内置 3D 场景编辑器与脚本 SDK 的用户文�
 | [engine 入口](sdk/engine.md) | 时间、输入、场景、动画、音频、物理、UI、日志 |
 | [内置组件门面](sdk/components.md) | 刚体、碰撞体、灯光、音源、动画剪辑、骨骼动画 |
 | [数学库 math](sdk/math.md) | 向量运算纯函数集 |
+| [补间动画 tween](sdk/tween.md) | `tween` 工厂、缓动函数、delay/loop/yoyo、序列/并行组 |
 | [通用设施](sdk/utils.md) | `Delegate` 委托、`Pool` 对象池、`DataCenter` 数据中心 |

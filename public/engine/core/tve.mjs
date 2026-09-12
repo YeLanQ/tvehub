@@ -12,6 +12,7 @@
 import * as THREE from "./three.module.min.js";
 import { postLog } from "./log.mjs";
 import { buildComponentLight } from "./lights.mjs";
+import { tween, tickTweens, resetTweens, EASING, Tween } from "./tween.mjs";
 
 export const VERSION = "1.3.0";
 
@@ -159,6 +160,7 @@ export function installRuntime(api) {
   builtinByNode.clear();
   scriptClassByPath.clear();
   scriptClassByName.clear();
+  resetTweens();
   installInputListeners();
 }
 
@@ -173,6 +175,8 @@ export function tickTime(dt) {
   timeState.delta = dt > 0 && Number.isFinite(dt) ? dt : 0;
   timeState.elapsed += timeState.delta;
   timeState.frame += 1;
+  // 补间动画推进（在脚本 onUpdate 前；当帧创建的 tween 下一帧起插值）
+  tickTweens(timeState.delta);
 }
 
 const heldKeys = new Set();
@@ -2036,6 +2040,12 @@ class DataCenter {
 const dataCenter = new DataCenter();
 
 // ---------------------------------------------------------------------------
+// tween —— 补间动画（实现与全局单例见 tween.mjs；驱动挂 tickTime，见文件头）
+// ---------------------------------------------------------------------------
+
+const easing = Object.freeze({ ...EASING });
+
+// ---------------------------------------------------------------------------
 // engine 入口
 // ---------------------------------------------------------------------------
 
@@ -2386,6 +2396,7 @@ const engine = {
   particles: particlesApi,
   physics: physicsApi,
   ui: uiApi,
+  tween,
   log(...args) {
     postLog("info", formatArgs(args));
     console.log(...args);
@@ -2405,6 +2416,9 @@ export {
   Entity,
   engine,
   math,
+  tween,
+  easing,
+  Tween,
   Transform,
   MeshNode,
   LightNode,
@@ -2427,7 +2441,7 @@ export {
   UITextNode as uiTextNode,
   UIButtonNode as uiButtonNode,
   UILayoutNode as uiLayoutNode,
-  // 脚本通用系统（委托/对象池/数据中心）
+  // 脚本通用系统（委托/对象池/数据中心/补间动画）
   Delegate,
   Pool,
   DataCenter,
