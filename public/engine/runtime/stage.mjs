@@ -29,7 +29,14 @@ function makeWebGL(cfg, preserveDrawingBuffer) {
 
 /** 双后端通用渲染器状态（像素比/色调映射/阴影） */
 function applyCommon(cfg, renderer) {
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // 设备仿真：URL ?dpr= 覆盖设备像素比（限 1~4），使预览按设备像素密度渲染；
+  // 缺省沿用浏览器 devicePixelRatio（上限 2，避免高 DPR 屏幕过度采样）
+  const dprParam = new URLSearchParams(location.search).get("dpr");
+  const dpr =
+    dprParam != null && dprParam !== ""
+      ? Math.max(1, Math.min(4, Number(dprParam) || 1))
+      : Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(dpr);
   renderer.toneMapping = cfg.hdrMode === "hdr" ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   renderer.shadowMap.enabled = true;
   // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效。

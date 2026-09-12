@@ -68,6 +68,119 @@
   }
 }
 
+/* ---------- 设备仿真条 ---------- */
+.wp-device-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.wpd-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.wpd-device {
+  width: 176px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.wpd-orient {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.wpd-size-input {
+  width: 58px;
+  text-align: right;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.wpd-dpr-input {
+  width: 48px;
+  text-align: right;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+.wpd-x {
+  color: var(--text-dim);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* 缩放比例调节（相对自动适配） */
+.wpd-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.wpd-zoom-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.wpd-zoom-slider {
+  width: 110px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.wpd-fit {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.wpd-info {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ---------- 预览内容 ---------- */
 .wp-body {
   flex: 1;
   min-height: 0;
@@ -76,13 +189,45 @@
 }
 
 .wp-frame {
-  position: absolute;
-  inset: 0;
   width: 100%;
   height: 100%;
   border: none;
   background: #000;
   display: block;
+}
+
+/* 设备仿真：舞台居中，框架按设备分辨率等比缩放；自适应 = 舞台/框架铺满视口 */
+.wp-device-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.wp-device-stage.auto {
+  background: #000;
+}
+
+.wp-device-frame {
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #000;
+  border-radius: 30px;
+  border: 8px solid #121217;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  transform-origin: center center;
+}
+
+.wp-device-frame.auto {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .wp-hint {
