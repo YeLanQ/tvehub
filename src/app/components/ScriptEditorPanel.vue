@@ -119,6 +119,20 @@ watch(tabs, (list) => {
   if (active.value) bindModel(active.value);
 });
 
+// 外部改盘（fs-watch 经 reloadExternal 重读）后把新源码回写到 Monaco 模型：
+// 仅非脏页同步（脏页保留本地编辑）；setValue 触发的 onDidChangeContent 回调
+// 里 setContent 发现内容已一致即无操作，不会形成回写循环
+watch(
+  () => activeState.value?.source,
+  (source) => {
+    const m = monaco.value;
+    const rel = active.value;
+    if (!m || !rel || source == null || scriptsStore.isDirty(rel)) return;
+    const model = m.editor.getModel(m.Uri.parse("file:///" + rel));
+    if (model && model.getValue() !== source) model.setValue(source);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // 标签页操作
 // ---------------------------------------------------------------------------

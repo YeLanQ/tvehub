@@ -672,6 +672,36 @@ export class EditorEngine {
     return task;
   }
 
+  /**
+   * 外部（磁盘改写等）通知某贴图内容已更新：清除该资产的加载缓存并刷新所有
+   * 引用方（材质网格按参数重新取图 / 粒子贴图重装 / UI 图片清签名重填 /
+   * 天空重算）。asset:// 协议本身 no-store，重取即得新字节；未引用该贴图时
+   * 材质扫描不命中，无刷新开销。
+   */
+  invalidateTexture(rel: string): void {
+    if (!rel) return;
+    for (const key of [...this.textureCache.keys()]) {
+      if (key.endsWith(`|${rel}`)) this.textureCache.delete(key);
+    }
+    this.skyEpoch++;
+    this.applySkyFromGraph();
+    // 粒子贴图走同一缓存：重装加载器使全部绑定按当前缓存重取（未失效的贴图
+    // 命中缓存承诺，无重复解码）
+    this.particles.setTextureLoader((r) => this.loadTexture(r, true));
+    // 材质网格：扫描已解析材质参数是否引用该贴图，命中才刷新（材质参数是
+    // 纯 JSON 值，序列化串包含 rel 即视为引用；误报仅多刷一次，无副作用）
+    for (const matRel of this.materials.loadedRels()) {
+      if (!JSON.stringify(this.materials.paramsFor(matRel)).includes(rel)) continue;
+      this.refreshMaterialNodes(matRel);
+    }
+    // UI 图片节点：路径签名相同时回填被跳过，先清签名再重刷
+    for (const node of this.graph.all()) {
+      if (node instanceof UIImageNode && node.image === rel) {
+        this.synchronizer.refreshUIImage(node);
+      }
+    }
+  }
+
   // ===================== 操作 API（乐观应用 → 后端提交） =====================
 
   undo(): void {

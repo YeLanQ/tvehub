@@ -10,6 +10,7 @@ import "./app/commands"; // 注册命令层（编辑器窗口命令入口）
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
 import { handleProjectOpenedFromHome } from "./app/services/editorService";
+import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus } from "./app/lib/devtools";
 
 debugLog("boot", "app script started");
@@ -36,6 +37,9 @@ if (!isTauri()) {
       void handleProjectOpenedFromHome(e.payload.root, e.payload.name, e.payload.rel);
     },
   );
+  // 文件监听：外部改动工程脚本/资产后失效编辑器缓存并刷新（后端在打开项目时
+  // 才开始监听目标目录，这里先装好事件接收端）
+  installFsWatch();
   // 首页「启用服务」在首页窗口启停服务器；本窗口（main）是唯一命令执行端，
   // 收到 devtools:enabled 后（重新）确认命令监听器就绪（幂等），首页本身不挂监听器。
   void listen("devtools:enabled", () => {

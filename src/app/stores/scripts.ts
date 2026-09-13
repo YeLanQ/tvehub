@@ -70,6 +70,9 @@ export interface ScriptsStore {
   scriptNodeTypes(): { rel: string; name: string; nodeType: ScriptNodeType }[];
   /** 预读全部 src/ 脚本并解析元数据（面板挂载时预热 nodeType/props 缓存） */
   prefetchScriptMetas(): Promise<void>;
+  /** 外部改盘后重读已缓存/已打开的脚本（非脏才重读，脏文件保护本地编辑）；
+   *  磁盘内容相同则无操作，props 声明变化时 bump schemaRev 让检查器刷新 */
+  reloadExternal(rels: string[]): Promise<void>;
   /** 项目脚本清单（assets 扫描结果的 src/**.ts） */
   listScripts(): string[];
 }
@@ -278,6 +281,38 @@ export function getScriptsStore(): ScriptsStore {
         if (state.files.has(rel)) continue;
         await ensureLoaded(rel);
       }
+    },
+    async reloadExternal(rels) {
+      const root = getProjectStore().currentPath;
+      if (!root) return;
+      let schemaChanged = false;
+      for (const rel of rels) {
+        const st = state.files.get(rel);
+        // 未打开/未缓存的文件无需处理（打开时才读盘）；脏文件保留本地编辑
+        if (!st || st.dirty) continue;
+        try {
+          const source = await api.readText(root, rel);
+          if (source == null || source === st.source) continue;
+          st.source = source;
+          if (st.kind === "shader") {
+            // 着色器：后端重解析拿诊断（引擎侧文档由 fs-watch 经 shaders.reload 刷新）
+            const doc = await api.shaderRead(root, rel);
+            st.compileError = doc?.error ?? null;
+          } else {
+            const meta = await parseScriptClassMeta(source).catch(() => ({
+              props: null as ScriptPropDef[] | null,
+              nodeType: null as ScriptNodeType | null,
+            }));
+            if (JSON.stringify(st.propsSchema) !== JSON.stringify(meta.props)) schemaChanged = true;
+            st.propsSchema = meta.props;
+            st.nodeType = meta.nodeType;
+            st.compileError = null;
+          }
+        } catch {
+          // 文件可能已被外部删除：保留内存副本，待保存时按实际报错处理
+        }
+      }
+      if (schemaChanged) state.schemaRev += 1;
     },
     listScripts() {
       const assetsStore = getAssetsStore();

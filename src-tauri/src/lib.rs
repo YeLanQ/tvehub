@@ -15,6 +15,7 @@ mod scene;
 mod store;
 mod trash;
 mod user_templates;
+mod watcher;
 
 use project::{AssetEntry, MetaEntry, ProjectInfo};
 use trash::move_to_trash;
@@ -558,6 +559,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(preview::PreviewServerState::default())
         .manage(asset_protocol::AssetProtocolState::default())
+        .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
         .manage(devtools::DevToolsState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；

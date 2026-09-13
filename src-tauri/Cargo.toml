@@ -30,4 +30,6 @@ rfd = "0.14"
 # 构建导出：资产 gzip 归档（flate2 纯 rust 后端）与内联 base64
 flate2 = "1"
 base64 = "0.22"
+# 项目目录文件监听（外部改动 → fs-changed 事件 → 前端失效缓存刷新）
+notify = "6"
 

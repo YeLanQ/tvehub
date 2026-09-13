@@ -694,6 +694,17 @@ export class SceneSynchronizer {
     this.refreshNode(node);
   }
 
+  /**
+   * 图片资产内容被外部改写后强制重取：图片回填按路径签名跳过（同路径不重载），
+   * 外部改写同路径图片时须先清签名再刷新，refreshUIWidget 才会重新回填贴图。
+   */
+  refreshUIImage(node: UIImageNode): void {
+    const obj = this.objectMap.get(node.id);
+    if (!obj) return;
+    delete obj.userData.uiImageSig;
+    this.refreshUIWidget(node, obj as THREE.Mesh);
+  }
+
   /** 音源节点图标刷新（音频绑定状态变化后由引擎调用；数据/变换不动） */
   refreshAudioNodeIcon(node: AudioNode): void {
     const obj = this.objectMap.get(node.id);

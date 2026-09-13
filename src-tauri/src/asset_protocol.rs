@@ -39,13 +39,18 @@ impl Default for AssetProtocolState {
     }
 }
 
-/// 前端打开/关闭项目时更新 asset:// 协议的项目根（root = null 表示无项目）
+/// 前端打开/关闭项目时更新 asset:// 协议的项目根（root = null 表示无项目）。
+/// 文件监听跟随同一命令启停：打开项目监听新根目录，外部改动经 `fs-changed`
+/// 事件推给前端刷新缓存；关闭项目停止监听。
 #[tauri::command]
 pub async fn set_current_project_root(
     state: tauri::State<'_, AssetProtocolState>,
+    watcher: tauri::State<'_, crate::watcher::WatcherState>,
+    app: tauri::AppHandle,
     root: Option<String>,
 ) -> Result<(), String> {
-    state.set_project_root(root.map(PathBuf::from));
+    state.set_project_root(root.clone().map(PathBuf::from));
+    crate::watcher::watch_project_root(&watcher, &app, root.map(PathBuf::from));
     Ok(())
 }
 
