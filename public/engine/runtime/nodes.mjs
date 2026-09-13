@@ -3,6 +3,8 @@
 // - 灯光节点 → Group + 真实 Light（方向光/聚光灯附加本地 -Z 目标点；
 //   点光/平行光/聚光灯可自带阴影参数组，见 applyLightShadow）；
 // - cameraNode → Group（记录世界位姿供渲染相机选用）；
+// - fogNode → Group（场景环境雾；scene.fog 由 player 经 runtime/fog.mjs 统一应用，
+//   第一个 启用且可见 的 fogNode 生效，与编辑器 applyFogFromGraph 同语义）；
 // - particleSystemNode → Group + 粒子 Points 子对象（发射器见 core/particles.mjs，
 //   与编辑器 ParticleEmitter 同语义；每帧推进由 runtime/particles.mjs 驱动）；
 // - UI（Canvas-Widget）：uiCanvasNode/uiImageNode/uiTextNode/uiButtonNode →

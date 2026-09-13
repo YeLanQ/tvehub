@@ -16,6 +16,7 @@ import { instantiatePrefabTree, serializePrefabTree } from "../prototype/prefab"
 import {
   AudioNode,
   CameraNode,
+  FogNode,
   LightNode,
   MeshNode,
   ParticleSystemNode,
@@ -27,6 +28,7 @@ import {
   UILayoutNode,
   UITextNode,
   UIWidgetNode,
+  type FogKind,
   type GeometryKind,
   type SkyboxKind,
   type UIScaleMode,
@@ -35,6 +37,7 @@ import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { clampCameraParam } from "../camera";
 import { parseCullingMask } from "../layers";
 import { cloneTerrainSettings, type TerrainSettings } from "../terrain";
+import { fogSettingsSig } from "../fog/types";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
@@ -87,6 +90,7 @@ const SCRIPT_NODE_BASE: Record<
   audioNode: (e, p) => e.addAudio(p),
   particleSystemNode: (e, p) => e.addParticleSystem(p),
   terrainNode: (e, p) => e.addTerrain(p),
+  fogNode: (e, p) => e.addFog("linear", p),
   uiCanvasNode: (e, p) => e.addUICanvas(p),
   uiImageNode: (e, p) => e.addUIImage(p),
   uiTextNode: (e, p) => e.addUIText(p),
@@ -234,6 +238,8 @@ export class EditorEngine {
   private previewOrthoSize = 5;
   /** 天空盒背景当前生效状态（签名 + 背景纹理）：变更/移除/销毁时据此释放 */
   private skyApplied: { sig: string; texture: THREE.Texture } | null = null;
+  /** 当前生效雾的签名（fogNode id/kind/参数；无生效雾为 null）——脏检查避免每帧重建 */
+  private fogAppliedSig: string | null = null;
   /** 已销毁标记：mount 期间被 dispose 后终止后续初始化；dispose 幂等 */
   private disposed = false;
   /** 后端 scene:changed 事件订阅取消函数 */
@@ -810,6 +816,22 @@ export class EditorEngine {
   addCamera(parentId?: string): CameraNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createCamera({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加雾节点（场景环境级：线性雾 / 指数雾，与天空盒同语义）。
+   * 场景里第一个 启用且可见 的雾节点决定渲染雾（见 applyFogFromGraph）。
+   */
+  addFog(kind: FogKind, parentId?: string): FogNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createFog(kind, { parentId: parent?.id ?? null });
+    // 场景只应用第一个 启用且可见 的雾节点；已有生效雾时给出提示避免困惑
+    if (this.findFogNode()) {
+      console.info("[fog] 场景中已有生效的雾节点，新增雾不会替换当前雾效（可停用/删除前者）");
+    }
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -1458,6 +1480,7 @@ export class EditorEngine {
       c.kind === "clear"
     ) {
       this.applySkyFromGraph();
+      this.applyFogFromGraph();
     }
     // 新入图/属性变更引用了尚未解析的材质资产（如撤销/重做改回引用）→ 异步预取后刷新
     const n = this.graph.get(c.nodeId);
@@ -1507,6 +1530,7 @@ export class EditorEngine {
       this.syncPhysicsNode(node);
     }
     this.applySkyFromGraph();
+    this.applyFogFromGraph();
   }
 
   /** 节点物理组件同步（有刚体/碰撞体组件 → 绑定；无 → 解绑） */
@@ -1896,6 +1920,51 @@ export class EditorEngine {
     while (stack.length) {
       const n = stack.pop()!;
       if (n instanceof SkyboxNode && n.active && n.visible) return n;
+      const ids = n.childIds;
+      for (let i = ids.length - 1; i >= 0; i--) {
+        const c = this.graph.get(ids[i]);
+        if (c) stack.push(c);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 依据场景图应用/移除渲染雾：
+   * 场景中第一个 启用且可见 的雾节点决定 scene.fog（线性 Fog / 指数 FogExp2，
+   * 与 three.js 官网 fog 示例同一用法），节点增删、属性修改、启停切换都会触发
+   * 重算；无雾节点时清掉场景雾。签名未变化的重复调用是空操作（脏检查）。
+   * three 的渲染器按「材质记录的雾引用 vs scene.fog」自动重编译着色器，
+   * 雾对象热替换/清空无需手动标记材质 needsUpdate。
+   */
+  private applyFogFromGraph(): void {
+    const scene = this.renderer.scene;
+    const fog = this.findFogNode();
+    if (!fog) {
+      if (this.fogAppliedSig !== null) {
+        this.fogAppliedSig = null;
+        scene.fog = null;
+      }
+      return;
+    }
+    const sig = [fog.id, fog.fogKind, fogSettingsSig(fog.fog)].join("|");
+    if (this.fogAppliedSig === sig) return;
+    this.fogAppliedSig = sig;
+    const color = fog.fog.color & 0xffffff;
+    scene.fog =
+      fog.fogKind === "exp2"
+        ? new THREE.FogExp2(color, fog.fog.density)
+        : new THREE.Fog(color, fog.fog.near, fog.fog.far);
+  }
+
+  /** 深度优先查找第一个 启用且可见 的雾节点（场景树的文档序，与 findSkyboxNode 同规则） */
+  private findFogNode(): FogNode | null {
+    const root = this.graph.root;
+    if (!root) return null;
+    const stack: Node[] = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n instanceof FogNode && n.active && n.visible) return n;
       const ids = n.childIds;
       for (let i = ids.length - 1; i >= 0; i--) {
         const c = this.graph.get(ids[i]);

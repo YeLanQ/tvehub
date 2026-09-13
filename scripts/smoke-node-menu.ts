@@ -10,6 +10,7 @@ import { createDefaultRegistry } from "../src/framework/prototype/PrototypeRegis
 import { NodeFactory } from "../src/framework/factory/NodeFactory";
 import type { LightKind } from "../src/framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../src/framework/prototype/nodes/SkyboxNode";
+import type { FogKind } from "../src/framework/fog/types";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail = ""): void {
@@ -42,6 +43,8 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
       return "cameraNode";
     case "skybox":
       return "skyboxNode";
+    case "fog":
+      return "fogNode";
     case "audio":
       return "audioNode";
     case "particle":
@@ -60,7 +63,7 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
 console.log("[1] 菜单项定义");
 check("菜单非空", types.length > 0, `${types.length} 项`);
 check("菜单不含已移除的阴影节点入口", !types.includes("shadow"), types.join(", "));
-check("含网格/灯光/天空盒/相机/空组/音源/粒子入口", ["mesh:", "light:", "skybox:", "camera", "group", "audio", "particle"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
+check("含网格/灯光/天空盒/雾/相机/空组/音源/粒子入口", ["mesh:", "light:", "skybox:", "fog:", "camera", "group", "audio", "particle"].every((p) => types.some((t) => (p.endsWith(":") ? t.startsWith(p) : t === p))));
 check("含 UI（Canvas-Widget）入口", ["ui:canvas", "ui:text", "ui:image", "ui:button", "ui:layout"].every((t) => types.includes(t)), types.join(", "));
 check("脚本节点分组只在有脚本时出现", types.some((t) => t.startsWith("script:")));
 
@@ -88,6 +91,8 @@ console.log("[3] 参数细节");
   check("light:spot → kind=light + subtype=spot", light?.kind === "light" && light?.subtype === "spot");
   const sky = addNodeArgs("skybox:cube", "p1");
   check("skybox:cube → kind=skybox + subtype=cube", sky?.kind === "skybox" && sky?.subtype === "cube");
+  const fog = addNodeArgs("fog:exp2", "p1");
+  check("fog:exp2 → kind=fog + subtype=exp2", fog?.kind === "fog" && fog?.subtype === "exp2");
   const script = addNodeArgs("script:src/scripts/Demo.ts", "p1");
   check(
     "script:… → kind=script + rel 完整（含路径分隔符）",
@@ -115,6 +120,8 @@ console.log("[4] 工厂真能造出对应类型（菜单 → 命令 → 节点�
     { type: "camera", make: () => factory.createCamera() },
     { type: "skybox:procedural", make: (a) => factory.createSkybox(a?.subtype as SkyboxKind) },
     { type: "skybox:cube", make: (a) => factory.createSkybox(a?.subtype as SkyboxKind) },
+    { type: "fog:linear", make: (a) => factory.createFog(a?.subtype as FogKind) },
+    { type: "fog:exp2", make: (a) => factory.createFog(a?.subtype as FogKind) },
     { type: "audio", make: () => factory.createAudio() },
     { type: "particle", make: () => factory.createParticleSystem() },
     { type: "ui:canvas", make: () => factory.createUICanvas() },

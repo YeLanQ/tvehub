@@ -21,6 +21,7 @@ import { createAnimations } from "../engine/runtime/animation.mjs";
 import { createAudios } from "../engine/runtime/audio.mjs";
 import { createParticles } from "../engine/runtime/particles.mjs";
 import { createTerrains } from "../engine/runtime/terrain.mjs";
+import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
 import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
@@ -316,6 +317,13 @@ async function main() {
     }
   }
   scene.updateMatrixWorld(true);
+
+  // 场景环境雾：场景里有 启用且可见 的 fogNode → 应用 scene.fog
+  // （线性 Fog / 指数 FogExp2，与编辑器 applyFogFromGraph 同一规则）
+  {
+    const fog = findFogNode(rootJson);
+    if (fog) applyFogFromNode(scene, fog);
+  }
 
   // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）
   await applyMeshTextures(meshes, materialParams);

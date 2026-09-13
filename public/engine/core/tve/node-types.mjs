@@ -12,6 +12,7 @@ class MeshNode extends Transform {}
 class LightNode extends Transform {}
 class CameraNode extends Transform {}
 class SkyboxNode extends Transform {}
+class FogNode extends Transform {}
 
 class ParticleSystemNode extends Transform {
   play() { state.host?.particles?.play(this.id); }
@@ -80,6 +81,7 @@ const KIND_CLASSES = {
   meshNode: MeshNode,
   cameraNode: CameraNode,
   skyboxNode: SkyboxNode,
+  fogNode: FogNode,
   audioNode: Transform,
   particleSystemNode: ParticleSystemNode,
   terrainNode: TerrainNode,
@@ -105,6 +107,7 @@ LightNode.__nodeKinds = [
 ];
 CameraNode.__nodeKinds = ["cameraNode"];
 SkyboxNode.__nodeKinds = ["skyboxNode"];
+FogNode.__nodeKinds = ["fogNode"];
 ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
 TerrainNode.__nodeKinds = ["terrainNode"];
 UICanvasNode.__nodeKinds = ["uiCanvasNode"];
@@ -125,6 +128,7 @@ export {
   LightNode,
   CameraNode,
   SkyboxNode,
+  FogNode,
   ParticleSystemNode,
   TerrainNode,
   UICanvasNode,

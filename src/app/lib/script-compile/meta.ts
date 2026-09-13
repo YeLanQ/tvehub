@@ -34,6 +34,7 @@ export type ScriptNodeKind =
   | "cameraNode"
   | "lightNode"
   | "skyboxNode"
+  | "fogNode"
   | "particleSystemNode"
   | "terrainNode"
   | "uiCanvasNode"
@@ -62,6 +63,7 @@ const NODE_KINDS: ScriptNodeKind[] = [
   "cameraNode",
   "lightNode",
   "skyboxNode",
+  "fogNode",
   "particleSystemNode",
   "terrainNode",
   "uiCanvasNode",

@@ -34,6 +34,7 @@ export type EntityKind =
   | "ambientLightNode"
   | "spotLightNode"
   | "skyboxNode"
+  | "fogNode"
   | "audioNode"
   | "particleSystemNode"
   | "terrainNode"
@@ -50,6 +51,7 @@ export type NodeClass =
   | typeof LightNode
   | typeof CameraNode
   | typeof SkyboxNode
+  | typeof FogNode
   | typeof ParticleSystemNode
   | typeof TerrainNode
   | typeof UICanvasNode
@@ -84,6 +86,7 @@ export type ScriptNodeKind =
   | "cameraNode"
   | "lightNode"
   | "skyboxNode"
+  | "fogNode"
   | "particleSystemNode"
   | "terrainNode"
   | "uiCanvasNode"
@@ -493,6 +496,9 @@ export class CameraNode extends Entity {}
 /** 天空盒节点（编辑器 skyboxNode） */
 export class SkyboxNode extends Entity {}
 
+/** 雾节点（编辑器 fogNode；场景环境级，第一个启用且可见的雾节点生效） */
+export class FogNode extends Entity {}
+
 /** 粒子发射形状：cone = 圆锥（沿节点本地 -Z）| sphere = 球面 | hemisphere = 上半球 | box = 盒体 */
 export type ParticleShape = "cone" | "sphere" | "hemisphere" | "box";
 
@@ -818,6 +824,7 @@ export {
   LightNode as lightNode,
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
+  FogNode as fogNode,
   ParticleSystemNode as particleSystemNode,
   TerrainNode as terrainNode,
   UICanvasNode as uiCanvasNode,

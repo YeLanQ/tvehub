@@ -33,18 +33,13 @@ export interface SceneMetadata {
 
 /**
  * 场景渲染设置
+ *
+ * 雾效为场景环境节点（FogNode："新建 > 雾 > 雾类型"，支持线性/指数雾），
+ * 不再走场景全局开关。
  */
 export interface SceneRenderingSettings {
   /** 背景色 (RGB hex) */
   backgroundColor: number;
-  /** 是否启用雾效 */
-  fogEnabled: boolean;
-  /** 雾效颜色 */
-  fogColor: number;
-  /** 雾效近裁剪距离 */
-  fogNear: number;
-  /** 雾效远裁剪距离 */
-  fogFar: number;
   /** 环境光强度 */
   ambientIntensity: number;
   /** 环境光颜色 */
@@ -79,10 +74,6 @@ export function createDefaultSettings(): SceneSettings {
   return {
     rendering: {
       backgroundColor: 0,
-      fogEnabled: false,
-      fogColor: 0x000000,
-      fogNear: 1,
-      fogFar: 100,
       ambientIntensity: 0.3,
       ambientColor: 0xffffff,
     },

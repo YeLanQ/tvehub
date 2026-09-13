@@ -2,6 +2,7 @@ import type { JsonRecord, Vec3 } from "../prototype/types";
 import {
   AudioNode,
   CameraNode,
+  FogNode,
   LightNode,
   MeshNode,
   ParticleSystemNode,
@@ -13,6 +14,7 @@ import {
   UILayoutNode,
   UITextNode,
   skyMaterialForKind,
+  type FogKind,
   type LightKind,
   type SkyboxKind,
   type UIScaleMode,
@@ -31,6 +33,7 @@ export type EditorNodeType =
   | "audioNode"
   | "particleSystemNode"
   | "terrainNode"
+  | "fogNode"
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
@@ -160,6 +163,15 @@ export class NodeFactory {
     return node;
   }
 
+  /** 按雾类型创建雾节点（线性 Fog / 指数 FogExp2；场景环境级，参数经检查器调整） */
+  createFog(kind: FogKind, opts: CreateOptions = {}): FogNode {
+    const node = this.registry.create("fogNode") as FogNode;
+    node.fogKind = kind;
+    node.name = opts.name ?? (kind === "exp2" ? "Exponential Fog" : "Linear Fog");
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   /**
    * 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
    * defaults：项目设置默认值（设计分辨率按屏幕方向定向）；
@@ -228,7 +240,9 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
             ? ParticleSystemNode
             : K extends "terrainNode"
               ? TerrainNode
-              : K extends "uiCanvasNode"
+              : K extends "fogNode"
+                ? FogNode
+                : K extends "uiCanvasNode"
               ? UICanvasNode
               : K extends "uiImageNode"
                 ? UIImageNode
@@ -252,6 +266,7 @@ export type {
   AudioNode,
   ParticleSystemNode,
   TerrainNode,
+  FogNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,

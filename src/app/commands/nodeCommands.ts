@@ -15,6 +15,7 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
+import type { FogKind } from "../../framework/fog/types";
 import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
 
 const GEOMETRY_KINDS: GeometryKind[] = [
@@ -22,6 +23,7 @@ const GEOMETRY_KINDS: GeometryKind[] = [
 ];
 const LIGHT_KINDS: LightKind[] = ["point", "directional", "ambient", "spot"];
 const SKYBOX_KINDS: SkyboxKind[] = ["cube", "procedural"];
+const FOG_KINDS: FogKind[] = ["linear", "exp2"];
 
 function editor() {
   return getEditorStore();
@@ -46,7 +48,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/audio/particle/terrain/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
   run: async (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
@@ -81,6 +83,13 @@ registerCommand({
       case "skyboxnode":
         node = engine().addSkybox(
           asSubtype(SKYBOX_KINDS, subtype ?? args?.skyKind, "procedural"),
+          parentId,
+        );
+        break;
+      case "fog":
+      case "fognode":
+        node = engine().addFog(
+          asSubtype(FOG_KINDS, subtype ?? args?.fogKind, "linear"),
           parentId,
         );
         break;
@@ -174,7 +183,7 @@ registerCommand({
       }
       default:
         throw new Error(
-          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/audio/particle/terrain/script/model）`,
+          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/fog/audio/particle/terrain/script/model）`,
         );
     }
     // 显式命名：仅在提供了非空 name 时重命名（未提供保持引擎默认名，与历史 UI 一致）

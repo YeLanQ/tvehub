@@ -70,6 +70,8 @@ export const NODE_REF_TYPE_KINDS: Record<string, string[] | null> = {
   cameraNode: ["cameraNode"],
   SkyboxNode: ["skyboxNode"],
   skyboxNode: ["skyboxNode"],
+  FogNode: ["fogNode"],
+  fogNode: ["fogNode"],
   ParticleSystemNode: ["particleSystemNode"],
   particleSystemNode: ["particleSystemNode"],
   TerrainNode: ["terrainNode"],

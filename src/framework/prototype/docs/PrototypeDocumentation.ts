@@ -59,18 +59,10 @@ export interface ScenePrototypeDoc {
    * 包含渲染等全局设置（物理配置在项目设置中）
    */
   settings: {
-    /** 渲染设置 */
+    /** 渲染设置（雾效为场景环境节点 FogNode：新建 > 雾 > 雾类型，线性/指数） */
     rendering: {
       /** 背景色 (RGB hex) */
       backgroundColor: number;
-      /** 是否启用雾效 */
-      fogEnabled: boolean;
-      /** 雾效颜色 */
-      fogColor: number;
-      /** 雾效近裁剪距离 */
-      fogNear: number;
-      /** 雾效远裁剪距离 */
-      fogFar: number;
       /** 环境光强度 */
       ambientIntensity: number;
       /** 环境光颜色 */

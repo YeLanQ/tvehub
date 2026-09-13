@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode, TerrainNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, SkyboxNode, AudioNode, ParticleSystemNode, TerrainNode, FogNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
   isAudioSourceComponent,
@@ -17,6 +17,7 @@ import { useInspectorLightAudio } from "../composables/inspector/useInspectorLig
 import { useInspectorCameraSky } from "../composables/inspector/useInspectorCameraSky";
 import { useInspectorParticles } from "../composables/inspector/useInspectorParticles";
 import { useInspectorTerrain } from "../composables/inspector/useInspectorTerrain";
+import { useInspectorFog } from "../composables/inspector/useInspectorFog";
 import { useInspectorUI } from "../composables/inspector/useInspectorUI";
 import ComponentCard from "./ComponentCard.vue";
 import NodeSection from "./inspector/NodeSection.vue";
@@ -34,6 +35,7 @@ import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
 import ParticleSection from "./inspector/ParticleSection.vue";
 import TerrainSection from "./inspector/TerrainSection.vue";
+import FogSection from "./inspector/FogSection.vue";
 import UICanvasSection from "./inspector/UICanvasSection.vue";
 import UIImageSection from "./inspector/UIImageSection.vue";
 import UITextSection from "./inspector/UITextSection.vue";
@@ -109,6 +111,7 @@ const {
 } = useInspectorCameraSky(inspector);
 const { onParticleUpdate } = useInspectorParticles(inspector);
 const { onTerrainUpdate } = useInspectorTerrain(inspector);
+const { onFogUpdate } = useInspectorFog(inspector);
 const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate, onUILayoutUpdate } = useInspectorUI(inspector);
 
 /** UI 节点（画布/Widget/布局容器）：3D Transform 卡换成 2D 变换/锚点卡 */
@@ -265,6 +268,10 @@ onBeforeUnmount(flushMaterialPersist);
 
       <ComponentCard v-if="node instanceof TerrainNode" title="Terrain" :open="true">
         <TerrainSection :node="node" :rev="revision" @update="onTerrainUpdate" />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof FogNode" title="Fog" :open="true">
+        <FogSection :node="node" :rev="revision" @update="onFogUpdate" />
       </ComponentCard>
 
       <!-- —— UI（Canvas-Widget）：画布与 Widget/布局卡 —— -->

@@ -17,6 +17,7 @@ export {
   AudioNode,
   ParticleSystemNode,
   TerrainNode,
+  FogNode,
   UICanvasNode,
   UIImageNode,
   UILayoutNode,
@@ -35,6 +36,7 @@ export type {
   ParticleSystemNodeInit,
   TerrainNodeInit,
   LightKind,
+  FogKind,
 } from "./derived/Primitives";
 export type { TransformInit } from "./Transform";
 export type { Vec3, Euler, JsonValue, JsonRecord } from "./types";
@@ -78,6 +80,7 @@ export type { ISkyboxNode } from "./nodes/SkyboxNode";
 export type { IAudioNode } from "./nodes/AudioNode";
 export type { IParticleSystemNode } from "./nodes/ParticleSystemNode";
 export type { ITerrainNode } from "./nodes/TerrainNode";
+export type { IFogNode } from "./nodes/FogNode";
 export type { IUICanvasNode } from "./nodes/UICanvasNode";
 export type { IUIImageNode } from "./nodes/UIImageNode";
 export type { IUITextNode } from "./nodes/UITextNode";

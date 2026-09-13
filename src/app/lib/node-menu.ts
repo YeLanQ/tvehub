@@ -77,6 +77,13 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
       { label: "Cube Skybox", type: "skybox:cube" },
     ],
   });
+  items.push({
+    label: "雾",
+    children: [
+      { label: "Linear Fog", type: "fog:linear" },
+      { label: "Exponential Fog", type: "fog:exp2" },
+    ],
+  });
   // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点
   if (src.scripts.length > 0) {
     items.push({ separator: true });
@@ -109,6 +116,9 @@ export function addNodeArgs(
   } else if (type.startsWith("skybox:")) {
     args.kind = "skybox";
     args.subtype = type.slice("skybox:".length);
+  } else if (type.startsWith("fog:")) {
+    args.kind = "fog";
+    args.subtype = type.slice("fog:".length);
   } else if (type.startsWith("script:")) {
     args.kind = "script";
     args.subtype = type.slice("script:".length);

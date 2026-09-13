@@ -3,6 +3,7 @@ import {
   AudioNode,
   CameraNode,
   DirectionalLightNode,
+  FogNode,
   LightNode,
   MeshNode,
   ParticleSystemNode,
@@ -81,6 +82,8 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(ParticleSystemNode.kType, () => new ParticleSystemNode());
   // 程序化地形（高度场 + 顶点色烘焙）
   registry.register(TerrainNode.kType, () => new TerrainNode());
+  // 场景环境雾（线性/指数；场景级节点，与天空盒同语义）
+  registry.register(FogNode.kType, () => new FogNode());
   // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器
   registry.register(UICanvasNode.kType, () => new UICanvasNode());
   registry.register(UIImageNode.kType, () => new UIImageNode());

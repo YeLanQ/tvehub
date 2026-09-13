@@ -93,6 +93,13 @@ export const TERRAIN_ICON_PATHS: string[] = [
   "M3 21h18",
 ];
 
+/** 雾节点：三条错位横线（层叠雾带/大气雾效语义） */
+export const FOG_ICON_PATHS: string[] = [
+  "M3.5 7.5h11",
+  "M7 12h13.5",
+  "M4.5 16.5h11.5",
+];
+
 /** UI 画布：层叠矩形画框（Canvas-Widget 的 Canvas 语义） */
 export const UI_CANVAS_ICON_PATHS: string[] = [
   "M3 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
