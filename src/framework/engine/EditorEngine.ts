@@ -59,8 +59,14 @@ import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
 import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
 import { PhysicsSystem } from "../physics";
-import { UISystem } from "./modules/ui";
-import { uiInverseAnchoredPosition, vec2, type UIRect } from "../prototype/nodes/ui-shared";
+import { UISystem, uiParentRectInOwnSpace } from "./modules/ui";
+import {
+  uiAnchorFieldsForRect,
+  uiInverseAnchoredPosition,
+  vec2,
+  type UIRect,
+  type Vec2,
+} from "../prototype/nodes/ui-shared";
 
 /**
  * 脚本节点类型声明（脚本类 `@nodeType({ kind })`）→ 基础节点创建。
@@ -105,6 +111,11 @@ export interface EditorEvents extends Record<string, unknown> {
   "physics:changed": { nodeId: string };
   /** 粒子系统运行时变化（播放/暂停/停止/重启控制后广播） */
   "particles:changed": { nodeId: string };
+}
+
+/** Vec2 近似相等（换父补偿的同值判定，容差远小于任何可视偏移） */
+function vec2Near(a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+  return Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
 }
 
 export class EditorEngine {
@@ -416,7 +427,8 @@ export class EditorEngine {
     const rot = radToDeg({ x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z });
     if (node instanceof UIWidgetNode && this.isUIPositionManaged(id)) {
       const u = obj.userData;
-      const parentRect = obj.parent?.userData?.uiRect as UIRect | undefined;
+      // 父矩形归一化到父自身局部空间（原点 = 父矩形中心；uiRect 存储语义按节点类型而异）
+      const parentRect = uiParentRectInOwnSpace(obj.parent);
       if (parentRect) {
         const inv = uiInverseAnchoredPosition(
           parentRect,
@@ -933,7 +945,148 @@ export class EditorEngine {
   reparentNodes(moves: { id: string; newParentId: string | null; newIndex: number }[]): void {
     const valid = moves.filter((m) => m.id && this.graph.has(m.id));
     if (!valid.length) return;
+    // UI 节点换父位置补偿依赖「旧世界位置 + 解析矩形标注」，必须在 reparent 生效前计算
+    const adjusts = this.computeReparentAnchorAdjust(valid);
     this.graph.reparentNodes(valid);
+    if (!adjusts.length) return;
+    // 补偿字段以整节点 JSON 补丁落地（快照在 reparent 之后取，层级字段为最新值，
+    // 不会回写父级；与 reparent 各成一个撤销单元，按序 undo 净效果正确）
+    const items: { id: string; before: JsonRecord; after: JsonRecord }[] = [];
+    for (const a of adjusts) {
+      const node = this.graph.get(a.id);
+      if (!node) continue;
+      const before = node.toJSON() as JsonRecord;
+      const w = node as unknown as {
+        anchoredPosition: Vec2;
+        offsetMin: Vec2;
+        offsetMax: Vec2;
+      };
+      if (a.anchoredPosition) w.anchoredPosition = a.anchoredPosition;
+      if (a.offsetMin) w.offsetMin = a.offsetMin;
+      if (a.offsetMax) w.offsetMax = a.offsetMax;
+      if (a.position) node.transform.setPosition(a.position.x, a.position.y, a.position.z);
+      items.push({ id: a.id, before, after: node.toJSON() as JsonRecord });
+    }
+    if (items.length) this.patchNodes(items, "移动节点（保持视觉位置）");
+  }
+
+  /**
+   * 换父位置补偿计算（UI 节点换父保持视觉位置/尺寸，Unity/Cocos 层级拖拽同语义）：
+   * - 画布内 UI 托管节点 → 画布内：由旧世界中心在新父局部空间的投影 + 新父矩形
+   *   （自身空间表示，uiParentRectInOwnSpace）反解锚点字段；新父为布局容器
+   *   （mode≠none）时跳过——位置由布局接管，与 Unity Layout Group 同语义；
+   * - 跨 UI 边界（画布 ↔ 场景）或画布内普通节点：改用 transform.position 补偿
+   *   （世界位置不变）；
+   * - 同值/画布外常规 3D 移动：不产生补偿。
+   */
+  private computeReparentAnchorAdjust(
+    moves: { id: string; newParentId: string | null }[],
+  ): {
+    id: string;
+    anchoredPosition?: Vec2;
+    offsetMin?: Vec2;
+    offsetMax?: Vec2;
+    position?: { x: number; y: number; z: number };
+  }[] {
+    const out: {
+      id: string;
+      anchoredPosition?: Vec2;
+      offsetMin?: Vec2;
+      offsetMax?: Vec2;
+      position?: { x: number; y: number; z: number };
+    }[] = [];
+    const objMap = this.synchronizer.getObjectMap();
+    for (const m of moves) {
+      const node = this.graph.get(m.id);
+      const obj = objMap.get(m.id);
+      if (!node || !obj) continue;
+      const newParentObj = m.newParentId ? objMap.get(m.newParentId) : this.synchronizer.getSceneRoot();
+      if (!newParentObj) continue;
+      const oldManaged = this.isUIPositionManaged(m.id);
+      const newManaged = this.isInCanvasSubtree(newParentObj);
+      if (!oldManaged && !newManaged) continue;
+
+      // 节点视觉中心 = 对象原点（UI 托管对象的位置即解析矩形中心）
+      const center = obj.getWorldPosition(new THREE.Vector3());
+
+      if (node instanceof UIWidgetNode && oldManaged && newManaged) {
+        const pu = newParentObj.userData as Record<string, unknown> | undefined;
+        if (
+          pu?.nodeKind === "uiLayoutNode" &&
+          (pu.uiLayoutMode as string | undefined) !== "none"
+        ) {
+          continue; // 新父为生效布局容器：位置由布局接管
+        }
+        const parentRect = uiParentRectInOwnSpace(newParentObj);
+        const oldRect = obj.userData?.uiRect as UIRect | undefined;
+        if (!parentRect || !oldRect) continue;
+        newParentObj.updateWorldMatrix(true, false);
+        const local = newParentObj.worldToLocal(center.clone());
+        const w = node as unknown as {
+          anchorMin: Vec2;
+          anchorMax: Vec2;
+          pivot: Vec2;
+          anchoredPosition: Vec2;
+          offsetMin: Vec2;
+          offsetMax: Vec2;
+          size: Vec2;
+        };
+        const fields = uiAnchorFieldsForRect(
+          parentRect,
+          {
+            anchorMin: w.anchorMin,
+            anchorMax: w.anchorMax,
+            pivot: w.pivot,
+            anchoredPosition: w.anchoredPosition,
+            offsetMin: w.offsetMin,
+            offsetMax: w.offsetMax,
+            size: w.size,
+          },
+          local.x,
+          local.y,
+          oldRect.w,
+          oldRect.h,
+        );
+        if (
+          vec2Near(fields.anchoredPosition, w.anchoredPosition) &&
+          vec2Near(fields.offsetMin, w.offsetMin) &&
+          vec2Near(fields.offsetMax, w.offsetMax)
+        ) {
+          continue; // 上下文未变，无需补偿
+        }
+        out.push({
+          id: m.id,
+          anchoredPosition: fields.anchoredPosition,
+          offsetMin: fields.offsetMin,
+          offsetMax: fields.offsetMax,
+        });
+        continue;
+      }
+
+      // 跨 UI 边界 / 画布内普通节点：transform.position 补偿（世界位置不变）
+      newParentObj.updateWorldMatrix(true, false);
+      const local = newParentObj.worldToLocal(center.clone());
+      const cur = node.transform.position;
+      if (
+        Math.abs(local.x - cur.x) < 1e-6 &&
+        Math.abs(local.y - cur.y) < 1e-6 &&
+        Math.abs(local.z - cur.z) < 1e-6
+      ) {
+        continue;
+      }
+      out.push({ id: m.id, position: { x: local.x, y: local.y, z: local.z } });
+    }
+    return out;
+  }
+
+  /** obj 是否处于画布子树内（自身或父链上有 uiCanvasNode） */
+  private isInCanvasSubtree(obj: THREE.Object3D | null): boolean {
+    let cur = obj;
+    while (cur) {
+      if (cur.userData?.nodeKind === "uiCanvasNode") return true;
+      cur = cur.parent;
+    }
+    return false;
   }
 
   renameSelected(name: string): void {
@@ -942,7 +1095,7 @@ export class EditorEngine {
 
   reparentSelected(newParentId: string | null): void {
     if (!this.selectedId) return;
-    this.graph.reparentNodes([{ id: this.selectedId, newParentId, newIndex: -1 }]);
+    this.reparentNodes([{ id: this.selectedId, newParentId, newIndex: -1 }]);
   }
 
   setTransform(nodeId: string, snap: TransformSnapshot): void {

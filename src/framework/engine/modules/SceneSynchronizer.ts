@@ -246,6 +246,11 @@ export class SceneSynchronizer {
     return this.objectMap;
   }
 
+  /** 场景根对象（无父节点的挂载点；换父位置补偿的世界坐标换算用） */
+  getSceneRoot(): THREE.Object3D {
+    return this.scene;
+  }
+
   rebuildAll(graph: GraphLike): void {
     this.objectMap.forEach((o: THREE.Object3D) => {
       o.parent?.remove(o);
@@ -1227,7 +1232,8 @@ export class SceneSynchronizer {
    * - 几何：PlaneGeometry(size.x, size.y)（设计尺寸，尺寸变化重建；拉伸锚点的
    *   实际矩形由 UISystem 每帧经对象 scale 缩放实现）；
    * - 材质：MeshBasicMaterial 透明 + 关深度测试/不写深度（UI 恒叠在场景之上，
-   *   叠加序由 renderOrder 决定：画布 SortOrder×1e4 + Widget SortOrder）；
+   *   叠加序由 renderOrder 决定：画布 SortOrder×1e7 + Widget SortOrder（含父链
+   *   累加）×1e4，由 UISystem 每帧合成）；
    * - 锚点字段：stamp 供 UISystem 每帧布局解析（resolveUIRect）；
    * - 图片：loadTexture 异步回填（带失效 token，过期回填丢弃）；
    * - 文本：2D 画布光栅化 CanvasTexture（样式签名变化重光栅化）；

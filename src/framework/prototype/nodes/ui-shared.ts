@@ -1,8 +1,8 @@
 // UI 系统（Canvas-Widget）共享类型与小工具：
 // - UI 空间：画布原点在屏幕中心，+x 右 +y 上，纵向可见范围恒为 [-UI_HALF_HEIGHT, +UI_HALF_HEIGHT]
 //   （透视相机按 fov 推距离、正交相机按缩放对齐，编辑器与运行时同一套数学，见 engine/modules/ui.ts）；
-// - 排序：Widget 的 sortOrder 与画布级 sortOrder 合成渲染序（renderOrder），
-//   画布整体先比、画布内 Widget 再比；同 SortOrder 按 Canvas 下节点顺序
+// - 排序：Widget 的渲染序（renderOrder）= 画布级 sortOrder + 父链 sortOrder
+//   累加（层级继承：改父值整棵子树随之移动）；同累加值按 Canvas 下节点顺序
 //   （树序 rank）稳定细分，越靠后的越在上层；都关深度测试按序叠加。
 
 /** UI 空间半高（UI 单位；屏幕纵向可见 10 个 UI 单位） */
@@ -41,9 +41,10 @@ export function clampUICanvasSortOrder(v: unknown, fallback = 0): number {
 }
 
 /** 合成渲染序：
- *  画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档）→ 树序 rank（同 SortOrder
- *  时按 Canvas 下的节点顺序，越靠后 rank 越大 → 越晚绘制 → 越在上层）。
- *  档位间距保证互不侵占：|widgetSort|×1e4+999 < 1e7。 */
+ *  画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档；widgetSortOrder 为自身
+ *  与父链祖先累加后的层级继承值）→ 树序 rank（同值时按 Canvas 下的节点顺序，
+ *  越靠后 rank 越大 → 越晚绘制 → 越在上层）。
+ *  档位间距保证互不侵占：|累加值|×1e4+999 < 1e7（累加结果经 clamp 收敛 ±999）。 */
 export function uiRenderOrder(canvasSortOrder: number, widgetSortOrder: number, treeRank = 0): number {
   return (
     UI_RENDER_ORDER_BASE +
@@ -263,6 +264,53 @@ export function uiInverseAnchoredPosition(
       ? cy - (pMinY + aMinY * parent.h) - (0.5 - clamp01(a.pivot.y)) * Math.max(0.01, a.size.y)
       : null;
   return { x, y };
+}
+
+/**
+ * 锚点字段整体反解（换父位置补偿用）：给定「父局部空间中的期望解析矩形」
+ * （中心 cx/cy + 解析尺寸 w/h），按锚点/枢轴反推字段值——点锚轴 → anchoredPosition
+ * 分量（与 uiInverseAnchoredPosition 同式，尺寸取期望值）；拉伸轴 → offsetMin/
+ * offsetMax 分量（由期望矩形两缘反推边距）；点锚轴的 offset 分量与拉伸轴的
+ * anchoredPosition 分量不参与解析，原样带回。
+ * 用返回值整体替换三个字段后，resolveUIRect 在同一父矩形上解析出期望矩形。
+ */
+export function uiAnchorFieldsForRect(
+  parent: UIRect,
+  a: UIAnchorInput,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+): { anchoredPosition: Vec2; offsetMin: Vec2; offsetMax: Vec2 } {
+  const pMinX = parent.cx - parent.w / 2;
+  const pMinY = parent.cy - parent.h / 2;
+  const aMinX = clamp01(a.anchorMin.x);
+  const aMaxX = clamp01(a.anchorMax.x);
+  const aMinY = clamp01(a.anchorMin.y);
+  const aMaxY = clamp01(a.anchorMax.y);
+  const sizeW = Math.max(0.01, w);
+  const sizeH = Math.max(0.01, h);
+
+  const anchoredPosition = vec2(a.anchoredPosition.x, a.anchoredPosition.y);
+  const offsetMin = vec2(a.offsetMin.x, a.offsetMin.y);
+  const offsetMax = vec2(a.offsetMax.x, a.offsetMax.y);
+
+  if (aMaxX - aMinX < 1e-6) {
+    anchoredPosition.x = cx - (pMinX + aMinX * parent.w) - (0.5 - clamp01(a.pivot.x)) * sizeW;
+  } else {
+    const left = cx - sizeW / 2;
+    offsetMin.x = left - (pMinX + aMinX * parent.w);
+    offsetMax.x = pMinX + aMaxX * parent.w - (left + sizeW);
+  }
+  if (aMaxY - aMinY < 1e-6) {
+    anchoredPosition.y = cy - (pMinY + aMinY * parent.h) - (0.5 - clamp01(a.pivot.y)) * sizeH;
+  } else {
+    const bottom = cy - sizeH / 2;
+    offsetMin.y = bottom - (pMinY + aMinY * parent.h);
+    offsetMax.y = pMinY + aMaxY * parent.h - (bottom + sizeH);
+  }
+
+  return { anchoredPosition, offsetMin, offsetMax };
 }
 
 // ---------------------------------------------------------------------------

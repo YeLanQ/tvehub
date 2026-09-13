@@ -392,8 +392,9 @@ export interface CameraNodePrototypeDoc extends NodePrototypeDoc {
 // 定位：Widget 位置由锚点系统在每帧布局解析中推导（ui-shared resolveUIRect），
 // 画布子树内节点的 transform.position 不直接生效（旧数据迁移：无锚点字段时取原
 // transform.position 作中心锚点下的 anchoredPosition，视觉位置不变）。
-// 排序：渲染序 = 画布 sortOrder（×1e7）+ Widget sortOrder（×1e4）+ 树序 rank，
-// 材质统一关深度测试，按渲染序从小到大叠加（大 SortOrder 在上层）。
+// 排序：渲染序 = 画布 sortOrder（×1e7）+ Widget sortOrder（×1e4；自身 + 父链祖先
+// 累加，层级继承：改父值整棵子树随之移动）+ 树序 rank，材质统一关深度测试，
+// 按渲染序从小到大叠加（大 SortOrder 在上层）。
 // ---------------------------------------------------------------------------
 
 /** UI 缩放模式（画布设计矩形映射到屏幕矩形的适配策略；与项目设置 scaleMode 同名集） */
@@ -488,7 +489,7 @@ export interface UICanvasNodePrototypeDoc extends NodePrototypeDoc {
  * 结构：
  * ```
  * UIWidgetNode extends Node {
- *   sortOrder: number        // 画布内叠加序（-999..999；大者在上）
+ *   sortOrder: number        // 叠加序（-999..999；层级继承，大者在上）
  *   size: Vec2               // 设计尺寸（UI 单位；点锚点轴生效）
  *   + UIAnchorFieldsDoc      // 锚点字段集
  * }
@@ -498,10 +499,12 @@ export interface UIWidgetPrototypeDoc extends NodePrototypeDoc, UIAnchorFieldsDo
   type: "uiImageNode" | "uiTextNode" | "uiButtonNode" | "uiLayoutNode";
 
   /**
-   * 画布内叠加序（-999..999）
+   * 叠加序（-999..999；层级继承）
    *
-   * 同一画布内 sortOrder 大的 Widget 叠在上层（点击命中也取最上层）；
-   * 同 SortOrder 按画布下节点顺序（树序）稳定细分，越靠后越在上层
+   * 渲染时沿父链累加（自身 + 全部祖先的 sortOrder）：修改父节点的排序值，
+   * 整棵子树作为整体上下移动；子节点仍可用自身值在父级范围内微调
+   * （点击命中也取最上层）；同累加值按画布下节点顺序（树序）稳定细分，
+   * 越靠后越在上层
    */
   sortOrder: number;
 

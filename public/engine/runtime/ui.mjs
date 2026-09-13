@@ -50,8 +50,8 @@ function clampCanvasSort(v, fallback = 0) {
   return Math.min(500, Math.max(-500, n));
 }
 
-/** 合成渲染序：画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档）→ 树序 rank
- *  （同 SortOrder 按 Canvas 下节点顺序，越靠后越在上层）——与编辑器同公式 */
+/** 合成渲染序：画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档；祖先链累加的
+ *  层级继承值）→ 树序 rank（同值按 Canvas 下节点顺序，越靠后越在上层）——与编辑器同公式 */
 export function uiRenderOrder(canvasSortOrder, widgetSortOrder, treeRank = 0) {
   return (
     UI_RENDER_ORDER_BASE +
@@ -501,9 +501,15 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   function applyOrder(w) {
     const root = nearestRoot(w.obj);
     w.root = root;
+    // 层级继承：自身 + 父链祖先 sortOrder 累加（改父值整棵子树随之移动），与编辑器同公式
+    let sort = clampSort(w.json.sortOrder, 0);
+    for (let cur = w.obj.parent; cur && cur !== root; cur = cur.parent) {
+      const ancestor = cur.userData?.nodeId != null ? byId.get(cur.userData.nodeId) : undefined;
+      if (ancestor) sort += clampSort(ancestor.json.sortOrder, 0);
+    }
     const order = uiRenderOrder(
       root ? root.userData.uiCanvasSort : 0,
-      clampSort(w.json.sortOrder, 0),
+      sort,
       w.obj.userData?.uiTreeRank ?? 0,
     );
     w.obj.renderOrder = order;

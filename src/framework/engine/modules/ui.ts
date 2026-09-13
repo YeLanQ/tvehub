@@ -13,8 +13,9 @@
 //   anchoredPosition、拉伸锚点用 offset 边距；布局容器再按 horizontal/vertical/
 //   grid 排列其直接子 UI 节点）——子节点的 transform.position 不再直接生效。
 // - Widget（uiImageNode/uiTextNode/uiButtonNode）材质统一：透明 + 关深度测试 +
-//   不写深度 + frustumCulled 关；渲染序 = UI_RENDER_ORDER_BASE + 画布 sortOrder×1e4
-//   + Widget sortOrder —— SortOrder 决定画布上 UI 节点的叠加顺序（大者在上）。
+//   不写深度 + frustumCulled 关；渲染序 = UI_RENDER_ORDER_BASE + 画布 sortOrder×1e7
+//   + Widget sortOrder（自身 + 父链祖先累加，层级继承，改父值整棵子树移动）×1e4
+//   —— SortOrder 决定画布上 UI 节点的叠加顺序（大者在上）。
 // - 编辑视口两种形态（运行时导出物恒为"场景 + UI 叠加"）：
 //   - 场景视图：画布整体隐藏（点选同规则）；
 //   - 布局视图：UI 独占渲染——除画布祖先链与 gizmo 外的顶层子树临时隐藏，
@@ -23,6 +24,7 @@
 import * as THREE from "three";
 import {
   UI_HALF_HEIGHT,
+  clampUISortOrder,
   uiFontSizeToUnits,
   uiRenderOrder,
   pxToUnits,
@@ -169,6 +171,34 @@ export function nearestUICanvasRoot(obj: THREE.Object3D | null): THREE.Object3D 
     cur = cur.parent;
   }
   return null;
+}
+
+/** 位置由锚点/布局解析托管的节点类型（Widget + 布局容器；与运行时 UI_POSITION_KINDS 同名集） */
+export const UI_POSITION_KINDS = new Set<string>([
+  "uiImageNode",
+  "uiTextNode",
+  "uiButtonNode",
+  "uiLayoutNode",
+]);
+
+/**
+ * parent 的矩形在「parent 自身局部空间」的表示（原点 = 矩形中心）——锚点
+ * 正/反解（resolveUIRect / uiInverseAnchoredPosition）需要的坐标系。
+ * userData.uiRect 的存储语义按节点类型分三种，在此统一归一化：
+ * - 托管 Widget/布局容器：存的是自身矩形在父局部空间的坐标（resolveSubtree
+ *   递归值），自身空间表示恒为 {0,0,w,h}；
+ * - 画布根：存的就是自身空间表示，原样返回；
+ * - 普通容器：存的是祖先矩形（未按自身位置平移），减去自身位置得自身空间表示。
+ */
+export function uiParentRectInOwnSpace(parent: THREE.Object3D | null): UIRect | null {
+  const rect = parent?.userData?.uiRect as UIRect | undefined;
+  if (!rect || !parent) return null;
+  const kind = parent.userData?.nodeKind as string | undefined;
+  if (kind !== undefined && UI_POSITION_KINDS.has(kind)) {
+    return { cx: 0, cy: 0, w: rect.w, h: rect.h };
+  }
+  if (kind === "uiCanvasNode") return rect;
+  return { cx: rect.cx - parent.position.x, cy: rect.cy - parent.position.y, w: rect.w, h: rect.h };
 }
 
 /** 父链上是否还有其它画布（嵌套画布不作叠加根） */
@@ -478,12 +508,16 @@ export class UISystem {
     for (const child of hidden) child.visible = true;
   }
 
-  /** 合成渲染序：画布 sortOrder（父链最近画布根上标注）×1e7 + Widget sortOrder×1e4
-   *  + 树序 rank（布局解析时先序编排；同 SortOrder 越靠后越在上层） */
+  /** 合成渲染序：画布 sortOrder（父链最近画布根上标注）×1e7 + Widget sortOrder
+   *  （层级继承：自身 + 父链祖先累加，改父值整棵子树随之移动）×1e4 + 树序 rank
+   *  （布局解析时先序编排；同累加值越靠后越在上层） */
   private applyRenderOrder(widget: THREE.Object3D): void {
     const canvas = nearestUICanvasRoot(widget);
     const canvasSort = typeof canvas?.userData?.uiCanvasSort === "number" ? canvas.userData.uiCanvasSort : 0;
-    const sort = typeof widget.userData?.uiSort === "number" ? widget.userData.uiSort : 0;
+    let sort = typeof widget.userData?.uiSort === "number" ? widget.userData.uiSort : 0;
+    for (let cur = widget.parent; cur && cur !== canvas; cur = cur.parent) {
+      sort += clampUISortOrder(cur.userData?.uiSort);
+    }
     const rank = typeof widget.userData?.uiTreeRank === "number" ? widget.userData.uiTreeRank : 0;
     const order = uiRenderOrder(canvasSort, sort, rank);
     widget.renderOrder = order;

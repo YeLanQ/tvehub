@@ -69,8 +69,8 @@ const emitUnits = (label: string, px: number): void => emit("update", label, pxT
       </div>
     </div>
     <div class="field">
-      <label title="Sort Order（同画布内大者在上；点击命中也按此取最上层）">Sort Order</label>
-      <NumberField :model-value="sortOrder" :step="1" :min="-999" :max="999" title="画布内叠加序（大者在上）" @commit="(v) => emit('update', 'sortOrder', v)" />
+      <label title="Sort Order（层级继承：子孙随父级累加，改父值整棵子树移动；点击命中取最上层）">Sort Order</label>
+      <NumberField :model-value="sortOrder" :step="1" :min="-999" :max="999" title="叠加序（大者在上；子孙随父级累加）" @commit="(v) => emit('update', 'sortOrder', v)" />
     </div>
     <div class="hint">位置/尺寸按 100px = 1 单位换算；拉伸锚点轴的位置/尺寸由父矩形与边距推导</div>
   </div>
