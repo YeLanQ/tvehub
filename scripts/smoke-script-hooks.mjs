@@ -132,7 +132,16 @@ host.dispose();
 host.dispose();
 ok(true, "dispose 重复调用安全");
 
-// ⑧ 空场景宿主：noop 形态含全部驱动入口
+// ⑧ getComponent(类名) 查找脚本组件（state.resolveScriptInstance 槽位接线回归：
+//    漏接线会让按类名/源路径查找脚本组件永远返回 null）
+const tv = await import(core("tve.mjs"));
+const entOk = tv.getEntity(nodes[0].obj);
+const entBroken = tv.getEntity(nodes[1].obj);
+ok(entOk?.getComponent("HooksOk") != null, "getComponent(类名) 命中已挂载脚本组件");
+ok(entBroken?.getComponent("HooksBroken") != null, "getComponent(类名) 对另一实例同样命中");
+ok(entOk?.getComponent("HooksBroken") == null, "getComponent(类名) 不串其他实例");
+
+// ⑨ 空场景宿主：noop 形态含全部驱动入口
 const empty = await createScripts({ ...opts, nodes: [] });
 ok(
   typeof empty.fixedUpdate === "function" && typeof empty.update === "function" &&

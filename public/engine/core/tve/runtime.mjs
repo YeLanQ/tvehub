@@ -31,6 +31,11 @@ export function registerComponent(nodeId, instance, scriptRel) {
   list.push(instance);
 }
 
+// entity.mjs 的 getComponent(类名字符串) 经 state 槽位调用本函数
+//（与 component-registry.mjs 的 builtinTypeKeyOf 等接线同一模式）——
+// 漏接线会让按脚本类名/源路径查找组件永远返回 null
+state.resolveScriptInstance = resolveScriptInstance;
+
 /** 脚本类注册（宿主在脚本模块加载后调用；路径与类名双键，类名先到先得） */
 export function registerScriptClass(srcRel, klass) {
   if (typeof srcRel !== "string" || !srcRel || typeof klass !== "function") return;
