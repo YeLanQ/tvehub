@@ -66,6 +66,8 @@ export interface ScriptsStore {
   deleteScript(rel: string): Promise<boolean>;
   /** 检查器用：按需读取并解析脚本 props 声明（缓存） */
   propsSchemaFor(rel: string): Promise<ScriptPropDef[] | null>;
+  /** 按需读取脚本进缓存（不打开标签页；Monaco 模型镜像/跨文件智能提示用） */
+  ensureCached(rel: string): Promise<ScriptFileState | undefined>;
   /** 节点类型清单：声明了 static nodeType/@nodeType 的脚本（层级/资源面板创建入口数据） */
   scriptNodeTypes(): { rel: string; name: string; nodeType: ScriptNodeType }[];
   /** 预读全部 src/ 脚本并解析元数据（面板挂载时预热 nodeType/props 缓存） */
@@ -262,6 +264,9 @@ export function getScriptsStore(): ScriptsStore {
     async propsSchemaFor(rel) {
       const st = await ensureLoaded(rel);
       return st?.propsSchema ?? null;
+    },
+    async ensureCached(rel) {
+      return (await ensureLoaded(rel)) ?? undefined;
     },
     scriptNodeTypes() {
       const out: { rel: string; name: string; nodeType: ScriptNodeType }[] = [];

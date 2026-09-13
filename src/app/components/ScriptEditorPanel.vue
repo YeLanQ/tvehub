@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // 脚本模式工作台：Monaco 标签页编辑器 + 状态栏（保存 = 写盘 + 内存编译 + props 解析）。
+// 附带类型自动导入（auto-import）与全项目脚本模型镜像（model-sync）：
+// 输入引擎/脚本导出名即建议「自动导入」，接受时自动写入/合并 import 语句。
 // 脚本的打开/新建入口在资产面板（双击 .ts 进入本视图；src 目录右键「新建脚本」）
 // 与检查器（添加脚本组件菜单可新建）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -8,6 +10,8 @@ import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { confirm } from "../lib/confirm";
 import { loadMonaco, ensureScriptModel, type MonacoNamespace } from "./script-editor/monaco-setup";
+import { setupScriptIntellisense } from "./script-editor/auto-import";
+import { startScriptModelSync } from "./script-editor/model-sync";
 import "../../styles/components/script-editor.scss";
 
 const scriptsStore = getScriptsStore();
@@ -51,6 +55,10 @@ onMounted(async () => {
   try {
     const m = await loadMonaco();
     monaco.value = m;
+    // 类型自动导入补全 + 全项目脚本模型镜像（跨文件智能提示/自动导入的地基）；
+    // 两者进程内幂等，面板反复挂载/卸载安全
+    setupScriptIntellisense(m);
+    startScriptModelSync(m);
     await nextTick();
     if (!containerEl.value) return;
     editor = m.editor.create(containerEl.value, {
