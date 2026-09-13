@@ -137,6 +137,139 @@ sk.ensureGraph(graph);
 
 条件操作符：`> < >= <= == !=`；布尔参数按 0/1 参与数值比较。过渡缺省交叉淡化 0.25 秒；`exitTime` 为归一化退出时间 0..1（>0 表示源状态播放到该进度才允许过渡）。
 
+### 蒙皮完全控制（动作混合 / 加法层 / 骨骼 / 形态键 / IK）
+
+对应 three 官网 `animation/skinning` 系列示例（blending / morph / additive_blending / ik）的完整能力面。除 `anim`/`animGraph` 设置外全部为**运行时控制，不写入场景数据**。
+
+```ts
+// —— 动作级：权重混合 / 淡入淡出（blending 示例）——
+sk.setWeight("Walk", 0.6);        // 动作权重（确保在播；0 即静默层）
+sk.getWeight("Walk");             // 当前有效权重（含淡入淡出实时值）
+sk.fadeIn("Run", 0.25);           // 权重 0→1 淡入
+sk.fadeOut("Idle", 0.25);         // 权重→0 淡出
+sk.crossFade("Walk", "Run", 0.35, true); // warp=true 自动对齐两动作相位
+sk.setActionSpeed("Run", 1.2);    // 单动作速度（与 globalSpeed 相乘）
+sk.setActionLoop("Jump", "once"); // "loop"|"once"|"pingpong"（once 定格末帧）
+sk.stopAction("Walk");            // 停单个动作（不影响其他混合层）
+sk.globalSpeed(0.5);              // 全局播放速度（mixer 速度）
+sk.playOneShot("Wave", 0.25);     // 一次性动作：定格末帧后自动淡回基础动作
+sk.onFinished(({ clip }) => {});  // 动作播完事件（返回注销函数）
+sk.onLoop(({ clip }) => {});      // 动作循环事件
+
+// —— 加法层（additive_blending 示例）——
+sk.playAdditive("SneakPose", 0.7); // 惰性 makeClipAdditive 后以差值叠加在基础动作上
+sk.stopAdditive("SneakPose");
+
+// —— 骨骼级 ——
+sk.skinInfo;                      // {boneCount, boneNames, morphMeshes}
+sk.bones;                         // 骨骼名列表
+sk.boneHierarchy;                 // [{name, parent, children}]
+sk.getBoneTransform("Head_4");    // {position, rotation(度), scale}
+sk.setBoneRotation("Head_4", 0, 25, 0);   // 度制欧拉
+sk.setBonePosition("Head_4", 0, 0.1, 0);
+sk.resetBone("Head_4");           // 复位单骨（加载姿势快照）
+sk.resetPose();                   // 复位全部骨骼
+sk.getBoneWorldPosition("Head_4"); // 世界坐标（瞄准/挂点参考）
+
+// —— 形态键（morph 示例）——
+sk.morphs;                        // [{mesh, targets}]
+sk.setMorphWeight("", "Angry", 0.8); // mesh 传 "" 取首个含该目标的网格
+sk.getMorphWeight("Head_4", "Angry");
+
+// —— IK（skinning_ik 示例，CCD 求解；每帧在动画之后求解）——
+const id = sk.addIK({
+  name: "左手",
+  effector: "hand_l",             // 末端效应器骨骼名
+  links: [                        // 关节链：从效应器父级向根方向
+    { bone: "lowerarm_l", rotationMin: [0, -90, -30], rotationMax: [15, -60, 0] },
+    { bone: "Upperarm_l" },
+  ],
+  iteration: 3,
+});
+sk.setIKTargetPosition(id, 0.3, 1.2, 0.4); // 目标点（模型根局部空间）
+sk.setIKEnabled(id, false);       // 启停
+sk.removeIK(id);
+sk.iks;                           // [{id, name, effector, enabled}]
+```
+
+骨骼写入的生效时机：动画动作播放中，mixer 每帧覆写被驱动骨骼——手动骨骼写入适用于暂停/未被驱动的骨骼，或需要每帧覆写的场景（IK/头部朝向）。
+
+### 骨骼/IK 目标绑定（物体跟随骨骼）
+
+把场景节点绑到骨骼或 IK 目标上，每帧跟随（对应官方 ik 示例中目标点与挂体的跟随语义）：
+
+```ts
+sk.attachToBone(box, "hand_r");          // Entity 或节点 id；骨骼名（IK id / IK 名也可）
+sk.attachToBone(box, "hand_r", { keepOffset: false }); // 对象原点对齐骨骼原点
+sk.attachToBone(box, "ik1");             // 绑到 IK 目标点（目标移动 → 物体跟随）
+sk.detach(box);                          // 解除绑定
+sk.attachments;                          // [{node, bone, syncRotation, syncScale, keepOffset}]
+```
+
+选项（`BoneAttachOptions`）：
+
+| 选项 | 缺省 | 说明 |
+| --- | --- | --- |
+| `keepOffset` | `true` | 保持 attach 时刻的相对位姿（骨骼带动下刚性跟随）；`false` = 对象原点对齐骨骼原点 |
+| `syncRotation` | `true` | 跟随骨骼旋转；`false` = 仅锚点位置跟随，姿态自主控制 |
+| `syncScale` | `false` | 跟随骨骼缩放 |
+
+约束：目标节点须在该模型子树之外（骨骼世界矩阵依赖树外对象才无反馈环）；跟随发生在动画与 IK 求解之后，每帧应用。
+
+两条写入路径：**编辑器皮肤面板**的绑定写入节点 `boneBindings` 数据（随场景保存，预览/发布自动生效，可撤销）；脚本 `attachToBone` 为运行时叠加（不落盘，适合按玩法动态挂接）。
+
+**示例：表情一次性播放，播完自动回落（morph 模式）**
+
+```ts
+import { Component, property, engine, SkeletalAnimation } from "tve";
+
+export default class Emotes extends Component {
+  @property({ type: SkeletalAnimation })
+  skel!: SkeletalAnimation;
+
+  onStart() {
+    this.skel.play("Idle"); // 基础状态持续循环
+    // 3 秒后挥手：定格末帧，自动淡回 Idle
+    setTimeout(() => {
+      this.skel.playOneShot("Wave", 0.25);
+      this.skel.onFinished(({ clip }) => engine.log(`回落：${clip} 播完`));
+    }, 3000);
+  }
+}
+```
+
+**示例：手臂 IK 跟随目标点（ik 模式）**
+
+```ts
+import { Component, property, SkeletalAnimation } from "tve";
+
+export default class HandIK extends Component {
+  @property({ type: SkeletalAnimation })
+  skel!: SkeletalAnimation;
+
+  ikId: string | null = null;
+  t = 0;
+
+  onStart() {
+    this.skel.play("Idle");
+    this.ikId = this.skel.addIK({
+      effector: "hand_l",
+      links: [{ bone: "lowerarm_l" }, { bone: "Upperarm_l" }],
+    });
+  }
+
+  onUpdate(delta: number) {
+    if (!this.ikId) return;
+    this.t += delta;
+    // 目标点绕圈（模型根局部空间），手臂持续跟随
+    this.skel.setIKTargetPosition(
+      this.ikId,
+      Math.cos(this.t * 2) * 0.4, 1.2, 0.4 + Math.sin(this.t * 2) * 0.2,
+    );
+  }
+}
+```
+
 ## addComponent 创建参数速查
 
 | 组件 | 参数 |

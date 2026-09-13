@@ -219,3 +219,45 @@ export function parseClipSettings(v: unknown): AnimClipSettings {
     loop: LOOP_MODES.includes(o.loop as AnimLoopMode) ? (o.loop as AnimLoopMode) : "loop",
   };
 }
+
+/** 骨骼/IK 目标绑定（MeshNode.boneBindings 的形状；随场景持久化） */
+export interface BoneBindingSpec {
+  /** 目标节点 id（须在模型子树之外） */
+  target: string;
+  /** 骨骼名 / IK id / IK 名（IK 目标运行时解析） */
+  bone: string;
+  /** 保持绑定时刻的相对位姿（false = 对象原点对齐骨骼原点） */
+  keepOffset: boolean;
+  /** 跟随骨骼旋转（false = 仅锚点位置跟随） */
+  syncRotation: boolean;
+  /** 跟随骨骼缩放 */
+  syncScale: boolean;
+}
+
+/** 深拷贝绑定列表（编辑器改绑前的工作副本 / 节点克隆） */
+export function cloneBoneBindings(list: BoneBindingSpec[]): BoneBindingSpec[] {
+  return list.map((b) => ({ ...b }));
+}
+
+/** 任意来源 → 收敛的绑定列表（同目标去重保序、字段收敛；缺失布尔回退默认） */
+export function parseBoneBindings(v: unknown): BoneBindingSpec[] {
+  if (!Array.isArray(v)) return [];
+  const out: BoneBindingSpec[] = [];
+  const seen = new Set<string>();
+  for (const item of v) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const target = str(o.target);
+    const bone = str(o.bone);
+    if (!target || !bone || seen.has(target)) continue;
+    seen.add(target);
+    out.push({
+      target,
+      bone,
+      keepOffset: bool(o.keepOffset, true),
+      syncRotation: bool(o.syncRotation, true),
+      syncScale: bool(o.syncScale, false),
+    });
+  }
+  return out;
+}

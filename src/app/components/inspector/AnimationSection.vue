@@ -11,6 +11,7 @@ import type { AnimGraph } from "../../../framework/animation";
 import { getEditorStore } from "../../stores/editor";
 import NumberField from "../NumberField.vue";
 import AnimGraphSection from "./AnimGraphSection.vue";
+import SkinFields from "./SkinFields.vue";
 
 const props = defineProps<{ node: MeshNode; rev?: number }>();
 
@@ -33,6 +34,15 @@ const modelError = computed(() => {
 });
 /** 可选剪辑（未就绪为空数组；下拉保留当前值兜底） */
 const clips = computed(() => modelMeta.value?.clips ?? []);
+
+/** 蒙皮能力（骨骼/形态键；模型实例就绪后非 null）——决定皮肤调试面板挂载 */
+const skin = computed(() => {
+  void props.rev;
+  return engine.animation.skinInfoOf(props.node.id);
+});
+const hasSkin = computed(
+  () => !!modelMeta.value && (modelMeta.value.hasSkeleton || (skin.value?.morphMeshes ?? 0) > 0),
+);
 
 /** 模式：图 > 单剪辑 > 关闭 */
 const mode = computed<"off" | "clip" | "graph">(() => {
@@ -173,6 +183,9 @@ function rtStop(): void {
       :clips="clips"
       @updateGraph="(g) => emit('updateGraph', g)"
     />
+
+    <!-- 皮肤调试面板（骨骼/形态键/动作权重/IK；运行时控制不落盘） -->
+    <SkinFields v-if="hasSkin" :node="node" :rev="rev" :clips="clips" />
   </div>
 </template>
 

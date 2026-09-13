@@ -1434,6 +1434,96 @@ export interface AnimGraphDef {
   params?: Record<string, number | boolean>;
 }
 
+// —— 蒙皮控制类型（对应 three 官网 animation/skinning 系列示例）——
+
+/** 骨骼本地变换快照（rotation 为度制欧拉，与节点 transform 同度制） */
+export interface BoneTransform {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+}
+
+/** 骨骼层级条目（parent 为骨骼名，根骨骼为 null） */
+export interface BoneHierarchyEntry {
+  name: string;
+  parent: string | null;
+  children: string[];
+}
+
+/** 形态键分组（某网格的全部形态键名） */
+export interface MorphGroup {
+  /** 网格名（未命名网格自动编号 mesh0/mesh1…） */
+  mesh: string;
+  /** 形态键名列表（权重按名读写） */
+  targets: string[];
+}
+
+/** 蒙皮能力摘要 */
+export interface SkinInfo {
+  boneCount: number;
+  boneNames: string[];
+  /** 含形态键的网格数 */
+  morphMeshes: number;
+}
+
+/** IK 链关节（effector → 根方向的逐级骨骼；rotationMin/Max 为度制欧拉数组） */
+export interface IKLinkDef {
+  /** 关节骨骼名 */
+  bone: string;
+  /** 旋转下限 [x,y,z]（度；缺省不限） */
+  rotationMin?: number[];
+  /** 旋转上限 [x,y,z]（度；缺省不限） */
+  rotationMax?: number[];
+  /** 是否启用该关节（缺省 true） */
+  enabled?: boolean;
+}
+
+/** IK 链定义（CCD 求解；目标点由引擎创建并挂模型根下——局部空间） */
+export interface IKDef {
+  /** 可选名称（缺省同 id） */
+  name?: string;
+  /** 末端效应器骨骼名（必填） */
+  effector: string;
+  /** 关节链（从效应器的父级向根方向排列） */
+  links?: IKLinkDef[];
+  /** 每帧 CCD 迭代次数（缺省 1） */
+  iteration?: number;
+}
+
+/** IK 链运行态条目 */
+export interface IKEntry {
+  id: string;
+  name: string;
+  effector: string;
+  enabled: boolean;
+}
+
+/** 骨骼绑定选项（attachToBone 用） */
+export interface BoneAttachOptions {
+  /** 保持 attach 时刻的相对位姿（缺省 true；false = 对象原点对齐骨骼原点） */
+  keepOffset?: boolean;
+  /** 跟随骨骼旋转（缺省 true；false = 仅锚点位置跟随，姿态自主控制） */
+  syncRotation?: boolean;
+  /** 跟随骨骼缩放（缺省 false） */
+  syncScale?: boolean;
+}
+
+/** 骨骼绑定运行态条目 */
+export interface BoneAttachmentEntry {
+  /** 目标节点 id */
+  node: string;
+  /** 骨骼名 / IK id / IK name */
+  bone: string;
+  syncRotation: boolean;
+  syncScale: boolean;
+  keepOffset: boolean;
+}
+
+/** 动画事件负载（finished/loop 回调参数） */
+export interface AnimEventPayload {
+  clip: string;
+}
+
 /**
  * 骨骼动画（模型内嵌动画）门面：单剪辑 anim / 动画图 animGraph 的运行期视图。
  * 仅模型网格节点（source=model）拥有绑定；图模式下 play(状态名) 切换状态，
@@ -1490,6 +1580,89 @@ export declare class SkeletalAnimation {
   addTransition(transition: AnimTransitionDef): boolean;
   /** 移除过渡（按 id） */
   removeTransition(id: string): boolean;
+
+  // —— 蒙皮完全控制（运行时控制不落盘；对应 three 官网 skinning 示例）——
+
+  /** 蒙皮能力摘要（{boneCount, boneNames, morphMeshes}；未绑定模型 null） */
+  readonly skinInfo: SkinInfo | null;
+
+  /** 动作权重（确保动作在播；0 即静默层。与 play/stop 的 currentClip 语义独立） */
+  setWeight(clip: string, w: number): boolean;
+  /** 动作当前有效权重（淡入淡出进行中的实时值；未命中 null） */
+  getWeight(clip: string): number | null;
+  /** 权重 0→1 淡入（缺省 0.25 秒） */
+  fadeIn(clip: string, dur?: number): boolean;
+  /** 权重→0 淡出（动作本身不停止） */
+  fadeOut(clip: string, dur?: number): boolean;
+  /** 交叉淡化 from→to（warp=true 自动对齐两动作相位） */
+  crossFade(from: string, to: string, dur?: number, warp?: boolean): boolean;
+  /** 单动作播放速度（与 globalSpeed 相乘生效） */
+  setActionSpeed(clip: string, scale: number): boolean;
+  /** 单动作循环模式（"loop"/"once"/"pingpong"；once 定格末帧） */
+  setActionLoop(clip: string, mode: AnimLoopMode): boolean;
+  /** 停止单个动作（不影响其他混合层） */
+  stopAction(clip: string): boolean;
+  /** 一次性动作：定格末帧后自动淡回基础动作（表情/挥手等，缺省 0.25 秒过渡） */
+  playOneShot(clip: string, fade?: number): boolean;
+  /** 全局播放速度（mixer 速度，影响全部动作） */
+  globalSpeed(scale: number): boolean;
+  /** 订阅动作播完事件（LoopOnce 到达末帧；负载 {clip}），返回注销函数 */
+  onFinished(cb: (e: AnimEventPayload) => void): () => void;
+  /** 订阅动作循环事件（负载 {clip}），返回注销函数 */
+  onLoop(cb: (e: AnimEventPayload) => void): () => void;
+
+  /** 以加法混合叠加播放剪辑（权重独立于基础层；未转换剪辑惰性 makeClipAdditive） */
+  playAdditive(clip: string, weight?: number): boolean;
+  /** 停止加法层动作 */
+  stopAdditive(clip: string): boolean;
+
+  /** 骨骼名列表（无骨骼返回 []） */
+  readonly bones: string[];
+  /** 骨骼层级（[{name,parent,children}]） */
+  readonly boneHierarchy: BoneHierarchyEntry[];
+  /** 骨骼本地变换快照（未命中 null） */
+  getBoneTransform(name: string): BoneTransform | null;
+  /** 骨骼本地位移。注意：动作播放中 mixer 每帧覆写被驱动骨骼；手动写入适用于
+   *  暂停/未被驱动的骨骼，或每帧覆写场景（IK/朝向） */
+  setBonePosition(name: string, x: number, y: number, z: number): boolean;
+  /** 骨骼本地旋转（度制欧拉） */
+  setBoneRotation(name: string, x: number, y: number, z: number): boolean;
+  /** 骨骼本地缩放 */
+  setBoneScale(name: string, x: number, y: number, z: number): boolean;
+  /** 复位单个骨骼到绑定姿势 */
+  resetBone(name: string): boolean;
+  /** 复位全部骨骼到绑定姿势 */
+  resetPose(): boolean;
+  /** 骨骼世界坐标（未命中 null） */
+  getBoneWorldPosition(name: string): Vec3 | null;
+
+  /** 形态键清单（[{mesh, targets}]） */
+  readonly morphs: MorphGroup[];
+  /** 形态键权重写入（0..1；mesh 传 "" 取首个含该目标的网格） */
+  setMorphWeight(mesh: string, target: string, v: number): boolean;
+  /** 形态键权重读取（未命中 null） */
+  getMorphWeight(mesh: string, target: string): number | null;
+
+  /** 注册 IK 链（目标点挂模型根下局部空间；成功返回 IK id，失败 null） */
+  addIK(def: IKDef): string | null;
+  /** 移除 IK（solver 不再更新） */
+  removeIK(id: string): boolean;
+  /** IK 启停 */
+  setIKEnabled(id: string, v: boolean): boolean;
+  /** 目标点位置（模型根局部空间） */
+  setIKTargetPosition(id: string, x: number, y: number, z: number): boolean;
+  /** 目标点位置读取（未命中 null） */
+  getIKTargetPosition(id: string): Vec3 | null;
+  /** IK 清单（[{id,name,effector,enabled}]） */
+  readonly iks: IKEntry[];
+
+  /** 把场景节点绑到骨骼/IK 目标上每帧跟随（target 为 Entity 或节点 id，须在模型
+   *  子树之外；bone 传骨骼名、IK id 或 IK name；见 BoneAttachOptions） */
+  attachToBone(target: Entity | string, bone: string, opts?: BoneAttachOptions): boolean;
+  /** 解除节点绑定（target 为 Entity 或节点 id） */
+  detach(target: Entity | string): boolean;
+  /** 绑定清单（[{node, bone, syncRotation, syncScale, keepOffset}]） */
+  readonly attachments: BoneAttachmentEntry[];
 }
 
 // —— addComponent 创建参数 ——

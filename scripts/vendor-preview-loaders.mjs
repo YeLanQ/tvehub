@@ -33,6 +33,7 @@ const FILES = [
   { src: "libs/fflate.module.js", rewrites: {} },
   { src: "curves/NURBSCurve.js", rewrites: { "../curves/NURBSUtils.js": "./NURBSUtils.js" } },
   { src: "curves/NURBSUtils.js", rewrites: {} },
+  { src: "animation/CCDIKSolver.js", rewrites: {} },
 ];
 
 const header = (src) =>

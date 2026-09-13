@@ -6,10 +6,13 @@ import type { MeshSourceKind } from "../../mesh/types";
 import type { GeometryKind } from "../../mesh/geometry";
 import {
   cloneAnimGraph,
+  cloneBoneBindings,
   parseAnimGraph,
+  parseBoneBindings,
   parseClipSettings,
   type AnimClipSettings,
   type AnimGraph,
+  type BoneBindingSpec,
 } from "../../animation";
 
 export type { GeometryKind };
@@ -27,6 +30,8 @@ export interface MeshNodeInit extends NodeInit {
   anim?: AnimClipSettings;
   /** 动画图（source=model 时优先于单剪辑；null = 未使用图模式） */
   animGraph?: AnimGraph | null;
+  /** 骨骼/IK 目标绑定（source=model 时有效；把场景节点绑到骨骼上每帧跟随） */
+  boneBindings?: BoneBindingSpec[];
 }
 
 /** 网格节点能力接口：网格来源（基元/模型）+ 材质资产引用 */
@@ -75,6 +80,8 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
   anim: AnimClipSettings = { autoplay: true, clip: "", speed: 1, loop: "loop" };
   /** 动画图（null = 单剪辑模式） */
   animGraph: AnimGraph | null = null;
+  /** 骨骼/IK 目标绑定（随场景持久化；运行时由 AnimationSystem 每帧应用） */
+  boneBindings: BoneBindingSpec[] = [];
 
   constructor(init: MeshNodeInit = {}) {
     super(init);
@@ -85,6 +92,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     this.model = init.model ?? this.model;
     this.anim = init.anim ? { ...init.anim } : { ...this.anim };
     this.animGraph = init.animGraph ? cloneAnimGraph(init.animGraph) : null;
+    this.boneBindings = init.boneBindings ? cloneBoneBindings(init.boneBindings) : [];
   }
 
   override clone(): MeshNode {
@@ -103,6 +111,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
       model: this.model,
       anim: { ...this.anim },
       animGraph: this.animGraph ? cloneAnimGraph(this.animGraph) : null,
+      boneBindings: cloneBoneBindings(this.boneBindings),
     });
   }
 
@@ -114,6 +123,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     target.model = this.model;
     target.anim = { ...this.anim };
     target.animGraph = this.animGraph ? cloneAnimGraph(this.animGraph) : null;
+    target.boneBindings = cloneBoneBindings(this.boneBindings);
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
@@ -127,5 +137,6 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     this.model = typeof source.model === "string" ? source.model : "";
     this.anim = parseClipSettings(source.anim);
     this.animGraph = parseAnimGraph(source.animGraph);
+    this.boneBindings = parseBoneBindings(source.boneBindings);
   }
 }

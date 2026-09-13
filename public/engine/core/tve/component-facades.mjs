@@ -335,6 +335,174 @@ class SkeletalAnimation extends BuiltinComponent {
     g.transitions.splice(i, 1);
     return true;
   }
+
+  // —— 蒙皮完全控制（对应 three 官网 animation/skinning 系列示例）——
+
+  /** 蒙皮能力摘要（{boneCount, boneNames, morphMeshes}；未绑定模型 null） */
+  get skinInfo() {
+    return state.host?.animations?.skinInfoOf(this.entity.id) ?? null;
+  }
+
+  // —— 动作级控制（blending/morph：权重混合/淡入淡出/一次性动作/全局速度/事件）——
+
+  /** 动作权重（确保动作在播；0 即静默层。与 play/stop 的 currentClip 语义独立） */
+  setWeight(clip, w) {
+    return state.host?.animations?.setWeight(this.entity.id, clip, w) === true;
+  }
+  /** 动作当前有效权重（淡入淡出进行中的实时值） */
+  getWeight(clip) {
+    return state.host?.animations?.getWeight(this.entity.id, clip) ?? null;
+  }
+  fadeIn(clip, dur = 0.25) {
+    return state.host?.animations?.fadeIn(this.entity.id, clip, dur) === true;
+  }
+  fadeOut(clip, dur = 0.25) {
+    return state.host?.animations?.fadeOut(this.entity.id, clip, dur) === true;
+  }
+  /** 交叉淡化 from→to（warp=true 自动对齐相位） */
+  crossFade(from, to, dur = 0.25, warp = false) {
+    return state.host?.animations?.crossFade(this.entity.id, from, to, dur, warp) === true;
+  }
+  /** 单动作播放速度（与 globalSpeed 相乘生效） */
+  setActionSpeed(clip, scale) {
+    return state.host?.animations?.setActionSpeed(this.entity.id, clip, scale) === true;
+  }
+  /** 单动作循环模式（"loop"/"once"/"pingpong"；once 定格末帧） */
+  setActionLoop(clip, mode) {
+    return state.host?.animations?.setActionLoop(this.entity.id, clip, mode) === true;
+  }
+  /** 停止单个动作（不影响其他混合层） */
+  stopAction(clip) {
+    return state.host?.animations?.stopAction(this.entity.id, clip) === true;
+  }
+  /** 一次性动作：定格末帧后自动淡回基础动作（表情/挥手等） */
+  playOneShot(clip, fade = 0.25) {
+    return state.host?.animations?.playOneShot(this.entity.id, clip, fade) === true;
+  }
+  /** 全局播放速度（mixer 速度） */
+  globalSpeed(scale) {
+    return state.host?.animations?.globalSpeed(this.entity.id, scale) === true;
+  }
+  /** 订阅动作播完事件（负载 {clip}），返回注销函数 */
+  onFinished(cb) {
+    return state.host?.animations?.onFinished(this.entity.id, cb) ?? (() => {});
+  }
+  /** 订阅动作循环事件（负载 {clip}），返回注销函数 */
+  onLoop(cb) {
+    return state.host?.animations?.onLoop(this.entity.id, cb) ?? (() => {});
+  }
+
+  // —— 加法层（additive_blending：独立权重叠加在基础动作之上）——
+
+  playAdditive(clip, weight = 1) {
+    return state.host?.animations?.playAdditive(this.entity.id, clip, weight) === true;
+  }
+  stopAdditive(clip) {
+    return state.host?.animations?.stopAdditive(this.entity.id, clip) === true;
+  }
+
+  // —— 骨骼级控制（本地变换读写/复位/世界坐标）——
+
+  /** 骨骼名列表（无骨骼返回 []） */
+  get bones() {
+    return state.host?.animations?.bonesOf(this.entity.id) ?? [];
+  }
+  /** 骨骼层级（[{name,parent,children}]） */
+  get boneHierarchy() {
+    return state.host?.animations?.boneHierarchy(this.entity.id) ?? [];
+  }
+  /** 骨骼本地变换快照（rotation 为度制欧拉；未命中 null） */
+  getBoneTransform(name) {
+    return state.host?.animations?.getBoneTransform(this.entity.id, name) ?? null;
+  }
+  setBonePosition(name, x, y, z) {
+    return state.host?.animations?.setBonePosition(this.entity.id, name, x, y, z) === true;
+  }
+  setBoneRotation(name, x, y, z) {
+    return state.host?.animations?.setBoneRotation(this.entity.id, name, x, y, z) === true;
+  }
+  setBoneScale(name, x, y, z) {
+    return state.host?.animations?.setBoneScale(this.entity.id, name, x, y, z) === true;
+  }
+  resetBone(name) {
+    return state.host?.animations?.resetBone(this.entity.id, name) === true;
+  }
+  /** 复位全部骨骼到绑定姿势 */
+  resetPose() {
+    return state.host?.animations?.resetPose(this.entity.id) === true;
+  }
+  /** 骨骼世界坐标（attach 物体/瞄准参考；未命中 null） */
+  getBoneWorldPosition(name) {
+    return state.host?.animations?.getBoneWorldPosition(this.entity.id, name) ?? null;
+  }
+
+  // —— 形态键（morph：表情/姿态权重）——
+
+  /** 形态键清单（[{mesh, targets}]） */
+  get morphs() {
+    return state.host?.animations?.morphsOf(this.entity.id) ?? [];
+  }
+  setMorphWeight(mesh, target, v) {
+    return state.host?.animations?.setMorphWeight(this.entity.id, mesh, target, v) === true;
+  }
+  getMorphWeight(mesh, target) {
+    return state.host?.animations?.getMorphWeight(this.entity.id, mesh, target) ?? null;
+  }
+
+  // —— IK（skinning_ik：CCD 求解，目标点/关节限位）——
+
+  /**
+   * 注册 IK 链：{ name?, effector: 骨骼名, links: [{bone, rotationMin?,
+   * rotationMax?}], iteration? }（限位为度制欧拉数组）。返回 IK id，失败 null。
+   */
+  addIK(def) {
+    const id = state.host?.animations?.addIK(this.entity.id, def);
+    return typeof id === "string" ? id : null;
+  }
+  removeIK(id) {
+    return state.host?.animations?.removeIK(this.entity.id, id) === true;
+  }
+  setIKEnabled(id, v) {
+    return state.host?.animations?.setIKEnabled(this.entity.id, id, v) === true;
+  }
+  setIKTargetPosition(id, x, y, z) {
+    return state.host?.animations?.setIKTargetPosition(this.entity.id, id, x, y, z) === true;
+  }
+  getIKTargetPosition(id) {
+    return state.host?.animations?.getIKTargetPosition(this.entity.id, id) ?? null;
+  }
+  /** IK 清单（[{id,name,effector,enabled}]） */
+  get iks() {
+    return state.host?.animations?.iksOf(this.entity.id) ?? [];
+  }
+
+  // —— 骨骼/IK 目标绑定（物体跟随骨骼；官方 ik 示例挂点语义）——
+
+  /**
+   * 把场景节点绑到骨骼/IK 目标上每帧跟随。
+   * target 为 Entity 或节点 id（须在模型子树之外）；bone 传骨骼名、IK id 或
+   * IK name；opts = { keepOffset?, syncRotation?, syncScale? }。
+   */
+  attachToBone(target, bone, opts) {
+    const targetId = target && typeof target === "object" ? target.id : target;
+    const entry = typeof targetId === "string"
+      ? (state.host?.registry ?? []).find((r) => r.json && r.json.id === targetId)
+      : null;
+    if (!entry) return false;
+    return state.host?.animations?.attachObject(this.entity.id, entry.obj, bone, opts) === true;
+  }
+  /** 解除节点绑定（target 为 Entity 或节点 id） */
+  detach(target) {
+    const targetId = target && typeof target === "object" ? target.id : target;
+    if (typeof targetId !== "string" || !targetId) return false;
+    const entry = (state.host?.registry ?? []).find((r) => r.json && r.json.id === targetId);
+    if (!entry) return false;
+    return state.host?.animations?.detachObject(this.entity.id, entry.obj) === true;
+  }
+  /** 绑定清单（[{node, bone, syncRotation, syncScale, keepOffset}]） */
+  get attachments() {
+    return state.host?.animations?.attachmentsOf(this.entity.id) ?? [];
+  }
 }
 
 export { RigidBody, Collider, AudioSource, AnimationClip, SkeletalAnimation };

@@ -497,6 +497,21 @@ async function main() {
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
   const animations = createAnimations(meshes, models);
 
+  // 骨骼/IK 目标绑定（MeshNode.boneBindings 随场景数据；场景树已建全，目标对象可直接解析。
+  // 编辑器皮肤面板写入的绑定在此生效——与 anim/animGraph 同为节点持久化数据）
+  for (const { json, obj } of nodes) {
+    if (json.source !== "model" || !Array.isArray(json.boneBindings) || !json.boneBindings.length) {
+      continue;
+    }
+    for (const def of json.boneBindings) {
+      if (!def || typeof def !== "object" || typeof def.target !== "string" || typeof def.bone !== "string") {
+        continue;
+      }
+      const target = nodes.find((n) => n.json.id === def.target)?.obj;
+      if (target && obj) animations.attachObject(json.id, target, def.bone, def);
+    }
+  }
+
   // 音频（音源节点 2D/3D 播放；监听器挂渲染相机随其位姿推进；
   // autoplay 绑定在用户首次交互解锁 AudioContext 后自动起播）
   const audiosApi = createAudios(audios, cam);

@@ -253,6 +253,14 @@ export class EditorEngine {
     this.graph = new SceneClient(this.factory);
     // 骨骼辅助线需挂在无变换的场景根下（挂在节点容器上会叠加两次节点变换）
     this.animation.setSceneRoot(this.renderer.scene);
+    // 骨骼绑定的目标解析：场景树按 userData.nodeId 查找（attach 频度低，遍历可接受）
+    this.animation.setTargetResolver((nodeId) => {
+      let hit: THREE.Object3D | null = null;
+      this.renderer.scene.traverse((o) => {
+        if (!hit && o.userData?.nodeId === nodeId) hit = o;
+      });
+      return hit;
+    });
     this.synchronizer = new SceneSynchronizer(this.renderer.scene, {
       paramsFor: (rel) => this.materials.paramsFor(rel),
       typeFor: (rel) => this.materials.typeFor(rel),
