@@ -279,7 +279,10 @@ async function loadRapier() {
               body.setAngularDamping(a);
             },
             setGravityScale(s) {
-              body.setGravityScale(s, true);
+              body.setGravityScale(s);
+              // 缩放 0 的静止体会被睡眠：改系数后必须显式唤醒
+              //（setGravityScale 的 wake 标志实测唤不醒已睡眠体）
+              body.wakeUp();
             },
             setCcd(on) {
               body.enableCcd(on);
@@ -551,6 +554,8 @@ async function loadJolt() {
             },
             setGravityScale(s) {
               mp?.SetGravityFactor(s);
+              // 缩放 0 的静止体会被休眠：改系数后必须显式激活
+              bi.ActivateBody(body.GetID());
             },
             setCcd(on) {
               bi.SetMotionQuality(body.GetID(), on ? Jolt.EMotionQuality_LinearCast : Jolt.EMotionQuality_Discrete);
@@ -644,6 +649,14 @@ async function loadAmmo() {
       const solver = new Ammo.btSequentialImpulseConstraintSolver();
       const world = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, cfg);
       world.setGravity(new Ammo.btVector3(gravity.x, gravity.y, gravity.z));
+      // 逐体重力（重力缩放）：Bullet 的 world.setGravity 会重置所有非静态体的
+      // 逐体重力，缩放体登记在册、世界重力变化后统一重铺
+      const gravityVec = { x: gravity.x, y: gravity.y, z: gravity.z };
+      const gravityTracked = [];
+      const applyBodyGravity = (e) =>
+        e.body.setGravity(
+          new Ammo.btVector3(gravityVec.x * e.scale, gravityVec.y * e.scale, gravityVec.z * e.scale),
+        );
       const seenManifolds = new Set();
       // 持续接触中被临时清零弹性的碰撞对象（ptr → { obj, value }），接触结束后恢复
       const zeroedRestitution = new Map();
@@ -697,7 +710,12 @@ async function loadAmmo() {
       };
       return {
         setGravity(g) {
+          gravityVec.x = g.x;
+          gravityVec.y = g.y;
+          gravityVec.z = g.z;
           world.setGravity(new Ammo.btVector3(g.x, g.y, g.z));
+          // Bullet 的 setGravity 已重置全部非静态体逐体重力：登记的缩放体重铺
+          for (const e of gravityTracked) applyBodyGravity(e);
         },
         createBody(desc) {
           const shapes = [];
@@ -727,6 +745,14 @@ async function loadAmmo() {
             body.setCollisionFlags(body.getCollisionFlags() | CF_KINEMATIC_OBJECT);
             body.setActivationState(DISABLE_DEACTIVATION);
           }
+          // 动力学体登记逐体重力（缩放 ≠ 1 时显式覆盖；= 1 跟随世界重力）。
+          // 注意覆盖必须在下方 world.addRigidBody 之后——addRigidBody 会把
+          // 体重力重置为世界重力，先覆盖会被冲掉
+          let gravRecord = null;
+          if (desc.mode === "dynamic") {
+            gravRecord = { body, scale: desc.gravityScale };
+            gravityTracked.push(gravRecord);
+          }
           if (desc.colliders.some((c) => c.isSensor)) {
             body.setCollisionFlags(body.getCollisionFlags() | CF_NO_CONTACT_RESPONSE);
           }
@@ -746,6 +772,8 @@ async function loadAmmo() {
             body.setCcdSweptSphereRadius(0.02);
           }
           world.addRigidBody(body);
+          // 逐体重力覆盖（缩放 ≠ 1）：见上方登记处注释
+          if (gravRecord && gravRecord.scale !== 1) applyBodyGravity(gravRecord);
           pointerToNode.set(Ammo.getPointer(body), desc.nodeId);
           const handle = {
             nodeId: desc.nodeId,
@@ -797,8 +825,12 @@ async function loadAmmo() {
             setDamping(l, a) {
               body.setDamping(l, a);
             },
-            setGravityScale() {
-              /* ammo 走每体重力，运行时简化：跟随世界重力 */
+            setGravityScale(s) {
+              // ammo 无逐体系数：显式覆盖逐体重力 = 世界重力 × 缩放
+              if (!gravRecord) return;
+              gravRecord.scale = Math.max(0, s);
+              applyBodyGravity(gravRecord);
+              body.activate(true);
             },
             setCcd(on) {
               if (on) {
