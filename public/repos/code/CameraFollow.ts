@@ -1,7 +1,7 @@
-// @desc: 简易相机跟随，支持平滑或瞬时跟随
+// @desc: 简易相机跟随（onLateUpdate 晚更新驱动：晚于一切模拟、渲染前，跟得最稳）
 import { Component, property, Transform, math } from "tve";
 
-export default class CameraFollow extends Component {
+export default class {{CLASS_NAME}} extends Component {
   @property({ type: Transform, label: "跟随目标" })
   target: Transform | null = null;
 
@@ -29,7 +29,9 @@ export default class CameraFollow extends Component {
     this.offsetVec = vec;
   }
 
-  onUpdate(delta: number) {
+  // 相机跟随放 onLateUpdate：晚于脚本/动画/物理/粒子的一切位姿写入、渲染前
+  // 调用——目标本帧被谁动过都跟得上，且写入当帧即被相机位姿回填采用
+  onLateUpdate(delta: number) {
     if (!this.target || !this.offsetVec) return;
     const t = this.target.worldPosition;
     // 期望位置 = 目标位置 + 偏移向量（直线距离恒等于 |offsetVec|，永不与目标重叠）
