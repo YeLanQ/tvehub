@@ -18,6 +18,7 @@ import { assetService } from "../../services/assetService";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { isModelAssetRel } from "../../../framework/mesh";
 import { isAudioAssetRel } from "../../../framework/audio";
+import { isTerrainAssetRel } from "../../../framework/terrain";
 import type { ChildEntry } from "../../lib/asset-browser";
 
 /** 面板注入的上下文（动作依赖的面板状态与壳层回调） */
@@ -41,6 +42,7 @@ export interface AssetItemActionsApi {
   openScriptAsset: (item: ChildEntry) => void;
   addModelToScene: (item: ChildEntry) => void;
   addAudioToScene: (item: ChildEntry) => void;
+  addTerrainToScene: (item: ChildEntry) => void;
   instantiatePrefab: (item: { path: string }) => Promise<void>;
   doCopy: (item: ChildEntry) => Promise<void>;
   doRename: (item: ChildEntry) => Promise<void>;
@@ -94,6 +96,11 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
       addAudioToScene(item);
       return;
     }
+    // 双击地形资产：作为地形节点加入当前场景（快照资产设置）
+    if (isTerrainAssetRel(item.path)) {
+      addTerrainToScene(item);
+      return;
+    }
     // 双击 .ts 脚本 / .shader 着色器：切到脚本工作台打开编辑
     if (item.kind === "ts" || item.kind === "shader") {
       openScriptAsset(item);
@@ -134,6 +141,20 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     void dispatchCommand("node.add", { kind: "audio", path: item.path }).then((r) => {
       if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
         logStore.log("success", `已添加音源节点 ${(r.value as { name: string }).name}`, "engine");
+      }
+    });
+  }
+
+  /** 把地形资产作为地形节点加入当前场景（terrainNode 并快照资产设置） */
+  function addTerrainToScene(item: ChildEntry): void {
+    const store = getEditorStore();
+    if (!store.state.mounted) {
+      logStore.log("warn", "编辑器未就绪，无法添加地形");
+      return;
+    }
+    void dispatchCommand("node.add", { kind: "terrain", path: item.path }).then((r) => {
+      if (r.ok && r.value && typeof r.value === "object" && "name" in r.value) {
+        logStore.log("success", `已添加地形节点 ${(r.value as { name: string }).name}`, "engine");
       }
     });
   }
@@ -208,6 +229,7 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     openScriptAsset,
     addModelToScene,
     addAudioToScene,
+    addTerrainToScene,
     instantiatePrefab,
     doCopy,
     doRename,

@@ -1,0 +1,343 @@
+// ---------------------------------------------------------------------------
+// 程序化地形生成（编辑器侧；three BufferGeometry 输出）。
+// 算法语义移植自 three.js 示例 generators/TerrainGenerator.js：
+// - 高度场：ImprovedNoise 导数阻尼分形（fake erosion，脊锐谷平）+ 低频域扭曲
+//   （山脊蜿蜒）+ 谷地压平幂曲线 + 海平面下移；
+// - 热侵蚀（talus）：超过休止角的坡面逐 pass 塌落，消除分形针尖；
+// - 网格：逐 quad 交替对角线的菱形三角化，避免单向纹理感；
+// - 着色：按海拔/坡度在 CPU 烘焙顶点色（草/林/岩/碎石/雪带 + 明度扰动），
+//   MeshStandardMaterial(vertexColors) 直接消费，WebGL/WebGPU 双后端可用。
+// 播放器侧同语义实现见 public/engine/runtime/terrain.mjs（两边改参数需同步）。
+// ---------------------------------------------------------------------------
+import * as THREE from "three";
+import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
+import { cloneTerrainSettings, type TerrainSettings } from "./types";
+
+/** 确定性 PRNG（mulberry32）：同种子恒定序列 */
+function createRandom(seed: number): () => number {
+  let s = (seed >>> 0) || 1;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 整数格点哈希（0..1；表面色扰动的确定性值噪声用） */
+function hash2(ix: number, iz: number, seed: number): number {
+  let h = (ix * 374761393 + iz * 668265263 + seed * 1442695) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** 平滑值噪声（-1..1；世界坐标驱动，颗粒/斑块扰动） */
+function valueNoise2(x: number, z: number, seed: number): number {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const tx = x - ix;
+  const tz = z - iz;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sz = tz * tz * (3 - 2 * tz);
+  const a = hash2(ix, iz, seed);
+  const b = hash2(ix + 1, iz, seed);
+  const c = hash2(ix, iz + 1, seed);
+  const d = hash2(ix + 1, iz + 1, seed);
+  return ((a * (1 - sx) + b * sx) * (1 - sz) + (c * (1 - sx) + d * sx) * sz) * 2 - 1;
+}
+
+function smoothstep(e0: number, e1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * 构建某 seed 的高度函数 height(worldX, worldZ)。
+ * ImprovedNoise 置换表固定 → 种子只位移采样窗口（平移 + 逐层 z 切片），
+ * 由 PRNG 抽取以去相关。
+ */
+function heightField(p: TerrainSettings): (x: number, z: number) => number {
+  const perlin = new ImprovedNoise();
+  const random = createRandom(p.seed);
+  const offsetX = random() * 256;
+  const offsetZ = random() * 256;
+  const slice = random() * 256;
+  const { frequency, octaves, lacunarity, gain, erosion, warp, valleyBias, seaLevel, heightScale } = p;
+
+  // 低频分形和（域扭曲场）
+  function warpField(x: number, z: number, zr: number): number {
+    let freq = 1, amp = 1, sum = 0, norm = 0;
+    for (let i = 0; i < 2; i++) {
+      sum += amp * perlin.noise(x * freq + offsetX, z * freq + offsetZ, zr + i * 1.7);
+      norm += amp;
+      freq *= lacunarity;
+      amp *= gain;
+    }
+    return sum / norm;
+  }
+
+  // 导数阻尼分形和：坡度已陡处抑制后继层（脊更脆、谷更顺），逐层旋转采样域破除轴向网格
+  function eroded(x: number, z: number): number {
+    let sum = 0, amp = 1, dX = 0, dZ = 0, px = x, pz = z, freq = 1;
+    const e = 0.004; // 有限差分步长（噪声单位）
+    for (let i = 0; i < octaves; i++) {
+      const zr = slice + i * 1.7;
+      const bx = px * freq + offsetX;
+      const bz = pz * freq + offsetZ;
+      const n = perlin.noise(bx, bz, zr);
+      const nx = perlin.noise(bx + e, bz, zr);
+      const nz = perlin.noise(bx, bz + e, zr);
+      dX += ((nx - n) / e) * freq;
+      dZ += ((nz - n) / e) * freq;
+      sum += (amp * n) / (1 + erosion * (dX * dX + dZ * dZ));
+      // 采样域旋转 ~37°（矩阵 [0.8 -0.6; 0.6 0.8]）
+      const rx = 0.8 * px - 0.6 * pz;
+      pz = 0.6 * px + 0.8 * pz;
+      px = rx;
+      freq *= lacunarity;
+      amp *= gain;
+    }
+    return sum * 0.5 + 0.5;
+  }
+
+  return function (worldX: number, worldZ: number): number {
+    const x = worldX * frequency;
+    const z = worldZ * frequency;
+    // 域扭曲：山脊/谷地蜿蜒而非直线
+    const wx = x + warp * warpField(x + 1.3, z + 7.2, slice + 40);
+    const wz = z + warp * warpField(x + 5.2, z + 1.3, slice + 70);
+    // 幂曲线压低谷地成平地
+    const h = Math.pow(Math.min(eroded(wx, wz) * 1.1, 1), valleyBias);
+    return (h - seaLevel) * heightScale;
+  };
+}
+
+/**
+ * 热侵蚀（talus）：悬空超过休止角落差的下坡面逐 pass 按比例塌落；
+ * delta 缓冲保证物料守恒（结果与遍历顺序无关）。
+ */
+function thermalErode(h: Float32Array, n: number, cellSize: number, talus: number, passes: number): void {
+  const drop = talus * cellSize;
+  const carry = 0.5; // 每 pass 挪走最陡悬空量的比例（≤0.5 稳定）
+  const delta = new Float32Array(n * n);
+  const ex = [0, 0, 0, 0];
+  const off = [-1, 1, -n, n];
+  for (let p = 0; p < passes; p++) {
+    delta.fill(0);
+    for (let z = 0; z < n; z++) {
+      for (let x = 0; x < n; x++) {
+        const i = z * n + x;
+        const hi = h[i];
+        ex[0] = x > 0 ? hi - h[i - 1] - drop : 0;
+        ex[1] = x < n - 1 ? hi - h[i + 1] - drop : 0;
+        ex[2] = z > 0 ? hi - h[i - n] - drop : 0;
+        ex[3] = z < n - 1 ? hi - h[i + n] - drop : 0;
+        let sum = 0;
+        let peak = 0;
+        for (let k = 0; k < 4; k++) {
+          const d = ex[k];
+          if (d <= 0) {
+            ex[k] = 0;
+            continue;
+          }
+          sum += d;
+          if (d > peak) peak = d;
+        }
+        if (sum <= 0) continue;
+        const move = carry * peak;
+        delta[i] -= move;
+        for (let k = 0; k < 4; k++) {
+          if (ex[k] > 0) delta[i + off[k]] += (move * ex[k]) / sum;
+        }
+      }
+    }
+    for (let k = 0; k < n * n; k++) h[k] += delta[k];
+  }
+}
+
+// —— 顶点色烘焙辅助（sRGB hex → 线性 RGB）——
+function hexToLinear(hex: number): [number, number, number] {
+  const c = new THREE.Color();
+  c.setHex(hex & 0xffffff); // ColorManagement 开启时自动 sRGB → 线性
+  return [c.r, c.g, c.b];
+}
+
+function mix3(a: number[], b: number[], t: number): void {
+  a[0] += (b[0] - a[0]) * t;
+  a[1] += (b[1] - a[1]) * t;
+  a[2] += (b[2] - a[2]) * t;
+}
+
+function scale3(a: number[], f: number): void {
+  a[0] = Math.min(1, a[0] * f);
+  a[1] = Math.min(1, a[1] * f);
+  a[2] = Math.min(1, a[2] * f);
+}
+
+/** 一次地形烘焙结果：几何 + 采样数据（sampleHeight/sampleSlope 用） */
+export interface TerrainBuild {
+  geometry: THREE.BufferGeometry;
+  /** 烘焙后的高度网格（行主序，N×N） */
+  heights: Float32Array;
+  /** 网格边长（N = segments + 1） */
+  gridSize: number;
+  size: number;
+  segments: number;
+  minY: number;
+  maxY: number;
+}
+
+/**
+ * 按设置烘焙地形几何（位置 + 顶点色 + 菱形三角索引 + 顶点法线）。
+ * 每次调用都产出全新几何（调用方负责释放旧几何）。
+ */
+export function buildTerrain(settings: TerrainSettings): TerrainBuild {
+  const p = cloneTerrainSettings(settings);
+  const n = p.segments + 1;
+  const half = p.size / 2;
+
+  const coord = new Array<number>(n);
+  for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
+
+  // 烘焙高度网格（保留供采样）
+  const height = heightField(p);
+  const heights = new Float32Array(n * n);
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      heights[iz * n + ix] = height(coord[ix], coord[iz]);
+    }
+  }
+
+  // 热侵蚀：超过休止角的坡面塌落，消除分形针尖
+  if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
+
+  // 顶点位置（XZ 平面网格 + Y 高度），统计高度范围
+  const positions = new Float32Array(n * n * 3);
+  let min = Infinity;
+  let max = -Infinity;
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      const o = iz * n + ix;
+      const y = heights[o];
+      positions[o * 3] = coord[ix];
+      positions[o * 3 + 1] = y;
+      positions[o * 3 + 2] = coord[iz];
+      if (y < min) min = y;
+      if (y > max) max = y;
+    }
+  }
+
+  // 菱形三角化：逐 quad 交替对角线方向
+  const indices: number[] = [];
+  for (let iz = 0; iz < p.segments; iz++) {
+    for (let ix = 0; ix < p.segments; ix++) {
+      const a = iz * n + ix;
+      const b = a + 1;
+      const c = a + n;
+      const d = c + 1;
+      if ((ix + iz) % 2 === 0) indices.push(a, c, b, b, c, d);
+      else indices.push(a, c, d, a, d, b);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  // —— 顶点色烘焙：海拔 + 坡度驱动色带（语义对齐示例的 TSL 着色）——
+  const normalAttr = geometry.getAttribute("normal") as THREE.BufferAttribute;
+  const colors = new Float32Array(n * n * 3);
+  const grass = hexToLinear(p.grassColor);
+  const rock = hexToLinear(p.rockColor);
+  const snow = hexToLinear(p.snowColor);
+  const dryGrass = [...grass];
+  scale3(dryGrass, 1.28);
+  const forest = [...grass];
+  scale3(forest, 0.55);
+  const scree = [...rock];
+  scale3(scree, 1.15);
+  const lichen = [...rock];
+  mix3(lichen, grass, 0.35);
+  const snowDeep = [...snow];
+  scale3(snowDeep, 0.88);
+  const hSpan = Math.max(1e-6, max - min);
+  const colorSeed = p.seed & 0xffff;
+  const tmp = [0, 0, 0];
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      const o = iz * n + ix;
+      const wx = positions[o * 3];
+      const wy = positions[o * 3 + 1];
+      const wz = positions[o * 3 + 2];
+      const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
+      const flatness = Math.min(1, Math.max(0, normalAttr.getY(o)));
+      const steep = 1 - flatness;
+      const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
+      const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
+      const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
+
+      // 草地 → 干草斑块（中海拔宏观噪声）
+      const surface = [...grass];
+      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+      // 缓坡中段的暗林带
+      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+      // 岩石 shading：地层层理明暗 + 地衣斑块
+      const rockShade = [...rock];
+      const strata =
+        (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) *
+          0.5 +
+        0.5;
+      const lichenMask =
+        smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+      mix3(rockShade, lichen, lichenMask * 0.45);
+      scale3(rockShade, strata * 0.36 + 0.8);
+      // 高海拔或一切陡面 → 岩
+      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+      // 陡而未竖直的坡面撒碎石
+      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+      mix3(surface, scree, screeMask * 0.5);
+      // 高平处积雪（噪声打破雪线，岩石透出）
+      const snowMask =
+        smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+      tmp[0] = snow[0];
+      tmp[1] = snow[1];
+      tmp[2] = snow[2];
+      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+      mix3(surface, tmp, snowMask);
+      // 低洼潮暗
+      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+      scale3(surface, 1 - cavity * 0.32);
+      // 宏观漂移 + 细颗粒斑驳
+      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+
+      colors[o * 3] = surface[0];
+      colors[o * 3 + 1] = surface[1];
+      colors[o * 3 + 2] = surface[2];
+    }
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+  return { geometry, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
+}
+
+/** 双线性采样世界高度（x/z 超界钳到边缘；build 结果上调用） */
+export function sampleTerrainHeight(b: TerrainBuild, x: number, z: number): number {
+  const seg = b.segments;
+  const half = b.size / 2;
+  const n = b.gridSize;
+  const fx = Math.min(seg, Math.max(0, ((x + half) / b.size) * seg));
+  const fz = Math.min(seg, Math.max(0, ((z + half) / b.size) * seg));
+  const ix = Math.min(n - 2, Math.floor(fx));
+  const iz = Math.min(n - 2, Math.floor(fz));
+  const tx = fx - ix;
+  const tz = fz - iz;
+  const h = b.heights;
+  const h00 = h[iz * n + ix];
+  const h10 = h[iz * n + ix + 1];
+  const h01 = h[(iz + 1) * n + ix];
+  const h11 = h[(iz + 1) * n + ix + 1];
+  return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+}

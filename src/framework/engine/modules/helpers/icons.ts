@@ -87,6 +87,12 @@ export const PARTICLE_ICON_PATHS: string[] = [
   "M6.5 17.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z",
 ];
 
+/** 地形节点：山形双峰 + 底线（程序化高度场地形语义） */
+export const TERRAIN_ICON_PATHS: string[] = [
+  "m3 18 5.5-9.5 3.2 5.5 2.3-3.5L21 18",
+  "M3 21h18",
+];
+
 /** UI 画布：层叠矩形画框（Canvas-Widget 的 Canvas 语义） */
 export const UI_CANVAS_ICON_PATHS: string[] = [
   "M3 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",

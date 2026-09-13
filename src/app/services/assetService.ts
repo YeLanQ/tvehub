@@ -12,6 +12,10 @@ import {
   materialTypeRegistry,
   normalizeShaderKind,
 } from "../../framework/material";
+import {
+  DEFAULT_TERRAIN_SETTINGS,
+  TERRAIN_EXT,
+} from "../../framework/terrain";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
 import { injectClassName, type ScriptPrototype } from "../lib/script-prototypes";
@@ -114,6 +118,7 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   bmp: "assets/textures",
   hdr: "assets/textures",
   texcube: "assets/textures",
+  terrain: "assets",
   glb: "assets/models",
   gltf: "assets/models",
   fbx: "assets/models",
@@ -469,6 +474,34 @@ export const assetService = {
       return rel;
     } catch (e) {
       logStore.log("error", `新建天空盒失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
+   * 新建地形资产（.terrain）：默认程序化山地设置（与地形节点默认值一致）；
+   * 序列化/落盘由后端 terrain_write 完成（自动补 .meta）。
+   * 创建即可从地形节点检查器绑定，或资产面板「添加到场景」。
+   */
+  async createTerrainAsset(
+    root: string,
+    destDir: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建地形");
+      return null;
+    }
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "Terrain";
+    const rel = uniqueRel(assets, destDir, baseName, TERRAIN_EXT);
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - TERRAIN_EXT.length);
+    try {
+      await api.terrainWrite(root, rel, name, { ...DEFAULT_TERRAIN_SETTINGS });
+      logStore.log("success", `已新建地形: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建地形失败: ${e}`);
       return null;
     }
   },

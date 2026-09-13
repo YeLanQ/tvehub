@@ -78,7 +78,7 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "state.snapshot", description: "场景状态快照（完整 JSON 文档）" },
   { name: "state.restore", description: "恢复场景快照（传入 state.snapshot 返回的 doc）" },
   { name: "asset.list", description: "列出项目资源（脚本/场景/材质/贴图/目录等，含相对路径与类型）" },
-  { name: "asset.create", description: "新建资源文件或目录（type: scene/script/material/shader/texcube/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube）" },
+  { name: "asset.create", description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/terrain/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube）" },
   { name: "asset.select", description: "选中资产（path：项目相对路径；属性面板切换到资产预览/属性）" },
   { name: "asset.delete", description: "删除资源文件或目录（path：项目相对路径）" },
   { name: "asset.rename", description: "重命名资源文件或目录（path + newName）" },

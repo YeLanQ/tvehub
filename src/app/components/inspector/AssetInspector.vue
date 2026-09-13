@@ -45,6 +45,8 @@ import {
 } from "../../lib/texcube";
 import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat";
 import { isAudioAssetRel } from "../../../framework/audio";
+import { parseTerrainSettings } from "../../../framework/terrain";
+import { dispatchCommand } from "../../commands";
 import type { MaterialParams } from "../../../framework/material";
 import AssetPreview3D from "./AssetPreview3D.vue";
 import ShaderEditorDialog from "./ShaderEditorDialog.vue";
@@ -58,6 +60,7 @@ import ShaderAssetFields from "./asset/ShaderAssetFields.vue";
 import ModelAssetInfo from "./asset/ModelAssetInfo.vue";
 import PrefabAssetInfo from "./asset/PrefabAssetInfo.vue";
 import AnimClipInfo from "./asset/AnimClipInfo.vue";
+import TerrainAssetFields from "./asset/TerrainAssetFields.vue";
 import PlainAssetHints from "./asset/PlainAssetHints.vue";
 
 const props = defineProps<{ rel: string }>();
@@ -261,6 +264,9 @@ function editTexcube(mutate: (doc: TexCubeAssetDoc) => void): void {
 // —— 模型信息（metaFor 就绪后填充）——
 const modelInfo = ref<{ clips: number; materials: number; hasSkeleton: boolean } | null>(null);
 
+// —— 地形资产（.terrain：设置概览；读取失败为 null）——
+const terrainSettings = ref<Record<string, number> | null>(null);
+
 // —— 图片尺寸（onload 后填充）——
 const imgSize = ref<{ w: number; h: number } | null>(null);
 
@@ -298,6 +304,7 @@ async function reload(): Promise<void> {
   shaderReady.value = false;
   prefabInfo.value = null;
   animInfo.value = null;
+  terrainSettings.value = null;
 
   if (kind.value === "mat") {
     matReady.value = false;
@@ -369,6 +376,17 @@ async function reload(): Promise<void> {
     const doc = await loadTexCubeDoc(root.value, rel);
     if (token !== loadToken) return;
     texcubeDoc.value = doc;
+    return;
+  }
+  if (kind.value === "terrain") {
+    try {
+      if (!root.value) return;
+      const text = await api.readText(root.value, rel);
+      const doc = JSON.parse(text) as { settings?: unknown };
+      terrainSettings.value = parseTerrainSettings(doc.settings) as unknown as Record<string, number>;
+    } catch {
+      terrainSettings.value = null;
+    }
     return;
   }
   if (MODEL_KINDS.has(kind.value)) {
@@ -487,6 +505,12 @@ async function onCopyToProject(): Promise<void> {
 function onImgLoad(w: number, h: number): void {
   imgSize.value = { w, h };
 }
+
+/** 地形资产「添加到场景」：按资产设置创建地形节点（node.add terrain 路径） */
+function onAddTerrainToScene(): void {
+  if (isInternal.value) return;
+  void dispatchCommand("node.add", { kind: "terrain", path: props.rel });
+}
 </script>
 
 <template>
@@ -603,6 +627,14 @@ function onImgLoad(w: number, h: number): void {
     />
     <!-- 动画剪辑：概览 -->
     <AnimClipInfo v-else-if="kind === 'anim'" :info="animInfo" />
+
+    <!-- 地形：设置概览 + 添加到场景 -->
+    <TerrainAssetFields
+      v-else-if="kind === 'terrain'"
+      :settings="terrainSettings"
+      :readonly="isInternal"
+      @addToScene="onAddTerrainToScene"
+    />
 
     <!-- 着色器源码编辑器（.shader；弹层 Monaco GLSL） -->
     <ShaderEditorDialog

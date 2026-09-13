@@ -47,6 +47,15 @@ class UITextNode extends Transform {}
 class UIButtonNode extends Transform {}
 class UILayoutNode extends Transform {}
 
+/** 地形节点：贴地采样（脚本把物体摆到地表/按坡度撒放用） */
+class TerrainNode extends Transform {
+  /** 世界高度采样（节点本地 x/z；节点仅平移时即世界坐标） */
+  sampleHeight(x, z) { return state.host?.terrains?.sampleHeight(this.id, x, z) ?? 0; }
+  /** 地表平坦度（1 = 平地 → 0 = 崖壁） */
+  sampleSlope(x, z) { return state.host?.terrains?.sampleSlope(this.id, x, z) ?? 1; }
+  get settings() { return state.host?.terrains?.settingsOf(this.id); }
+}
+
 const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "offsetMin", "offsetMax"];
 
 for (const [Cls, keys] of [
@@ -73,6 +82,7 @@ const KIND_CLASSES = {
   skyboxNode: SkyboxNode,
   audioNode: Transform,
   particleSystemNode: ParticleSystemNode,
+  terrainNode: TerrainNode,
   lightNode: LightNode,
   pointLightNode: LightNode,
   directionalLightNode: LightNode,
@@ -96,6 +106,7 @@ LightNode.__nodeKinds = [
 CameraNode.__nodeKinds = ["cameraNode"];
 SkyboxNode.__nodeKinds = ["skyboxNode"];
 ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
+TerrainNode.__nodeKinds = ["terrainNode"];
 UICanvasNode.__nodeKinds = ["uiCanvasNode"];
 UIImageNode.__nodeKinds = ["uiImageNode"];
 UITextNode.__nodeKinds = ["uiTextNode"];
@@ -115,6 +126,7 @@ export {
   CameraNode,
   SkyboxNode,
   ParticleSystemNode,
+  TerrainNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,

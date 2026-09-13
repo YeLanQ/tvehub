@@ -20,6 +20,7 @@ import {
   MeshNode,
   ParticleSystemNode,
   SkyboxNode,
+  TerrainNode,
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
@@ -33,6 +34,7 @@ import {
 import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { clampCameraParam } from "../camera";
 import { parseCullingMask } from "../layers";
+import { cloneTerrainSettings, type TerrainSettings } from "../terrain";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
@@ -84,6 +86,7 @@ const SCRIPT_NODE_BASE: Record<
   skyboxNode: (e, p) => e.addSkybox("procedural", p),
   audioNode: (e, p) => e.addAudio(p),
   particleSystemNode: (e, p) => e.addParticleSystem(p),
+  terrainNode: (e, p) => e.addTerrain(p),
   uiCanvasNode: (e, p) => e.addUICanvas(p),
   uiImageNode: (e, p) => e.addUIImage(p),
   uiTextNode: (e, p) => e.addUIText(p),
@@ -784,6 +787,21 @@ export class EditorEngine {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createParticleSystem({ parentId: parent?.id ?? null });
     applySpawnOffset(node);
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加地形节点（程序化高度场地形；入图即按设置烘焙几何，
+   * 参数经检查器调整实时重建）。地形面积大，不做出生点偏移，原地生成。
+   * init：资产绑定初始化（资产面板「添加到场景」携带 .terrain 引用与快照设置）。
+   */
+  addTerrain(parentId?: string, init?: { asset?: string; terrain?: TerrainSettings }): TerrainNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createTerrain({ parentId: parent?.id ?? null });
+    if (init?.asset) node.asset = init.asset;
+    if (init?.terrain) node.terrain = cloneTerrainSettings(init.terrain);
     this.graph.add(node);
     this.select(node.id);
     return node;

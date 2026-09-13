@@ -51,6 +51,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/shaderHooks.mjs",
   "engine/runtime/sky.mjs",
   "engine/runtime/stage.mjs",
+  "engine/runtime/terrain.mjs",
   "engine/runtime/textures.mjs",
   "engine/runtime/ui.mjs",
   "index.html",

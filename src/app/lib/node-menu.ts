@@ -57,6 +57,7 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
   items.push({ label: "Group", type: "group" });
   items.push({ label: "Audio Source", type: "audio" });
   items.push({ label: "Particle System", type: "particle" });
+  items.push({ label: "Terrain", type: "terrain" });
   items.push({ separator: true });
   items.push({
     label: "UI",
@@ -120,6 +121,8 @@ export function addNodeArgs(
     args.kind = "audio";
   } else if (type === "particle") {
     args.kind = "particle";
+  } else if (type === "terrain") {
+    args.kind = "terrain";
   } else {
     return null;
   }

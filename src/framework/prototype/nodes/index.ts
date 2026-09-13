@@ -8,6 +8,7 @@ export { CameraNode, type CameraNodeInit } from "./CameraNode";
 export { SkyboxNode, type SkyboxNodeInit, type SkyboxKind, type SkySunDisk } from "./SkyboxNode";
 export { AudioNode, type AudioNodeInit } from "./AudioNode";
 export { ParticleSystemNode, type ParticleSystemNodeInit } from "./ParticleSystemNode";
+export { TerrainNode, type TerrainNodeInit } from "./TerrainNode";
 export {
   UICanvasNode,
   type UICanvasNodeInit,

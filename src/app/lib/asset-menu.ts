@@ -7,6 +7,7 @@ import type { ChildEntry } from "./asset-browser";
 import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
+import { isTerrainAssetRel } from "../../framework/terrain";
 
 /** 着色器种类注册表项（菜单「新建着色器」子项需要 key + label） */
 export interface MenuShaderType {
@@ -47,6 +48,8 @@ export interface AssetMenuApi {
   onOpenDir: (dir: string) => void;
   onAddModelToScene: (item: ChildEntry) => void;
   onAddAudioToScene: (item: ChildEntry) => void;
+  /** 地形资产：按资产设置创建地形节点并入场景 */
+  onAddTerrainToScene: (item: ChildEntry) => void;
   onInstantiatePrefab: (item: ChildEntry) => void;
   onOpenScript: (item: ChildEntry) => void;
   onCopyInternal: (item: ChildEntry) => void;
@@ -64,6 +67,7 @@ export interface AssetMenuApi {
   onNewMaterial: (dir: string) => void;
   onNewShader: (dir: string, kind: string) => void;
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
+  onNewTerrain: (dir: string) => void;
   onNewTextureCube: (dir: string) => void;
   onNewPrefab: (dir: string) => void;
   onNewAnim: (dir: string) => void;
@@ -99,6 +103,7 @@ function newAssetItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
       ],
     },
     { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) },
+    { label: "新建地形", onClick: () => api.onNewTerrain(dir) },
     { label: "新建预制体", onClick: () => api.onNewPrefab(dir) },
     { label: "新建动画", onClick: () => api.onNewAnim(dir) },
   ];
@@ -157,6 +162,10 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   // 音频资产：加入当前场景（audioNode 音源节点并绑定该资产）
   if (item.kind !== "dir" && isAudioAssetRel(item.path)) {
     items.push({ label: "添加到场景", onClick: () => api.onAddAudioToScene(item) });
+  }
+  // 地形资产：加入当前场景（terrainNode 并快照资产设置）
+  if (item.kind !== "dir" && isTerrainAssetRel(item.path)) {
+    items.push({ label: "添加到场景", onClick: () => api.onAddTerrainToScene(item) });
   }
   // 预制体资产：实例化到当前场景（挂到选中节点/根下，一次撤销）
   if (item.kind === "prefab") {

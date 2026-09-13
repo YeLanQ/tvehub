@@ -344,7 +344,7 @@ registerCommand({
   label: "新建资源",
   group: "资源",
   expose: true,
-  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube；skybox 可带 skyKind: procedural/cube）",
+  description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/terrain/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube；skybox 可带 skyKind: procedural/cube）",
   run: async (_ctx, args: any) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();
@@ -423,7 +423,17 @@ registerCommand({
       case "anim": {
         const name = uniqueName(taken, dir, stem ?? "NewAnimation", ".anim");
         const rel = await store.createAnimAsset(root, dir, stripAssetExt(name, ".anim"));
-        if (!rel) throw new Error("创建动画失败: " + (dir || "项目根"));
+        if (!rel) throw new Error(`创建动画失败: ${dir || "项目根"}`);
+        return { created: rel, type };
+      }
+      case "terrain": {
+        const name = stem ?? "";
+        const rel = await store.createTerrainAsset(
+          root,
+          dir,
+          stripAssetExt(name, ".terrain") || null,
+        );
+        if (!rel) throw new Error(`创建地形失败: ${dir || "项目根"}`);
         return { created: rel, type };
       }
       case "folder": {
@@ -434,7 +444,7 @@ registerCommand({
         return { created: rel, type };
       }
       default:
-        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/shader/texcube/skybox/prefab/folder）`);
+        throw new Error(`未知资源类型: ${type}（应为 scene/script/material/shader/texcube/skybox/prefab/anim/terrain/folder）`);
     }
   },
 });

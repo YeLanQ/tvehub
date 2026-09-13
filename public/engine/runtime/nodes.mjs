@@ -16,6 +16,7 @@ import { num, vec, D2R } from "../core/utils.mjs";
 import { buildComponentLight } from "../core/lights.mjs";
 import { createParticleEmitter } from "../core/particles.mjs";
 import { createMesh } from "./mesh.mjs";
+import { createTerrain } from "./terrain.mjs";
 import { buildUICanvas, buildUIImage, buildUIText, buildUIButton, buildUILayout } from "./ui.mjs";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
@@ -56,6 +57,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
   const audios = [];
   const clips = [];
   const particles = [];
+  const terrains = [];
   const nodes = [];
 
   function buildOwn(type, json) {
@@ -72,6 +74,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
         return wrapLight(json, "ambient");
       case "particleSystemNode":
         return wrapParticles(json);
+      case "terrainNode":
+        return wrapTerrain(json);
       case "uiCanvasNode":
         return buildUICanvas();
       case "uiImageNode":
@@ -94,6 +98,16 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const emitter = createParticleEmitter(json.particles, ctx.particleMaterial);
     group.add(emitter.object);
     particles.push({ json, obj: group, emitter });
+    return group;
+  }
+
+  /** 地形节点：Group 承载节点变换，烘焙高度场网格挂 __terrainMesh（与编辑器同结构）；
+   *  data 供 createTerrains 的贴地采样（sampleHeight/sampleSlope）使用 */
+  function wrapTerrain(json) {
+    const group = new THREE.Group();
+    const { obj: mesh, data, settings } = createTerrain(json);
+    group.add(mesh);
+    terrains.push({ json, obj: group, data, settings });
     return group;
   }
 
@@ -265,5 +279,5 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   buildNode(rootJson, null);
-  return { cameras, meshes, audios, clips, particles, nodes };
+  return { cameras, meshes, audios, clips, particles, terrains, nodes };
 }

@@ -20,6 +20,7 @@ import { loadModels } from "../engine/runtime/model.mjs";
 import { createAnimations } from "../engine/runtime/animation.mjs";
 import { createAudios } from "../engine/runtime/audio.mjs";
 import { createParticles } from "../engine/runtime/particles.mjs";
+import { createTerrains } from "../engine/runtime/terrain.mjs";
 import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
@@ -252,7 +253,7 @@ async function main() {
     loadMaterialParams(rootJson),
     loadModels(rootJson),
   ]);
-  const { cameras, meshes, audios, clips, particles, nodes } = buildSceneTree(rootJson, scene, {
+  const { cameras, meshes, audios, clips, particles, terrains, nodes } = buildSceneTree(rootJson, scene, {
     materialParams,
     models,
     particleMaterial: particleMaterialFactory,
@@ -527,6 +528,9 @@ async function main() {
     particleMaterialFactory,
   );
 
+  // 地形（静态高度场网格，无逐帧更新；脚本经 TerrainNode SDK 贴地采样）
+  const terrainsApi = createTerrains(terrains);
+
   // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
   // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。
   // physicsEnabled 为 true 时自动开始模拟，后端 rapier|jolt|ammo 惰性加载。
@@ -559,6 +563,7 @@ async function main() {
       physics: physicsApi,
       clipAnims,
       particles: particlesApi,
+      terrains: terrainsApi,
       ui: uiApi,
       canvas: renderer.domElement,
     });

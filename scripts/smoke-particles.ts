@@ -725,17 +725,20 @@ console.log("[5] 脚本 SDK 契约（tve.d.ts ↔ tve.mjs 镜像）");
 {
   const dts = readFileSync(resolve(process.cwd(), "src/framework/scripting/tve.d.ts"), "utf8");
   const mjs = readFileSync(resolve(process.cwd(), "public/engine/core/tve.mjs"), "utf8");
+  // KIND_CLASSES/属性表自 tve 拆分后（39a16d9）位于 node-types.mjs；灯光收敛在 core/lights.mjs
+  const nodeTypes = readFileSync(resolve(process.cwd(), "public/engine/core/tve/node-types.mjs"), "utf8");
+  const lightsMjs = readFileSync(resolve(process.cwd(), "public/engine/core/lights.mjs"), "utf8");
   check("d.ts：EntityKind 含 particleSystemNode", /EntityKind[\s\S]*?"particleSystemNode"/.test(dts));
   check("d.ts：ScriptNodeKind 含 particleSystemNode", /ScriptNodeKind[\s\S]*?"particleSystemNode"/.test(dts));
   check("d.ts：声明 class ParticleSystemNode", /export class ParticleSystemNode extends Entity/.test(dts));
   check("d.ts：engine.particles: ParticlesApi", /readonly particles: ParticlesApi/.test(dts));
-  check("mjs：KIND_CLASSES 映射 particleSystemNode", /particleSystemNode:\s*ParticleSystemNode/.test(mjs));
-  check("mjs：__nodeKinds 登记", /ParticleSystemNode\.__nodeKinds\s*=\s*\["particleSystemNode"\]/.test(mjs));
+  check("mjs：KIND_CLASSES 映射 particleSystemNode", /particleSystemNode:\s*ParticleSystemNode/.test(nodeTypes));
+  check("mjs：__nodeKinds 登记", /ParticleSystemNode\.__nodeKinds\s*=\s*\["particleSystemNode"\]/.test(nodeTypes));
   check("mjs：engine 挂 particles", /particles:\s*particlesApi/.test(mjs));
   check("mjs：导出 ParticleSystemNode 与小写别名", /ParticleSystemNode as particleSystemNode/.test(mjs));
-  check("mjs：灯光设置 cullingMask 收敛语句完整（回归：曾被截断成 umber）", /typeof s\.cullingMask === "number"/.test(mjs) && !/\number &&/.test(mjs));
+  check("mjs：灯光设置 cullingMask 收敛语句完整（回归：曾被截断成 umber）", /typeof s\.cullingMask === "number"/.test(lightsMjs) && !/\number &&/.test(lightsMjs));
   check("d.ts：ParticleSettings / ParticleSystemNode 声明 texture", (dts.match(/^\s+texture: string;/gm) ?? []).length >= 2);
-  check("mjs：ParticleSystemNode 属性表含 texture", /"blending",\s*"texture",/.test(mjs));
+  check("mjs：ParticleSystemNode 属性表含 texture", /"blending",\s*"texture",/.test(nodeTypes));
   const player = readFileSync(resolve(process.cwd(), "public/web-preview/player.mjs"), "utf8");
   check("player：接线 createParticles 并每帧推进", /createParticles\(\s*particles/.test(player) && /particlesApi\.update\(dt\)/.test(player));
   check("player：粒子控制传入脚本宿主", /particles:\s*particlesApi/.test(player));

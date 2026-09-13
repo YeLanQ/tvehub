@@ -16,6 +16,7 @@ export {
   CameraNode,
   AudioNode,
   ParticleSystemNode,
+  TerrainNode,
   UICanvasNode,
   UIImageNode,
   UILayoutNode,
@@ -32,6 +33,7 @@ export type {
   CameraNodeInit,
   AudioNodeInit,
   ParticleSystemNodeInit,
+  TerrainNodeInit,
   LightKind,
 } from "./derived/Primitives";
 export type { TransformInit } from "./Transform";
@@ -75,6 +77,7 @@ export type { ICameraNode } from "./nodes/CameraNode";
 export type { ISkyboxNode } from "./nodes/SkyboxNode";
 export type { IAudioNode } from "./nodes/AudioNode";
 export type { IParticleSystemNode } from "./nodes/ParticleSystemNode";
+export type { ITerrainNode } from "./nodes/TerrainNode";
 export type { IUICanvasNode } from "./nodes/UICanvasNode";
 export type { IUIImageNode } from "./nodes/UIImageNode";
 export type { IUITextNode } from "./nodes/UITextNode";

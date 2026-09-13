@@ -12,6 +12,7 @@ pub mod material;
 pub mod migrate;
 pub mod model;
 pub mod shader;
+pub mod terrain;
 pub mod texcube;
 
 use std::path::PathBuf;

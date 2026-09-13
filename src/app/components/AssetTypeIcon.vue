@@ -10,6 +10,7 @@ import {
   LIGHT_DIRECTIONAL_ICON_PATHS,
   LIGHT_AMBIENT_ICON_PATHS,
   AUDIO_ICON_PATHS,
+  TERRAIN_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 
 defineProps<{ kind: string }>();
@@ -69,6 +70,11 @@ defineProps<{ kind: string }>();
       <path d="M7 5.5l3 2.6-3 2.6-3-2.6 3-2.6z" />
       <path d="M3.5 17c3.5 0 3.5-4 7-4s3.5 4 7 4" />
       <path d="M17 6.5l3 2.6-3 2.6" />
+    </template>
+
+    <!-- 地形（.terrain）：山形双峰 + 网格线 -->
+    <template v-else-if="kind === 'terrain'">
+      <path v-for="d in TERRAIN_ICON_PATHS" :key="d" :d="d" />
     </template>
     <!-- 预制体（.prefab）：立方体 + 子树分支（区别于纯模型立方体） -->
     <template v-else-if="kind === 'prefab'">

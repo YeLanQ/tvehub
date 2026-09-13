@@ -36,6 +36,7 @@ export type EntityKind =
   | "skyboxNode"
   | "audioNode"
   | "particleSystemNode"
+  | "terrainNode"
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
@@ -50,6 +51,7 @@ export type NodeClass =
   | typeof CameraNode
   | typeof SkyboxNode
   | typeof ParticleSystemNode
+  | typeof TerrainNode
   | typeof UICanvasNode
   | typeof UIImageNode
   | typeof UITextNode
@@ -83,6 +85,7 @@ export type ScriptNodeKind =
   | "lightNode"
   | "skyboxNode"
   | "particleSystemNode"
+  | "terrainNode"
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
@@ -613,6 +616,52 @@ export class ParticleSystemNode extends Entity {
   texture: string;
 }
 
+/**
+ * 地形节点（编辑器 terrainNode）：通用节点能力 + 贴地采样
+ * （脚本把物体摆到地表、按坡度撒放植被/装饰物用）。
+ *
+ * ```ts
+ * export default class Drop extends Component {
+ *   @property({ type: TerrainNode, label: "地形" })
+ *   ground: TerrainNode | null = null;
+ *
+ *   onUpdate() {
+ *     const p = this.entity.position;
+ *     if (this.ground) p.y = this.ground.sampleHeight(p.x, p.z);
+ *   }
+ * }
+ * ```
+ */
+export class TerrainNode extends Entity {
+  /** 双线性采样地表高度（节点本地 x/z；节点仅平移时即世界坐标；未命中返回 0） */
+  sampleHeight(x: number, z: number): number;
+  /** 地表平坦度（1 = 平地 → 0 = 崖壁；有限差分估算，撒放可用性检测用） */
+  sampleSlope(x: number, z: number): number;
+  /** 地形设置快照（未绑定返回 null） */
+  readonly settings: TerrainSettingsSnapshot | null;
+}
+
+/** 地形设置快照（SDK 只读视图；与编辑器 TerrainSettings 同形状） */
+export interface TerrainSettingsSnapshot {
+  seed: number;
+  size: number;
+  segments: number;
+  heightScale: number;
+  frequency: number;
+  octaves: number;
+  lacunarity: number;
+  gain: number;
+  erosion: number;
+  warp: number;
+  valleyBias: number;
+  seaLevel: number;
+  talus: number;
+  talusPasses: number;
+  grassColor: number;
+  rockColor: number;
+  snowColor: number;
+}
+
 // ---------------------------------------------------------------------------
 // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器
 // 2D 定位标准：100px = 1 UI 单位；锚点 anchorMin/Max/pivot 为 0..1 归一化
@@ -770,6 +819,7 @@ export {
   CameraNode as cameraNode,
   SkyboxNode as skyboxNode,
   ParticleSystemNode as particleSystemNode,
+  TerrainNode as terrainNode,
   UICanvasNode as uiCanvasNode,
   UIImageNode as uiImageNode,
   UITextNode as uiTextNode,

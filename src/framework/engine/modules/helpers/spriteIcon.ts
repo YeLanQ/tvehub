@@ -8,6 +8,7 @@ import {
   LIGHT_SPOT_ICON_PATHS,
   AUDIO_ICON_PATHS,
   PARTICLE_ICON_PATHS,
+  TERRAIN_ICON_PATHS,
 } from "./icons";
 
 export type SpriteIconKind =
@@ -17,7 +18,8 @@ export type SpriteIconKind =
   | "light-ambient"
   | "light-spot"
   | "audio"
-  | "particle";
+  | "particle"
+  | "terrain";
 
 const TEXTURE_SIZE = 128;
 
@@ -41,6 +43,8 @@ function iconPaths(kind: SpriteIconKind): string[] {
       return AUDIO_ICON_PATHS;
     case "particle":
       return PARTICLE_ICON_PATHS;
+    case "terrain":
+      return TERRAIN_ICON_PATHS;
   }
 }
 

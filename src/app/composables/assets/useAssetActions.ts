@@ -36,6 +36,7 @@ export interface AssetActionsApi {
   doNewMaterial: (dir: string) => Promise<void>;
   doNewShader: (dir: string, kind: string) => Promise<void>;
   doNewSkybox: (dir: string, kind: "procedural" | "cube") => Promise<void>;
+  doNewTerrain: (dir: string) => Promise<void>;
   doNewTextureCube: (dir: string) => Promise<void>;
   doNewPrefab: (dir: string) => Promise<void>;
   doNewAnim: (dir: string) => Promise<void>;
@@ -237,6 +238,26 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
     await assetsStore.createSkyboxAsset(root, dir, kind, name.trim());
   }
 
+  /** 新建地形资产（.terrain 程序化地形设置预设；弹窗命名，重名自动去重） */
+  async function doNewTerrain(dir: string): Promise<void> {
+    const root = projectStore.currentPath;
+    if (!root) return;
+    if (!ctx.importAllowedDir(dir)) {
+      logStore.log("warn", ctx.isSrcDir(dir)
+        ? "src 目录不允许新建地形"
+        : "内置目录只读，不允许新建地形");
+      return;
+    }
+    const name = await prompt({
+      title: "新建地形",
+      label: dir || "项目根",
+      initial: "Terrain",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createTerrainAsset(root, dir, name.trim());
+  }
+
   /** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；弹窗命名，重名自动去重） */
   async function doNewTextureCube(dir: string): Promise<void> {
     const root = projectStore.currentPath;
@@ -295,6 +316,7 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
     doNewMaterial,
     doNewShader,
     doNewSkybox,
+    doNewTerrain,
     doNewTextureCube,
     doNewPrefab,
     doNewAnim,

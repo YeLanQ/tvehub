@@ -6,6 +6,7 @@ import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { getScriptsStore } from "../stores/scripts";
 import { prompt } from "../lib/prompt";
+import { api } from "../../lib/api";
 import { registerCommand } from "./registry";
 import { isEditingText } from "./context";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
@@ -14,6 +15,7 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
+import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
 
 const GEOMETRY_KINDS: GeometryKind[] = [
   "box", "sphere", "plane", "cylinder", "cone", "torus", "capsule",
@@ -44,8 +46,8 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/audio/particle/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
-  run: (_ctx, args: any) => {
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/audio/particle/terrain/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
+  run: async (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
     const parentId = args?.parentId ? String(args.parentId) : undefined;
@@ -95,6 +97,28 @@ registerCommand({
       case "particlesystemnode":
         node = engine().addParticleSystem(parentId);
         break;
+      case "terrain":
+      case "terrainnode": {
+        // 可选 path：直接绑定 .terrain 资产（资产面板「添加到场景」/devtools），
+        // 快照资产设置到节点（运行时不读资产文件，设置内嵌在节点上）
+        const terrainPath = args?.path !== undefined ? String(args.path) : "";
+        if (terrainPath) {
+          if (!isTerrainAssetRel(terrainPath)) {
+            throw new Error(`非地形资产: ${terrainPath}（应为 .terrain）`);
+          }
+          const root = getProjectStore().currentPath;
+          if (!root) throw new Error("未打开项目，无法读取地形资产");
+          const text = await api.readText(root, terrainPath);
+          const doc = JSON.parse(text) as { settings?: unknown };
+          node = engine().addTerrain(parentId, {
+            asset: terrainPath,
+            terrain: parseTerrainSettings(doc.settings),
+          });
+        } else {
+          node = engine().addTerrain(parentId);
+        }
+        break;
+      }
       case "ui":
       case "uicanvas":
       case "uiimage":
@@ -150,7 +174,7 @@ registerCommand({
       }
       default:
         throw new Error(
-          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/audio/particle/script/model）`,
+          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/audio/particle/terrain/script/model）`,
         );
     }
     // 显式命名：仅在提供了非空 name 时重命名（未提供保持引擎默认名，与历史 UI 一致）

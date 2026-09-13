@@ -11,6 +11,7 @@ import {
   SpotLightNode,
   CameraNode,
   ParticleSystemNode,
+  TerrainNode,
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
@@ -36,6 +37,7 @@ import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
+import { buildTerrain, terrainSettingsSig } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
 import {
@@ -92,6 +94,8 @@ const MODEL_PENDING_NAME = "__modelPending";
 const AUDIO_ICON_COLOR = 0x7ed49a;
 /** 粒子系统节点图标子对象名（编辑器辅助物；粒子 Points 由 ParticleSystem 挂 __particles） */
 const PARTICLE_ICON_NAME = "__particleIcon";
+/** 地形渲染网格子对象名（节点 Group 下；设置变化按签名重建） */
+const TERRAIN_MESH_NAME = "__terrainMesh";
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
 /** UI 按钮标签子网格名（文本光栅化贴图；随按钮背景同序渲染） */
@@ -435,6 +439,7 @@ export class SceneSynchronizer {
     else if (node instanceof CameraNode) this.refreshCamera(node, obj);
     else if (node instanceof AudioNode) this.refreshAudio(node, obj);
     else if (node instanceof ParticleSystemNode) this.refreshParticleSystem(node, obj);
+    else if (node instanceof TerrainNode) this.refreshTerrain(node, obj);
     else if (node instanceof UICanvasNode) this.refreshUICanvas(node, obj);
     else if (UI_IS_WIDGET_KINDS.has(node.typeKey)) this.refreshUIWidget(node, obj as THREE.Mesh);
     else if (node instanceof UILayoutNode) this.refreshUILayout(node, obj);
@@ -463,6 +468,9 @@ export class SceneSynchronizer {
         c.traverse((d) => d.layers.set(layer));
       } else if (c.name === PARTICLES_CHILD_NAME) {
         // 粒子 Points 是节点的渲染内容：跟随节点层（ParticleSystem 首次挂载时也置位）
+        c.layers.set(layer);
+      } else if (c.name === TERRAIN_MESH_NAME) {
+        // 地形网格是节点的渲染内容：跟随节点层
         c.layers.set(layer);
       } else if (c.name === UI_LABEL_CHILD_NAME) {
         // UI 按钮标签网格是节点的渲染内容：跟随节点层（refreshUIWidget 每次刷新重置位）
@@ -1131,6 +1139,39 @@ export class SceneSynchronizer {
       obj.add(icon);
     }
     (icon.material as THREE.SpriteMaterial).color.setHex(node.particles.startColor & 0xffffff);
+  }
+
+  /**
+   * 地形节点刷新：按设置烘焙高度场几何（位置 + 顶点色 + 法线）挂在 __terrainMesh
+   * 子网格下。设置签名变化 → 重建几何并释放旧的（烘焙成本 O(segments²)，检查器
+   * 拖值按提交粒度触发）；签名未变只同步阴影/层等既有路径。
+   */
+  private refreshTerrain(node: TerrainNode, obj: THREE.Object3D): void {
+    const sig = terrainSettingsSig(node.terrain);
+    let mesh = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Mesh | null;
+    if (!mesh || mesh.userData.terrainSig !== sig) {
+      const build = buildTerrain(node.terrain);
+      if (mesh) {
+        mesh.geometry.dispose();
+        mesh.geometry = build.geometry;
+      } else {
+        mesh = new THREE.Mesh(build.geometry, new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          metalness: 0,
+          roughness: 0.95,
+        }));
+        mesh.name = TERRAIN_MESH_NAME;
+        obj.add(mesh);
+        // 首建后补层（applyNodeLayer 在本函数之前跑）
+        mesh.layers.set(clampLayerIndex(node.layer));
+      }
+      mesh.userData.terrainSig = sig;
+      mesh.userData.terrainMinY = build.minY;
+      mesh.userData.terrainMaxY = build.maxY;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.shadowCamerasDirty = true;
+    }
   }
 
   /**

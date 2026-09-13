@@ -9,6 +9,7 @@ export { CameraNode } from "../nodes/CameraNode";
 export { SkyboxNode, type SkyboxKind, type SkySunDisk, skyMaterialForKind } from "../nodes/SkyboxNode";
 export { AudioNode } from "../nodes/AudioNode";
 export { ParticleSystemNode } from "../nodes/ParticleSystemNode";
+export { TerrainNode, type TerrainNodeInit } from "../nodes/TerrainNode";
 export { UICanvasNode, type UIRenderMode, type IUICanvasNode } from "../nodes/UICanvasNode";
 export { UIWidgetNode, type UIWidgetNodeInit } from "../nodes/UIWidgetNode";
 export { UILayoutNode, type UILayoutNodeInit, type IUILayoutNode } from "../nodes/UILayoutNode";

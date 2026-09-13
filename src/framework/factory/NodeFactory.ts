@@ -6,6 +6,7 @@ import {
   MeshNode,
   ParticleSystemNode,
   SkyboxNode,
+  TerrainNode,
   UIButtonNode,
   UICanvasNode,
   UIImageNode,
@@ -29,6 +30,7 @@ export type EditorNodeType =
   | "skyboxNode"
   | "audioNode"
   | "particleSystemNode"
+  | "terrainNode"
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
@@ -150,6 +152,14 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建地形节点（默认程序化山地设置；参数经检查器调整，改参数即重建几何） */
+  createTerrain(opts: CreateOptions = {}): TerrainNode {
+    const node = this.registry.create("terrainNode") as TerrainNode;
+    node.name = opts.name ?? "Terrain";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   /**
    * 创建 UI 画布（Canvas-Widget 的 Canvas；Widget 挂其下，屏幕叠加渲染）。
    * defaults：项目设置默认值（设计分辨率按屏幕方向定向）；
@@ -216,7 +226,9 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
           ? AudioNode
           : K extends "particleSystemNode"
             ? ParticleSystemNode
-            : K extends "uiCanvasNode"
+            : K extends "terrainNode"
+              ? TerrainNode
+              : K extends "uiCanvasNode"
               ? UICanvasNode
               : K extends "uiImageNode"
                 ? UIImageNode
@@ -239,6 +251,7 @@ export type {
   SkyboxNode,
   AudioNode,
   ParticleSystemNode,
+  TerrainNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,

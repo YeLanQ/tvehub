@@ -72,6 +72,8 @@ export const NODE_REF_TYPE_KINDS: Record<string, string[] | null> = {
   skyboxNode: ["skyboxNode"],
   ParticleSystemNode: ["particleSystemNode"],
   particleSystemNode: ["particleSystemNode"],
+  TerrainNode: ["terrainNode"],
+  terrainNode: ["terrainNode"],
   UICanvasNode: ["uiCanvasNode"],
   uiCanvasNode: ["uiCanvasNode"],
   UIImageNode: ["uiImageNode"],
