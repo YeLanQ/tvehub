@@ -1,8 +1,55 @@
 # 实体与查询
 
+场景在脚本运行期有两类对象：**节点**（`Entity` 及其子类，代表场景树中的一个节点）与**组件**（挂载在节点上的功能模块，`Component` 子类或内置门面）。二者 API 不同、获取方式不同、命名也不同——先读下方的「节点 vs 组件」一节区分，再分节详述。
+
+## 节点 vs 组件（先读这一节）
+
+### 概念
+
+- **节点句柄**（`Entity` 子类）：场景树中的一个节点。持有变换（position/rotation/scale）、层级（parent/children）、名称/标签/层。用 `engine.scene.find` 查找，或 `@property({ type: 节点类 })` 引用。类名以 `Node` 结尾，或为 `Transform`。
+- **组件门面**（`Component` 子类 / 内置门面）：挂载在节点上的功能模块（灯光、刚体、音源、动画…）。用 `entity.getComponent(组件类)` 获取，`entity.addComponent(...)` 添加。内置门面类名**不带** `Node` 后缀。
+
+### 命名对照
+
+| 节点句柄（`extends Entity`） | 对应组件门面 | 关系 |
+| --- | --- | --- |
+| `LightNode` | `Light` | 灯光节点上的灯光组件（intensity/color/阴影…） |
+| —（任意节点可挂） | `RigidBody` / `Collider` | 物理组件 |
+| —（音频源节点） | `AudioSource` | 音源组件 |
+| —（任意节点可挂） | `AnimationClip` | 关键帧动画剪辑组件 |
+| —（模型网格节点） | `SkeletalAnimation` | 骨骼动画组件 |
+| `MeshNode` | — | 网格是节点本身属性，无独立组件门面 |
+| `CameraNode` | — | 相机是节点本身属性 |
+| `SkyboxNode` / `UICanvasNode` / `UIImageNode` / … | — | 节点本身即功能，无组件门面 |
+
+> 规律：类名以 `Node` 结尾（或 `Transform`）= 节点句柄；去掉 `Node` 后缀 = 对应组件门面（若存在）。
+
+### 常见误用
+
+```ts
+// ✗ 错误：LightNode 是节点句柄，不是组件——编译期报 TS2769
+const light = entity.getComponent(LightNode);
+
+// ✓ 正确：Light 是组件门面
+const light = entity.getComponent(Light);      // 或 entity.getComponent("light")
+
+// ✓ 引用灯光节点本身（变换/层级）用节点句柄类
+@property({ type: LightNode }) target: LightNode | null = null;
+
+// ✓ 运行时查找节点后用 instanceof 收窄（find 不支持泛型）
+const node = engine.scene.find("Sun");
+if (node instanceof LightNode) { /* node 收窄为 LightNode */ }
+```
+
+**判定法**：`getComponent` 的参数永远是**组件门面类**或**脚本组件类**（`extends Component`），绝不传节点句柄类（`extends Entity`）。
+
+---
+
+## 节点句柄：Entity
+
 `Entity` 是场景节点在脚本运行期的句柄。变换与编辑器同一套语义：位置/缩放为米制，**旋转为度制欧拉角 XYZ**，前向为 **-Z**（与灯光/相机/粒子发射方向一致）。
 
-## Entity
+### Entity 基类
 
 ```ts
 // 属性
@@ -80,9 +127,9 @@ onUpdate(delta: number) {
 }
 ```
 
-## 节点类型引用类
+### 节点类型类（Entity 子类）
 
-既可作字段类型标注，也可作为值传给 `@property({ type })`。运行期字段解析为对应 kind 的 `Entity` 子类实例（`instanceof` 可判断）：
+以下类均 `extends Entity`，是**节点句柄**——既可作字段类型标注，也可作为值传给 `@property({ type })`。运行期字段解析为对应 kind 的 `Entity` 子类实例（`instanceof` 可判断）。**它们不是组件，不能传给 `getComponent`。**
 
 | 类 | 对应编辑器节点 |
 | --- | --- |
@@ -176,9 +223,29 @@ engine.scene.findAllByTag("enemy");// 按标签全量（文档序）
 
 - 「文档序」= 场景树的深度优先顺序（与层级面板从上到下一致）；
 - 标签在检查器 Node 卡设置（项目设置 › 标签与层 维护列表；节点上存储但不在列表中的标签原样保留），空串 = 无标签；
-- 查询是**每帧可重复调用**的轻量操作，但结果应缓存使用（如 `onStart` 里查一次存字段），避免每帧全树遍历。
+- 查询是**每帧可重复调用**的轻量操作，但结果应缓存使用（如 `onStart` 里查一次存字段），避免每帧全树遍历；
+- `find` 返回 `Entity | null`，需要具体节点类型时用 `instanceof` 收窄（不支持泛型调用）。
 
-## 组件查找：getComponent
+---
+
+## 组件门面与组件查找
+
+### 内置组件门面类
+
+以下类是**组件门面**，通过 `getComponent` / `addComponent` / 组件字段声明获得，脚本不要直接 `new`。每个门面均有 `entity`（宿主实体）与 `id`（组件引用 id）只读属性。完整 API 见[内置组件门面](components.md)。
+
+| 门面 | 对应编辑器组件 | 获取方式 | 运行时创建 |
+| --- | --- | --- | --- |
+| `RigidBody` | 刚体 | `getComponent(RigidBody)` | ✗（返回 null） |
+| `Collider` | 碰撞体（可多） | `getComponent(Collider)` | ✗（返回 null） |
+| `Light` | 灯光 | `getComponent(Light)` | ✓（多实例追加） |
+| `AudioSource` | 音源 | `getComponent(AudioSource)` | ✓（多实例追加） |
+| `AnimationClip` | 动画剪辑 | `getComponent(AnimationClip)` | ✓（多实例追加） |
+| `SkeletalAnimation` | Animation 卡（模型内嵌） | `getComponent(SkeletalAnimation)` | ✓（仅模型网格节点） |
+
+**脚本组件**：继承 `Component` 的自定义类（见[组件与装饰器](decorators.md)），同样通过 `getComponent(脚本类)` 获取。
+
+### getComponent
 
 ```ts
 // 内置组件：传门面类或类型键字符串
@@ -202,7 +269,9 @@ token 对照：
 
 脚本类在加载后**全局可见**，脚本之间互相引用组件无需 import 运行时——严格模式下用 `import type` 只引入类型即可获得智能提示（按类型名查找）。
 
-## 全场景组件查找
+> **不要传节点句柄类**：`getComponent(LightNode)` / `getComponent(MeshNode)` 等会编译报错（TS2769）。节点句柄类（`extends Entity`）代表节点本身，不是组件；灯光属性用 `getComponent(Light)`，引用节点用 `@property({ type: LightNode })` 或 `engine.scene.find` + `instanceof`。
+
+### 全场景组件查找
 
 ```ts
 engine.scene.findComponent(HPBar);    // 文档序第一个命中（未命中 null）
@@ -210,7 +279,7 @@ engine.scene.findComponents("enemy"); // 文档序全量（未命中空数组）
 // token：脚本类 / 脚本源路径 / 脚本类名 / 内置组件门面类 / 类型键
 ```
 
-## 动态添加组件：addComponent
+### 动态添加组件：addComponent
 
 ```ts
 // 内置组件（多实例）：追加一个新组件，settings 缺省项回默认
@@ -233,6 +302,8 @@ entity.addComponent("src/hp.ts", { max: 100 });
 - 预览运行态添加的组件**不回写场景文件**；
 - 创建的脚本组件**立即进入生命周期**（`onEnable` → `onStart`），并进入每帧 `onUpdate` 队列（执行顺序排末尾）；
 - `Light` / `AudioSource` / `AnimationClip` 为多实例追加；`SkeletalAnimation` 仅模型网格节点可用；物理组件不支持运行时创建（返回 `null`）。
+
+---
 
 ## 运行态 vs 持久化（哪些写入会保存）
 

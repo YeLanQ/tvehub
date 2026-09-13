@@ -406,7 +406,7 @@ export class Entity {
    * - 注意：节点句柄类（LightNode/MeshNode/CameraNode/Transform 等，均
    *   extends Entity）是场景节点而非组件，不能传给 getComponent；灯光属性
    *   用 `getComponent(Light)`，引用节点本身用 `@property({ type: LightNode })`
-   *   或 `engine.node.find<LightNode>("name")`。
+   *   或 `engine.scene.find("name")` 后以 `instanceof LightNode` 收窄。
    */
   getComponent(component: "rigidBody" | typeof RigidBody): RigidBody | null;
   getComponent(component: "collider" | typeof Collider): Collider | null;
@@ -479,8 +479,8 @@ export class MeshNode extends Entity {}
  * const light = this.entity.getComponent("light");    // ✅ 字符串键
  * // this.entity.getComponent(LightNode)              // ❌ LightNode 是节点句柄，非组件
  * ```
- * 引用灯光节点本身（变换/层级）用 `@property({ type: LightNode })` 或
- * `engine.node.find<LightNode>("name")`。
+ * 引用灯光节点本身（变换/层级）用 `@property({ type: LightNode })` 声明字段，
+ * 或 `engine.scene.find("name")` 后以 `instanceof LightNode` 收窄。
  */
 export class LightNode extends Entity {}
 

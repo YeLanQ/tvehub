@@ -127,7 +127,7 @@ export default class Game extends Component {
 ## 下一步
 
 - [装饰器](decorators.md)：`@property` / `@nodeType`
-- [实体与查询](entity.md)：`Entity`、场景/组件查找
+- [实体与查询](entity.md)：节点 vs 组件区分、`Entity`、场景/组件查找
 - [engine 入口](engine.md)：时间/输入/物理/音频等系统 API
 - [内置组件门面](components.md)：刚体/灯光/音源/骨骼动画
 - [补间动画](tween.md) / [数学库](math.md) / [通用设施](utils.md)

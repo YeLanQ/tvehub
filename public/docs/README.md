@@ -40,7 +40,7 @@ tve（three-visual-editor）内置 3D 场景编辑器与脚本 SDK 的用户文�
 | --- | --- |
 | [SDK 总览](sdk/overview.md) | 快速上手、生命周期详解、每帧调度顺序、执行顺序与错误隔离、约定速查 |
 | [装饰器](sdk/decorators.md) | `@property` 属性声明（类型推断/节点引用/组件引用/自动挂载）、`@nodeType` 脚本节点、常见错误 |
-| [实体与查询](sdk/entity.md) | `Entity` 全量属性与方法、快照语义、节点类型类、场景/组件查询、addComponent、落盘约定 |
+| [实体与查询](sdk/entity.md) | 节点 vs 组件区分、`Entity` 全量属性与方法、快照语义、节点类型类、场景/组件查询、addComponent、落盘约定 |
 | [UI](sdk/ui.md) | UI 画布与 Widget 节点类字段、`engine.ui`、按钮点击订阅、坐标换算、摇杆示例 |
 | [engine 入口](sdk/engine.md) | 时间、输入、场景、动画、音频、粒子、物理、UI、补间、日志 |
 | [内置组件门面](sdk/components.md) | 刚体、碰撞体、灯光、音源、动画剪辑、骨骼动画（混合/加法层/骨骼/形态键/IK/绑定） |
