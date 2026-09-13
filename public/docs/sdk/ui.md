@@ -23,34 +23,60 @@ interface UIWidgetBase {
 }
 ```
 
+锚点解析规则（与编辑器同一套数学）：
+
+- **点锚点轴**（min == max）：矩形由 `anchoredPosition`（枢轴相对锚点的偏移）与 `size` 决定；
+- **拉伸轴**（min < max）：矩形 = 父矩形上两锚线之间收进 `offsetMin`（左/下）与 `offsetMax`（右/上）——尺寸由父矩形与边距推导，**写 `size` 不生效**；屏幕适配时随父矩形自动拉伸；
+- 枢轴 `pivot` 是点锚点定位与旋转的基准（0.5,0.5 = 中心）。
+
+```ts
+// 居中血条：点锚点 + 中心枢轴，血量变化只改 size
+const bar = engine.scene.find("UI/HealthBar") as UIImageNode;
+bar.anchorMin = { x: 0.5, y: 0.5 }; bar.anchorMax = { x: 0.5, y: 0.5 };
+bar.pivot = { x: 0, y: 0.5 };          // 左边缘为基准 → 缩短时右端收缩
+bar.size = { x: 8 * hp / maxHp, y: 0.4 };
+
+// 全屏底板：双向拉伸锚点 + 零边距 → 自动铺满任意屏幕
+panel.anchorMin = { x: 0, y: 0 }; panel.anchorMax = { x: 1, y: 1 };
+panel.offsetMin = { x: 0, y: 0 }; panel.offsetMax = { x: 0, y: 0 };
+```
+
 ## 画布：UICanvasNode
 
 ```ts
-canvas.sortOrder;      // 画布整体排序（多画布叠加大者在上，优先于 Widget sortOrder）
-canvas.designWidth;    // 设计宽度（设计像素；100px = 1 UI 单位）
+canvas.sortOrder;      // 画布整体排序（多画布叠加大者在上，优先于 Widget sortOrder；-500..500）
+canvas.designWidth;    // 设计宽度（设计像素；100px = 1 UI 单位；1..16384）
 canvas.designHeight;   // 设计高度（设计像素）
 canvas.scaleMode;      // 屏幕适配方案（仅预览/构建运行时生效；编辑器布局视图恒 1:1）
 ```
 
-`scaleMode` 取值：`"noscale"` 不缩放 / `"fixedwidth"` 固定宽度 / `"fixedheight"` 固定高度 / `"fixedauto"` 固定宽高比（cover 铺满裁切）/ `"full"` 等比包含（contain 完整显示）。
+`scaleMode` 取值与数学（screen = 运行窗口的满视野矩形，宽高比随窗口变化）：
+
+| 值 | 缩放系数 | 效果 |
+| --- | --- | --- |
+| `"noscale"` | (1, 1) | 画布按设计尺寸原样显示，不随屏幕缩放 |
+| `"fixedwidth"` | screenW / 设计宽 | 固定宽度等比缩放（高度随屏幕比例变化） |
+| `"fixedheight"` | screenH / 设计高 | 固定高度等比缩放（宽度随屏幕比例变化） |
+| `"fixedauto"` | max(W/cw, H/ch) | 等比铺满（cover）：铺满屏幕，超出部分裁切 |
+| `"full"` | min(W/cw, H/ch) | 等比包含（contain）：完整显示不裁切，可能有留白 |
 
 ## 图片：UIImageNode
 
 ```ts
 img.image;   // 图片资产相对路径（空串 = 纯色矩形；运行态异步加载后热替换）
-img.color;   // 着色 0xRRGGBB（与图片相乘）
+img.color;   // 着色 0xRRGGBB（与图片相乘；白图 × 颜色 = 染色）
 ```
 
 ## 文本：UITextNode
 
 ```ts
-txt.text;        // 文本内容（\n 分行；超界自动换行）
-txt.fontSize;    // 字号（设计像素，100px = 1 单位）
+txt.text;        // 文本内容（\n 分行；超界自动换行，逐字符断行对中文友好）
+txt.fontSize;    // 字号（设计像素，100px = 1 单位；约 4..512）
 txt.color;       // 文本颜色 0xRRGGBB
 txt.bold;        // 粗体
 txt.italic;      // 斜体
 txt.fontFamily;  // "system" | "serif" | "mono"
-txt.align;       // "left" | "center" | "right"（水平对齐）
+txt.align;       // "left" | "center" | "right"（相对文本框的水平对齐；垂直恒居中）
 ```
 
 ## 按钮：UIButtonNode
@@ -65,6 +91,8 @@ btn.labelBold;      // 标签粗体
 btn.interactable;   // 可交互（false 时仅展示，不参与点击命中）
 ```
 
+点击命中的运行时规则：按下/抬起指针位移 ≤ 5px 才算点击；命中测试在画布空间做矩形判定（`|x| ≤ size.x/2 && |y| ≤ size.y/2`），候选按钮按渲染序**降序**取第一个命中的可交互按钮——与视觉层级一致（最上层先收到）。
+
 ## 布局容器：UILayoutNode
 
 ```ts
@@ -74,7 +102,12 @@ layout.spacing;       // 子元素间距 { x, y }（UI 单位）
 layout.gridColumns;   // 网格列数（grid 模式；行数由子元素数量推导）
 ```
 
-布局容器接管直接子节点的位置（子元素 `anchoredPosition` 被忽略，槽位内居中）；`layoutMode = "none"` 时子节点回归锚点定位。
+布局容器接管直接子节点的位置（子元素 `anchoredPosition` 被忽略，槽位内居中）；`layoutMode = "none"` 时子节点回归锚点定位。排列规则：
+
+- `horizontal`：从内容区左缘向右排，槽内垂直居中；`vertical`：从内容区顶缘向下排，槽内水平居中；
+- `grid`：格子尺寸 = 子元素最大宽高，从左上角按行排（列数 = `gridColumns`，行数自动）；
+- padding / spacing 逐项生效（下限 0）；
+- 容器自身是「无形 Widget」：有尺寸/锚点/SortOrder（可被父布局排列）但无渲染内容；可嵌套。
 
 ## engine.ui
 
@@ -163,6 +196,54 @@ export default class MainMenu extends Component {
 
   onDisable() {
     this.unbind?.();   // 解绑按钮点击订阅
+  }
+}
+```
+
+## 示例：虚拟摇杆（rectOf + screenToUi + deadZone）
+
+```ts
+import { Component, property, math, engine, UIImageNode } from "tve";
+
+export default class Joystick extends Component {
+  @property({ type: UIImageNode }) base: UIImageNode | null = null;   // 摇杆底座
+  @property({ type: UIImageNode }) knob: UIImageNode | null = null;   // 摇杆头
+  @property({ min: 0 }) maxRadius = 1.2;                              // 摇杆行程（UI 单位）
+
+  value = { x: 0, y: 0 };           // 归一化输出（-1..1），其他组件读取
+  private grabbing = false;
+
+  onStart() {
+    engine.input.onPointerDown((p) => {
+      const rect = this.base && engine.ui.rectOf(this.base);
+      const pt = this.base && engine.ui.screenToUi(this.base, p.x, p.y);
+      if (rect && pt && Math.hypot(pt.x - rect.cx, pt.y - rect.cy) <= rect.w / 2) {
+        this.grabbing = true;        // 按在底座范围内才开始拖动
+      }
+    });
+    engine.input.onPointerUp(() => {
+      this.grabbing = false;
+      this.value = { x: 0, y: 0 };
+      if (this.knob && this.base) {
+        const rect = engine.ui.rectOf(this.base);
+        if (rect) this.knob.anchoredPosition = { x: 0, y: 0 };  // 回中
+      }
+    });
+  }
+
+  onUpdate() {
+    if (!this.grabbing || !this.knob || !this.base) return;
+    const rect = engine.ui.rectOf(this.base);
+    const p = engine.ui.screenToUi(this.base, engine.input.pointer.x, engine.input.pointer.y);
+    if (!rect || !p) return;
+    let dx = p.x - rect.cx, dy = p.y - rect.cy;
+    const len = Math.hypot(dx, dy) || 1;
+    if (len > this.maxRadius) { dx = (dx / len) * this.maxRadius; dy = (dy / len) * this.maxRadius; }
+    this.knob.anchoredPosition = { x: dx, y: dy };                     // 摇杆头跟随（钳在行程内）
+    this.value = {
+      x: math.deadZone(dx / this.maxRadius, 0.12),                     // 死区滤抖
+      y: math.deadZone(dy / this.maxRadius, 0.12),
+    };
   }
 }
 ```

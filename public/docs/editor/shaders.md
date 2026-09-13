@@ -80,6 +80,13 @@ Shader "assets/shaders/MyEffect"             // 指令名 = 资产路径去扩�
 | `_Dir ("文案", Vector) = (0, 1, 0, 0)` | `vec4` | 四个数值框 | `[x, y, z, w]` |
 | `_MainTex ("文案", 2D) = "white" {}` | `sampler2D` | 贴图下拉（按 sRGB 加载） | 资产相对路径（空串 = 无贴图） |
 
+约定与注意：
+
+- 属性名以 `_` 开头；**同名只取首个**，重名属性在保存解析时合并；
+- `Properties` 只取**第一个 Properties 块**（写多个块不会合并）；
+- 改属性**默认值**后，已存在的 `.mat` 里存的是旧值（材质值优先于默认值）——想让旧材质吃到新默认值需在材质卡片重置该参数；
+- 贴图属性按 sRGB 采样，构建导出会自动把被引用的贴图一并打包。
+
 ## 五、内置 uniform
 
 无需声明，直接使用：`_Time`（运行秒数：编辑器 = 引擎运行时长，产物 = 播放开始后的时长），以及 three 的标准量（`modelMatrix` / `modelViewMatrix` / `projectionMatrix` / `viewMatrix` / `normalMatrix` / `cameraPosition`）。
@@ -90,13 +97,89 @@ Shader "assets/shaders/MyEffect"             // 指令名 = 资产路径去扩�
 - 着色器只负责"内置分支表达不了的效果"，自定义参数通过 `Properties` 暴露；
 - 换分支（PBR → Unlit/卡通）只需换材质挂载的着色器（或改它的 Base 后重新保存）。
 
-## 七、报错与回退
+## 七、示例拆解
+
+以下效果全部来自创意工坊内置原型（`effect` 标签，可直接复制到项目后改造），按「用了哪个钩子、哪些变量」拆解：
+
+### 边缘光（RimLight）—— Emissive 钩子 + 菲涅尔
+
+```hlsl
+Hook "Emissive"
+{
+    // 菲涅尔：视线与法线越接近垂直（掠射角）边缘越亮
+    float rim = pow(1.0 - max(dot(normal, viewDir), 0.0), _RimPower);
+    emissive += rim * _RimColor.rgb;
+}
+```
+
+只用 `normal` / `viewDir` 两个只读变量和 `emissive` 出口。`_RimPower` 越大边缘越细锐。
+
+### 扫描线（ScanLine）—— Emissive 钩子 + `_Time` + `uv`
+
+```hlsl
+Hook "Emissive"
+{
+    // uv.y 加时间偏移取正弦 → 横向条纹向上/下流动
+    float scan = sin((uv.y + _Time * _ScanSpeed) * _ScanDensity * 6.2831853);
+    scan = scan * 0.5 + 0.5;
+    emissive += _ScanColor.rgb * scan * _ScanStrength;
+}
+```
+
+`_Time` 是效果动画的通用驱动（编辑器 = 引擎运行时长，产物 = 播放开始后的时长）。
+
+### 溶解消失（DissolveExt）—— 双钩子 + discard + CGINCLUDE 噪声
+
+```hlsl
+CGINCLUDE
+float noise(vec2 p) { /* 值噪声，见工坊源码 */ }
+ENDCG
+
+Hook "Diffuse"                          // 按噪声阈值裁剪片元
+{
+    float n = noise(uv * _NoiseScale);
+    if (n < _Threshold) discard;
+}
+
+Hook "Emissive"                         // 阈值附近的"烧灼边缘"发光
+{
+    float n = noise(uv * _NoiseScale);
+    float edge = 1.0 - smoothstep(_Threshold, _Threshold + _EdgeWidth, n);
+    emissive += _EdgeColor.rgb * edge * _EdgeIntensity;
+}
+```
+
+要点：`discard` 可以在钩子里用（裁剪片元）；复杂工具函数（噪声等）放 `CGINCLUDE`，多个 Hook 共用；两个 Hook 各自重算同一噪声保持图案一致；阈值参数 `_Threshold` 交给玩法脚本/动画从 0 推到 1 即可做出消失演出。
+
+### 顶点波动（VertexWave）—— Vertex 钩子
+
+```hlsl
+Hook "Vertex"
+{
+    // 沿法线方向按正弦波推动顶点（旗帜/水面）
+    position += normal * sin(position.y * _Frequency + _Time * _Speed) * _Amplitude;
+}
+```
+
+`Vertex` 钩子里 `position` 是**物体空间**位置、`normal` 是物体空间法线——位移幅度与物体缩放相关，跨尺寸复用效果时留意 `_Amplitude` 的量级。
+
+### 全息投影（HologramExt）—— 多钩子组合
+
+菲涅尔边缘（Emissive）+ 流动扫描线（Emissive）组合；半透明感由**材质卡片的不透明度**提供（材质参数与效果参数分工），不是在着色器里硬写 alpha。
+
+### UV 流光（UVScrollExt）—— Diffuse 钩子偏移采样
+
+按 `_Time` 平移 `uv` 后叠加流光纹理到漫反射颜色；贴图类 Properties（`2D`）在此类效果里作为第二张贴图参与采样。
+
+## 八、报错与回退
 
 - **解析错误**（未知钩子名 / Unlit 上用了不支持的钩子 / 缺 Base）：保存仍成功，资产检查器与材质卡片显示原因，材质**仍按 Base 分支渲染**，只是不叠加效果；
 - **GLSL 编译失败**（语法错误、未声明变量）：编辑器控制台输出编译日志摘要，视口不渲染该网格；
 - **着色器文件被删除**：材质回退默认分支（下拉显示「（缺失）」），不会中断渲染。
 
-## 八、WebGPU 后端（同一契约翻译为 TSL）
+排错流程建议：保存后先看资产检查器的解析提示（结构问题）→ 再看控制台编译日志（GLSL 语法/变量问题）→ 最后确认挂载材质的分支与钩子组合是否兼容（Unlit 限制）。
+
+## 九、WebGPU 后端（同一契约翻译为 TSL）
 
 WebGPU 后端下材质改用 three 的节点材质（MeshPhysical/Basic/Toon NodeMaterial），同一份 Hook 片段由 **GLSL→TSL 转译**接到对应端口槽位，`.shader` 不用改：
 
@@ -112,7 +195,17 @@ WebGPU 后端下材质改用 three 的节点材质（MeshPhysical/Basic/Toon Nod
 - 翻译取的是**受控子集**（与编辑器内置转译器一致：局部变量、赋值、if/else、discard、常见内置函数、CGINCLUDE 工具函数 inline）。子集之外的写法（循环、数组、结构体、矩阵下标等）会让**该 Hook 不生效**，编辑器/播放器控制台会给出"转译为 TSL 失败"的原因，材质仍按 Base 分支渲染；
 - 因此**跨后端可移植的效果建议只用受控子集**；Fragment 端口只在 WebGL 下生效（需要跨后端就改用 Diffuse/Emissive 端口表达）。
 
-## 八·补：渲染后端差异汇总
+### 跨后端可移植清单
+
+| 写法 | WebGL | WebGPU | 建议 |
+| --- | --- | --- | --- |
+| 局部变量、赋值、四则/内置函数 | ✓ | ✓ | 放心用 |
+| `if / else`、`discard` | ✓ | ✓ | 放心用 |
+| `for / while` 循环、数组、结构体 | ✓ | ✗（该 Hook 失效） | 用受控子集重写或接受仅 WebGL |
+| Fragment 钩子 | ✓ | ✗ | 改用 Diffuse/Emissive 表达 |
+| 依赖 sin 大参数精度的 hash | 可能两端图案不同 | 同左 | 用工坊示例的无 sin hash 写法 |
+
+## 九·补：渲染后端差异汇总
 
 | 能力 | WebGL | WebGPU |
 | --- | --- | --- |
@@ -121,10 +214,10 @@ WebGPU 后端下材质改用 three 的节点材质（MeshPhysical/Basic/Toon Nod
 | Fragment 端口 | ✓ | ✗（显式告警） |
 | 受控子集外的 GLSL 写法 | 直接编译，可能通过 | 该 Hook 不生效（告警） |
 
-## 九、天空程序（内置资产）
+## 十、天空程序（内置资产）
 
 `internal/shaders/SkyProcedural.shader` / `SkyBox.shader` 是天空程序，由天空材质引用（按 `Tags` 里的 `"PreviewType"="Skybox"` 标记识别），**不参与效果着色器管线**（没有 Hook，也不出现在材质卡片的着色器下拉里）。
 
-## 十、与构建导出的关系
+## 十一、与构建导出的关系
 
 导出产物内的网页运行时（`engine/runtime/shader.mjs` 解析 + `engine/runtime/shaderHooks.mjs` 注入）按**同一套规则**处理同一份 `.shader`：Base → 渲染分支、钩子注入位置与变量映射、属性表、`_Time` 推进在编辑器与产物中行为一致；`.mat` 的 `shader` 引用与 `props` 里的贴图引用都会随构建打包（发布模式下随资产重命名一并改写）。

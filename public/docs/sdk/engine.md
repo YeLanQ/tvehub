@@ -1,21 +1,33 @@
 # engine 入口
 
-`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志）。
+`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志）。全部子系统**按实体（Entity）寻址**：拿到实体句柄（`@property` 节点引用、`engine.scene.find` 等）后传入各 API。
 
 ## 时间：engine.time
 
 ```ts
-engine.time.delta;    // 距上一帧的秒数
+engine.time.delta;    // 距上一帧的秒数（与 onUpdate(delta) 的参数相同）
 engine.time.elapsed;  // 运行期累计秒数
 engine.time.frame;    // 帧序号（从 1 开始）
 ```
 
-## 输入：engine.input
-
-按键用 `KeyboardEvent.code`（如 `"KeyW"`、`"Space"`、`"ArrowLeft"`）。指针坐标为画布内 CSS 像素。
+典型用法：把「每 N 秒执行一次」改成基于累计时间的调度，避免 setTimeout 与帧循环脱节：
 
 ```ts
-engine.input.isKeyDown("KeyW");            // 按键当前是否按下
+private next = 0;
+onUpdate() {
+  if (engine.time.elapsed >= this.next) {
+    this.next += 2;        // 每 2 秒
+    this.spawn();
+  }
+}
+```
+
+## 输入：engine.input
+
+按键用 `KeyboardEvent.code`（如 `"KeyW"`、`"Space"`、`"ArrowLeft"`、`"Digit1"`、`"ShiftLeft"`）。指针坐标为**画布内 CSS 像素**（左上角原点），与 `engine.ui.screenToUi` 的入参同一空间。
+
+```ts
+engine.input.isKeyDown("KeyW");            // 按键当前是否按下（轮询式）
 const off = engine.input.onKeyDown((key) => { /* 按下 */ });  // 返回取消订阅函数
 const off2 = engine.input.onKeyUp(handler);
 engine.input.pointer;                       // { x, y, down }
@@ -25,6 +37,20 @@ engine.input.onPointerMove(handler);
 ```
 
 订阅函数均返回取消订阅函数；请在 `onDisable`/`onDestroy` 中调用以免悬挂。
+
+```ts
+// WASD 轮询移动（每帧查询）
+onUpdate(delta: number) {
+  const x = (engine.input.isKeyDown("KeyD") ? 1 : 0) - (engine.input.isKeyDown("KeyA") ? 1 : 0);
+  const z = (engine.input.isKeyDown("KeyS") ? 1 : 0) - (engine.input.isKeyDown("KeyW") ? 1 : 0);
+  if (x || z) this.entity.translate(x * this.speed * delta, 0, z * this.speed * delta);
+}
+
+// 事件式点击（一次性交互）
+private off?: () => void;
+onEnable() { this.off = engine.input.onPointerDown((p) => this.tryPick(p.x, p.y)); }
+onDisable() { this.off?.(); }
+```
 
 ## 场景：engine.scene
 
@@ -42,11 +68,11 @@ engine.animation.pause(entity);       // 暂停（保留进度）
 engine.animation.resume(entity);      // 继续
 ```
 
-更细的控制（进度、倍速、循环模式、动画图参数）见[内置组件门面](components.md)的 `SkeletalAnimation`。
+更细的控制（进度、倍速、循环模式、动画图参数、蒙皮/IK）见[内置组件门面](components.md)的 `SkeletalAnimation`；关键帧 `.anim` 剪辑用 `AnimationClip` 门面（两者互不相关）。
 
 ## 音频：engine.audio
 
-按实体寻址；音源节点与挂「音源」组件的节点有效，实体上多个音源时寻址首个。
+按实体寻址；音源节点与挂「音源」组件的节点有效，实体上多个音源时寻址首个（需要精确控制某个音源用 `getComponent(AudioSource)`）。
 
 ```ts
 engine.audio.play(entity);            // 暂停态续播；停止/播完态从头播
@@ -58,7 +84,7 @@ engine.audio.setVolume(entity, 0.5);  // 运行时音量 0~1（不落盘）
 
 ## 粒子：engine.particles
 
-按实体寻址；仅粒子系统节点有效。拿到 `ParticleSystemNode` 实体时也可直接调用其同名方法/属性（见 entity.md）。
+按实体寻址；仅粒子系统节点有效。拿到 `ParticleSystemNode` 实体时也可直接调用其同名方法/属性（见 [实体与查询](entity.md)）。
 
 ```ts
 engine.particles.play(entity);       // 暂停态续播；停止/播完态从头开始
@@ -70,9 +96,11 @@ engine.particles.stateOf(entity);    // { playing, paused, finished, alive, time
 engine.particles.setSettings(entity, { emissionRate: 50, startColor: 0x66ccff }); // 运行态合并（不落盘）
 ```
 
+`stateOf` 的 `finished` 在「非循环系统发射完毕且粒子全部消亡」时为 true，配合 `restart()` 可做「播完一轮再来一轮」的节奏控制。
+
 ## 物理：engine.physics
 
-按实体寻址；仅挂了「刚体」组件的节点有效。
+按实体寻址；仅挂了「刚体」组件的节点有效（需要项目设置启用物理）。
 
 ```ts
 engine.physics.applyImpulse(entity, x, y, z);   // 施加冲量（世界空间，N·s；动力学体）
@@ -85,6 +113,14 @@ engine.physics.setGravityScale(entity, 0);      // 重力缩放（0 = 不受重�
 engine.physics.wakeUp(entity);                  // 唤醒（修改参数后让睡眠中的体立即响应）
 engine.physics.setGravity(0, -9.81, 0);         // 世界重力（影响全部动力学体）
 ```
+
+| 方法 | 典型场景 |
+| --- | --- |
+| `applyImpulse` | 跳跃、爆炸击飞（一次性冲量，质量越大效果越弱） |
+| `applyForce` | 推力/浮力/风力（**每帧调用**才持续生效） |
+| `setLinearVelocity` | 直接控制速度（平台跳跃的空中控制、传送带） |
+| `setGravityScale` | 局部失重/下落加速（0 = 悬浮） |
+| `wakeUp` | 物理引擎会休眠静止的体；脚本改完参数/落点后调一次确保响应 |
 
 `RigidBody` 门面上有绑定本实体的同名接口（`setLinearVelocity` / `applyImpulse` / `setGravityScale` / `wakeUp` 等），见[内置组件门面](components.md)。
 
@@ -117,6 +153,10 @@ engine.log("得分", score);   // 输出到编辑器控制台（预览）/ 浏�
 engine.warn("低血量");
 engine.error("非法状态", entity);
 ```
+
+- 预览运行时日志转发到编辑器控制台（`[预览]` 前缀）；发布产物转发到浏览器控制台（调试模式构建保留转发）；
+- 参数原样透传（多参数以空格拼接显示），对象/实体按可读形式打印；
+- 每帧高频 `log` 会刷屏（控制台上限 500 行，超出丢弃最旧），调试完记得移除。
 
 ## 其他导出
 
