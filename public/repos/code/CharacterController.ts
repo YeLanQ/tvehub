@@ -5,14 +5,15 @@ import { Component, property, engine, Transform, math } from "tve";
 // 场景里摆一个虚拟摇杆（VirtualJoystick 原型）——本脚本自动读取其 dirX/dirY。
 // 移动方案（onStart 自动探测，同 WASDMove）：
 // - 动力学（dynamic）刚体 → 物理速度驱动：会被障碍物阻挡、支持跳跃（带重力），
-//   线速度写入在 onFixedUpdate（固定步长、与物理步进同频）。注意：动力学体的
-//   位姿由物理步进回写节点，转向放 onLateUpdate（回写后、渲染前）直写旋转——
-//   朝向由脚本自治推进、不与求解器形成反馈回路，无抖动；物理体旋转不参与
-//   解算（角色碰撞体建议胶囊/球，形状不随视觉转向）；
-// - 无刚体 / 运动学 → 位移驱动：onUpdate 平移 + 直写 rotation（渲染帧率平滑；
-//   不被阻挡，跳跃需要重力，此方案忽略）。
+//   线速度写入在 onFixedUpdate（固定步长、与物理步进同频）。注意：动力学体
+//   的位姿由物理步进回写节点，转向放 onLateUpdate（回写后、渲染前）直写旋转
+//   ——朝向由脚本自治变量推进、不与求解器形成反馈回路，无抖动；
+// - 无刚体 / 运动学 → 位移驱动：onUpdate 平移（世界意图经节点 yaw 反旋转到
+//   本地轴，转身过程中路径不偏航；不被阻挡，跳跃需要重力，此方案忽略）。
 // 方向合成：输入向量默认按世界轴（W = -Z），给 camera 参照后按参照节点朝向
-// （只用水平 yaw）旋转——把 CameraFollow 的相机拖进 camera 即"相机相对移动"。
+// （只用水平 yaw）旋转——把跟随相机拖进 camera 即"相机相对移动"。
+// 朝向去抖：新方向需连续持续 3 帧才替换目标（键盘瞬断/摇杆噪声/参照朝向
+// 微抖不会让转身在两个方向间来回跳）。
 export default class {{CLASS_NAME}} extends Component {
   @property({ label: "移动速度（米/秒）", min: 0 })
   speed = 5;
@@ -40,10 +41,13 @@ export default class {{CLASS_NAME}} extends Component {
   /** 世界空间移动意图（onUpdate 合成，physics 方案由 onFixedUpdate 消费） */
   private moveX = 0;
   private moveZ = 0;
-  /** 目标朝向（度；有移动输入时更新，两方案各自的转向逻辑消费） */
+  /** 目标朝向（度；有移动输入时经去抖更新，两方案统一在 onLateUpdate 转向） */
   private faceYaw = 0;
   private hasFace = false;
-  /** 脚本自治的当前朝向（度；物理方案不读节点旋转——插值回写值滞后且带接触噪声） */
+  /** 朝向去抖：候选目标 + 已持续帧数（连续 FACE_COMMIT_FRAMES 帧一致才提交） */
+  private pendingYaw = 0;
+  private pendingFrames = 0;
+  /** 脚本自治的当前朝向（度；不读节点旋转——物理插值回写值滞后且带接触噪声） */
   private curYaw = 0;
   /** 跳跃请求（onUpdate 边沿检测置位，onFixedUpdate 消费） */
   private jumpQueued = false;
@@ -54,6 +58,8 @@ export default class {{CLASS_NAME}} extends Component {
     const rb = this.entity.getComponent("rigidBody");
     if (rb && rb.mode === "dynamic") this.scheme = "physics";
     this.curYaw = this.entity.rotation.y;
+    this.faceYaw = this.curYaw;
+    this.pendingYaw = this.curYaw;
   }
 
   onUpdate(delta: number) {
@@ -85,10 +91,16 @@ export default class {{CLASS_NAME}} extends Component {
     this.moveX = wx;
     this.moveZ = wz;
 
-    // —— 3) 目标朝向（度；前向 = -Z）：有移动输入时更新 ——
+    // —— 3) 目标朝向（度；前向 = -Z）+ 去抖：新方向连续保持才提交 ——
     if (ilen > 0.01) {
-      this.faceYaw = math.radToDeg(Math.atan2(-wx, -wz));
-      this.hasFace = true;
+      const targetYaw = math.radToDeg(Math.atan2(-wx, -wz));
+      const same = Math.abs(wrapDeg(targetYaw - this.pendingYaw)) < 1;
+      this.pendingFrames = same ? this.pendingFrames + 1 : 1;
+      this.pendingYaw = targetYaw;
+      if (this.pendingFrames >= FACE_COMMIT_FRAMES) {
+        this.faceYaw = targetYaw;
+        this.hasFace = true;
+      }
     } else {
       this.hasFace = false;
     }
@@ -98,20 +110,16 @@ export default class {{CLASS_NAME}} extends Component {
     if (jumpKey && !this.prevJumpKey) this.jumpQueued = true;
     this.prevJumpKey = jumpKey;
 
-    // 位移方案：直写旋转转向 + 平移（渲染帧率平滑；无物理位姿回写冲突）
+    // 位移方案：世界意图 → 节点本地轴平移（translate 沿本地轴；
+    // 直接用世界向量会在转身后偏航——这里按当前 yaw 反旋转回本地）
     if (this.scheme !== "physics") {
-      if (this.hasFace) {
-        const cur = this.entity.rotation.y;
-        const next = this.turnSpeed > 0
-          ? math.moveTowardsAngle(cur, this.faceYaw, this.turnSpeed * delta)
-          : this.faceYaw;
-        // rotation 类型为完整 Vec3（运行时容忍部分字段，这里显式写全）
-        const r = this.entity.rotation;
-        this.entity.rotation = { x: r.x, y: next, z: r.z };
-      }
       if (ilen <= 0.01) return;
+      const yawRad = math.degToRad(this.entity.rotation.y);
+      const cy = Math.cos(yawRad), sy = Math.sin(yawRad);
+      const lx = wx * cy - wz * sy;
+      const lz = wx * sy + wz * cy;
       const v = (this.speed * delta) / Math.max(1, ilen);
-      this.entity.translate(wx * v, 0, wz * v);
+      this.entity.translate(lx * v, 0, lz * v);
     }
   }
 
@@ -141,12 +149,10 @@ export default class {{CLASS_NAME}} extends Component {
     );
   }
 
-  // 物理方案的转向：动力学体的位姿由物理步进回写节点（onUpdate/onFixedUpdate
-  // 直写都会被覆盖），而 onLateUpdate 晚于回写、渲染前执行——直写旋转当帧生效。
-  // 朝向用脚本自治变量平滑推进（不读节点旋转：插值回写值滞后且带接触噪声，
-  // 以它作反馈会形成抖动自旋），物理体旋转完全不参与解算，无反馈回路。
-  // 注意每帧都要写（hasFace 只控制是否推进朝向）：停下后若停止写入，下一帧
-  // 物理回写会把节点转回物理体自身的初始朝向——表现为「松手弹回原方向」。
+  // 两方案统一的转向（物理方案必须在位姿回写后的 onLateUpdate 直写；位移方案
+  // 同帧早些时候已平移，转向晚一帧应用无感知）。朝向用脚本自治变量平滑推进。
+  // 物理方案每帧都要写（hasFace 只控制是否推进朝向）：停下后若停止写入，
+  // 下一帧物理回写会把节点转回物理体自身的初始朝向——表现为「松手弹回原方向」。
   onLateUpdate(delta: number) {
     if (this.scheme !== "physics") return;
     if (this.hasFace) {
@@ -172,3 +178,11 @@ export default class {{CLASS_NAME}} extends Component {
     return { dirX: dir.dirX ?? 0, dirY: dir.dirY ?? 0 };
   }
 }
+
+/** 角度差归一到 -180..180（跨 ±180° 时取最短转向路径） */
+function wrapDeg(d: number): number {
+  return ((d + 180) % 360 + 360) % 360 - 180;
+}
+
+/** 朝向目标需持续保持的帧数（60fps 下约 50ms，方向切换几乎无感） */
+const FACE_COMMIT_FRAMES = 3;
