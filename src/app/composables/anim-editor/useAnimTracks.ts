@@ -11,7 +11,7 @@ import {
   type AnimationClipData,
   type AnimProp,
 } from "../../../framework/animation/clip";
-import { ANIM_PATHS, animPropGroupsFor, propDefOf } from "../../lib/anim-props";
+import { ANIM_PATHS, animPropGroupsFor, defMenuTrail, propDefOf, type AnimPropDef } from "../../lib/anim-props";
 import { getEditorStore } from "../../stores/editor";
 import { openContextMenu, type CtxMenuItem } from "../../../lib/editor/context-menu";
 import type { AnimEditorCtx, TrackRow, TracksApi } from "./ctx";
@@ -49,24 +49,64 @@ export function useAnimTracks(ctx: AnimEditorCtx): TracksApi {
     ctx.clip.touch();
   }
 
-  /** 添加属性菜单（按选中节点能力分组；已添加的通道禁用） */
+  /**
+   * 添加属性菜单（按选中节点能力分组；已添加的通道禁用）。
+   * 组内按属性路径逐级出子菜单（Transform/Position/X → 变换 ▸ 位置 ▸ X），
+   * 与左列轨道树同构。
+   */
   function onAddPropertyMenu(e: MouseEvent): void {
     const node = ctx.preview.targetNode.value;
     const d = ctx.clip.doc.value;
     if (!node || !d) return;
-    const groups = animPropGroupsFor(node);
+    const groups = animPropGroupsFor(node, engine.graph);
     const items: CtxMenuItem[] = [];
     for (const g of groups) {
-      items.push({
-        label: g.group,
-        children: g.items.map((def) => ({
-          label: def.label,
-          disabled: d.curves.some((c) => c.prop === def.prop),
-          onClick: () => addProperty(def.prop),
-        })),
-      });
+      items.push({ label: g.group, children: buildGroupMenu(g.items, d) });
     }
     openContextMenu(e, items);
+  }
+
+  /** 组内通道按路径段建嵌套子菜单（同段归并；目录顺序即展示顺序） */
+  function buildGroupMenu(defs: AnimPropDef[], d: AnimationClipData): CtxMenuItem[] {
+    interface MenuNode {
+      label: string;
+      children: Map<string, MenuNode>;
+      /** 叶子（通道菜单项；\u0000 后缀键防与同名组段冲突） */
+      leaf?: CtxMenuItem;
+    }
+    const root: MenuNode = { label: "", children: new Map() };
+    for (const def of defs) {
+      const trail = defMenuTrail(def);
+      let cur = root;
+      for (let i = 0; i < trail.length - 1; i++) {
+        const key = trail[i].label;
+        let next = cur.children.get(key);
+        if (!next) {
+          next = { label: key, children: new Map() };
+          cur.children.set(key, next);
+        }
+        cur = next;
+      }
+      const last = trail[trail.length - 1];
+      cur.children.set(last.label + "\u0000", {
+        label: last.label,
+        children: new Map(),
+        leaf: {
+          label: last.label,
+          disabled: d.curves.some((c) => c.prop === def.prop),
+          onClick: () => addProperty(def.prop),
+        },
+      });
+    }
+    const convert = (n: MenuNode): CtxMenuItem[] => {
+      const out: CtxMenuItem[] = [];
+      for (const child of n.children.values()) {
+        if (child.leaf) out.push(child.leaf);
+        else out.push({ label: child.label, children: convert(child) });
+      }
+      return out;
+    };
+    return convert(root);
   }
 
   function addProperty(prop: AnimProp): void {

@@ -17,8 +17,9 @@ function parseCullingMask(v) {
 
 /**
  * 构建渲染相机（优先取场景第一个非编辑器相机节点，无相机节点用缺省位姿）。
- * 返回 { cam, applyProjection(aspect), clear }：透视写 aspect；正交重算左右/上下范围；
- * clear = { flags, color } 供渲染循环每帧应用清除标志。
+ * 返回 { cam, applyProjection(aspect), clear, nodeId }：透视写 aspect；正交重算
+ * 左右/上下范围；clear = { flags, color } 供渲染循环每帧应用清除标志；
+ * nodeId = 渲染相机对应的相机节点 id（关键帧动画 camera.* 通道按它匹配绑定）。
  */
 export function createRenderCamera(canvasCameras) {
   const cams = canvasCameras.filter((c) => c.json.isEditorCamera !== true);
@@ -69,5 +70,5 @@ export function createRenderCamera(canvasCameras) {
     pick.obj.getWorldPosition(cam.position);
     pick.obj.getWorldQuaternion(cam.quaternion);
   }
-  return { cam, applyProjection, syncPose, clear };
+  return { cam, applyProjection, syncPose, clear, nodeId: pick?.json?.id ?? null };
 }

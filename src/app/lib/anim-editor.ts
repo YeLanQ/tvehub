@@ -12,9 +12,11 @@ export const animEditor = reactive({
 });
 
 /**
- * 打开动画编辑器。nodeId 指定时进入「聚焦编辑模式」：蒙版层高亮该节点及其
- * 子树、其它节点不可选中、面板切换锁定（退出按钮/exitAnimEditMode 解除）；
- * 不传 nodeId（资产面板打开）则普通编辑，目标跟随场景选中节点。
+ * 打开动画编辑器。必须经动画组件卡入口（传 nodeId）才能进入编辑：
+ * 进入「聚焦编辑模式」——面板解除蒙版可编辑、场景选中锁定该节点及其子树、
+ * 其它节点不可选中、视口内压暗、面板切换锁定（「退出编辑」解除，面板回到
+ * 只读蒙版态）。不传 nodeId（直接开面板/资产侧打开）仅为查看：加载剪辑并
+ * 停靠面板，面板保持蒙版只读，不可编辑。
  */
 export function openInAnimEditor(rel: string, nodeId?: string): void {
   animEditor.clipRel = rel;

@@ -323,7 +323,7 @@ async function main() {
   });
 
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
-  const { cam, applyProjection, syncPose, clear } = createRenderCamera(cameras);
+  const { cam, applyProjection, syncPose, clear, nodeId: renderCamNodeId } = createRenderCamera(cameras);
   const clearColor = new THREE.Color(clear.color);
 
   // 仅深度/仅颜色清除标志需要跨帧保留缓冲：WebGL 默认关闭（省一整块画布带宽），
@@ -538,8 +538,12 @@ async function main() {
     return null;
   });
 
-  // 关键帧动画剪辑（节点 animationClip 组件；autoplay 绑定自动应用）
-  const clipAnims = await createClipAnimations(clips).catch((e) => {
+  // 关键帧动画剪辑（节点 animationClip 组件；autoplay 绑定自动应用）。
+  // 传渲染相机（camera.* 投影通道按节点匹配写入）与 UI 系统（ui.* 数据通道）
+  const clipAnims = await createClipAnimations(clips, {
+    renderCamera: { nodeId: renderCamNodeId, cam },
+    ui: uiApi,
+  }).catch((e) => {
     postLog("error", `关键帧动画运行时启动失败: ${e?.message ?? e}`);
     return { update() {} };
   });

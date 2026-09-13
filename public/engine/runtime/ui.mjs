@@ -852,30 +852,43 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
           }
           break;
         }
-        case "anchorMin":
-          j.anchorMin = unitVec2Of(v, 0.5, 0.5);
+        // Vec2 字段支持部分补丁：缺省分量保持当前值（动画/脚本逐通道写不串轴）
+        case "anchorMin": {
+          const cur = unitVec2Of(j.anchorMin, 0.5, 0.5);
+          j.anchorMin = unitVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
-        case "anchorMax":
-          j.anchorMax = unitVec2Of(v, 0.5, 0.5);
+        }
+        case "anchorMax": {
+          const cur = unitVec2Of(j.anchorMax, 0.5, 0.5);
+          j.anchorMax = unitVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
-        case "pivot":
-          j.pivot = unitVec2Of(v, 0.5, 0.5);
+        }
+        case "pivot": {
+          const cur = unitVec2Of(j.pivot, 0.5, 0.5);
+          j.pivot = unitVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
-        case "anchoredPosition":
-          j.anchoredPosition = freeVec2Of(v, 0, 0);
+        }
+        case "anchoredPosition": {
+          const cur = freeVec2Of(j.anchoredPosition, 0, 0);
+          j.anchoredPosition = freeVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
-        case "offsetMin":
-          j.offsetMin = freeVec2Of(v, 0, 0);
+        }
+        case "offsetMin": {
+          const cur = freeVec2Of(j.offsetMin, 0, 0);
+          j.offsetMin = freeVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
-        case "offsetMax":
-          j.offsetMax = freeVec2Of(v, 0, 0);
+        }
+        case "offsetMax": {
+          const cur = freeVec2Of(j.offsetMax, 0, 0);
+          j.offsetMax = freeVec2Of(v, cur.x, cur.y);
           layoutChanged = true;
           break;
+        }
         case "layoutMode":
           if (j.type === "uiLayoutNode") {
             j.layoutMode = layoutModeOf(v);
@@ -884,16 +897,19 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
           break;
         case "padding":
           if (j.type === "uiLayoutNode") {
-            j.padding = paddingOf(v);
+            const cur = paddingOf(j.padding);
+            j.padding = paddingOf({ ...cur, ...v });
             layoutChanged = true;
           }
           break;
-        case "spacing":
+        case "spacing": {
           if (j.type === "uiLayoutNode") {
-            j.spacing = freeVec2Of(v, 0, 0);
+            const cur = freeVec2Of(j.spacing, 0, 0);
+            j.spacing = freeVec2Of(v, cur.x, cur.y);
             layoutChanged = true;
           }
           break;
+        }
         case "gridColumns":
           if (j.type === "uiLayoutNode" && typeof v === "number" && Number.isFinite(v)) {
             j.gridColumns = Math.max(1, Math.round(v));

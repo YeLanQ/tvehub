@@ -8,7 +8,13 @@
 // - 通道应用规则（与编辑器 anim-props.ts 目录镜像）：
 //     position.* / rotation.*（度）/ scale.*  → 节点对象变换；
 //     material.*                              → 对象材质（颜色分量为 0~1）；
-//     light.*                                 → 对象子树内首个灯光；
+//     light.*                                 → 对象子树内首个灯光（angle 度→弧度）；
+//     camera.fov / camera.near / camera.far   → 渲染相机投影参数（仅渲染相机
+//                                               节点的绑定生效，写入后刷新投影矩阵）；
+//     ui.*（anchoredPosition/size/sortOrder/fontSize/spacing/padding）
+//                                             → UI 节点数据（经 UI 系统
+//                                               updateSettings 生效：布局重解析/
+//                                               几何与文本重建；一帧一补丁）
 // - entries 由 nodes.mjs 收集（节点 components 中 type=animationClip 且启用）；
 // - 剪辑 JSON 按 rel fetch（导出产物内含 .anim 文本，assets shim 命中），
 //   加载完成前该绑定静默跳过；
@@ -212,6 +218,16 @@ function setSegs(target, segs, v) {
   if (cur != null) cur[segs[segs.length - 1]] = v;
 }
 
+/** 按路径段写入并自动创建中间对象（攒 UI 设置补丁用：patch.anchoredPosition.x = v） */
+function setSegsCreate(target, segs, v) {
+  let cur = target;
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (cur[segs[i]] == null || typeof cur[segs[i]] !== "object") cur[segs[i]] = {};
+    cur = cur[segs[i]];
+  }
+  cur[segs[segs.length - 1]] = v;
+}
+
 /** 对象子树内首个灯光（灯光缓存未命中时逐帧重试，命中后固定） */
 function findFirstLight(obj) {
   let light = null;
@@ -238,7 +254,20 @@ function compileBinding(b) {
     } else if (group === "material") {
       items.push({ curve: c, group, segs: path.split(".") });
     } else if (group === "light") {
-      items.push({ curve: c, group, segs: path.split("."), light: null });
+      const segs = path.split(".");
+      items.push({
+        curve: c,
+        group,
+        segs,
+        light: null,
+        // 聚光角度：通道值为度（与编辑器/节点一致），three 灯光为弧度
+        degrees: segs.length === 1 && segs[0] === "angle",
+      });
+    } else if (group === "camera") {
+      items.push({ curve: c, group, segs: path.split(".") });
+    } else if (group === "ui") {
+      // UI 节点数据字段（anchoredPosition.x / size.y / spacing.x / padding.left…）
+      items.push({ curve: c, group, segs: path.split(".") });
     }
     // 其余分组不构成应用目标（与编辑器通道目录一致）：跳过
   }
@@ -262,7 +291,17 @@ function applyItem(b, item, v) {
       item.light = findFirstLight(obj);
       if (item.light === null) return;
     }
-    setSegs(item.light, item.segs, v);
+    setSegs(item.light, item.segs, item.degrees ? v * D2R : v);
+  } else if (item.group === "camera") {
+    // 相机投影参数：仅渲染相机节点的绑定有 camTarget；fov 对正交相机无意义
+    const t = b.camTarget;
+    if (!t) return;
+    const key = item.segs.length === 1 ? item.segs[0] : "";
+    if (key === "fov" && t.isOrthographicCamera) return;
+    if (key === "near") v = Math.max(0.01, v);
+    else if (key === "far") v = Math.max(t.near + 0.001, v);
+    setSegs(t, item.segs, v);
+    t.updateProjectionMatrix();
   }
 }
 
@@ -272,10 +311,21 @@ function applyClipAt(b, time) {
   let t = time;
   if (clip.loops && clip.duration > 0) t = ((time % clip.duration) + clip.duration) % clip.duration;
   else t = clamp(time, 0, clip.duration);
+  let uiPatch = null;
   for (const item of b.compiled) {
     const v = evalCurve(item.curve, t);
-    if (v !== null) applyItem(b, item, v);
+    if (v === null) continue;
+    if (item.group === "ui") {
+      // UI 数据字段：攒补丁，循环后经 UI 系统 updateSettings 一次性生效
+      // （逐通道写同一 Vec2 的不同分量；缺省分量由 updateSettings 保留当前值）
+      if (!b.uiApi) continue;
+      uiPatch = uiPatch || {};
+      setSegsCreate(uiPatch, item.segs, v);
+      continue;
+    }
+    applyItem(b, item, v);
   }
+  if (uiPatch) b.uiApi.updateSettings(b.nodeId, uiPatch);
 }
 
 /** 加载单个剪辑文本（fetch 相对路径，归档/内联产物经 assets shim 命中） */
@@ -287,11 +337,17 @@ async function loadClip(rel) {
 
 /** 单个绑定（组件）：播放进度 + 剪辑数据 + 预编译应用项。
  *  播放态模型：playing = 正在推进；paused = 经 pause() 暂停（resume 续播）；
- *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）。 */
-function createBinding(entry) {
+ *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）；
+ *  camTarget = 渲染相机（仅当绑定节点是渲染相机节点时非空，camera.* 组写入目标）；
+ *  uiApi = UI 系统（ui.* 组经 updateSettings 生效；播放器注入，编辑器预览不用）。 */
+function createBinding(entry, camEnv, uiApi) {
+  const nodeId = typeof entry.nodeId === "string" ? entry.nodeId : "";
   return {
     key: typeof entry.key === "string" && entry.key ? entry.key : "",
+    nodeId,
     obj: entry.obj,
+    camTarget: camEnv && camEnv.nodeId && camEnv.nodeId === nodeId ? camEnv.cam : null,
+    uiApi,
     speed: Math.max(0.05, Number(entry.speed) || 1),
     loop: entry.loop !== false,
     autoplay: entry.autoplay !== false,
@@ -329,14 +385,26 @@ function sampleAt(b, time) {
  *                autoplay: boolean, loop: boolean, speed: number}>} entries
  *        nodes.mjs 收集的 animationClip 组件绑定（clip 为 .anim 资产相对路径；
  *        key = 组件 id，缺省回退节点 id，SDK 门面按 key 寻址）
+ * @param {{renderCamera?: {nodeId: string, cam: object}, ui?: {updateSettings: Function}}} [env]
+ *        播放器环境：renderCamera = 渲染相机与其节点 id（camera.* 通道的写入
+ *        目标；节点 id 匹配的绑定才生效，其余绑定的 camera.* 通道跳过）；
+ *        ui = UI 系统（ui.* 通道经其 updateSettings 落地，缺省时 ui.* 跳过）
  * @returns {Promise<{update(dt: number): void} & ClipAnimApi>} 渲染循环每帧驱动
  *          + 运行时控件 API（SDK AnimationClip 门面 / 动态创建组件用）
  */
-export async function createClipAnimations(entries) {
+export async function createClipAnimations(entries, env) {
   const api = {
     update() {},
   };
   if (!entries || !entries.length) return api;
+
+  const renderCamera = env && env.renderCamera ? env.renderCamera : null;
+  const camEnv =
+    renderCamera && renderCamera.cam && renderCamera.nodeId
+      ? { nodeId: renderCamera.nodeId, cam: renderCamera.cam }
+      : null;
+  const uiApi =
+    env && env.ui && typeof env.ui.updateSettings === "function" ? env.ui : null;
 
   const bindings = [];
   const byKey = new Map();
@@ -346,7 +414,7 @@ export async function createClipAnimations(entries) {
   }
   await Promise.all(
     entries.map(async (entry) => {
-      const b = createBinding(entry);
+      const b = createBinding(entry, camEnv, uiApi);
       if (!b.key) b.key = typeof entry.nodeId === "string" ? entry.nodeId : "";
       if (!(await loadInto(b))) return;
       b.playing = b.autoplay; // 加载完成后按 autoplay 起播（禁用时停在初始姿势）
@@ -428,7 +496,7 @@ export async function createClipAnimations(entries) {
   };
   /** 运行时新增组件绑定（SDK addComponent；异步加载后按 autoplay 起播） */
   api.add = (entry) => {
-    const b = createBinding(entry);
+    const b = createBinding(entry, camEnv, uiApi);
     register(b);
     void loadInto(b).then((ok) => {
       if (ok) b.playing = b.autoplay;

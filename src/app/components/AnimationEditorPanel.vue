@@ -75,6 +75,12 @@ const {
 
 // 聚焦编辑模式：面板卸载（整机/编辑器关闭）时兜底解除，避免选中范围过滤残留
 onBeforeUnmount(() => exitAnimEditMode());
+
+/** 退出聚焦编辑：先停预览（还原节点姿势），再解除聚焦与蒙版 */
+function onExitEdit(): void {
+  stopPreview();
+  exitAnimEditMode();
+}
 </script>
 
 <template>
@@ -119,8 +125,8 @@ onBeforeUnmount(() => exitAnimEditMode());
         <button
           v-if="animEditMode.active"
           class="anim-btn exit-edit"
-          title="退出聚焦编辑：恢复其它节点可选与面板切换"
-          @click="exitAnimEditMode"
+          title="退出聚焦编辑：还原节点姿势、恢复其它节点可选与面板切换"
+          @click="onExitEdit"
         >退出编辑</button>
         <span class="anim-dirty" :class="{ dirty }">{{ saving ? "保存中…" : dirty ? "未保存" : "已保存" }}</span>
         <select
@@ -355,6 +361,17 @@ onBeforeUnmount(() => exitAnimEditMode());
         </div>
       </div>
     </template>
+
+    <!-- 蒙版保护：只有经动画组件卡「在动画编辑器中打开」进入聚焦编辑后才可编辑；
+         退出编辑/直接打开面板时面板只读（内容可见、交互被遮罩拦截） -->
+    <div v-if="!animEditMode.active" class="anim-edit-mask" title="动画面板当前为只读">
+      <div class="anim-mask-card">
+        <div class="anim-mask-title">动画编辑已锁定</div>
+        <div class="anim-mask-hint">
+          选中节点，在检查器「动画剪辑」组件卡点击<b>「在动画编辑器中打开」</b>进入编辑
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

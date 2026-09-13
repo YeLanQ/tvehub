@@ -685,6 +685,15 @@ export class SceneSynchronizer {
     this.applyTransform(mesh);
   }
 
+  /**
+   * 整卡刷新单个 UI 节点（锚点标注/几何/文本/布局标注）：
+   * 动画预览直写节点数据（anchoredPosition/size 等）后调用——不走撤销历史，
+   * 几何与文本贴图按签名缓存，逐帧刷新只在数据真正变化时重建。
+   */
+  refreshUINode(node: Node): void {
+    this.refreshNode(node);
+  }
+
   /** 音源节点图标刷新（音频绑定状态变化后由引擎调用；数据/变换不动） */
   refreshAudioNodeIcon(node: AudioNode): void {
     const obj = this.objectMap.get(node.id);

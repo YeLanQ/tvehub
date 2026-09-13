@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 .anim-editor {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -10,6 +11,51 @@
   overflow: hidden;
   font-size: 11px;
   background: var(--bg-panel);
+}
+
+/* ---------- 蒙版保护（未进入聚焦编辑时全面板只读） ---------- */
+.anim-edit-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(1.5px);
+  cursor: default;
+  user-select: none;
+}
+
+.anim-mask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+  padding: 14px 18px;
+  text-align: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.anim-mask-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.anim-mask-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.anim-mask-hint b {
+  color: var(--text);
+  font-weight: 600;
 }
 
 /* ---------- 顶部工具条 ---------- */

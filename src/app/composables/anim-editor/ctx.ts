@@ -43,7 +43,7 @@ export interface ClipApi {
 export interface PreviewApi {
   targetNode: Ref<Node | null>;
   targetObj: Ref<THREE.Object3D | null>;
-  applyChannels: (obj: THREE.Object3D, values: Map<AnimProp, number>) => void;
+  applyChannels: (node: Node, obj: THREE.Object3D, values: Map<AnimProp, number>) => void;
   previewAt: (t: number) => void;
   restorePreview: () => void;
 }
