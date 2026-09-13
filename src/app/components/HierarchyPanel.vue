@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
+import { getProjectStore } from "../stores/project";
 import { sceneApi } from "../../lib/scene-api";
 import type { Node } from "../../framework/prototype/Node";
 import { geometryRegistry } from "../../framework/mesh";
@@ -124,9 +125,48 @@ interface FlatNode {
   depth: number;
 }
 
-// ---------- 折叠/展开 ----------
-/** 已折叠节点 id 集（仅记忆状态；缺省全部展开） */
+// ---------- 折叠/展开（按 项目+场景 持久化；重开编辑器/工程后还原） ----------
+const projectStore = getProjectStore();
+
+/** 已折叠节点 id 集（缺省全部展开；localStorage 键 = 项目根 + 场景相对路径，
+ *  节点 id 随场景文件持久化，跨会话稳定） */
 const collapsedIds = ref(new Set<string>());
+const collapsedKey = computed(
+  () => `three-visual-editor:hierarchy:v1:${projectStore.currentPath ?? ""}::${projectStore.sceneRel}`,
+);
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function loadCollapsed(): void {
+  // 取消未落盘的旧写入（防止上个场景的折叠态写进新键）
+  if (persistTimer != null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  try {
+    const raw = localStorage.getItem(collapsedKey.value);
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    collapsedIds.value = new Set(
+      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
+    );
+  } catch {
+    collapsedIds.value = new Set();
+  }
+}
+
+function persistCollapsed(): void {
+  if (persistTimer != null) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    try {
+      localStorage.setItem(collapsedKey.value, JSON.stringify([...collapsedIds.value]));
+    } catch {
+      /* 存储不可用（隐私模式等）：折叠态仅本次会话有效 */
+    }
+  }, 300);
+}
+
+// 项目/场景切换 → 载入对应折叠态（面板挂载时也立即执行）
+watch(collapsedKey, loadCollapsed, { immediate: true });
 
 function hasChildren(node: Node): boolean {
   return node.childIds.length > 0;
@@ -140,6 +180,7 @@ function toggleCollapse(node: Node): void {
   if (next.has(node.id)) next.delete(node.id);
   else next.add(node.id);
   collapsedIds.value = next;
+  persistCollapsed();
 }
 /** 拖拽悬停目标为折叠节点时自动展开（放入的子级立即可见） */
 function expandIfCollapsed(id: string): void {
@@ -147,6 +188,7 @@ function expandIfCollapsed(id: string): void {
   const next = new Set(collapsedIds.value);
   next.delete(id);
   collapsedIds.value = next;
+  persistCollapsed();
 }
 
 // ---------- 行数据源（后端计算） ----------
@@ -536,6 +578,16 @@ onUnmounted(() => {
   if (refreshTimer != null) {
     clearTimeout(refreshTimer);
     refreshTimer = null;
+  }
+  // 未落盘的折叠态立即写入（面板卸载后定时器不再触发）
+  if (persistTimer != null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+    try {
+      localStorage.setItem(collapsedKey.value, JSON.stringify([...collapsedIds.value]));
+    } catch {
+      /* 存储不可用：忽略 */
+    }
   }
 });
 
