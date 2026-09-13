@@ -15,10 +15,16 @@ export interface AssetDragHandle {
   hoverPath?: Ref<string | null>;
 }
 export const ASSET_DRAG_KEY: unique symbol = Symbol("asset-drag");
+/** 目录树折叠状态句柄：AssetsPanel provide（按项目持久化；缺省展开，只记录用户折叠过的目录） */
+export interface AssetTreeCollapsed {
+  isCollapsed(path: string): boolean;
+  toggle(path: string): void;
+}
+export const ASSET_TREE_COLLAPSED_KEY: unique symbol = Symbol("asset-tree-collapsed");
 </script>
 
 <script setup lang="ts">
-import { computed, inject, ref } from "vue";
+import { computed, inject } from "vue";
 import { getAssetsStore } from "../stores/assets";
 import {
   openContextMenu,
@@ -32,6 +38,8 @@ import { isInternalAsset } from "../../lib/internal-assets";
 import { isProtectedAsset } from "../lib/asset-guards";
 
 const dragHandle = inject<AssetDragHandle | null>(ASSET_DRAG_KEY, null);
+// 折叠状态上收面板（按项目持久化；无提供方时缺省展开）
+const collapsedState = inject<AssetTreeCollapsed | null>(ASSET_TREE_COLLAPSED_KEY, null);
 
 const dropOver = computed(() => {
   if (props.node.kind !== "dir") return false;
@@ -51,7 +59,13 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ (e: "select-dir", path: string): void }>();
 
-const open = ref(props.node.kind === "dir" && props.node.children.length > 0);
+/** 展开态 = 有子级且未被用户折叠（缺省展开；折叠集持久化在面板侧） */
+const open = computed(
+  () =>
+    props.node.kind === "dir" &&
+    props.node.children.length > 0 &&
+    !(collapsedState?.isCollapsed(props.node.path) ?? false),
+);
 
 const assetsStore = getAssetsStore();
 const projectStore = getProjectStore();
@@ -60,9 +74,13 @@ function projectRoot(): string | null {
   return projectStore.currentPath;
 }
 
+function toggleOpen(): void {
+  collapsedState?.toggle(props.node.path);
+}
+
 function click() {
   if (props.node.kind === "dir") {
-    open.value = !open.value;
+    toggleOpen();
     emit("select-dir", props.node.path);
   } else {
     assetsStore.select(props.node.path);
@@ -84,7 +102,7 @@ function onContext(e: MouseEvent) {
   if (props.node.kind === "dir") {
     items.push({
       label: open.value ? "折叠" : "展开",
-      onClick: () => (open.value = !open.value),
+      onClick: toggleOpen,
     });
   }
   if (!protectedNode) {

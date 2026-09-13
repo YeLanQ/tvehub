@@ -7,7 +7,7 @@
  * - 底部状态栏：选中项 + 总数量
  * 右键菜单（新建目录/复制/重命名/删除/复制路径/刷新）。资产操作统一走 assets store。
  */
-import { computed, provide, onMounted, ref, watch } from "vue";
+import { computed, provide, onMounted, onUnmounted, ref, watch } from "vue";
 import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
 import { openContextMenu } from "../../lib/editor/context-menu";
@@ -25,8 +25,10 @@ import {
 } from "../lib/asset-menu";
 import AssetTreeNode, {
   ASSET_DRAG_KEY,
+  ASSET_TREE_COLLAPSED_KEY,
   type AssetDragHandle,
   type AssetNode,
+  type AssetTreeCollapsed,
 } from "./AssetTreeNode.vue";
 import AssetEntryCell from "./AssetEntryCell.vue";
 import AssetToolbar from "./AssetToolbar.vue";
@@ -78,6 +80,64 @@ const currentDir = ref("assets");
 const backStack = ref<string[]>([]);
 const fwdStack = ref<string[]>([]);
 
+// ---------------------------------------------------------------------------
+// 目录树折叠状态（左栏）：按项目持久化（localStorage），缺省展开，
+// 只记录用户折叠过的目录；目录路径随项目结构稳定，跨会话还原。
+// ---------------------------------------------------------------------------
+const collapsedDirs = ref(new Set<string>());
+let collapsedTimer: ReturnType<typeof setTimeout> | null = null;
+
+function collapsedKey(): string {
+  return `three-visual-editor:asset-tree:v1:${projectStore.currentPath ?? ""}`;
+}
+function loadCollapsedDirs(): void {
+  // 取消未落盘的旧写入（防串项目）
+  if (collapsedTimer != null) {
+    clearTimeout(collapsedTimer);
+    collapsedTimer = null;
+  }
+  try {
+    const raw = localStorage.getItem(collapsedKey());
+    const ids = raw ? (JSON.parse(raw) as unknown) : [];
+    collapsedDirs.value = new Set(
+      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
+    );
+  } catch {
+    collapsedDirs.value = new Set();
+  }
+}
+function persistCollapsedDirs(): void {
+  if (collapsedTimer != null) clearTimeout(collapsedTimer);
+  collapsedTimer = setTimeout(() => {
+    collapsedTimer = null;
+    try {
+      localStorage.setItem(collapsedKey(), JSON.stringify([...collapsedDirs.value]));
+    } catch {
+      /* 存储不可用（隐私模式等）：仅本次会话有效 */
+    }
+  }, 300);
+}
+function flushCollapsedDirs(): void {
+  if (collapsedTimer == null) return;
+  clearTimeout(collapsedTimer);
+  collapsedTimer = null;
+  try {
+    localStorage.setItem(collapsedKey(), JSON.stringify([...collapsedDirs.value]));
+  } catch {
+    /* ignore */
+  }
+}
+const treeCollapsed: AssetTreeCollapsed = {
+  isCollapsed: (path) => collapsedDirs.value.has(path),
+  toggle: (path) => {
+    const next = new Set(collapsedDirs.value);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    collapsedDirs.value = next;
+    persistCollapsedDirs();
+  },
+};
+
 function navigate(dir: string) {
   if (dir === currentDir.value) return;
   backStack.value.push(currentDir.value);
@@ -107,13 +167,14 @@ function goUp() {
   else if (currentDir.value !== "") navigate("");
 }
 
-/** 切换项目时回到默认目录并重新加载资产 */
+/** 切换项目时回到默认目录并重新加载资产（折叠态随之切换到新项目的记录） */
 watch(
   () => projectStore.currentPath,
   (path) => {
     currentDir.value = "assets";
     backStack.value = [];
     fwdStack.value = [];
+    loadCollapsedDirs();
     if (path) void assetsStore.load(path);
   },
 );
@@ -279,7 +340,10 @@ const {
 onMounted(() => {
   void refreshWorkshopMenu();
   if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
+  loadCollapsedDirs();
 });
+
+onUnmounted(flushCollapsedDirs);
 
 provide<AssetDragHandle>(ASSET_DRAG_KEY, {
   getPaths: () => dragPaths.value,
@@ -288,6 +352,8 @@ provide<AssetDragHandle>(ASSET_DRAG_KEY, {
   },
   hoverPath,
 });
+
+provide<AssetTreeCollapsed>(ASSET_TREE_COLLAPSED_KEY, treeCollapsed);
 </script>
 
 <template>
