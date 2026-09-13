@@ -43,7 +43,9 @@ export default class Spin extends Component {
 | --- | --- |
 | `onEnable()` | 实例创建后调用；**全部实例的 onEnable 先于全部 onStart**，此时可安全引用其他实体与组件 |
 | `onStart()` | 全部脚本实例创建后、首个 `onUpdate` 前调用一次（初始化玩法逻辑） |
+| `onFixedUpdate(fixedDelta)` | 固定步长更新，每 1/60 秒一次（与物理步进同频）。帧率无关：一帧内可能不调用或连续调用多次（掉帧补偿，上限 4 次）；**先于同帧 onUpdate 与物理步进**。适合施力/速度等与物理相关的确定性逻辑 |
 | `onUpdate(delta)` | 每帧调用，`delta` 为距上一帧的秒数 |
+| `onLateUpdate(delta)` | 每帧一次；全部脚本/动画/物理/粒子更新后、渲染前调用。相机跟随等需要覆盖本帧一切位姿写入的逻辑放这里 |
 | `onCollisionEnter(other)` | 本节点碰撞体与对方碰撞体开始接触；**在 onUpdate 前调用**；传感器同样触发 |
 | `onCollisionExit(other)` | 接触断开；`other` 为对方 `Entity` |
 | `onDisable()` | 页面卸载/预览停机时调用一次（先于 onDestroy），用于释放定时器/事件订阅 |
@@ -68,16 +70,19 @@ export default class Spin extends Component {
 播放器主循环每帧固定次序（理解它可避免「为什么我先动了再被覆盖」类问题）：
 
 ```
-碰撞回调分发（上一帧物理步进收集的接触对 → onCollisionEnter/Exit）
+固定步长更新（帧间隔累积到 1/60s 才触发，一帧 0..n 次；与物理步进同频）
+  → 各脚本 onFixedUpdate（按 executionOrder）
+  → 碰撞回调分发（上一帧物理步进收集的接触对 → onCollisionEnter/Exit）
   → engine.time 推进 + 补间动画 tween 推进
   → 各脚本 onUpdate（按 executionOrder）
   → 骨骼动画 mixer → IK 求解 → 骨骼绑定跟随 → 动画图评估
   → 物理步进（固定 1/60s）
   → 关键帧动画 .anim → 音频 → 粒子
+  → 各脚本 onLateUpdate（按 executionOrder）
   → 相机位姿回填 → UI 布局解析 → 渲染
 ```
 
-要点：tween 在 `onUpdate` **前**推进（本帧读到的已是补间后的值）；物理步进在脚本之后（本帧 `applyForce` 下一帧生效；`onCollisionEnter` 收到的是上一帧的接触）；动画系统晚于脚本（脚本写骨骼会被动画覆写，见[内置组件门面](components.md)）。
+要点：`onFixedUpdate` 与物理步进同频（本帧的施力/速度写入紧随其后的物理步进生效）；tween 在 `onUpdate` **前**推进（本帧读到的已是补间后的值）；物理步进在 `onUpdate` 之后（本帧 `applyForce` 下一帧生效；`onCollisionEnter` 收到的是上一帧的接触）；动画系统晚于 `onUpdate`（脚本写骨骼会被动画覆写，见[内置组件门面](components.md)）；`onLateUpdate` 晚于一切模拟、相机回填之前——相机跟随写位姿当帧即生效。
 
 ### 执行顺序与错误隔离
 

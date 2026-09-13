@@ -617,6 +617,9 @@ async function main() {
     const dt = timer.getDelta();
     shaderTime += dt;
     tickShaderTime(shaderTime);
+    // 固定步长脚本更新（1/60s 累积驱动 0..n 次，先于本帧一切可变步长更新；
+    // 与物理步进同频，物理相关的确定性逻辑在 onFixedUpdate）
+    scripts.fixedUpdate(dt);
     scripts.update(dt);
     animations.update(dt);
     physicsApi?.update(dt);
@@ -624,6 +627,9 @@ async function main() {
     audiosApi.update();
     // 粒子推进（脚本/物理已更新节点位姿后再发射，world 空间粒子出生点跟上）
     particlesApi.update(dt);
+    // 晚更新：全部模拟（脚本/动画/物理/粒子）完成后、相机位姿回填与渲染前
+    // ——相机跟随等覆盖性位姿写在 onLateUpdate，当帧即被回填生效
+    scripts.lateUpdate(dt);
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
     // UI 相机叠加：画布根贴合渲染相机（相机位姿回填之后）

@@ -48,7 +48,7 @@
 
 - 默认导出一个继承 `Component` 的类（导出其他内容不会被当作组件）；
 - `@property` 声明可编辑属性（检查器渲染控件）；字段初值即默认值；
-- 生命周期钩子：`onEnable` / `onStart` / `onUpdate` / `onCollisionEnter` / `onCollisionExit` / `onDisable` / `onDestroy`（全部可选）；
+- 生命周期钩子：`onEnable` / `onStart` / `onFixedUpdate` / `onUpdate` / `onLateUpdate` / `onCollisionEnter` / `onCollisionExit` / `onDisable` / `onDestroy`（全部可选）；
 - 详细 API 见 [SDK 文档](../sdk/overview.md)。
 
 ## 编译说明

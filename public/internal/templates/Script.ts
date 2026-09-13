@@ -16,4 +16,13 @@ export default class {{CLASS_NAME}} extends Component {
     // 每帧逻辑，例如自转（改用属性字段：this.speed）：
     // this.entity.rotate(0, this.speed * delta, 0);
   }
+
+  // 固定步长更新（每 1/60 秒一次，与物理步进同频、帧率无关；适合施力/速度
+  // 等与物理相关的确定性逻辑）：
+  // onFixedUpdate(fixedDelta: number) {
+  //   this.entity.translate(0, 0, 5 * fixedDelta);
+  // }
+
+  // 晚更新（全部脚本/动画/物理更新后、渲染前；适合相机跟随等覆盖性位姿写入）：
+  // onLateUpdate(delta: number) {}
 }

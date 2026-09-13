@@ -180,7 +180,9 @@ export type ComponentProps = Record<string, unknown>;
  * 组件生命周期回调契约（Component 基类的钩子接口；全部可选，按需实现）。
  * 调度方为播放器脚本宿主（engine/core/scripts.mjs）：
  * 全部实例化后先统一 onEnable 再统一 onStart；
- * 每帧先分派物理碰撞回调再调 onUpdate；停机时逐实例 onDisable → onDestroy。
+ * 每帧先按固定步长驱动 onFixedUpdate，再分派物理碰撞回调并调 onUpdate；
+ * 全部模拟（脚本/动画/物理/粒子）更新后、渲染前驱动 onLateUpdate；
+ * 停机时逐实例 onDisable → onDestroy。
  */
 export interface ComponentLifecycle {
   /**
@@ -193,6 +195,21 @@ export interface ComponentLifecycle {
 
   /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
   onUpdate?(delta: number): void;
+
+  /**
+   * 生命周期：固定步长更新，每 1/60 秒一次（与物理步进同频；fixedDelta = 固定
+   * 步长秒数）。帧率无关：一次渲染帧内可能不调用或连续调用多次（掉帧补偿，
+   * 上限 4 次）。适合与物理相关的确定性逻辑（施力/速度控制）；调用先于同帧的
+   * onUpdate 与物理步进。
+   */
+  onFixedUpdate?(fixedDelta: number): void;
+
+  /**
+   * 生命周期：晚更新，每帧一次。在全部脚本/动画/物理/粒子更新完成后、相机
+   * 位姿回填与渲染前调用（delta = 距上一帧的秒数）——需要覆盖本帧一切位姿
+   * 写入的逻辑（相机跟随、HUD 对齐等）放这里。
+   */
+  onLateUpdate?(delta: number): void;
 
   /**
    * 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用）。
@@ -234,7 +251,9 @@ export interface ComponentLifecycle {
  * }
  * ```
  *
- * 生命周期：onStart 挂载后调用一次；onUpdate 每帧调用（delta = 秒）。
+ * 生命周期：onStart 挂载后调用一次；onUpdate 每帧调用（delta = 秒）；
+ * onFixedUpdate 固定步长调用（1/60s，与物理同频）；onLateUpdate 在全部模拟
+ * 更新后、渲染前调用。
  * 运行时 `this` 上还提供一个只读属性值视图 `this.props`（装饰器字段的
  * 当前值 + 检查器配置的覆盖值），便于以字典方式遍历。
  *
@@ -289,6 +308,16 @@ export class Component<P extends ComponentProps = ComponentProps> implements Com
 
   /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
   onUpdate?(delta: number): void;
+
+  /**
+   * 生命周期：固定步长更新，每 1/60 秒一次（与物理步进同频；fixedDelta = 固定
+   * 步长秒数）。一次渲染帧内可能不调用或连续调用多次（掉帧补偿，上限 4 次）；
+   * 调用先于同帧的 onUpdate 与物理步进。
+   */
+  onFixedUpdate?(fixedDelta: number): void;
+
+  /** 生命周期：每帧一次，全部脚本/动画/物理/粒子更新后、渲染前调用（相机跟随等） */
+  onLateUpdate?(delta: number): void;
 
   /** 物理碰撞开始（本节点碰撞体与 other 的碰撞体开始接触；在 onUpdate 前调用） */
   onCollisionEnter?(other: Entity): void;

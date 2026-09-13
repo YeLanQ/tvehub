@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // 脚本宿主：加载用户脚本（编辑器编译后的 src/**.js），按节点 components 数组与
 // config.entryScript 实例化 tve.Component，并驱动生命周期
-// （onEnable → onStart → onUpdate → onDisable/onDestroy）。
+// （onEnable → onStart → onUpdate → onLateUpdate → onDisable/onDestroy，
+//  另有固定步长的 onFixedUpdate，见文末 fixedUpdate/lateUpdate 驱动）。
 //
 // 执行顺序：组件 executionOrder 升序稳定排序（同序按挂载顺序）。
 //
@@ -35,6 +36,11 @@ function jsPathOf(srcRel) {
 function errText(e) {
   return e && e.message ? e.message : String(e);
 }
+
+// 固定步长与掉帧补偿上限：与 runtime/physics.mjs 的物理步进同参数（同频推进，
+// onFixedUpdate 里的施力/速度写入在紧随其后的物理步进生效）
+const FIXED_DT = 1 / 60;
+const MAX_SUBSTEPS = 4;
 
 /** 属性默认值深拷贝（vec3 等对象默认值不与 schema 共享引用） */
 function cloneDefault(v) {
@@ -126,7 +132,7 @@ function callLifecycle(record, method, ...args) {
  * @returns {Promise<{update(dt: number): void}>}
  */
 export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, ui, canvas }) {
-  const noop = { update() {} };
+  const noop = { fixedUpdate() {}, update() {}, lateUpdate() {}, dispose() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
     registry: nodes,
@@ -258,7 +264,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
    * 动态实例化脚本组件（entity.addComponent(脚本类/路径/类名) 与脚本字段
    * get-or-create 的共用入口）。tokenOrClass = 脚本类 / 源路径 / 类名；
    * props 为属性配置。创建的实例立即走 onEnable → onStart（统一批次已过）
-   * 并进入每帧 onUpdate 队列（执行顺序排末尾）。
+   * 并进入每帧更新队列（onFixedUpdate/onUpdate/onLateUpdate；执行顺序排末尾）。
    */
   function spawn(entity, tokenOrClass, props) {
     const found = resolveScriptClass(tokenOrClass);
@@ -309,6 +315,8 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   postLog("info", `[脚本] 已启动 ${instances.length} 个脚本实例`);
 
   let disposed = false;
+  /** onFixedUpdate 固定步长累积器（帧间隔凑满 1/60s 才触发，见 fixedUpdate） */
+  let fixedAccumulator = 0;
   /** 页面卸载/宿主停机：onDisable → onDestroy（各一次；错误实例已停用则跳过） */
   function dispose() {
     if (disposed) return;
@@ -356,6 +364,22 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   }
 
   return {
+    /**
+     * 固定步长驱动（播放器每帧最先调用，先于同帧 update/物理步进）：
+     * 帧间隔累积到固定步长（1/60s，与 runtime/physics.mjs 的 FIXED_DT 同频，
+     * 脚本可在 onFixedUpdate 里做与物理同步的确定性逻辑）才触发，一次渲染帧
+     * 可能不调用或连续调用多次（掉帧补偿上限与物理一致，避免死亡螺旋）。
+     */
+    fixedUpdate(dt) {
+      fixedAccumulator += Math.min(Math.max(dt, 0), FIXED_DT * MAX_SUBSTEPS);
+      while (fixedAccumulator >= FIXED_DT) {
+        fixedAccumulator -= FIXED_DT;
+        for (const record of instances) {
+          if (record.dead) continue;
+          callLifecycle(record, "onFixedUpdate", FIXED_DT);
+        }
+      }
+    },
     /** 每帧驱动：碰撞回调 → 时间推进 + onUpdate（错误实例自动停用） */
     update(dt) {
       dispatchCollisions();
@@ -363,6 +387,16 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
       for (const record of instances) {
         if (record.dead) continue;
         callLifecycle(record, "onUpdate", dt);
+      }
+    },
+    /**
+     * 晚更新驱动（播放器在全部脚本/动画/物理/粒子更新后、相机回填与渲染前
+     * 调用）：相机跟随等「要覆盖本帧一切位姿写入」的逻辑放 onLateUpdate。
+     */
+    lateUpdate(dt) {
+      for (const record of instances) {
+        if (record.dead) continue;
+        callLifecycle(record, "onLateUpdate", dt);
       }
     },
     dispose,

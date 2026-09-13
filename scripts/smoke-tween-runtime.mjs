@@ -403,11 +403,12 @@ console.log("[10] SDK 接线（tve.mjs）");
   tv.installRuntime({ registry: [], rootObj: null, canvas: null });
   ok(tv.tween.activeCount === 0 && tv.tween.timeScale === 1, "installRuntime 重置 tween 状态");
 
-  // 脚本宿主把 tickTime 挂进 update 链路（静态检查）
+  // 脚本宿主把 tickTime 挂进 update 链路（静态检查）；tickTime 实现在 tve/input.mjs
+  // （tve.mjs 只做再导出，曾位于 tve.mjs 本体，重构后断言跟随）
   const scriptsSrc = readFileSync(resolve(root, "public/engine/core/scripts.mjs"), "utf8");
   ok(/tickTime\(dt\)/.test(scriptsSrc), "scripts.mjs update 调用 tickTime（tween 随帧驱动）");
-  const tveSrc = readFileSync(resolve(root, "public/engine/core/tve.mjs"), "utf8");
-  ok(/tickTweens\(timeState\.delta\)/.test(tveSrc), "tve.mjs tickTime 内驱动 tickTweens");
+  const tveInputSrc = readFileSync(resolve(root, "public/engine/core/tve/input.mjs"), "utf8");
+  ok(/tickTweens\(state\.timeState\.delta\)/.test(tveInputSrc), "tve tickTime 内驱动 tickTweens");
 }
 
 cleanup();
