@@ -194,9 +194,33 @@ function morphVal(mesh: string, target: string): number {
   return engine.animation.getMorphWeight(props.node.id, mesh, target) ?? 0;
 }
 
+// 拖动草稿（滑块显示层）：权重/形态键读的是引擎运行时值（非响应式），拖动中
+// Vue 不重渲染，自定义填充轨道（--fill）需要本地草稿驱动才能实时跟随。
+// 键 = clip 或 mesh\0target；换节点重置（草稿属于当前模型的调试会话）。
+const weightDraft = ref<Record<string, number>>({});
+const morphDraft = ref<Record<string, number>>({});
+watch(
+  () => props.node.id,
+  () => {
+    weightDraft.value = {};
+    morphDraft.value = {};
+  },
+);
+
+function displayWeight(clip: string): number {
+  const d = weightDraft.value[clip];
+  return typeof d === "number" ? d : weightOf(clip);
+}
+function displayMorph(mesh: string, target: string): number {
+  const d = morphDraft.value[`${mesh}\u0000${target}`];
+  return typeof d === "number" ? d : morphVal(mesh, target);
+}
+
 function onMorph(mesh: string, target: string, e: Event): void {
   const v = parseFloat((e.target as HTMLInputElement).value);
-  if (Number.isFinite(v)) engine.animation.setMorphWeight(props.node.id, mesh, target, v);
+  if (!Number.isFinite(v)) return;
+  morphDraft.value[`${mesh}\u0000${target}`] = v;
+  engine.animation.setMorphWeight(props.node.id, mesh, target, v);
 }
 
 // —— 动作权重 / 加法层 / 一次性 ——
@@ -206,7 +230,9 @@ function weightOf(clip: string): number {
 
 function onWeight(clip: string, e: Event): void {
   const v = parseFloat((e.target as HTMLInputElement).value);
-  if (Number.isFinite(v)) engine.animation.setWeight(props.node.id, clip, v);
+  if (!Number.isFinite(v)) return;
+  weightDraft.value[clip] = v;
+  engine.animation.setWeight(props.node.id, clip, v);
 }
 
 /** 加法层开关（面板本地状态；对应官方 additive 示例的叠加权重滑块） */
@@ -424,10 +450,11 @@ function removeBinding(targetNodeId: string): void {
                 min="0"
                 max="1"
                 step="0.01"
-                :value="morphVal(group.mesh, target)"
+                :style="{ '--fill': `${(displayMorph(group.mesh, target) * 100).toFixed(2)}%` }"
+                :value="displayMorph(group.mesh, target)"
                 @input="onMorph(group.mesh, target, $event)"
               />
-              <span class="morph-val mono">{{ morphVal(group.mesh, target).toFixed(2) }}</span>
+              <span class="morph-val mono">{{ displayMorph(group.mesh, target).toFixed(2) }}</span>
             </div>
           </div>
         </div>
@@ -456,10 +483,11 @@ function removeBinding(targetNodeId: string): void {
                 min="0"
                 max="1"
                 step="0.01"
-                :value="weightOf(clip)"
+                :style="{ '--fill': `${(displayWeight(clip) * 100).toFixed(2)}%` }"
+                :value="displayWeight(clip)"
                 @input="onWeight(clip, $event)"
               />
-              <span class="morph-val mono">{{ weightOf(clip).toFixed(2) }}</span>
+              <span class="morph-val mono">{{ displayWeight(clip).toFixed(2) }}</span>
             </div>
           </div>
           <div class="hint">拖动滑块叠加混合多个动作 · 加法=差值叠加 · 1×=播完自动回落</div>
@@ -771,9 +799,37 @@ function removeBinding(targetNodeId: string): void {
   color: var(--text-dim, #999);
   text-align: right;
 }
+/* 自绘填充轨道：原生 accent-color 的填充止于滑块中心，1.0 时右端留约
+   半个滑块宽的空隙；改用 --fill（0~100%）驱动渐变，拉满即满格 */
 input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: var(--accent, #4a9eff);
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent, #4a9eff) 0%,
+    var(--accent, #4a9eff) var(--fill, 0%),
+    var(--border, #3a3a44) var(--fill, 0%),
+    var(--border, #3a3a44) 100%
+  );
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px; /* 居中于 4px 轨道：(4 - 12) / 2 */
+  border-radius: 50%;
+  background: var(--accent, #4a9eff);
+  border: none;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
 }
 .weight-row {
   padding: 2px 0;
