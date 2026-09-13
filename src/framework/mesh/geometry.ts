@@ -81,7 +81,7 @@ export function createDefaultGeometryRegistry(): GeometryRegistry {
   registry.register({
     key: "capsule",
     label: "Capsule",
-    build: (s) => new THREE.CapsuleGeometry(dim(s.x) / 2, Math.max(0, s.y - s.x), 8, 24),
+    build: (s) => new THREE.CapsuleGeometry(dim(s.x) / 2, dim(s.y), 8, 24),
   });
   return registry;
 }

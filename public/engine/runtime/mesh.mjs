@@ -70,6 +70,9 @@ function getPrimitiveGeometry(kind, x, y, z) {
     if (kind === "sphere") geom = new THREE.SphereGeometry(x / 2, 32, 24);
     else if (kind === "plane") geom = new THREE.PlaneGeometry(x, z);
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
+    else if (kind === "cone") geom = new THREE.ConeGeometry(x / 2, y, 24);
+    else if (kind === "torus") geom = new THREE.TorusGeometry(x / 2, y / 2, 16, 48);
+    else if (kind === "capsule") geom = new THREE.CapsuleGeometry(x / 2, y, 8, 24);
     else geom = new THREE.BoxGeometry(x, y, z);
     primitiveGeometryCache.set(key, geom);
   }
