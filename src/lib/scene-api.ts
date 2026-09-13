@@ -26,6 +26,23 @@ export interface SceneLoadResult {
   history: SceneHistoryState;
 }
 
+/** 层级面板行（后端单次 DFS 计算：域过滤 + 搜索过滤，displayDepth 已按域压缩） */
+export interface HierarchyRowDto {
+  id: string;
+  name: string;
+  typeKey: string;
+  depth: number;
+  visible: boolean;
+  active: boolean;
+  hasChildren: boolean;
+  hasPrefab: boolean;
+}
+
+export interface HierarchyRowsResult {
+  revision: number;
+  rows: HierarchyRowDto[];
+}
+
 const transport: SceneTransport = {
   addNode: (node, label) => invoke<void>("scene_add_node", { node, label }),
   addTree: (root, parentId, label) => invoke<void>("scene_add_tree", { root, parentId, label }),
@@ -57,6 +74,10 @@ export const sceneApi = {
   /** 提交场景物理设置（合并进 settings.physics；不入撤销历史，仅标脏随保存落盘） */
   /** 读取当前会话的完整场景文档（devtools/状态快照用） */
   doc: () => invoke<unknown>("scene_doc"),
+  /** 层级面板行查询（后端 DFS：view = scene|layout 域过滤 + 名称搜索；
+   *  大量节点下替代前端全树逐节点父链回溯，revision 供同版本跳过） */
+  hierarchyRows: (view: "scene" | "layout", search: string) =>
+    invoke<HierarchyRowsResult>("scene_hierarchy_rows", { view, search }),
   /** 关闭会话（清空后端图与历史） */
   close: () => invoke<void>("scene_close"),
   /** 后端是否有未保存修改 */

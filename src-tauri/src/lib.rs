@@ -650,6 +650,7 @@ pub fn run() {
             scene::scene_undo,
             scene::scene_redo,
             scene::scene_history_state,
+            scene::scene_hierarchy_rows,
             scene::scene_dirty,
             scene::scene_doc,
             scene::scene_save,

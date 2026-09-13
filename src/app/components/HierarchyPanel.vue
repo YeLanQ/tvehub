@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
+import { sceneApi } from "../../lib/scene-api";
 import type { Node } from "../../framework/prototype/Node";
 import { geometryRegistry } from "../../framework/mesh";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
@@ -148,50 +149,66 @@ function expandIfCollapsed(id: string): void {
   collapsedIds.value = next;
 }
 
+// ---------- 行数据源（后端计算） ----------
+// 展平/域过滤/搜索都在 Rust 权威图上单次 DFS 完成（scene_hierarchy_rows），
+// 前端不再随图变更做全树 O(n·depth) 逐节点父链回溯——大量节点下拖动/编辑
+// 不再卡层级面板。触发：图变更（防抖合并 gizmo 连续提交）、视图切换、搜索。
+interface BackendRow {
+  id: string;
+  depth: number;
+}
+const backendRows = ref<BackendRow[]>([]);
+let fetchSeq = 0;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let unsubGraphChanged: (() => void) | null = null;
+
+function scheduleRowRefresh(): void {
+  if (refreshTimer != null) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    void refreshRows();
+  }, 120);
+}
+
+async function refreshRows(): Promise<void> {
+  const seq = ++fetchSeq;
+  try {
+    const res = await sceneApi.hierarchyRows(
+      state.viewMode === "layout" ? "layout" : "scene",
+      search.value.trim().toLowerCase(),
+    );
+    if (seq !== fetchSeq) return; // 过期响应丢弃（防抖期间参数又变）
+    backendRows.value = res.rows.map((r) => ({ id: r.id, depth: r.depth }));
+  } catch {
+    /* 会话未开/后端不可用：保留旧行（未装载场景本就无行） */
+  }
+}
+
+onMounted(() => {
+  // 图变更（增删/重父级/重命名/可见性）→ 防抖刷新
+  unsubGraphChanged = engine.events.on("graph:changed", scheduleRowRefresh);
+  void refreshRows();
+});
+
 const flat = computed<FlatNode[]>(() => {
   void state.selectedId;
   void state.selectionIds;
   void store.revision();
-  void state.viewMode;
   const q = search.value.trim().toLowerCase();
-  const root = engine.graph.root;
+  // 折叠裁剪（后端行按 DFS 序带显示深度，深度栈跳过折叠子树）；
+  // 搜索时忽略折叠（旧行为：子树中的匹配项保持可见）。
+  // 镜像节点 O(1) 回填：模板/右键/拖拽处理器仍消费完整 Node。
   const out: FlatNode[] = [];
-  if (!root) return out;
-  // 层级域拆分：场景视图走场景树（非 UI 域），布局视口走 UI 树（UI 画布子树
-  // + UI 节点）——两棵树各自只含本域节点，跨域点选/拖拽自然不可达（与视口
-  // 点选规则 isSelectableInViewport 同口径）。
-  // 域外节点只隐藏不下钻会漏掉混合子树（根/组下挂画布是最常见路径）：
-  // 不入列但仍递归，本域子节点顶替父级深度直接成为可见行（画布作树根）。
-  const uiDomain = state.viewMode === "layout";
-  // 搜索时忽略折叠（子树中的匹配项保持可见），平时按折叠状态裁剪子级
-  const walk = (n: Node, depth: number) => {
-    if (isUiDomain(n) !== uiDomain) {
-      engine.graph.childrenOf(n.id).forEach((c) => walk(c, depth));
-      return;
-    }
-    out.push({ node: n, depth });
-    if (!q && collapsedIds.value.has(n.id)) return;
-    engine.graph.childrenOf(n.id).forEach((c) => walk(c, depth + 1));
-  };
-  walk(root, 0);
-  if (!q) return out;
-  return out.filter((f) => f.node.name.toLowerCase().includes(q));
-});
-
-/**
- * UI 域判定：UI 类型节点（typeKey 以 ui 开头，含画布外的游离 Widget），
- * 或处于某 UI 画布子树内（画布下挂的普通组/网格随画布同域，与视口
- * 布局视图的可见可点范围一致）。
- */
-function isUiDomain(node: Node): boolean {
-  if (node.typeKey.startsWith("ui")) return true;
-  let cur = node.parentId ? engine.graph.get(node.parentId) : undefined;
-  while (cur) {
-    if (cur.typeKey === "uiCanvasNode") return true;
-    cur = cur.parentId ? engine.graph.get(cur.parentId) : undefined;
+  let collapsedAt = Number.POSITIVE_INFINITY;
+  for (const row of backendRows.value) {
+    if (row.depth <= collapsedAt) collapsedAt = Number.POSITIVE_INFINITY;
+    if (row.depth > collapsedAt) continue;
+    if (!q && collapsedIds.value.has(row.id)) collapsedAt = row.depth;
+    const node = engine.graph.get(row.id);
+    if (node) out.push({ node, depth: row.depth });
   }
-  return false;
-}
+  return out;
+});
 
 // ---------- 选中 ----------
 function isSelected(id: string): boolean {
@@ -514,7 +531,20 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("mousemove", onWindowMouseMove);
   window.removeEventListener("mouseup", onWindowMouseUp);
+  unsubGraphChanged?.();
+  unsubGraphChanged = null;
+  if (refreshTimer != null) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
 });
+
+// 视图切换（场景树 ↔ UI 树）与搜索输入都改变行集 → 防抖拉取
+watch(
+  () => state.viewMode,
+  () => scheduleRowRefresh(),
+);
+watch(search, () => scheduleRowRefresh());
 </script>
 
 <template>

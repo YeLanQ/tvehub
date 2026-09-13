@@ -539,6 +539,76 @@ pub async fn scene_dirty(state: tauri::State<'_, SceneSession>) -> Result<bool, 
     Ok(core.dirty)
 }
 
+/// 层级面板行（后端单次 DFS 计算的展平树；前端只做折叠裁剪与渲染）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HierarchyRow {
+    pub id: String,
+    pub name: String,
+    pub type_key: String,
+    /// 显示深度：域外祖先不计入（画布挂组下时顶替父级深度作树根）
+    pub depth: u32,
+    pub visible: bool,
+    pub active: bool,
+    pub has_children: bool,
+    pub has_prefab: bool,
+}
+
+/// scene_hierarchy_rows 结果（revision 为后端图版本，供前端同版本跳过）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HierarchyRows {
+    pub revision: u64,
+    pub rows: Vec<HierarchyRow>,
+}
+
+/// 层级面板行查询（读命令，O(n) 单次 DFS，替代前端每次图变更的全树
+/// O(n·depth) 逐节点父链回溯）：view = scene 出非 UI 域 / layout 出 UI 域
+/// （type 以 ui 开头或处于画布子树内，与前端视口点选同口径）；search 非空
+/// 按名称子串过滤（大小写不敏感；行仍按 DFS 序带全深度，折叠由前端裁剪）。
+#[tauri::command]
+pub async fn scene_hierarchy_rows(
+    state: tauri::State<'_, SceneSession>,
+    view: String,
+    search: Option<String>,
+) -> Result<HierarchyRows, String> {
+    let core = state.0.read().map_err(|e| e.to_string())?;
+    let ui_domain = view == "layout";
+    let q = search.unwrap_or_default().trim().to_lowercase();
+    let graph = &core.graph;
+    let mut rows: Vec<HierarchyRow> = Vec::new();
+    let Some(root_id) = graph.root_id.clone() else {
+        return Ok(HierarchyRows { revision: core.revision, rows });
+    };
+    // 迭代式 DFS（栈：节点 id、显示深度、所在画布子树标记）；子级逆序入栈保序
+    let mut stack: Vec<(String, u32, bool)> = vec![(root_id, 0, false)];
+    while let Some((id, depth, parent_in_canvas)) = stack.pop() {
+        let Some(node) = graph.get(&id) else { continue };
+        let in_canvas = parent_in_canvas || node.type_key == "uiCanvasNode";
+        let in_domain = ui_domain == (node.type_key.starts_with("ui") || in_canvas);
+        // 域外节点不进结果但仍下钻（根/组下挂画布），子级沿用同一显示深度
+        let child_depth = if in_domain { depth + 1 } else { depth };
+        if in_domain && (q.is_empty() || node.name.to_lowercase().contains(&q)) {
+            rows.push(HierarchyRow {
+                id: node.id.clone(),
+                name: node.name.clone(),
+                type_key: node.type_key.clone(),
+                depth,
+                visible: node.visible,
+                active: node.active,
+                has_children: !node.child_ids.is_empty(),
+                has_prefab: node.extra.contains_key("prefab"),
+            });
+        }
+        let mut children = node.child_ids.clone();
+        children.reverse();
+        for child in children {
+            stack.push((child, child_depth, in_canvas));
+        }
+    }
+    Ok(HierarchyRows { revision: core.revision, rows })
+}
+
 /// 会话当前打开的项目根目录（devtools 纯后端查询扫描用；未打开返回 None）
 #[tauri::command]
 pub async fn scene_root_path(
