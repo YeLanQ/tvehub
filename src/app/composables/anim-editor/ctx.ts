@@ -105,7 +105,7 @@ export interface TimelineApi {
   setTWindow: (zNew: number, anchorFrac: number, anchorT: number) => void;
   timelineWheel: (e: WheelEvent, frac: number) => void;
   onLaneWheel: (e: WheelEvent) => void;
-  onZoomInput: (e: Event) => void;
+  onZoomInput: (v: number) => void;
   onWrapPointerDown: (e: PointerEvent) => void;
   onLanesScroll: () => void;
   onNamesScroll: () => void;
@@ -153,7 +153,7 @@ export interface CurveApi {
   resetCurveView: () => void;
   /** 切剪辑的整体复位（含拖拽冻结快照） */
   reset: () => void;
-  onCurveZoomInput: (e: Event) => void;
+  onCurveZoomInput: (v: number) => void;
   onCurveDown: (e: PointerEvent) => void;
   onCurveMove: (e: PointerEvent) => void;
   onCurveUp: () => void;

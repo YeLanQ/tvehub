@@ -1,0 +1,28 @@
+:root {
+  --bg: #141414;
+  --bg-panel: #1c1c1c;
+  --bg-panel-2: #212121;
+  --bg-input: #1a1a1a;
+  --btn: #3f3f3f;
+  --btn-hover: #363636;
+  --bg-hover: #292929;
+  --bg-active: #303030;
+  --border: #3f3f3f;
+  --text: #d2d2d2;
+  --text-dim: #949494;
+  --accent: #757575;
+  --ok: #5fb05f;
+  --warn: #d9a13b;
+  --err: #dc6b6b;
+  --hero-glow: #454a55;
+  --scrollbar-thumb: #565656;
+  --scrollbar-thumb-hover: #6a6a6a;
+  font-family: "Segoe UI", "Microsoft YaHei", Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background-color: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}

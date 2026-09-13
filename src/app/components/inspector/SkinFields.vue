@@ -15,6 +15,7 @@ import { parseBoneBindings, type BoneBindingSpec } from "../../../framework/anim
 import { dispatchCommand } from "../../commands";
 import { getEditorStore } from "../../stores/editor";
 import NumberField from "../NumberField.vue";
+import Slider from "../../../ui-kit/components/Slider.vue";
 
 const props = defineProps<{ node: MeshNode; rev?: number; clips: string[] }>();
 
@@ -216,8 +217,7 @@ function displayMorph(mesh: string, target: string): number {
   return typeof d === "number" ? d : morphVal(mesh, target);
 }
 
-function onMorph(mesh: string, target: string, e: Event): void {
-  const v = parseFloat((e.target as HTMLInputElement).value);
+function onMorph(mesh: string, target: string, v: number): void {
   if (!Number.isFinite(v)) return;
   morphDraft.value[`${mesh}\u0000${target}`] = v;
   engine.animation.setMorphWeight(props.node.id, mesh, target, v);
@@ -228,8 +228,7 @@ function weightOf(clip: string): number {
   return engine.animation.getWeight(props.node.id, clip) ?? 0;
 }
 
-function onWeight(clip: string, e: Event): void {
-  const v = parseFloat((e.target as HTMLInputElement).value);
+function onWeight(clip: string, v: number): void {
   if (!Number.isFinite(v)) return;
   weightDraft.value[clip] = v;
   engine.animation.setWeight(props.node.id, clip, v);
@@ -445,14 +444,9 @@ function removeBinding(targetNodeId: string): void {
             <div class="morph-mesh mono">{{ group.mesh }}</div>
             <div v-for="target in group.targets" :key="target" class="morph-row">
               <span class="morph-name" :title="target">{{ target }}</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                :style="{ '--fill': `${(displayMorph(group.mesh, target) * 100).toFixed(2)}%` }"
-                :value="displayMorph(group.mesh, target)"
-                @input="onMorph(group.mesh, target, $event)"
+              <Slider
+                :model-value="displayMorph(group.mesh, target)"
+                @update:model-value="(v) => onMorph(group.mesh, target, v)"
               />
               <span class="morph-val mono">{{ displayMorph(group.mesh, target).toFixed(2) }}</span>
             </div>
@@ -478,14 +472,9 @@ function removeBinding(targetNodeId: string): void {
               <button class="skin-btn sm" title="一次性播放（定格末帧后自动回落）" @click="onOneShot(clip)">1×</button>
             </div>
             <div class="slider-row">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                :style="{ '--fill': `${(displayWeight(clip) * 100).toFixed(2)}%` }"
-                :value="displayWeight(clip)"
-                @input="onWeight(clip, $event)"
+              <Slider
+                :model-value="displayWeight(clip)"
+                @update:model-value="(v) => onWeight(clip, v)"
               />
               <span class="morph-val mono">{{ displayWeight(clip).toFixed(2) }}</span>
             </div>
@@ -799,38 +788,7 @@ function removeBinding(targetNodeId: string): void {
   color: var(--text-dim, #999);
   text-align: right;
 }
-/* 自绘填充轨道：原生 accent-color 的填充止于滑块中心，1.0 时右端留约
-   半个滑块宽的空隙；改用 --fill（0~100%）驱动渐变，拉满即满格 */
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 14px;
-  background: transparent;
-  cursor: pointer;
-}
-input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(
-    to right,
-    var(--accent, #4a9eff) 0%,
-    var(--accent, #4a9eff) var(--fill, 0%),
-    var(--border, #3a3a44) var(--fill, 0%),
-    var(--border, #3a3a44) 100%
-  );
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  margin-top: -4px; /* 居中于 4px 轨道：(4 - 12) / 2 */
-  border-radius: 50%;
-  background: var(--accent, #4a9eff);
-  border: none;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
-}
+
 .weight-row {
   padding: 2px 0;
   border-bottom: 1px dashed var(--border, #333);

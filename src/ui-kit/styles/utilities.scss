@@ -1,0 +1,40 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+
+  label {
+    width: 68px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+}
+
+.mono {
+  font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+  font-size: 11px;
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.panel .inspector-body,
+.panel .tree,
+.panel .field-row,
+.panel .comp-list,
+.panel .section {
+  user-select: none;
+}

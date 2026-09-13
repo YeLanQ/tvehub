@@ -13,49 +13,8 @@
   // gap: 8px; /* 卡片间距 */
 }
 
-/* ---------- 折叠卡片（ComponentCard） ---------- */
-.inspector .section {
-  background: var(--bg-panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  flex-shrink: 0;
-  margin: 4px; /* 使用外边距替代卡片间距 */
-}
-
-.inspector .section-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  user-select: none;
-
-  &:hover {
-    background: var(--bg-hover);
-  }
-}
-
-.inspector .caret {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.inspector .section-head .title {
-  font-weight: 600;
-}
-
-/* 组件卡置灰（组件停用时整卡弱化，标题与主体可读性保留） */
-.inspector .section.dim .section-head .title,
-.inspector .section.dim .comp-type {
-  opacity: 0.55;
-}
-
-.inspector .comp-type {
-  color: var(--text-dim);
-  font-size: 11px;
-  flex-shrink: 0;
-}
+/* ---------- 折叠卡片基础样式见 ui-kit/styles/components/component-card.scss ---------- */
+/* ---------- NumberField 基础样式见 ui-kit/styles/components/number-field.scss ---------- */
 
 /* 组件卡头：启用勾选 + ⋮ 操作菜单（组件模式） */
 .inspector .comp-card-toggle {
@@ -108,14 +67,6 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
-}
-
-.inspector .section-body {
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .type-tag {
@@ -190,40 +141,13 @@
   }
 }
 
-/* ---------- NumberField（数字拖动输入） ---------- */
-.inspector .nf-input {
-  flex: 1;
-  min-width: 0;
-  height: 24px;
-  padding: 0 6px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  outline: none;
-  cursor: ew-resize;
-
-  &:focus {
-    border-color: var(--accent);
-  }
-
-  &.nf-disabled {
-    cursor: default;
-    opacity: 0.55;
-  }
-}
-
 /* vec3 输入框只保留自身特有的固定宽度 */
 .inspector .vec3 .nf-input {
   width: 60px;
   flex: none;
 }
 
-/* ---------- UI 卡片成对数值行（2D Transform / Anchor / Layout 的 field-row）----------
-   网格自适应分列（放不下自动换行）。label 不在此覆盖：沿用 .inspector .field 的
-   80px 定宽列，使单字段行与成对行的输入框左缘对齐成一条线（此前 label 自适应
-   宽度导致两种行式输入框起点参差，卡片看起来是乱的）。 */
+/* ---------- UI 卡片成对数值行（2D Transform / Anchor / Layout 的 field-row）---------- */
 .inspector .ui-section .field-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -235,8 +159,7 @@
   }
 }
 
-/* UI 卡片 label 列统一 72px（比面板默认 80px 略窄）：单字段行与成对行仍同宽对齐，
-   成对行输入框多出 8px 容纳像素值（如 162.76083）不裁字 */
+/* UI 卡片 label 列统一 72px（比面板默认 80px 略窄） */
 .inspector .ui-section .field > label {
   width: 72px;
 }

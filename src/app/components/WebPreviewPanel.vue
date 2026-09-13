@@ -13,6 +13,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../stores/project";
 import { getScriptsStore } from "../stores/scripts";
+import Slider from "../../ui-kit/components/Slider.vue";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
@@ -464,13 +465,11 @@ onUnmounted(() => {
       </template>
       <span v-if="deviceActive" class="wpd-zoom">
         <span class="wpd-zoom-label">缩放</span>
-        <input
-          v-model.number="deviceZoomPct"
-          class="wpd-zoom-slider"
-          type="range"
-          min="25"
-          max="200"
-          step="5"
+        <Slider
+          v-model="deviceZoomPct"
+          :min="25"
+          :max="200"
+          :step="5"
           title="手动缩放比例（相对自动适配，100% = 完整适配视口）"
         />
         <button class="wp-btn wpd-fit" title="恢复自动适配（100%）" @click="deviceZoomPct = 100">

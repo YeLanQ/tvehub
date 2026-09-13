@@ -134,8 +134,8 @@ export function useAnimCurve(ctx: AnimEditorCtx): CurveApi {
     };
   }
 
-  function onCurveZoomInput(e: Event): void {
-    curveZoom.value = parseFloat((e.target as HTMLInputElement).value) || 1;
+  function onCurveZoomInput(v: number): void {
+    curveZoom.value = v || 1;
     applyCurveZoom();
   }
 

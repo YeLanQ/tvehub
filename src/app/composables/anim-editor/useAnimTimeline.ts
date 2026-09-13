@@ -109,10 +109,10 @@ export function useAnimTimeline(ctx: AnimEditorCtx): TimelineApi {
     timelineWheel(e, (e.clientX - r.left) / Math.max(1, r.width));
   }
 
-  function onZoomInput(e: Event): void {
+  function onZoomInput(v: number): void {
     // 滑条改倍率：以可视窗中心为锚
     const win = tWindow.value;
-    setTWindow(parseFloat((e.target as HTMLInputElement).value) || 1, 0.5, (win.t0 + win.t1) / 2);
+    setTWindow(v || 1, 0.5, (win.t0 + win.t1) / 2);
   }
 
   // —— 中键拖拽平移时间窗（dope：标尺/轨道/内容层按下全局接管；曲线：见曲线模块）——

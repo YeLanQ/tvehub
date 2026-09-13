@@ -1,0 +1,49 @@
+.section {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin: 4px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.caret {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.section-head .title {
+  font-weight: 600;
+}
+
+.section.dim .section-head .title,
+.section.dim .comp-type {
+  opacity: 0.55;
+}
+
+.comp-type {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.section-body {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

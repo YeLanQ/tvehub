@@ -501,17 +501,8 @@
   color: var(--text-dim);
   cursor: default;
 
-  input[type="range"] {
+  .slider {
     width: 90px;
-    height: 14px;
-    /* 全局 input 有 padding 4px 7px + 边框 + 背景色：会把原生轨道内缩，
-       滑块推到最大也够不到右缘（永远空出一段空白）且高度被挤变形，全部重置 */
-    margin: 0;
-    padding: 0;
-    background: transparent;
-    border: none;
-    accent-color: var(--accent);
-    cursor: pointer;
   }
 }
 

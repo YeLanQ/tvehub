@@ -10,6 +10,7 @@ import { onBeforeUnmount } from "vue";
 import { useAnimEditor } from "../composables/anim-editor/useAnimEditor";
 import { animEditMode, exitAnimEditMode } from "../lib/anim-edit-mode";
 import NumberField from "./NumberField.vue";
+import Slider from "../../ui-kit/components/Slider.vue";
 
 const {
   clip: { clipRel, doc, dirty, saving, onPickClip, clipOptions },
@@ -141,7 +142,7 @@ function onExitEdit(): void {
         <template v-if="viewMode === 'curve'">
           <span class="anim-sep"></span>
           <label class="zoom-ctl" title="曲线数值轴缩放（1 = 自动适配全曲线；调小 = 放大查看）。鼠标方案与帧动画统一：滚轮缩放时间轴、Ctrl 滚轮平移、中键拖拽平移（纵向拖动可平移数值轴）">
-            <input type="range" min="0.2" max="4" step="0.1" :value="curveZoom" @input="onCurveZoomInput" />
+            <Slider :model-value="curveZoom" :min="0.2" :max="4" :step="0.1" @update:model-value="onCurveZoomInput" />
             <span class="mono">值×{{ curveZoom.toFixed(1) }}</span>
           </label>
           <button class="anim-btn" :disabled="!curveView" title="复位数值轴（恢复自动适配全曲线；时间轴用底部滑条/滚轮）" @click="resetCurveView">适配</button>
@@ -355,7 +356,7 @@ function onExitEdit(): void {
           <button class="anim-btn danger" :disabled="!selected" title="删除选中的关键帧" @click="deleteSelected">删除 K</button>
           <span class="anim-hint">{{ viewHint }}</span>
           <label class="zoom-ctl" title="时间轴缩放（1× 铺满；帧动画与曲线视图共用同一时间窗，滚轮同样可缩放）">
-            <input type="range" min="1" max="8" step="0.5" :value="zoom" @input="onZoomInput" />
+            <Slider :model-value="zoom" :min="1" :max="8" :step="0.5" @update:model-value="onZoomInput" />
             <span class="mono">×{{ zoom.toFixed(1) }}</span>
           </label>
         </div>

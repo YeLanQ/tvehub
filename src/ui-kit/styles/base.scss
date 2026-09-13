@@ -1,0 +1,108 @@
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--btn);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+
+  &:hover:not(:disabled) {
+    background: var(--btn-hover);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  &.primary {
+    font-weight: 600;
+  }
+
+  &.danger:hover:not(:disabled) {
+    border-color: var(--err);
+    color: var(--err);
+  }
+
+  &.is-active {
+    background: var(--bg-active);
+    border-color: var(--bg-active);
+    color: var(--text);
+    font-weight: 600;
+  }
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 7px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--accent);
+  }
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+
+  &:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body.dock-dragging,
+body.dock-resizing {
+  user-select: none;
+  cursor: grabbing;
+}
+
+input,
+textarea,
+select {
+  user-select: none;
+}
