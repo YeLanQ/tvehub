@@ -403,6 +403,10 @@ export class Entity {
    *   （"src/hp.ts" / "HPBar"）——按类型名查找：所有脚本类在加载后
    *   全局可见，脚本之间互相引用组件无需 import（严格模式下用
    *   `import type` 只引入类型即可获得智能提示）。
+   * - 注意：节点句柄类（LightNode/MeshNode/CameraNode/Transform 等，均
+   *   extends Entity）是场景节点而非组件，不能传给 getComponent；灯光属性
+   *   用 `getComponent(Light)`，引用节点本身用 `@property({ type: LightNode })`
+   *   或 `engine.node.find<LightNode>("name")`。
    */
   getComponent(component: "rigidBody" | typeof RigidBody): RigidBody | null;
   getComponent(component: "collider" | typeof Collider): Collider | null;
@@ -465,7 +469,19 @@ export class Transform extends Entity {}
 /** 网格节点（编辑器 meshNode：基元网格或模型网格） */
 export class MeshNode extends Entity {}
 
-/** 灯光节点（编辑器 lightNode / pointLightNode / directionalLightNode / ambientLightNode / spotLightNode） */
+/**
+ * 灯光节点句柄（编辑器 lightNode / pointLightNode / directionalLightNode / ambientLightNode / spotLightNode）。
+ *
+ * 这是场景**节点**句柄（extends Entity），不是组件——不能用 `getComponent(LightNode)`。
+ * 灯光属性（intensity/color/kind/...）通过组件门面 `Light` 访问：
+ * ```ts
+ * const light = this.entity.getComponent(Light);      // ✅ 组件门面
+ * const light = this.entity.getComponent("light");    // ✅ 字符串键
+ * // this.entity.getComponent(LightNode)              // ❌ LightNode 是节点句柄，非组件
+ * ```
+ * 引用灯光节点本身（变换/层级）用 `@property({ type: LightNode })` 或
+ * `engine.node.find<LightNode>("name")`。
+ */
 export class LightNode extends Entity {}
 
 /** 相机节点（编辑器 cameraNode） */
