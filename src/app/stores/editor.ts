@@ -1,7 +1,8 @@
-import { computed, readonly, reactive } from "vue";
+import { computed, readonly, reactive, watch } from "vue";
 import { EditorEngine } from "../../framework/engine/EditorEngine";
 import type { Node } from "../../framework/prototype/Node";
 import { logStore } from "./log";
+import { animEditMode } from "../lib/anim-edit-mode";
 
 export type ViewMode = "scene" | "layout" | "preview" | "script";
 
@@ -118,6 +119,35 @@ export function getEditorStore(): EditorStore {
     if (node && node.typeKey.startsWith("ui")) applyViewMode("layout");
   });
 
+  // ---------- 选中范围（布局视口限定 UI 域；动画聚焦模式自持更严过滤器） ----------
+
+  /** 布局视口的选中范围谓词：仅 UI 画布子树内节点（与视口点选
+   *  isSelectableInViewport 同口径）；null = 清空选中，放行 */
+  function allowInLayoutView(id: string | null): boolean {
+    if (id == null) return true;
+    let cur = engine.graph.get(id);
+    while (cur) {
+      if (cur.typeKey === "uiCanvasNode") return true;
+      cur = cur.parentId ? engine.graph.get(cur.parentId) : undefined;
+    }
+    return false;
+  }
+
+  /** 选中过滤槽按当前状态同步：布局视口装 UI 限定（层级面板已按域拆树，
+   *  此槽兜底其余选择路径——创建/重父级/脚本等），其余视图卸下；
+   *  动画聚焦模式期间不动槽（聚焦自带更严的目标子树过滤，不越权覆盖） */
+  function syncSelectionFilter(): void {
+    if (animEditMode.active) return;
+    engine.setSelectionFilter(state.viewMode === "layout" ? allowInLayoutView : null);
+  }
+
+  // 动画聚焦进入/退出后回落过滤槽（聚焦中切到布局视图靠跳过保护；
+  // 退出时若停在布局视图 → 恢复 UI 限定）
+  watch(
+    () => animEditMode.active,
+    () => syncSelectionFilter(),
+  );
+
   // 场景图变化 → 控制台日志（框架层不依赖 app，日志桥接只在 app 层）
   engine.events.on("graph:changed", (c) => {
     const node = engine.graph.get(c.nodeId);
@@ -157,6 +187,7 @@ export function getEditorStore(): EditorStore {
       engine.setRenderingActive(false);
     }
     state.viewMode = mode;
+    syncSelectionFilter();
   }
 
   const store: EditorStore = {

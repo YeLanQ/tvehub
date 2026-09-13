@@ -152,12 +152,23 @@ const flat = computed<FlatNode[]>(() => {
   void state.selectedId;
   void state.selectionIds;
   void store.revision();
+  void state.viewMode;
   const q = search.value.trim().toLowerCase();
   const root = engine.graph.root;
   const out: FlatNode[] = [];
   if (!root) return out;
+  // 层级域拆分：场景视图走场景树（非 UI 域），布局视口走 UI 树（UI 画布子树
+  // + UI 节点）——两棵树各自只含本域节点，跨域点选/拖拽自然不可达（与视口
+  // 点选规则 isSelectableInViewport 同口径）。
+  // 域外节点只隐藏不下钻会漏掉混合子树（根/组下挂画布是最常见路径）：
+  // 不入列但仍递归，本域子节点顶替父级深度直接成为可见行（画布作树根）。
+  const uiDomain = state.viewMode === "layout";
   // 搜索时忽略折叠（子树中的匹配项保持可见），平时按折叠状态裁剪子级
   const walk = (n: Node, depth: number) => {
+    if (isUiDomain(n) !== uiDomain) {
+      engine.graph.childrenOf(n.id).forEach((c) => walk(c, depth));
+      return;
+    }
     out.push({ node: n, depth });
     if (!q && collapsedIds.value.has(n.id)) return;
     engine.graph.childrenOf(n.id).forEach((c) => walk(c, depth + 1));
@@ -166,6 +177,21 @@ const flat = computed<FlatNode[]>(() => {
   if (!q) return out;
   return out.filter((f) => f.node.name.toLowerCase().includes(q));
 });
+
+/**
+ * UI 域判定：UI 类型节点（typeKey 以 ui 开头，含画布外的游离 Widget），
+ * 或处于某 UI 画布子树内（画布下挂的普通组/网格随画布同域，与视口
+ * 布局视图的可见可点范围一致）。
+ */
+function isUiDomain(node: Node): boolean {
+  if (node.typeKey.startsWith("ui")) return true;
+  let cur = node.parentId ? engine.graph.get(node.parentId) : undefined;
+  while (cur) {
+    if (cur.typeKey === "uiCanvasNode") return true;
+    cur = cur.parentId ? engine.graph.get(cur.parentId) : undefined;
+  }
+  return false;
+}
 
 // ---------- 选中 ----------
 function isSelected(id: string): boolean {
@@ -565,7 +591,13 @@ onUnmounted(() => {
         </button>
       </div>
       <div v-if="!flat.length" class="empty muted">
-        {{ search.trim() ? "无匹配节点" : "场景为空" }}
+        {{
+          search.trim()
+            ? "无匹配节点"
+            : state.viewMode === "layout"
+              ? "场景中没有 UI 画布（回到场景视图创建画布后自动进入布局）"
+              : "场景为空"
+        }}
       </div>
     </div>
 

@@ -1164,8 +1164,12 @@ export class EditorEngine {
   }
 
   setSelection(ids: string[]): void {
-    this.selectedIds = [...ids];
-    this.selectedId = ids[ids.length - 1] ?? null;
+    // 范围选同样过选中过滤（动画聚焦/布局视口）：范围外 id 剔除；
+    // 全部被拒时保持现状（避免一次越界操作误清已有选中）
+    const next = ids.filter((id) => this.allowedToSelect(id));
+    if (ids.length > 0 && next.length === 0) return;
+    this.selectedIds = next;
+    this.selectedId = next[next.length - 1] ?? null;
     this.syncGizmo();
     this.events.emit("select:changed", { nodeId: this.selectedId });
   }
