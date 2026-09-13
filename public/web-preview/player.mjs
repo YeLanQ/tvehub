@@ -536,6 +536,7 @@ async function main() {
   // physicsEnabled 为 true 时自动开始模拟，后端 rapier|jolt|ammo 惰性加载。
   const physicsApi = await createPhysics({
     nodes,
+    terrains,
     settings: (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics),
   }).catch((e) => {
     postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);

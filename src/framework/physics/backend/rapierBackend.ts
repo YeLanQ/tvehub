@@ -153,6 +153,30 @@ function colliderDesc(R: RapierAPI, col: ColliderShapeDesc): InstanceType<Rapier
       d = R.ColliderDesc.cuboid(0.5, 0.5, 0.5);
       break;
     }
+    case "heightfield": {
+      // Rapier（parry）高度场：heights 为 (nrows+1)×(ncols+1) 列主序矩阵，
+      // 索引 = row + col*S，row ↔ 引擎 z、col ↔ 引擎 x（cell 宽 = scale.x/(S-1)）；
+      // y = height × scale.y 绝对值，XZ 以原点为中心。desc.heights 是行主序
+      // [z][x]（x 为快索引）→ 目标索引 row=z/col=x 恰好转置传入。
+      // 网格无数据/规模不符 → 包围盒兜底（与 convex 顶点不足同策略）。
+      const s = col.samples;
+      if (!col.heights || s < 2 || col.heights.length < s * s) {
+        d = R.ColliderDesc.cuboid(0.5, 0.5, 0.5);
+        break;
+      }
+      const cm = new Float32Array(s * s);
+      for (let iz = 0; iz < s; iz++) {
+        for (let ix = 0; ix < s; ix++) {
+          cm[iz + ix * s] = col.heights[iz * s + ix];
+        }
+      }
+      d = R.ColliderDesc.heightfield(s - 1, s - 1, cm, {
+        x: Math.max(0.001, col.terrainSizeX),
+        y: 1,
+        z: Math.max(0.001, col.terrainSizeZ),
+      });
+      break;
+    }
     case "box":
     default:
       d = R.ColliderDesc.cuboid(

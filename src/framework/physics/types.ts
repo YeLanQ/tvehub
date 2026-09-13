@@ -57,7 +57,27 @@ export const DEFAULT_RIGID_BODY_SETTINGS: RigidBodySettings = {
 };
 
 /** 碰撞形状（尺寸可从节点渲染包围盒自动推导，或显式指定） */
-export type ColliderShape = "box" | "sphere" | "capsule" | "cylinder" | "convex";
+export type ColliderShape = "box" | "sphere" | "capsule" | "cylinder" | "convex" | "heightfield";
+
+/**
+ * 高度场碰撞分辨率（每轴采样数；碰撞 LOD）。
+ * 只允许 2 的幂：Jolt HeightFieldShapeSettings 要求每轴采样为 2 的幂，
+ * 统一取值集合让三引擎共享同一下采样结果（无需按引擎 padding）。
+ */
+export const HEIGHTFIELD_RESOLUTIONS = [64, 128, 256] as const;
+
+/** 高度场碰撞分辨率默认值（128² ≈ 1.6 万采样，三引擎宽相/内存都很轻） */
+export const DEFAULT_HEIGHTFIELD_RESOLUTION = 128;
+
+/** 吸附到最接近的合法高度场分辨率（非法/越界值同样回吸） */
+export function snapHeightfieldResolution(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULT_HEIGHTFIELD_RESOLUTION;
+  let best: number = HEIGHTFIELD_RESOLUTIONS[0];
+  for (const r of HEIGHTFIELD_RESOLUTIONS) {
+    if (Math.abs(r - n) < Math.abs(best - n)) best = r;
+  }
+  return best;
+}
 
 /** 碰撞体组件设置（node.components[type=collider].collider 的形状） */
 export interface ColliderSettings {
@@ -75,6 +95,11 @@ export interface ColliderSettings {
   restitution: number;
   /** 传感器：只产生触发不产生碰撞响应 */
   isSensor: boolean;
+  /**
+   * 高度场碰撞分辨率（每轴采样数；仅 shape=heightfield 生效）。
+   * 从烘焙地形网格按等步长取样（取到的都是真实烘焙高度点），越小越省性能。
+   */
+  resolution: number;
 }
 
 export const DEFAULT_COLLIDER_SETTINGS: ColliderSettings = {
@@ -85,6 +110,7 @@ export const DEFAULT_COLLIDER_SETTINGS: ColliderSettings = {
   friction: 0.6,
   restitution: 0.1,
   isSensor: false,
+  resolution: DEFAULT_HEIGHTFIELD_RESOLUTION,
 };
 
 function str(v: unknown, fb: string): string {
@@ -133,7 +159,7 @@ export function parseColliderSettings(v: unknown): ColliderSettings {
   const shape = str(o.shape, DEFAULT_COLLIDER_SETTINGS.shape);
   return {
     shape: (
-      ["box", "sphere", "capsule", "cylinder", "convex"] as const
+      ["box", "sphere", "capsule", "cylinder", "convex", "heightfield"] as const
     ).includes(shape as ColliderShape)
       ? (shape as ColliderShape)
       : DEFAULT_COLLIDER_SETTINGS.shape,
@@ -143,6 +169,7 @@ export function parseColliderSettings(v: unknown): ColliderSettings {
     friction: clamp(num(o.friction, DEFAULT_COLLIDER_SETTINGS.friction), 0, 4),
     restitution: clamp(num(o.restitution, DEFAULT_COLLIDER_SETTINGS.restitution), 0, 1),
     isSensor: bool(o.isSensor, DEFAULT_COLLIDER_SETTINGS.isSensor),
+    resolution: snapHeightfieldResolution(o.resolution),
   };
 }
 

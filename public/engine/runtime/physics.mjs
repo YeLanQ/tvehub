@@ -47,19 +47,33 @@ function parseRigidBody(v) {
   };
 }
 
+/** 高度场碰撞分辨率合法档位（2 的幂：Jolt HeightFieldShape 要求；与编辑器同集合） */
+const HF_RESOLUTIONS = [64, 128, 256];
+const HF_DEFAULT_RESOLUTION = 128;
+
+function snapHeightfieldResolution(v) {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : HF_DEFAULT_RESOLUTION;
+  let best = HF_RESOLUTIONS[0];
+  for (const r of HF_RESOLUTIONS) {
+    if (Math.abs(r - n) < Math.abs(best - n)) best = r;
+  }
+  return best;
+}
+
 function parseCollider(v) {
   const o = v && typeof v === "object" ? v : {};
   const shape = typeof o.shape === "string" ? o.shape : "box";
   const sz = o.size && typeof o.size === "object" ? o.size : {};
   const off = o.offset && typeof o.offset === "object" ? o.offset : {};
   return {
-    shape: ["box", "sphere", "capsule", "cylinder", "convex"].includes(shape) ? shape : "box",
+    shape: ["box", "sphere", "capsule", "cylinder", "convex", "heightfield"].includes(shape) ? shape : "box",
     autoSize: o.autoSize !== false,
     size: { x: num(sz.x, 1), y: num(sz.y, 1), z: num(sz.z, 1) },
     offset: { x: num(off.x, 0), y: num(off.y, 0), z: num(off.z, 0) },
     friction: clamp(num(o.friction, 0.6), 0, 4),
     restitution: clamp(num(o.restitution, 0.1), 0, 1),
     isSensor: o.isSensor === true,
+    resolution: snapHeightfieldResolution(o.resolution),
   };
 }
 
@@ -109,8 +123,79 @@ function computeLocalBounds(obj) {
   return { center, half, points };
 }
 
-function colliderDescFor(col, obj) {
+/**
+ * 高度网格下采样（碰撞 LOD；与编辑器 colliderShape.ts 同规则）：最近邻取点，
+ * 输出每个采样都是源网格的真实烘焙高度。src 行主序 [iz*srcN + ix]。
+ */
+function downsampleHeightfield(src, srcN, samples, scaleY) {
+  const out = new Float32Array(samples * samples);
+  const last = srcN - 1;
+  for (let iz = 0; iz < samples; iz++) {
+    const sz = Math.round((iz * last) / (samples - 1));
+    for (let ix = 0; ix < samples; ix++) {
+      const sx = Math.round((ix * last) / (samples - 1));
+      out[iz * samples + ix] = src[sz * srcN + sx] * scaleY;
+    }
+  }
+  return out;
+}
+
+/** 非地形节点选高度场形状的告警去重 */
+let hfFallbackWarned = false;
+
+/**
+ * 碰撞形状推导（对象局部包围盒 + 世界缩放烘入尺寸；与编辑器同规则）。
+ * terrainGrid：该节点的烘焙地形网格（{ heights, gridSize, size }，来自
+ * buildSceneTree 的 terrains 收集），heightfield 形状需要；无数据回退盒形。
+ */
+function colliderDescFor(col, obj, terrainGrid) {
   const s = col;
+  const ws = obj.getWorldScale(new THREE.Vector3());
+  const sx = Math.abs(ws.x) || 1;
+  const sy = Math.abs(ws.y) || 1;
+  const sz = Math.abs(ws.z) || 1;
+  if (s.shape === "heightfield") {
+    const desc = {
+      shape: "heightfield",
+      halfExtents: { x: 0.5, y: 0.5, z: 0.5 },
+      radius: 0.5,
+      halfHeight: 0.5,
+      points: [],
+      heights: null,
+      samples: 0,
+      terrainSizeX: 0,
+      terrainSizeZ: 0,
+      minHeight: 0,
+      maxHeight: 0,
+      offset: { x: s.offset.x, y: s.offset.y, z: s.offset.z },
+      friction: s.friction,
+      restitution: s.restitution,
+      isSensor: s.isSensor,
+    };
+    if (!terrainGrid || !(terrainGrid.heights instanceof Float32Array) || terrainGrid.gridSize < 2) {
+      if (!hfFallbackWarned) {
+        hfFallbackWarned = true;
+        postLog("warn", "[物理] heightfield 碰撞体找不到地形高度数据（仅 terrainNode 可用），已回退单位盒");
+      }
+      return desc;
+    }
+    const samples = snapHeightfieldResolution(s.resolution);
+    const heights = downsampleHeightfield(terrainGrid.heights, terrainGrid.gridSize, samples, sy);
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < heights.length; i++) {
+      const h = heights[i];
+      if (h < min) min = h;
+      if (h > max) max = h;
+    }
+    desc.heights = heights;
+    desc.samples = samples;
+    desc.terrainSizeX = Math.max(0.001, terrainGrid.size * sx);
+    desc.terrainSizeZ = Math.max(0.001, terrainGrid.size * sz);
+    desc.minHeight = min;
+    desc.maxHeight = max;
+    return desc;
+  }
   let half = { x: 0.5, y: 0.5, z: 0.5 };
   let center = { x: 0, y: 0, z: 0 };
   let points = [];
@@ -128,10 +213,6 @@ function colliderDescFor(col, obj) {
       if (b) points = b.points;
     }
   }
-  const ws = obj.getWorldScale(new THREE.Vector3());
-  const sx = Math.abs(ws.x) || 1;
-  const sy = Math.abs(ws.y) || 1;
-  const sz = Math.abs(ws.z) || 1;
   const uniform = (sx + sy + sz) / 3;
   const desc = {
     shape: s.shape,
@@ -139,6 +220,12 @@ function colliderDescFor(col, obj) {
     radius: Math.max(0.001, Math.max(half.x * sx, half.z * sz, s.shape === "sphere" ? half.y * sy : 0.001)),
     halfHeight: 0.5,
     points: [],
+    heights: null,
+    samples: 0,
+    terrainSizeX: 0,
+    terrainSizeZ: 0,
+    minHeight: 0,
+    maxHeight: 0,
     offset: {
       x: s.offset.x + (s.autoSize ? center.x : 0),
       y: s.offset.y + (s.autoSize ? center.y : 0),
@@ -209,6 +296,27 @@ async function loadRapier() {
               if (hull) return hull;
             }
             return R.ColliderDesc.cuboid(0.5, 0.5, 0.5);
+          }
+          case "heightfield": {
+            // Rapier（parry）高度场：列主序矩阵，索引 = row + col*S，row ↔ 引擎
+            // z、col ↔ 引擎 x；y = height × scale.y 绝对值，XZ 以原点为中心。
+            // desc.heights 是行主序 [z][x]（x 为快索引）→ 目标索引 row=z/col=x
+            // 恰好转置传入（与编辑器 rapierBackend 同规则）。
+            const n = col.samples;
+            if (!col.heights || n < 2 || col.heights.length < n * n) {
+              return R.ColliderDesc.cuboid(0.5, 0.5, 0.5);
+            }
+            const cm = new Float32Array(n * n);
+            for (let iz = 0; iz < n; iz++) {
+              for (let ix = 0; ix < n; ix++) {
+                cm[iz + ix * n] = col.heights[iz * n + ix];
+              }
+            }
+            return R.ColliderDesc.heightfield(n - 1, n - 1, cm, {
+              x: Math.max(0.001, col.terrainSizeX),
+              y: 1,
+              z: Math.max(0.001, col.terrainSizeZ),
+            });
           }
           default:
             return R.ColliderDesc.cuboid(col.halfExtents.x, col.halfExtents.y, col.halfExtents.z);
@@ -451,6 +559,35 @@ async function loadJolt() {
             if (!s) s = new Jolt.BoxShape(new Jolt.Vec3(0.5, 0.5, 0.5), 0.03);
             break;
           }
+          case "heightfield": {
+            // Jolt 高度场：采样行主序 X-then-Z（与 desc.heights 布局一致），首采样
+            // 位置 = mOffset，步长 = mScale；高度在 [min,max] 按 mBitsPerSample 量化
+            // （此版本要求 [1,16]，取 16 位）。每轴采样数须为 2 的幂（resolution 已保证）。
+            const n = col.samples;
+            if (!col.heights || n < 2 || col.heights.length < n * n) {
+              s = new Jolt.BoxShape(new Jolt.Vec3(0.5, 0.5, 0.5), 0.03);
+              break;
+            }
+            try {
+              const hs = new Jolt.HeightFieldShapeSettings();
+              hs.mSampleCount = n; // 每轴采样数（须 2 的幂；样本总数 = n²）
+              hs.mBitsPerSample = 16;
+              hs.mMinHeightValue = col.minHeight;
+              hs.mMaxHeightValue = col.maxHeight;
+              const samples = new Jolt.ArrayFloat();
+              samples.reserve(n * n);
+              for (let i = 0; i < n * n; i++) samples.push_back(col.heights[i]);
+              hs.mHeightSamples = samples;
+              hs.mOffset = new Jolt.Vec3(-col.terrainSizeX / 2, 0, -col.terrainSizeZ / 2);
+              hs.mScale = new Jolt.Vec3(col.terrainSizeX / (n - 1), 1, col.terrainSizeZ / (n - 1));
+              const result = hs.Create();
+              s = result.IsValid() ? result.Get() : null;
+            } catch {
+              s = null;
+            }
+            if (!s) s = new Jolt.BoxShape(new Jolt.Vec3(0.5, 0.5, 0.5), 0.03);
+            break;
+          }
           default:
             s = new Jolt.BoxShape(
               new Jolt.Vec3(col.halfExtents.x, col.halfExtents.y, col.halfExtents.z),
@@ -665,6 +802,11 @@ async function loadAmmo() {
       // 持续接触中被临时清零弹性的碰撞对象（ptr → { obj, value }），接触结束后恢复
       const zeroedRestitution = new Map();
       const bodies = [];
+      const CF_KINEMATIC_OBJECT = 2;
+      const CF_NO_CONTACT_RESPONSE = 4;
+      const DISABLE_DEACTIVATION = 4;
+      // 高度场 _malloc 缓冲指针（embind destroy 不托管裸指针；随世界 dispose 释放）
+      const heightfieldBuffers = new Set();
       const buildShape = (col, out) => {
         let s;
         switch (col.shape) {
@@ -692,6 +834,45 @@ async function loadAmmo() {
             }
             break;
           }
+          case "heightfield": {
+            // Bullet 高度场：单位采样间距、以高度中线为局部原点 → setLocalScaling
+            // 拉伸 XZ 到 terrainSize、包一层 compound 子变换 y=+mid 抬回绝对高度
+            // 语义（与编辑器同规则）。缓冲行主序 [z*n + x]，须持久有效（不拷贝）。
+            const n = col.samples;
+            if (!col.heights || n < 2 || col.heights.length < n * n) {
+              s = new Ammo.btBoxShape(new Ammo.btVector3(0.5, 0.5, 0.5));
+              break;
+            }
+            const ptr = Ammo._malloc(n * n * 4);
+            if (!ptr) {
+              s = new Ammo.btBoxShape(new Ammo.btVector3(0.5, 0.5, 0.5));
+              break;
+            }
+            heightfieldBuffers.add(ptr);
+            const heap = Ammo.HEAPF32;
+            const base = ptr >> 2;
+            for (let i = 0; i < n * n; i++) heap[base + i] = col.heights[i];
+            const mid = (col.minHeight + col.maxHeight) / 2;
+            const hf = new Ammo.btHeightfieldTerrainShape(
+              n, n, ptr, 1, col.minHeight, col.maxHeight,
+              1 /* upAxis=Y */, Ammo.PHY_FLOAT, false /* flipQuadEdges */,
+            );
+            out.push(hf);
+            hf.setLocalScaling(new Ammo.btVector3(
+              Math.max(0.001, col.terrainSizeX) / (n - 1),
+              1,
+              Math.max(0.001, col.terrainSizeZ) / (n - 1),
+            ));
+            const wrapper = new Ammo.btCompoundShape();
+            out.push(wrapper);
+            const t = new Ammo.btTransform();
+            t.setIdentity();
+            t.setOrigin(new Ammo.btVector3(0, mid, 0));
+            out.push(t);
+            wrapper.addChildShape(t, hf);
+            s = wrapper;
+            break;
+          }
           default:
             s = new Ammo.btBoxShape(
               new Ammo.btVector3(col.halfExtents.x, col.halfExtents.y, col.halfExtents.z),
@@ -700,9 +881,6 @@ async function loadAmmo() {
         out.push(s);
         return s;
       };
-      const CF_KINEMATIC_OBJECT = 2;
-      const CF_NO_CONTACT_RESPONSE = 4;
-      const DISABLE_DEACTIVATION = 4;
       // 碰撞事件（流形差分）：刚体指针 → 节点 id 在 createBody 登记；
       // 每步把「当前接触对」与「上一步接触对」diff 出 enter/exit
       const pointerToNode = new Map();
@@ -945,6 +1123,15 @@ async function loadAmmo() {
         dispose() {
           for (const b of [...bodies]) world.removeRigidBody(b.raw);
           bodies.length = 0;
+          // 高度场裸缓冲（embind destroy 不托管 _malloc 指针）：随世界销毁统一释放
+          for (const ptr of heightfieldBuffers) {
+            try {
+              Ammo._free(ptr);
+            } catch {
+              /* 重复释放忽略 */
+            }
+          }
+          heightfieldBuffers.clear();
         },
       };
     },
@@ -966,10 +1153,12 @@ const BACKEND_LOADERS = {
  * 创建播放器物理运行时。
  * @param {object} opts
  * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
+ * @param {Array<{json: object, obj: object, data: object, settings: object}>} [opts.terrains]
+ *        buildSceneTree 的地形节点收集（烘焙高度网格缓存；heightfield 碰撞体读取）
  * @param {object} [opts.settings] scene.settings.physics（backend/gravity/physicsEnabled）
  * @returns {Promise<object>} { update(dt), setGravity, applyImpulse, … } 物理控制 API
  */
-export async function createPhysics({ nodes, settings } = {}) {
+export async function createPhysics({ nodes, terrains, settings } = {}) {
   const cfg = settings && typeof settings === "object" ? settings : {};
   const gravity = {
     x: num(cfg.gravity?.x, 0),
@@ -1005,7 +1194,12 @@ export async function createPhysics({ nodes, settings } = {}) {
     },
   };
 
-  // 绑定收集（文档序：先父后子）
+  // 绑定收集（文档序：先父后子）；地形烘焙网格按节点 id 建索引（heightfield 读取）
+  const terrainById = new Map();
+  for (const t of Array.isArray(terrains) ? terrains : []) {
+    const id = t && typeof t.json?.id === "string" ? t.json.id : "";
+    if (id && t.data) terrainById.set(id, t.data);
+  }
   const bindings = [];
   for (const { json, obj } of nodes) {
     const comps = Array.isArray(json.components) ? json.components : [];
@@ -1019,6 +1213,7 @@ export async function createPhysics({ nodes, settings } = {}) {
       obj,
       rb: rbComp ? parseRigidBody(rbComp.rigidBody) : null,
       colliders,
+      terrain: terrainById.get(json.id) ?? null,
       body: null,
     });
   }
@@ -1054,7 +1249,7 @@ export async function createPhysics({ nodes, settings } = {}) {
       mode: rb.mode,
       position: { x: tmpPos.x, y: tmpPos.y, z: tmpPos.z },
       quaternion: { x: tmpQuat.x, y: tmpQuat.y, z: tmpQuat.z, w: tmpQuat.w },
-      colliders: b.colliders.map((c) => colliderDescFor(c.settings, obj)),
+      colliders: b.colliders.map((c) => colliderDescFor(c.settings, obj, b.terrain)),
       mass: rb.mass,
       linearDamping: rb.linearDamping,
       angularDamping: rb.angularDamping,

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { isColliderComponent, type ColliderComponentRef } from "../../../prototype/Node";
-import { computeColliderShapeDesc } from "../../../physics/colliderShape";
+import { computeColliderShapeDesc, terrainMeshSigOf } from "../../../physics/colliderShape";
 import { parseColliderSettings } from "../../../physics/types";
 import { buildColliderWireframe } from "./colliderWireframe";
 import type { HelperContext, NodeHelper } from "./types";
@@ -75,7 +75,8 @@ export class ColliderNodeHelper implements NodeHelper {
       sz = Math.abs(tmpScale.z) || 1;
     }
 
-    // 签名与 PhysicsSystem.bindingSig 同口径：设置 + 世界缩放（autoSize 包围盒随之变化）
+    // 签名与 PhysicsSystem.bindingSig 同口径：设置 + 世界缩放 + 地形内容
+    // （autoSize 包围盒随缩放变化；地形参数变化混 terrainSig 才能触发线框重建）
     const parts: string[] = [`n:${comps.length}`];
     for (const c of comps) {
       const s = parseColliderSettings(c.collider);
@@ -86,9 +87,11 @@ export class ColliderNodeHelper implements NodeHelper {
         s.autoSize ? "" : `${s.size.x.toFixed(3)}|${s.size.y.toFixed(3)}|${s.size.z.toFixed(3)}`,
         `${s.offset.x.toFixed(3)}|${s.offset.y.toFixed(3)}|${s.offset.z.toFixed(3)}`,
         String(s.isSensor),
+        s.shape === "heightfield" ? String(s.resolution) : "",
       );
     }
     parts.push(`s:${sx.toFixed(3)}|${sy.toFixed(3)}|${sz.toFixed(3)}`);
+    if (world) parts.push(`t:${terrainMeshSigOf(world)}`);
     const sig = parts.join("§");
     if (sig !== this.sig) {
       this.sig = sig;

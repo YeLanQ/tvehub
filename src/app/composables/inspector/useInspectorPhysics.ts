@@ -13,7 +13,11 @@ import {
   isRigidBodyComponent,
   type ColliderComponentRef,
 } from "../../../framework/prototype/Node";
-import type { ColliderSettings, RigidBodySettings } from "../../../framework/physics";
+import {
+  snapHeightfieldResolution,
+  type ColliderSettings,
+  type RigidBodySettings,
+} from "../../../framework/physics";
 import type { InspectorNodeApi } from "./useInspectorNode";
 
 export interface InspectorPhysicsApi {
@@ -81,10 +85,13 @@ export function useInspectorPhysics(ctx: InspectorNodeApi): InspectorPhysicsApi 
         case "Set Collider Shape":
           if (
             value === "box" || value === "sphere" || value === "capsule" ||
-            value === "cylinder" || value === "convex"
+            value === "cylinder" || value === "convex" || value === "heightfield"
           ) {
             col.shape = value;
           }
+          break;
+        case "Set Collider Resolution":
+          col.resolution = snapHeightfieldResolution(typeof value === "number" ? value : undefined);
           break;
         case "Set Collider AutoSize":
           col.autoSize = value === true;

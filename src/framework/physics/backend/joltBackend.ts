@@ -67,6 +67,34 @@ function buildShape(jolt: JoltAPI, col: ColliderShapeDesc, outShapes: unknown[])
         }
         return track(fallbackBox(jolt));
       }
+      case "heightfield": {
+        // Jolt 高度场：采样行主序 X-then-Z（与 desc.heights 布局一致），
+        // 首采样位置 = mOffset，采样步长 = mScale；高度在 [min,max] 区间按
+        // mBitsPerSample 量化（此版本要求 [1,16]，取 16 位：精度 (max-min)/65535）。
+        // 每轴采样数须为 2 的幂（parse 已把 resolution 吸附到合法档位）。
+        const s = col.samples;
+        if (!col.heights || s < 2 || col.heights.length < s * s) {
+          return track(fallbackBox(jolt));
+        }
+        const settings = new jolt.HeightFieldShapeSettings();
+        settings.mSampleCount = s; // 每轴采样数（须 2 的幂；样本总数 = s²）
+        settings.mBitsPerSample = 16;
+        settings.mMinHeightValue = col.minHeight;
+        settings.mMaxHeightValue = col.maxHeight;
+        const samples = new jolt.ArrayFloat();
+        samples.reserve(s * s);
+        for (let i = 0; i < s * s; i++) samples.push_back(col.heights[i]);
+        settings.mHeightSamples = samples;
+        settings.mOffset = new jolt.Vec3(-col.terrainSizeX / 2, 0, -col.terrainSizeZ / 2);
+        settings.mScale = new jolt.Vec3(
+          col.terrainSizeX / (s - 1),
+          1,
+          col.terrainSizeZ / (s - 1),
+        );
+        const result = settings.Create();
+        if (result.IsValid()) return track(result.Get());
+        return track(fallbackBox(jolt));
+      }
       case "box":
       default:
         return track(

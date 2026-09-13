@@ -28,6 +28,20 @@ export interface ColliderShapeDesc {
   halfHeight: number;
   /** convex：局部空间顶点采样（平面数组 xyz…；box 兜底当为空） */
   points: number[];
+  /**
+   * heightfield：高度网格（行主序 samples×samples，局部空间；已烘焙 Y 缩放）。
+   * XZ 铺在 [-sizeX/2, sizeX/2] × [-sizeZ/2, sizeZ/2]（见 terrainSizeX/Z），
+   * 采样间距 = sizeX/(samples-1) / sizeZ/(samples-1)。
+   */
+  heights: Float32Array | null;
+  /** heightfield：每轴采样数（2 的幂；heights 为 null 时无意义） */
+  samples: number;
+  /** heightfield：XZ 全边长（局部空间，已烘焙 XZ 缩放） */
+  terrainSizeX: number;
+  terrainSizeZ: number;
+  /** heightfield：高度最小/最大值（引擎中线对齐与 Ammo 高度范围用） */
+  minHeight: number;
+  maxHeight: number;
   /** 相对刚体原点的偏移 */
   offset: Vec3;
   friction: number;

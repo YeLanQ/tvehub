@@ -112,6 +112,36 @@ for (const backend of ["rapier", "jolt", "ammo"]) {
   const yh = half.obj.position.y, yf = full.obj.position.y;
   ok(yh > yf, `缩放 0.5 落得比缩放 1 少（${yh.toFixed(3)} vs ${yf.toFixed(3)}）`);
   ok(yf < 3, `缩放 1 按新世界重力 -19.62 下落（y=${yf.toFixed(3)}，0.5s 应 <3）`);
+
+  // ⑤ 高度场：terrainNode（隐式静态 heightfield 碰撞体，terrains 传烘焙网格）
+  //    两级平台 x<0 高 1 / x≥0 高 3，两球分别落在两台上（校准 y 对齐与 x 方向性）
+  const S = 64;
+  const hfHeights = new Float32Array(S * S);
+  for (let iz = 0; iz < S; iz++) {
+    for (let ix = 0; ix < S; ix++) hfHeights[iz * S + ix] = ix < S / 2 ? 1 : 3;
+  }
+  const terrainObj = new THREE.Object3D();
+  const terrainNode = {
+    json: {
+      id: "terrain", type: "terrainNode",
+      components: [
+        { type: "collider", enabled: true, collider: { shape: "heightfield", resolution: 64, friction: 0.6, restitution: 0 } },
+      ],
+    },
+    obj: terrainObj,
+  };
+  const lowBall = ball("low", -2.5, 8, 1);
+  const highBall = ball("high", 2.5, 8, 1);
+  const apiHf = await createPhysics({
+    nodes: [terrainNode, lowBall, highBall],
+    terrains: [{ json: terrainNode.json, obj: terrainObj, data: { heights: hfHeights, gridSize: S, size: 10, segments: S - 1, minY: 1, maxY: 3 } }],
+    settings: { physicsEnabled: true, backend, gravity: { x: 0, y: -9.81, z: 0 } },
+  });
+  await stepSeconds(apiHf, 3);
+  const yLow = lowBall.obj.position.y, yHigh = highBall.obj.position.y;
+  ok(yLow > 1.1 && yLow < 1.9, `高度场低台（x=-2.5）球停 y=${yLow.toFixed(3)}（期望 ≈1.5）`);
+  ok(yHigh > 3.1 && yHigh < 3.9, `高度场高台（x=+2.5）球停 y=${yHigh.toFixed(3)}（期望 ≈3.5）`);
+  ok(yHigh > yLow + 1, "高度场 x 方向正确（高台在 +x 侧）");
 }
 
 console.log(`\n${failed === 0 ? "全部通过" : "存在失败"}：${passed} 项通过，${failed} 项失败`);

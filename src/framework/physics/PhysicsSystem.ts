@@ -28,7 +28,7 @@ import {
   type RigidBodySettings,
 } from "./types";
 import { physicsBackendRegistry } from "./backend/factory";
-import { computeColliderShapeDesc } from "./colliderShape";
+import { computeColliderShapeDesc, terrainMeshSigOf } from "./colliderShape";
 import type {
   IPhysicsBody,
   IPhysicsWorld,
@@ -219,9 +219,12 @@ export class PhysicsSystem {
         s.friction.toFixed(3),
         s.restitution.toFixed(3),
         String(s.isSensor),
+        s.shape === "heightfield" ? String(s.resolution) : "",
       );
     }
     parts.push(`s:${obj.scale.x.toFixed(3)}|${obj.scale.y.toFixed(3)}|${obj.scale.z.toFixed(3)}`);
+    // 地形网格内容签名：改地形参数只重建网格不改缩放，混入 sig 才能触发高度场重建
+    parts.push(`t:${terrainMeshSigOf(obj)}`);
     return parts.join("§");
   }
 

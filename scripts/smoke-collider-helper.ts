@@ -8,11 +8,18 @@ import * as THREE from "three";
 import {
   computeColliderLocalBounds,
   computeColliderShapeDesc,
+  downsampleHeightfield,
+  terrainMeshSigOf,
 } from "../src/framework/physics/colliderShape";
 import { buildColliderWireframe } from "../src/framework/engine/modules/helpers/colliderWireframe";
 import { ColliderNodeHelper } from "../src/framework/engine/modules/helpers/ColliderNodeHelper";
 import { Node } from "../src/framework/prototype/Node";
-import { DEFAULT_COLLIDER_SETTINGS, type ColliderSettings } from "../src/framework/physics/types";
+import {
+  DEFAULT_COLLIDER_SETTINGS,
+  parseColliderSettings,
+  snapHeightfieldResolution,
+  type ColliderSettings,
+} from "../src/framework/physics/types";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail = ""): void {
@@ -273,6 +280,71 @@ function settings(patch: Partial<ColliderSettings>): ColliderSettings {
 
   helper.dispose();
   check("dispose 释放全部子对象", helper.object.children.length === 0);
+}
+
+// ---------- 5. heightfield（高度场：下采样 / 缩放烘焙 / 回退 / 线框有界 / 签名） ----------
+{
+  // resolution 吸附：非法值回默认 128，任意值吸附到合法档位
+  check("resolution 缺省 128", parseColliderSettings({}).resolution === 128);
+  check("resolution 吸附 300→256 / 100→128 / 50→64",
+    snapHeightfieldResolution(300) === 256 && snapHeightfieldResolution(100) === 128 && snapHeightfieldResolution(50) === 64);
+
+  // 带地形缓存的伪地形对象（两平台 x<0 高 1 / x≥0 高 3）
+  const s = 64;
+  const heights = new Float32Array(s * s);
+  for (let iz = 0; iz < s; iz++) {
+    for (let ix = 0; ix < s; ix++) heights[iz * s + ix] = ix < s / 2 ? 1 : 3;
+  }
+  const terrainObj = new THREE.Object3D();
+  const terrainMesh = new THREE.Mesh(new THREE.BoxGeometry(10, 1, 10));
+  terrainMesh.userData.terrainSig = "sig-1";
+  terrainMesh.userData.terrainHeights = heights;
+  terrainMesh.userData.terrainGridSize = s;
+  terrainMesh.userData.terrainSize = 10;
+  terrainObj.add(terrainMesh);
+
+  const desc = computeColliderShapeDesc(settings({ shape: "heightfield", resolution: 64 }), terrainObj);
+  check("heightfield desc 采样数/边长", desc.samples === 64 && desc.terrainSizeX === 10 && desc.terrainSizeZ === 10);
+  check("heightfield desc min/max", desc.minHeight === 1 && desc.maxHeight === 3);
+  check("heightfield desc 保留平台值（下采样取真实烘焙点）",
+    !!desc.heights && desc.heights[0] === 1 && desc.heights[desc.heights.length - 1] === 3);
+
+  // 世界缩放烘焙：Y 缩放乘进高度，XZ 缩放乘进边长
+  const scaled = new THREE.Object3D();
+  const scaledMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  scaledMesh.userData.terrainHeights = heights;
+  scaledMesh.userData.terrainGridSize = s;
+  scaledMesh.userData.terrainSize = 10;
+  scaled.add(scaledMesh);
+  scaled.scale.set(2, 2, 2);
+  scaled.updateMatrixWorld(true);
+  const scaledDesc = computeColliderShapeDesc(settings({ shape: "heightfield", resolution: 64 }), scaled);
+  check("heightfield 缩放烘焙（Y×2 → 高度 2..6；XZ×2 → 边长 20）",
+    !!scaledDesc.heights && scaledDesc.minHeight === 2 && scaledDesc.maxHeight === 6 &&
+    scaledDesc.terrainSizeX === 20 && scaledDesc.terrainSizeZ === 20);
+
+  // 非地形节点：heights 为 null（后端/线框各自回退盒形），告警只发一次
+  const plainDesc = computeColliderShapeDesc(settings({ shape: "heightfield" }), unitBoxObject());
+  check("非地形节点 heightfield → desc.heights 为 null（后端回退盒形）", plainDesc.heights === null);
+
+  // 线框：顶点数有界（每轴 ≤ ~33 条剖面线 × 2 方向），高度取样正确
+  const hfGeom = buildColliderWireframe(desc);
+  check("heightfield 线框非空且有界（≤ 10000 端点）",
+    hfGeom.getAttribute("position").count > 0 && hfGeom.getAttribute("position").count <= 10000,
+    String(hfGeom.getAttribute("position").count));
+  const nullGeom = buildColliderWireframe(plainDesc);
+  check("heightfield 无数据 → 线框回退盒形（24 端点）", nullGeom.getAttribute("position").count === 24);
+
+  // downsampleHeightfield：源 3×3 → 目标 5×5，角点保持源值
+  const src = Float32Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const ds = downsampleHeightfield(src, 3, 5, 1);
+  check("downsample 角点保持源值", ds[0] === 0 && ds[4] === 2 && ds[20] === 6 && ds[24] === 8);
+  const dsScaled = downsampleHeightfield(src, 3, 5, 2);
+  check("downsample scaleY 烘焙", dsScaled[24] === 16);
+
+  // 签名：地形网格内容签名参与重建判定
+  check("terrainMeshSigOf 读取地形签名", terrainMeshSigOf(terrainObj) === "sig-1");
+  check("terrainMeshSigOf 无地形为空串", terrainMeshSigOf(unitBoxObject()) === "");
 }
 
 if (failed) {

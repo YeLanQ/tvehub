@@ -1168,6 +1168,10 @@ export class SceneSynchronizer {
       mesh.userData.terrainSig = sig;
       mesh.userData.terrainMinY = build.minY;
       mesh.userData.terrainMaxY = build.maxY;
+      // 高度网格缓存（行主序 N×N）：高度场碰撞体直接读取，避免重复烘焙
+      mesh.userData.terrainHeights = build.heights;
+      mesh.userData.terrainGridSize = build.gridSize;
+      mesh.userData.terrainSize = build.size;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.shadowCamerasDirty = true;

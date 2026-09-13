@@ -6,11 +6,13 @@
 // desc.offset 由 ColliderNodeHelper 挂到子对象位置上，保证与物理体偏移一致。
 //
 // 各形状画法（干净结构线，不画三角剖分对角线）：
-// - box     → 12 条棱
-// - sphere  → 3 条纬线（赤道 ±45°）+ 4 条经线大圆
-// - capsule → 上下柱面交接圆 + 半球 45° 纬线 + 柱面竖直轮廓线 + 半球经线弧
-// - cylinder→ 上下底圆 + 8 条竖直轮廓线
-// - convex  → 采样点凸包的棱（ConvexGeometry + EdgesGeometry；退化时点集包围盒兜底）
+// - box        → 12 条棱
+// - sphere     → 3 条纬线（赤道 ±45°）+ 4 条经线大圆
+// - capsule    → 上下柱面交接圆 + 半球 45° 纬线 + 柱面竖直轮廓线 + 半球经线弧
+// - cylinder   → 上下底圆 + 8 条竖直轮廓线
+// - convex     → 采样点凸包的棱（ConvexGeometry + EdgesGeometry；退化时点集包围盒兜底）
+// - heightfield→ 降采样网格线（每轴 ≤ ~32 条等距纵/横剖面线 + 严格边框；碰撞网格
+//                本体是 LOD 网格，全量画线在 257×257 下会拖垮编辑器）
 // ---------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -18,6 +20,8 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import type { ColliderShapeDesc } from "../../../physics/backend/types";
 
 const CIRCLE_SEGMENTS = 24;
+/** 高度场线框每轴最大剖线条数（性能保护：顶点数随此值有界） */
+const HEIGHTFIELD_MAX_LINES = 32;
 
 /** 由碰撞形状描述生成线框几何（以形状局部原点为中心） */
 export function buildColliderWireframe(desc: ColliderShapeDesc): THREE.BufferGeometry {
@@ -30,6 +34,8 @@ export function buildColliderWireframe(desc: ColliderShapeDesc): THREE.BufferGeo
       return buildCylinderWireframe(desc.radius, desc.halfHeight);
     case "convex":
       return buildConvexWireframe(desc.points, desc.halfExtents);
+    case "heightfield":
+      return buildHeightfieldWireframe(desc);
     case "box":
     default:
       return buildBoxWireframe(desc.halfExtents);
@@ -132,6 +138,46 @@ function buildConvexWireframe(
   }
   // 完全没有采样点（无网格/空对象）：按半尺寸单位盒兜底
   return buildBoxWireframe(fallbackHalf);
+}
+
+/**
+ * heightfield：降采样网格线。
+ * 沿 X/Z 各取 ≤HEIGHTFIELD_MAX_LINES 条等距剖面折线 + 地形边框，顶点数有界；
+ * 无高度数据（非地形节点回退盒形 desc）时按单位盒兜底。
+ */
+function buildHeightfieldWireframe(desc: ColliderShapeDesc): THREE.BufferGeometry {
+  const heights = desc.heights;
+  const s = desc.samples;
+  if (!heights || s < 2) return buildBoxWireframe(desc.halfExtents);
+  const stepLine = Math.max(1, Math.ceil((s - 1) / (HEIGHTFIELD_MAX_LINES - 1)));
+  const sx = desc.terrainSizeX / (s - 1);
+  const sz = desc.terrainSizeZ / (s - 1);
+  const hAt = (ix: number, iz: number): number => heights[iz * s + ix];
+  // 剖面线位置：等步长 + 强制末行/末列（步长不整除时边框不缺）
+  const lines: number[] = [];
+  for (let i = 0; i < s; i += stepLine) lines.push(i);
+  if (lines[lines.length - 1] !== s - 1) lines.push(s - 1);
+  const pos: number[] = [];
+  // Z 向剖面线（沿 x 方向行走）与 X 向剖面线（沿 z 方向行走）
+  for (const iz of lines) {
+    const z = (iz - (s - 1) / 2) * sz;
+    for (let ix = 0; ix < s - 1; ix++) {
+      pos.push(
+        (ix - (s - 1) / 2) * sx, hAt(ix, iz), z,
+        (ix + 1 - (s - 1) / 2) * sx, hAt(ix + 1, iz), z,
+      );
+    }
+  }
+  for (const ix of lines) {
+    const x = (ix - (s - 1) / 2) * sx;
+    for (let iz = 0; iz < s - 1; iz++) {
+      pos.push(
+        x, hAt(ix, iz), (iz - (s - 1) / 2) * sz,
+        x, hAt(ix, iz + 1), (iz + 1 - (s - 1) / 2) * sz,
+      );
+    }
+  }
+  return segmentsGeometry(pos);
 }
 
 /** 包围盒线框（min/max 角点，中心可为任意点） */

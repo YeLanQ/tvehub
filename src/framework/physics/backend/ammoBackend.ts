@@ -55,6 +55,9 @@ interface AmmoConvexHullShape extends AmmoShape {
 interface AmmoCompoundShape extends AmmoShape {
   addChildShape(t: AmmoTransform, shape: AmmoShape): void;
 }
+interface AmmoHeightfieldShape extends AmmoShape {
+  setLocalScaling(v: AmmoVector3): void;
+}
 interface AmmoRigidBody {
   getMotionState(): AmmoMotionState;
   setMassProps(mass: number, inertia: AmmoVector3): void;
@@ -93,6 +96,25 @@ interface AmmoAPI {
   btCylinderShape: new (halfExtents: AmmoVector3) => AmmoShape;
   btConvexHullShape: new () => AmmoConvexHullShape;
   btCompoundShape: new () => AmmoCompoundShape;
+  /** Bullet 高度场：单位采样间距（每轴 s 个采样铺 s-1 单位）、以高度中线为局部原点；
+   *  heightfieldData 为 _malloc 出来的 float 指针（行主序 [z*宽 + x]，须持久有效），
+   *  heightDataType 传 PHY_FLOAT，upAxis=1（Y），XZ 尺寸经 setLocalScaling 适配 */
+  btHeightfieldTerrainShape: new (
+    heightStickWidth: number,
+    heightStickLength: number,
+    heightfieldData: number,
+    heightScale: number,
+    minHeight: number,
+    maxHeight: number,
+    upAxis: number,
+    heightDataType: number,
+    flipQuadEdges: boolean,
+  ) => AmmoHeightfieldShape;
+  PHY_FLOAT: number;
+  _malloc: (bytes: number) => number;
+  _free: (ptr: number) => void;
+  /** emscripten 堆视图（直接写 _malloc 出来的 float 缓冲） */
+  HEAPF32: Float32Array;
   btRigidBodyConstructionInfo: new (
     mass: number,
     motionState: AmmoMotionState,
@@ -151,6 +173,9 @@ function safeDestroy(api: AmmoAPI, obj: unknown): void {
   }
 }
 
+/** 高度场 _malloc 缓冲指针登记（随世界 dispose 统一 _free；embind destroy 不托管裸指针） */
+const heightfieldBuffers = new Set<number>();
+
 /** 形状构建（不含偏移；offset 经复合形状/包装处理）；产物记入 outShapes 随体释放 */
 function buildShape(api: AmmoAPI, col: ColliderShapeDesc, outShapes: AmmoShape[]): AmmoShape {
   const v = new api.btVector3(0, 0, 0);
@@ -176,6 +201,43 @@ function buildShape(api: AmmoAPI, col: ColliderShapeDesc, outShapes: AmmoShape[]
         return hull;
       }
       return new api.btBoxShape(new api.btVector3(0.5, 0.5, 0.5));
+    }
+    case "heightfield": {
+      // Bullet 高度场：单位采样间距、以高度中线为局部原点 →
+      // 1) setLocalScaling 把 (s-1) 单位的单位网格拉伸到 terrainSizeX/Z；
+      // 2) 包一层 compound 子变换 y=+mid，把"中线原点"抬回节点局部空间（绝对高度语义）。
+      // 缓冲数据行主序 [z*s + x] 须持久有效（Bullet 不拷贝）：登记随世界 dispose 释放。
+      const s = col.samples;
+      if (!col.heights || s < 2 || col.heights.length < s * s) {
+        return new api.btBoxShape(new api.btVector3(0.5, 0.5, 0.5));
+      }
+      const bytes = s * s * 4;
+      const ptr = api._malloc(bytes);
+      if (!ptr) return new api.btBoxShape(new api.btVector3(0.5, 0.5, 0.5));
+      heightfieldBuffers.add(ptr);
+      const heap = api.HEAPF32;
+      const base = ptr >> 2;
+      for (let i = 0; i < s * s; i++) heap[base + i] = col.heights[i];
+      const mid = (col.minHeight + col.maxHeight) / 2;
+      const hf = new api.btHeightfieldTerrainShape(
+        s, s, ptr, 1, col.minHeight, col.maxHeight,
+        1 /* upAxis=Y */, api.PHY_FLOAT, false /* flipQuadEdges */,
+      );
+      outShapes.push(hf);
+      hf.setLocalScaling(new api.btVector3(
+        Math.max(0.001, col.terrainSizeX) / (s - 1),
+        1,
+        Math.max(0.001, col.terrainSizeZ) / (s - 1),
+      ));
+      // 中线补偿（无论外层走单碰撞体快路径还是复合路径都对齐）
+      const wrapper = new api.btCompoundShape();
+      outShapes.push(wrapper);
+      const t = new api.btTransform();
+      t.setIdentity();
+      t.setOrigin(new api.btVector3(0, mid, 0));
+      outShapes.push(t as unknown as AmmoShape);
+      wrapper.addChildShape(t, hf);
+      return wrapper;
     }
     case "box":
     default:
@@ -476,6 +538,15 @@ class AmmoWorldAdapter implements IPhysicsWorld {
       }
     }
     this.tracked = [];
+    // 高度场裸缓冲（embind destroy 不托管 _malloc 指针）：随世界销毁统一释放
+    for (const ptr of heightfieldBuffers) {
+      try {
+        this.api._free(ptr);
+      } catch {
+        /* 重复释放忽略 */
+      }
+    }
+    heightfieldBuffers.clear();
   }
 }
 
