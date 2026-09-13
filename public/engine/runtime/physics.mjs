@@ -123,6 +123,10 @@ function colliderDescFor(col, obj) {
     }
   } else {
     half = { x: Math.max(0.05, s.size.x / 2), y: Math.max(0.05, s.size.y / 2), z: Math.max(0.05, s.size.z / 2) };
+    if (s.shape === "convex") {
+      const b = computeLocalBounds(obj);
+      if (b) points = b.points;
+    }
   }
   const ws = obj.getWorldScale(new THREE.Vector3());
   const sx = Math.abs(ws.x) || 1;
@@ -149,12 +153,12 @@ function colliderDescFor(col, obj) {
       desc.radius = Math.max(0.001, uniform * Math.max(half.x, half.y, half.z));
       break;
     case "capsule":
-      desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-      desc.halfHeight = Math.max(0.001, half.y - desc.radius);
+      desc.radius = Math.max(0.001, Math.max(half.x * sx, half.z * sz));
+      desc.halfHeight = Math.max(0.001, half.y * sy);
       break;
     case "cylinder":
-      desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-      desc.halfHeight = Math.max(0.001, half.y);
+      desc.radius = Math.max(0.001, Math.max(half.x * sx, half.z * sz));
+      desc.halfHeight = Math.max(0.001, half.y * sy);
       break;
     case "convex": {
       if (points.length) {

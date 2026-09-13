@@ -88,17 +88,17 @@ function settings(patch: Partial<ColliderSettings>): ColliderSettings {
   check("sphere 半径 = uniform×max(半尺寸) = 6", approx(sphere.radius, 6), String(sphere.radius));
 }
 
-// capsule/cylinder：半径/柱半高取未缩放局部 half（与建体实现一致，线框自然吻合）
+// capsule/cylinder：半径/柱半高乘世界缩放（与建体实现一致，线框自然吻合）
 {
   const plain = unitBoxObject();
   const capsule = computeColliderShapeDesc(
     settings({ shape: "capsule", autoSize: false, size: { x: 2, y: 6, z: 2 } }),
     plain,
   );
-  // half=(1,3,1) → radius=max(1,1)=1，halfHeight=3-1=2
+  // half=(1,3,1) → radius=max(1,1)=1，halfHeight=3
   check(
-    "capsule 半径 1 / 柱半高 2",
-    approx(capsule.radius, 1) && approx(capsule.halfHeight, 2),
+    "capsule 半径 1 / 柱半高 3",
+    approx(capsule.radius, 1) && approx(capsule.halfHeight, 3),
     JSON.stringify({ radius: capsule.radius, halfHeight: capsule.halfHeight }),
   );
 

@@ -87,12 +87,17 @@ export function computeColliderShapeDesc(
       points = bounds.points;
     }
   } else {
-    // 显式尺寸（全尺寸 → 半尺寸；sphere 直径取 x；capsule/cylinder 直径取 x、柱高取 y）
+    // 显式尺寸（全尺寸 → 半尺寸；sphere 直径取 x；capsule/cylinder 直径取 x、柱段高取 y）
     half = {
       x: Math.max(0.05, s.size.x / 2),
       y: Math.max(0.05, s.size.y / 2),
       z: Math.max(0.05, s.size.z / 2),
     };
+    // convex 需要网格顶点采样（非 autoSize 时也采样，仅用于凸包形状）
+    if (s.shape === "convex") {
+      const bounds = computeColliderLocalBounds(obj);
+      if (bounds) points = bounds.points;
+    }
   }
   // 对象世界缩放烘进形状（物理体不支持缩放变换）
   const scale = obj.getWorldScale(new THREE.Vector3());
@@ -120,13 +125,13 @@ export function computeColliderShapeDesc(
       desc.radius = Math.max(0.001, uniform * Math.max(half.x, half.y, half.z));
       break;
     case "capsule": {
-      desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-      desc.halfHeight = Math.max(0.001, half.y - desc.radius);
+      desc.radius = Math.max(0.001, Math.max(half.x * sx, half.z * sz));
+      desc.halfHeight = Math.max(0.001, half.y * sy);
       break;
     }
     case "cylinder": {
-      desc.radius = Math.max(0.001, Math.max(half.x, half.z));
-      desc.halfHeight = Math.max(0.001, half.y);
+      desc.radius = Math.max(0.001, Math.max(half.x * sx, half.z * sz));
+      desc.halfHeight = Math.max(0.001, half.y * sy);
       break;
     }
     case "convex": {

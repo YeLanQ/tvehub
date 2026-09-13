@@ -65,7 +65,7 @@ export interface ColliderSettings {
   shape: ColliderShape;
   /** 尺寸来源：true = 按节点渲染包围盒自动推导；false = 用 size 显式指定 */
   autoSize: boolean;
-  /** 显式尺寸（全尺寸；box=xyz 边长，sphere 直径取 x，capsule/cylinder 直径取 x、柱高取 y） */
+  /** 显式尺寸（全尺寸；box=xyz 边长，sphere 直径取 x，capsule/cylinder 直径取 x、柱段高取 y） */
   size: Vec3;
   /** 相对节点原点的局部偏移 */
   offset: Vec3;

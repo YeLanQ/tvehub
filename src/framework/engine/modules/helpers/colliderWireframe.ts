@@ -8,7 +8,7 @@
 // 各形状画法（干净结构线，不画三角剖分对角线）：
 // - box     → 12 条棱
 // - sphere  → 3 条纬线（赤道 ±45°）+ 4 条经线大圆
-// - capsule → 上下柱面交接圆 + 半球 45° 纬线 + 8 条竖直轮廓线
+// - capsule → 上下柱面交接圆 + 半球 45° 纬线 + 柱面竖直轮廓线 + 半球经线弧
 // - cylinder→ 上下底圆 + 8 条竖直轮廓线
 // - convex  → 采样点凸包的棱（ConvexGeometry + EdgesGeometry；退化时点集包围盒兜底）
 // ---------------------------------------------------------------------------
@@ -72,12 +72,18 @@ function buildCapsuleWireframe(r: number, halfHeight: number): THREE.BufferGeome
   // 半球 45° 纬线
   pushCircleXZ(pos, halfHeight + r * Math.SQRT1_2, r * Math.SQRT1_2);
   pushCircleXZ(pos, -(halfHeight + r * Math.SQRT1_2), r * Math.SQRT1_2);
-  // 竖直轮廓线（贯穿上下极点）
+  // 柱面竖直轮廓线（仅柱段）
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
-    pos.push(x, -(halfHeight + r), z, x, halfHeight + r, z);
+    pos.push(x, -halfHeight, z, x, halfHeight, z);
+  }
+  // 半球经线弧（4 条，勾勒球盖弧形而非圆锥）
+  for (let i = 0; i < 4; i++) {
+    const azimuth = (i / 4) * Math.PI * 2;
+    pushHemisphereMeridian(pos, azimuth, r, halfHeight, 1);
+    pushHemisphereMeridian(pos, azimuth, r, -halfHeight, -1);
   }
   return segmentsGeometry(pos);
 }
@@ -163,6 +169,23 @@ function pushMeridianCircle(pos: number[], azimuth: number, r: number): void {
     pos.push(
       Math.cos(a) * dx * r, Math.sin(a) * r, Math.cos(a) * dz * r,
       Math.cos(b) * dx * r, Math.sin(b) * r, Math.cos(b) * dz * r,
+    );
+  }
+}
+
+/** 半球经线弧：从赤道（交接圆）到极点，弧形勾勒球盖；baseY=基准高度，dir=+1上/-1下 */
+function pushHemisphereMeridian(pos: number[], azimuth: number, r: number, baseY: number, dir: number): void {
+  const dx = Math.cos(azimuth);
+  const dz = Math.sin(azimuth);
+  const half = CIRCLE_SEGMENTS / 2;
+  for (let i = 0; i < half; i++) {
+    const a = (i / half) * Math.PI * 0.5;
+    const b = ((i + 1) / half) * Math.PI * 0.5;
+    const ra = Math.cos(a) * r;
+    const rb = Math.cos(b) * r;
+    pos.push(
+      ra * dx, baseY + Math.sin(a) * r * dir, ra * dz,
+      rb * dx, baseY + Math.sin(b) * r * dir, rb * dz,
     );
   }
 }
