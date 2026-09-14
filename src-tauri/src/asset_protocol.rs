@@ -65,6 +65,7 @@ fn mime_for_ext(ext: &str) -> &'static str {
         "svg" => "image/svg+xml",
         "glb" => "model/gltf-binary",
         "gltf" => "model/gltf+json",
+        "wasm" => "application/wasm",
         "obj" | "txt" => "text/plain",
         "json" | "mat" | "texcube" => "application/json",
         "mp3" => "audio/mpeg",

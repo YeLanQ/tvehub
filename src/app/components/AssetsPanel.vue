@@ -286,6 +286,7 @@ const menuApi: AssetMenuApi = {
     materialTypeRegistry.list().map((d) => ({ key: d.key, label: shaderKindLabel(d.key) })),
   onOpenDir: (dir) => navigate(dir),
   onAddModelToScene: (item) => itemActions.addModelToScene(item),
+  onCompressDraco: (item) => void itemActions.compressDraco(item),
   onAddAudioToScene: (item) => itemActions.addAudioToScene(item),
   onAddTerrainToScene: (item) => itemActions.addTerrainToScene(item),
   onInstantiatePrefab: (item) => void itemActions.instantiatePrefab(item),

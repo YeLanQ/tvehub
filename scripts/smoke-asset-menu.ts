@@ -74,6 +74,7 @@ function makeApi(over: Partial<AssetMenuApi> = {}): {
     shaderTypes: () => [{ key: "physical", label: "PBR着色器" }],
     onOpenDir: track("onOpenDir"),
     onAddModelToScene: track("onAddModelToScene"),
+    onCompressDraco: track("onCompressDraco"),
     onAddAudioToScene: track("onAddAudioToScene"),
     onInstantiatePrefab: track("onInstantiatePrefab"),
     onOpenScript: track("onOpenScript"),

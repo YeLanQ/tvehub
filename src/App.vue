@@ -17,6 +17,7 @@ import AssetsPanel from "./app/components/AssetsPanel.vue";
 import AnimationEditorPanel from "./app/components/AnimationEditorPanel.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
+import DracoCompressDialog from "./app/components/DracoCompressDialog.vue";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
 import BuildPanel from "./app/components/BuildPanel.vue";
 import BootMask from "./app/components/BootMask.vue";
@@ -248,6 +249,8 @@ onUnmounted(() => {
       <ConfirmDialog />
       <!-- 全局输入弹窗 -->
       <PromptDialog />
+      <!-- Draco 压缩参数弹窗 -->
+      <DracoCompressDialog />
       <!-- 项目设置面板（点击工具栏“项目信息”打开） -->
       <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
       <!-- 构建导出面板（点击工具栏“构建”打开） -->

@@ -9,6 +9,7 @@ import { GLTFLoader } from "./loaders/GLTFLoader.js";
 import { FBXLoader } from "./loaders/FBXLoader.js";
 import { OBJLoader } from "./loaders/OBJLoader.js";
 import { clone as skeletonClone } from "./loaders/SkeletonUtils.js";
+import { withCompressedGltf } from "./loaders/compressed.mjs";
 import { postLog } from "../core/log.mjs";
 
 /** 收集场景树里 meshNode(source=model) 的模型引用（去重） */
@@ -116,7 +117,7 @@ async function parseModel(rel, buffer) {
     }
     const gltf = await new Promise((resolve, reject) => {
       // GLTFLoader.parse 的二进制分支要求 ArrayBuffer（Uint8Array 会被当作已解析 JSON）
-      new GLTFLoader(manager).parse(
+      withCompressedGltf(new GLTFLoader(manager)).parse(
         parsed.glb.buffer,
         resourcePath,
         (gltf) => resolve(gltf),
@@ -127,7 +128,7 @@ async function parseModel(rel, buffer) {
   }
   if (ext === "glb" || ext === "gltf") {
     const gltf = await new Promise((resolve, reject) => {
-      new GLTFLoader(manager).parse(
+      withCompressedGltf(new GLTFLoader(manager)).parse(
         buffer,
         resourcePath,
         (gltf) => resolve(gltf),

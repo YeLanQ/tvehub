@@ -125,9 +125,17 @@ fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
 /// 相对 import 由 rewrite_module_imports 重写，与 engine 模块同一套加载机制）
 fn is_runtime_code(rel: &str) -> bool {
     rel == "player.mjs"
-        || rel.starts_with("engine/")
+        || (rel.starts_with("engine/") && !is_runtime_support_data(rel))
         || rel.starts_with("src/")
         || is_entry_page(rel)
+}
+
+/// 运行时支撑数据（Draco JS 解码器等按文件名被加载器 fetch 的 engine/ 下非模块
+/// 文件）：不算运行时代码（单页/gzip 模式进资产表经 fetch 拦截供数据，而非内联成
+/// blob 模块——解码器无 export、内联后无法按文件名取回），也不参与发布模式 uid
+/// 改名（DRACOLoader 按固定文件名 decoderPath + "draco_decoder.js" 拉取）。
+fn is_runtime_support_data(rel: &str) -> bool {
+    rel.starts_with("engine/runtime/loaders/draco/")
 }
 
 /// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html
@@ -325,7 +333,7 @@ fn apply_release(
     let asset_rels: Vec<String> = files
         .keys()
         .chain(binaries.keys())
-        .filter(|rel| !is_runtime_code(rel) && !inlined_sibs.contains(*rel))
+        .filter(|rel| !is_runtime_code(rel) && !is_runtime_support_data(rel) && !inlined_sibs.contains(*rel))
         .cloned()
         .collect();
     for rel in asset_rels {

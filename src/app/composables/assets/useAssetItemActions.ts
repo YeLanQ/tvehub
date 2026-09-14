@@ -13,10 +13,20 @@ import { getScriptsStore } from "../../stores/scripts";
 import { logStore } from "../../stores/log";
 import { dispatchCommand } from "../../commands";
 import { confirm } from "../../lib/confirm";
+import { formatBytes, openDracoCompressDialog } from "../../lib/draco-compress";
 import { instantiatePrefabAsset } from "../../lib/prefabs";
 import { assetService } from "../../services/assetService";
 import { isInternalAsset } from "../../../lib/internal-assets";
-import { isModelAssetRel } from "../../../framework/mesh";
+import { assetUrl, fetchAssetBinary } from "../../../lib/asset-url";
+import { api } from "../../../lib/api";
+import {
+  isGltfAssetRel,
+  isModelAssetRel,
+  modelDirOf,
+  modelExtOf,
+  modelFileStem,
+} from "../../../framework/mesh";
+import { bytesToBase64, compressModelToDraco } from "../../lib/model-draco";
 import { isAudioAssetRel } from "../../../framework/audio";
 import { isTerrainAssetRel } from "../../../framework/terrain";
 import type { ChildEntry } from "../../lib/asset-browser";
@@ -41,6 +51,7 @@ export interface AssetItemActionsApi {
   onItemDblClick: (item: ChildEntry) => void;
   openScriptAsset: (item: ChildEntry) => void;
   addModelToScene: (item: ChildEntry) => void;
+  compressDraco: (item: ChildEntry) => Promise<void>;
   addAudioToScene: (item: ChildEntry) => void;
   addTerrainToScene: (item: ChildEntry) => void;
   instantiatePrefab: (item: { path: string }) => Promise<void>;
@@ -164,6 +175,59 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     await instantiatePrefabAsset(item.path);
   }
 
+  /**
+   * glTF/GLB 资产 Draco 压缩：参数弹窗 → gltf-transform 压缩 → 新文件
+   * <名>.draco.glb 写同目录（同名加序号；.gltf 的外部资源随产物一并内嵌）。
+   * 压缩在 WebView 主线程执行（wasm 编码），大模型期间 UI 会短暂卡顿。
+   */
+  async function compressDraco(item: ChildEntry): Promise<void> {
+    const root = projectStore.currentPath;
+    if (!root || item.kind === "dir" || !isGltfAssetRel(item.path)) return;
+    const ext = modelExtOf(item.path);
+    if (ext !== "glb" && ext !== "gltf") return;
+    const bytes = await fetchAssetBinary(item.path);
+    if (!bytes) {
+      logStore.log("error", `读取模型失败: ${item.path}`);
+      return;
+    }
+    const selection = await openDracoCompressDialog({ sourceSize: bytes.byteLength });
+    if (!selection) return;
+    logStore.log("info", `Draco 压缩中: ${item.name} …`);
+    try {
+      const dir = modelDirOf(item.path);
+      const rel = (n: string) => (dir ? `${dir}/${n}` : n);
+      const result = await compressModelToDraco(
+        ext === "glb"
+          ? { ext, bytes: new Uint8Array(bytes), originalSize: bytes.byteLength }
+          : {
+              ext,
+              rel: item.path,
+              dirUrl: `${assetUrl(dir)}/`,
+              originalSize: bytes.byteLength,
+            },
+        selection,
+      );
+      // 产物 <名>.draco.glb；重名自动加序号（与导入复制同规则）
+      const stem = modelFileStem(item.path);
+      const used = new Set(assetsStore.assets.map((a) => a.path.toLowerCase()));
+      let fname = `${stem}.draco.glb`;
+      let n = 2;
+      while (used.has(rel(fname).toLowerCase())) {
+        fname = `${stem}.draco ${n++}.glb`;
+      }
+      const outRel = rel(fname);
+      await api.writeAssetBinary(root, outRel, bytesToBase64(result.bytes));
+      await assetsStore.load(root);
+      const saved = 1 - result.compressedSize / Math.max(1, result.originalSize);
+      logStore.log(
+        "success",
+        `Draco 压缩完成: ${outRel}（${formatBytes(result.originalSize)} → ${formatBytes(result.compressedSize)}，减小 ${(saved * 100).toFixed(1)}%）`,
+      );
+    } catch (e) {
+      logStore.log("error", `Draco 压缩失败: ${e}`);
+    }
+  }
+
   async function doCopy(item: ChildEntry) {
     const root = projectStore.currentPath;
     if (!root) return;
@@ -228,6 +292,7 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     onItemDblClick,
     openScriptAsset,
     addModelToScene,
+    compressDraco,
     addAudioToScene,
     addTerrainToScene,
     instantiatePrefab,

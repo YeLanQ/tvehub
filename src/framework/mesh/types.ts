@@ -29,6 +29,12 @@ export function isModelAssetRel(rel: string): boolean {
   return modelExtOf(rel) != null;
 }
 
+/** 资产引用是否为 glTF/GLB（Draco 压缩等仅对 glTF 系开放的入口用） */
+export function isGltfAssetRel(rel: string): boolean {
+  const ext = modelExtOf(rel);
+  return ext === "glb" || ext === "gltf";
+}
+
 /** 模型资产相对路径 → 文件名（含扩展名） */
 export function modelFileName(rel: string): string {
   const segs = rel.split("/");

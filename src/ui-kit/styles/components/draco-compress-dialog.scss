@@ -1,0 +1,27 @@
+// Draco 压缩参数弹窗：复用 prompt-dialog 的骨架样式，补充滑杆/下拉行样式。
+.draco-compress-hint,
+.prompt-dialog .hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-dialog .mono {
+  font-family: var(--font-mono, monospace);
+  min-width: 2em;
+  text-align: right;
+}
+
+.prompt-dialog select {
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-dialog input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent, #4a9eff);
+}

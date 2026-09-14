@@ -5,7 +5,7 @@
 
 import type { ChildEntry } from "./asset-browser";
 import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
-import { isModelAssetRel } from "../../framework/mesh";
+import { isGltfAssetRel, isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
 import { isTerrainAssetRel } from "../../framework/terrain";
 
@@ -47,6 +47,8 @@ export interface AssetMenuApi {
   shaderTypes: () => MenuShaderType[];
   onOpenDir: (dir: string) => void;
   onAddModelToScene: (item: ChildEntry) => void;
+  /** glTF/GLB 资产：Draco 压缩（弹参数窗，产物 <名>.draco.glb 写同目录） */
+  onCompressDraco: (item: ChildEntry) => void;
   onAddAudioToScene: (item: ChildEntry) => void;
   /** 地形资产：按资产设置创建地形节点并入场景 */
   onAddTerrainToScene: (item: ChildEntry) => void;
@@ -158,6 +160,10 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   // 模型资产：加入当前场景（source=model 网格节点）
   if (item.kind !== "dir" && isModelAssetRel(item.path)) {
     items.push({ label: "添加到场景", onClick: () => api.onAddModelToScene(item) });
+  }
+  // glTF/GLB 资产：Draco 压缩（生成新文件 <名>.draco.glb；fbx/obj 无此入口）
+  if (item.kind !== "dir" && isGltfAssetRel(item.path)) {
+    items.push({ label: "Draco 压缩…", onClick: () => api.onCompressDraco(item) });
   }
   // 音频资产：加入当前场景（audioNode 音源节点并绑定该资产）
   if (item.kind !== "dir" && isAudioAssetRel(item.path)) {

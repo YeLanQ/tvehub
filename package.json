@@ -21,6 +21,8 @@
     "smoke:shadow-runtime": "node scripts/smoke-shadow-runtime.mjs",
     "smoke:node-menu": "vite build --ssr scripts/smoke-node-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-node-menu.js",
     "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js",
+    "smoke:model-draco": "vite build --ssr scripts/smoke-model-draco.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-model-draco.js",
+    "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js",
     "smoke:layers": "vite build --ssr scripts/smoke-layers.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-layers.js",
     "smoke:layers-runtime": "node scripts/smoke-layers-runtime.mjs",
@@ -35,8 +37,12 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "draco3dgltf": "^1.5.7",
     "jolt-physics": "^1.1.0",
     "monaco-editor": "0.52.2",
     "three": "^0.185.1",
@@ -45,8 +51,10 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/draco3dgltf": "^1.4.3",
     "@types/three": "^0.185.4",
     "@vitejs/plugin-vue": "^5.2.1",
+    "meshoptimizer": "^1.2.0",
     "sass": "^1.103.1",
     "vite": "^6.0.3",
     "vue-tsc": "^2.1.10"

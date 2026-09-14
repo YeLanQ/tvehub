@@ -1,6 +1,7 @@
 export {
   MODEL_EXTS,
   isModelAssetRel,
+  isGltfAssetRel,
   modelDirOf,
   modelExtOf,
   modelFileName,
@@ -22,3 +23,8 @@ export {
 export type { ModelLoadContext, ModelLoaderDef, LoadedModelData } from "./loaders";
 export { ModelManager } from "./ModelManager";
 export type { ModelFileAccess, ModelChangeListener } from "./ModelManager";
+export {
+  setupCompressedGltfSupport,
+  compressedGltfSupport,
+} from "./compressed-gltf";
+export type { CompressedGltfSetup, CompressedGltfSupport } from "./compressed-gltf";

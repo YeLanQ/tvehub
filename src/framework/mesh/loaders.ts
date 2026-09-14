@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { applyCompressedGltfSupport, compressedGltfSupport } from "./compressed-gltf";
 
 /** 单次模型解析的上下文（外部资源解析规则由 ModelManager 注入） */
 export interface ModelLoadContext {
@@ -62,8 +63,8 @@ export class ModelLoaderRegistry {
 
 // ---------------------------------------------------------------------------
 // glTF / GLB：three GLTFLoader.parse。动画 = gltf.animations（骨骼动画内嵌）。
-// 外部 .bin/贴图由 URL 修饰器解析；DRACO/KTX2 压缩资源未配置解码器，
-// 遇到会在 onError 中给出可读提示。
+// 外部 .bin/贴图由 URL 修饰器解析；DRACO/Meshopt/KTX2 压缩解码器由
+// compressed-gltf 统一注入（解码器未就绪的能力在 onError 给可读提示）。
 // ---------------------------------------------------------------------------
 
 const GLTF_DEF: ModelLoaderDef = {
@@ -73,16 +74,19 @@ const GLTF_DEF: ModelLoaderDef = {
   load: (buffer, ctx) =>
     new Promise<LoadedModelData>((resolve, reject) => {
       const loader = new GLTFLoader(ctx.manager);
+      applyCompressedGltfSupport(loader);
       loader.parse(
         buffer,
         ctx.resourcePath,
         (gltf) => resolve({ object: gltf.scene, clips: gltf.animations ?? [] }),
-        (err) =>
-          reject(
-            new Error(
-              `glTF 解析失败: ${String(err ?? "未知错误")}（DRACO/KTX2 压缩模型暂不支持）`,
-            ),
-          ),
+        (err) => {
+          const support = compressedGltfSupport();
+          const missing = [!support.draco && "DRACO", !support.ktx2 && "KTX2"]
+            .filter(Boolean)
+            .join("/");
+          const hint = missing ? `（${missing} 压缩解码器未就绪）` : "";
+          reject(new Error(`glTF 解析失败: ${String(err ?? "未知错误")}${hint}`));
+        },
       );
     }),
 };

@@ -54,6 +54,10 @@ export class RendererManager {
   private renderer!: RendererHandle;
   /** 实际生效的后端（webgl 或 webgpu），供日志/诊断 */
   activeBackend: RendererBackend | "webgpu" = "webgl";
+  /** 原始渲染器实例（handle 本身即渲染器；KTX2 压缩纹理格式探测等需要具体类型） */
+  get raw(): unknown {
+    return this.renderer;
+  }
   private orbit!: OrbitControls;
   private container!: HTMLElement;
   private raf = 0;
