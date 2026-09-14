@@ -8,6 +8,8 @@ import { menuSeparator, type CtxMenuItem } from "../../lib/editor/context-menu";
 import { isGltfAssetRel, isModelAssetRel } from "../../framework/mesh";
 import { isAudioAssetRel } from "../../framework/audio";
 import { isTerrainAssetRel } from "../../framework/terrain";
+import { isFsmAssetRel } from "../../framework/fsm";
+import { isBtAssetRel } from "../../framework/behavior";
 
 /** 着色器种类注册表项（菜单「新建着色器」子项需要 key + label） */
 export interface MenuShaderType {
@@ -71,6 +73,12 @@ export interface AssetMenuApi {
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTerrain: (dir: string) => void;
   onNewTerrainMaterial: (dir: string) => void;
+  /** 新建状态机（.fsm） */
+  onNewFsm: (dir: string) => void;
+  /** 新建行为树（.bt） */
+  onNewBehaviorTree: (dir: string) => void;
+  /** 打开逻辑资产可视化编辑器（.fsm 状态机图 / .bt 行为树） */
+  onOpenLogic: (item: ChildEntry) => void;
   onNewTextureCube: (dir: string) => void;
   onNewPrefab: (dir: string) => void;
   onNewAnim: (dir: string) => void;
@@ -111,6 +119,13 @@ function newAssetItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
       children: [
         { label: "地形数据", onClick: () => api.onNewTerrain(dir) },
         { label: "地形材质", onClick: () => api.onNewTerrainMaterial(dir) },
+      ],
+    },
+    {
+      label: "逻辑",
+      children: [
+        { label: "状态机", onClick: () => api.onNewFsm(dir) },
+        { label: "行为树", onClick: () => api.onNewBehaviorTree(dir) },
       ],
     },
     { label: "新建预制体", onClick: () => api.onNewPrefab(dir) },
@@ -183,6 +198,10 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   // 预制体资产：实例化到当前场景（挂到选中节点/根下，一次撤销）
   if (item.kind === "prefab") {
     items.push({ label: "实例化到场景", onClick: () => api.onInstantiatePrefab(item) });
+  }
+  // 逻辑资产（状态机/行为树）：打开可视化编辑器弹窗
+  if (isFsmAssetRel(item.path) || isBtAssetRel(item.path)) {
+    items.push({ label: "打开编辑器", onClick: () => api.onOpenLogic(item) });
   }
   // 脚本/着色器资产：打开脚本工作台编辑
   if (item.kind === "ts") {

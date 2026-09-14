@@ -186,6 +186,12 @@ export const api = {
   /** 序列化并写入地形材质资产（.terrainmat；4 纹理图层 + splatmap + 全局 PBR；后端持有格式，自动补 .meta） */
   terrainmatWrite: (root: string, rel: string, name: string, settings: Record<string, unknown>) =>
     invoke<void>("terrainmat_write", { root, rel, name, settings }),
+  /** 序列化并写入状态机资产（.fsm；状态图 JSON 前端已收敛；后端持有格式，自动补 .meta） */
+  fsmWrite: (root: string, rel: string, name: string, graph: Record<string, unknown>) =>
+    invoke<void>("fsm_write", { root, rel, name, graph }),
+  /** 序列化并写入行为树资产（.bt；节点树 JSON 前端已收敛；后端持有格式，自动补 .meta） */
+  behaviorTreeWrite: (root: string, rel: string, name: string, tree: Record<string, unknown>) =>
+    invoke<void>("behaviortree_write", { root, rel, name, tree }),
   /** 从当前场景导出网页预览产物（scene.json/.mat/贴图由后端直接读盘写入；
    *  files 仅为 WebView 打包的网页运行时 + config.json 文本） */
   exportWebPreviewFromScene: (root: string, sceneRel: string, files: Record<string, string>) =>

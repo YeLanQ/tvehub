@@ -18,6 +18,8 @@ import {
   TERRAIN_EXT,
   TERRAIN_MAT_EXT,
 } from "../../framework/terrain";
+import { DEFAULT_FSM_GRAPH, FSM_EXT } from "../../framework/fsm";
+import { BT_EXT, defaultBehaviorTree } from "../../framework/behavior";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
 import { injectClassName, type ScriptPrototype } from "../lib/script-prototypes";
@@ -122,6 +124,8 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   texcube: "assets/textures",
   terrain: "assets",
   terrainmat: "assets",
+  fsm: "assets",
+  bt: "assets",
   glb: "assets/models",
   gltf: "assets/models",
   fbx: "assets/models",
@@ -533,6 +537,54 @@ export const assetService = {
       return rel;
     } catch (e) {
       logStore.log("error", `新建地形材质失败: ${e}`);
+      return null;
+    }
+  },
+
+  /** 新建状态机资产（.fsm；默认单入口状态图；重名自动去重） */
+  async createFsmAsset(
+    root: string,
+    destDir: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建状态机");
+      return null;
+    }
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "StateMachine";
+    const rel = uniqueRel(assets, destDir, baseName, FSM_EXT);
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - FSM_EXT.length);
+    try {
+      await api.fsmWrite(root, rel, name, JSON.parse(JSON.stringify(DEFAULT_FSM_GRAPH)));
+      logStore.log("success", `已新建状态机: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建状态机失败: ${e}`);
+      return null;
+    }
+  },
+
+  /** 新建行为树资产（.bt；默认「顺序 + 动作 + 等待」示例树；重名自动去重） */
+  async createBehaviorTreeAsset(
+    root: string,
+    destDir: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建行为树");
+      return null;
+    }
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "BehaviorTree";
+    const rel = uniqueRel(assets, destDir, baseName, BT_EXT);
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - BT_EXT.length);
+    try {
+      await api.behaviorTreeWrite(root, rel, name, defaultBehaviorTree() as unknown as Record<string, unknown>);
+      logStore.log("success", `已新建行为树: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建行为树失败: ${e}`);
       return null;
     }
   },

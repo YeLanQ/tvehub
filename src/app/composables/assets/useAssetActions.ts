@@ -38,6 +38,8 @@ export interface AssetActionsApi {
   doNewSkybox: (dir: string, kind: "procedural" | "cube") => Promise<void>;
   doNewTerrain: (dir: string) => Promise<void>;
   doNewTerrainMaterial: (dir: string) => Promise<void>;
+  doNewFsm: (dir: string) => Promise<void>;
+  doNewBehaviorTree: (dir: string) => Promise<void>;
   doNewTextureCube: (dir: string) => Promise<void>;
   doNewPrefab: (dir: string) => Promise<void>;
   doNewAnim: (dir: string) => Promise<void>;
@@ -279,6 +281,46 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
     await assetsStore.createTerrainMaterialAsset(root, dir, name.trim());
   }
 
+  /** 新建状态机资产（.fsm；可视化图编辑；弹窗命名，重名自动去重） */
+  async function doNewFsm(dir: string): Promise<void> {
+    const root = projectStore.currentPath;
+    if (!root) return;
+    if (!ctx.importAllowedDir(dir)) {
+      logStore.log("warn", ctx.isSrcDir(dir)
+        ? "src 目录不允许新建状态机"
+        : "内置目录只读，不允许新建状态机");
+      return;
+    }
+    const name = await prompt({
+      title: "新建状态机",
+      label: dir || "项目根",
+      initial: "StateMachine",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createFsmAsset(root, dir, name.trim());
+  }
+
+  /** 新建行为树资产（.bt；可视化树编辑；弹窗命名，重名自动去重） */
+  async function doNewBehaviorTree(dir: string): Promise<void> {
+    const root = projectStore.currentPath;
+    if (!root) return;
+    if (!ctx.importAllowedDir(dir)) {
+      logStore.log("warn", ctx.isSrcDir(dir)
+        ? "src 目录不允许新建行为树"
+        : "内置目录只读，不允许新建行为树");
+      return;
+    }
+    const name = await prompt({
+      title: "新建行为树",
+      label: dir || "项目根",
+      initial: "BehaviorTree",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) return;
+    await assetsStore.createBehaviorTreeAsset(root, dir, name.trim());
+  }
+
   /** 新建 TextureCube 资产（立方体纹理；默认引用内置全景图，创建即可用；弹窗命名，重名自动去重） */
   async function doNewTextureCube(dir: string): Promise<void> {
     const root = projectStore.currentPath;
@@ -339,6 +381,8 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
     doNewSkybox,
     doNewTerrain,
     doNewTerrainMaterial,
+    doNewFsm,
+    doNewBehaviorTree,
     doNewTextureCube,
     doNewPrefab,
     doNewAnim,

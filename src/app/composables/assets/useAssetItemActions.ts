@@ -29,6 +29,9 @@ import {
 import { bytesToBase64, compressModelToDraco } from "../../lib/model-draco";
 import { isAudioAssetRel } from "../../../framework/audio";
 import { isTerrainAssetRel } from "../../../framework/terrain";
+import { isFsmAssetRel } from "../../../framework/fsm";
+import { isBtAssetRel } from "../../../framework/behavior";
+import { openLogicAssetEditor } from "../logic-editor";
 import type { ChildEntry } from "../../lib/asset-browser";
 
 /** 面板注入的上下文（动作依赖的面板状态与壳层回调） */
@@ -50,6 +53,7 @@ export interface AssetItemActionsApi {
   copyInternalToProject: (item: ChildEntry) => Promise<void>;
   onItemDblClick: (item: ChildEntry) => void;
   openScriptAsset: (item: ChildEntry) => void;
+  openLogicAsset: (item: { path: string }) => void;
   addModelToScene: (item: ChildEntry) => void;
   compressDraco: (item: ChildEntry) => Promise<void>;
   addAudioToScene: (item: ChildEntry) => void;
@@ -117,6 +121,11 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
       openScriptAsset(item);
       return;
     }
+    // 双击逻辑资产（.fsm 状态机 / .bt 行为树）：打开可视化编辑器弹窗
+    if (isFsmAssetRel(item.path) || isBtAssetRel(item.path)) {
+      openLogicAsset(item);
+      return;
+    }
     // 其余资产：双击仅选中并记录日志
     assetsStore.select(item.path);
     logStore.log("info", `${item.name} (${item.kind})`);
@@ -126,6 +135,13 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
   function openScriptAsset(item: ChildEntry): void {
     getEditorStore().setViewMode("script");
     void getScriptsStore().openScript(item.path);
+  }
+
+  /** 打开逻辑资产可视化编辑器（.fsm 状态机 / .bt 行为树；双击 / 右键 / 检查器共用） */
+  function openLogicAsset(item: { path: string }): void {
+    if (!openLogicAssetEditor(item.path)) {
+      logStore.log("warn", `不是可打开的逻辑资产: ${item.path}`);
+    }
   }
 
   /** 把模型资产作为网格节点加入当前场景（source=model；动画自动绑定） */
@@ -291,6 +307,7 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     copyInternalToProject,
     onItemDblClick,
     openScriptAsset,
+    openLogicAsset,
     addModelToScene,
     compressDraco,
     addAudioToScene,

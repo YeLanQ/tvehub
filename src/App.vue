@@ -18,6 +18,9 @@ import AnimationEditorPanel from "./app/components/AnimationEditorPanel.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
 import DracoCompressDialog from "./app/components/DracoCompressDialog.vue";
+import FsmEditorDialog from "./app/components/logic/FsmEditorDialog.vue";
+import BtEditorDialog from "./app/components/logic/BtEditorDialog.vue";
+import { logicEditorState } from "./app/composables/logic-editor";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
 import BuildPanel from "./app/components/BuildPanel.vue";
 import BootMask from "./app/components/BootMask.vue";
@@ -251,6 +254,9 @@ onUnmounted(() => {
       <PromptDialog />
       <!-- Draco 压缩参数弹窗 -->
       <DracoCompressDialog />
+      <!-- 逻辑资产可视化编辑器弹窗（状态机 / 行为树；双击资产或右键「打开编辑器」） -->
+      <FsmEditorDialog v-if="logicEditorState.fsmRel" :key="`fsm:${logicEditorState.fsmRel}`" :rel="logicEditorState.fsmRel" />
+      <BtEditorDialog v-if="logicEditorState.btRel" :key="`bt:${logicEditorState.btRel}`" :rel="logicEditorState.btRel" />
       <!-- 项目设置面板（点击工具栏“项目信息”打开） -->
       <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
       <!-- 构建导出面板（点击工具栏“构建”打开） -->

@@ -82,6 +82,22 @@ defineProps<{ kind: string }>();
       <path d="M15.5 14.5h5v5h-5z" />
       <path d="M15.5 17h5" />
     </template>
+    <!-- 状态机（.fsm）：双状态圆 + 转移箭头 -->
+    <template v-else-if="kind === 'fsm'">
+      <circle cx="6.5" cy="12" r="3" />
+      <circle cx="17.5" cy="12" r="3" />
+      <path d="M9.5 12h4.6" />
+      <path d="M12.6 10.2L14.4 12l-1.8 1.8" />
+    </template>
+
+    <!-- 行为树（.bt）：根节点 + 分叉子节点 -->
+    <template v-else-if="kind === 'bt'">
+      <rect x="9" y="3" width="6" height="5" rx="1" />
+      <path d="M12 8v2.5M6.5 13v-1.2a1.3 1.3 0 0 1 1.3-1.3h8.4a1.3 1.3 0 0 1 1.3 1.3V13" />
+      <rect x="4" y="13" width="5" height="5" rx="1" />
+      <rect x="15" y="13" width="5" height="5" rx="1" />
+    </template>
+
     <!-- 预制体（.prefab）：立方体 + 子树分支（区别于纯模型立方体） -->
     <template v-else-if="kind === 'prefab'">
       <path d="M9 3.5l5 2.8v5.4l-5 2.8-5-2.8V6.3l5-2.8z" />

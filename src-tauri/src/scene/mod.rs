@@ -8,6 +8,7 @@
 
 pub mod graph;
 pub mod history;
+pub mod logic_assets;
 pub mod material;
 pub mod migrate;
 pub mod model;

@@ -47,6 +47,7 @@ import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat"
 import { isAudioAssetRel } from "../../../framework/audio";
 import { parseTerrainSettings, parseTerrainMaterialSettings, type TerrainMaterialSettings } from "../../../framework/terrain";
 import { dispatchCommand } from "../../commands";
+import { openLogicAssetEditor } from "../../composables/logic-editor";
 import type { MaterialParams } from "../../../framework/material";
 import AssetPreview3D from "./AssetPreview3D.vue";
 import ShaderEditorDialog from "./ShaderEditorDialog.vue";
@@ -62,6 +63,7 @@ import PrefabAssetInfo from "./asset/PrefabAssetInfo.vue";
 import AnimClipInfo from "./asset/AnimClipInfo.vue";
 import TerrainAssetFields from "./asset/TerrainAssetFields.vue";
 import TerrainMaterialAssetFields from "./asset/TerrainMaterialAssetFields.vue";
+import LogicAssetInfo from "./asset/LogicAssetInfo.vue";
 import PlainAssetHints from "./asset/PlainAssetHints.vue";
 
 const props = defineProps<{ rel: string }>();
@@ -527,6 +529,11 @@ function onAddTerrainToScene(): void {
   if (isInternal.value) return;
   void dispatchCommand("node.add", { kind: "terrain", path: props.rel });
 }
+
+/** 逻辑资产（状态机/行为树）「打开编辑器」：调起可视化编辑器弹窗 */
+function openLogicEditor(): void {
+  openLogicAssetEditor(props.rel);
+}
 </script>
 
 <template>
@@ -658,6 +665,15 @@ function onAddTerrainToScene(): void {
       :settings="terrainMaterialSettings"
       :rel="props.rel"
       :readonly="isInternal"
+    />
+
+    <!-- 逻辑资产（状态机/行为树）：概览 + 打开可视化编辑器 -->
+    <LogicAssetInfo
+      v-else-if="kind === 'fsm' || kind === 'bt'"
+      :rel="props.rel"
+      :kind="kind"
+      :root="root"
+      @open="openLogicEditor"
     />
 
     <!-- 着色器源码编辑器（.shader；弹层 Monaco GLSL） -->

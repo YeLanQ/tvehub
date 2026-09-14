@@ -85,6 +85,18 @@ export interface AssetsStore {
     /** 显式指定名称；缺省用 "TerrainMaterial"（资产面板「新建地形材质」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
+  createFsmAsset: (
+    root: string,
+    destDir: string,
+    /** 显式指定名称；缺省用 "StateMachine"（资产面板「新建状态机」） */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
+  createBehaviorTreeAsset: (
+    root: string,
+    destDir: string,
+    /** 显式指定名称；缺省用 "BehaviorTree"（资产面板「新建行为树」） */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -287,6 +299,16 @@ export function getAssetsStore(): AssetsStore {
     },
     async createTerrainMaterialAsset(root, destDir, preferStem = null) {
       const r = await assetService.createTerrainMaterialAsset(root, destDir, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createFsmAsset(root, destDir, preferStem = null) {
+      const r = await assetService.createFsmAsset(root, destDir, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createBehaviorTreeAsset(root, destDir, preferStem = null) {
+      const r = await assetService.createBehaviorTreeAsset(root, destDir, state.assets, preferStem);
       if (r) await reload(root);
       return r;
     },
