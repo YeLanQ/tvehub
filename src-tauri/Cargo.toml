@@ -2,7 +2,7 @@
 name = "three-visual-editor"
 version = "0.1.0"
 description = "A Tauri App"
-authors = ["you"]
+authors = ["Tve Team"]
 edition = "2021"
 # 新增 mcp 独立二进制后需显式指定默认运行目标（tauri dev/build 用）
 default-run = "three-visual-editor"

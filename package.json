@@ -9,6 +9,7 @@
     "build": "node scripts/gen-web-preview-files.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:portable": "tauri build",
     "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
     "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js",
     "smoke:physics-runtime": "node scripts/smoke-physics-runtime.mjs",
