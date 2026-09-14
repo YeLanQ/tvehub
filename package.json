@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:layers": "node scripts/check-layers.mjs",
-    "build": "node scripts/gen-web-preview-files.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
+    "build": "node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "tauri build",

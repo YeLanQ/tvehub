@@ -35,7 +35,6 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/layerpass.mjs",
   "engine/runtime/loaders/BufferGeometryUtils.js",
   "engine/runtime/loaders/CCDIKSolver.js",
-  "engine/runtime/loaders/DRACOLoader.js",
   "engine/runtime/loaders/FBXLoader.js",
   "engine/runtime/loaders/GLTFLoader.js",
   "engine/runtime/loaders/NURBSCurve.js",

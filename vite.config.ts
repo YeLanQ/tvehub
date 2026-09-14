@@ -6,6 +6,7 @@ import {
   WEB_PREVIEW_ROOTS,
   generateWebPreviewFiles,
 } from "./scripts/gen-web-preview-files.mjs";
+import { buildRuntime } from "./scripts/build-runtime.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -118,9 +119,48 @@ function templateIndexPlugin(): Plugin {
   };
 }
 
+// 运行时自动编译插件（dev）：web 运行时的生成模块（public/engine 下 AUTO-GENERATED
+// 文件，单一事实源在 src/runtime + src/framework）在开发服务器启动时先编译一次
+// （产物已入库，缺省也能直接服务），并监听源目录变化防抖重建。构建期由 build 链
+// 的第一步 node scripts/build-runtime.mjs 负责。
+const RUNTIME_SRC_ROOTS = ["src/runtime", "src/framework"];
+
+function runtimeBuildPlugin(): Plugin {
+  return {
+    name: "three-visual-editor-runtime-build",
+    apply: "serve",
+    async configureServer(server) {
+      await buildRuntime("dev 初始编译").catch((e) => {
+        console.error("[runtime-build] 编译失败:", e?.message ?? e);
+      });
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          void buildRuntime("源变化").catch((e) => {
+            console.error("[runtime-build] 重建失败:", e?.message ?? e);
+          });
+        }, 500);
+      };
+      for (const root of RUNTIME_SRC_ROOTS) {
+        const abs = path.resolve(root);
+        if (fs.existsSync(abs)) server.watcher.add(abs);
+      }
+      const onChange = (file: string) => {
+        const norm = file.split(path.sep).join("/");
+        if (RUNTIME_SRC_ROOTS.some((root) => norm.startsWith(`${root}/`))) schedule();
+      };
+      server.watcher.on("add", onChange);
+      server.watcher.on("unlink", onChange);
+      server.watcher.on("change", onChange);
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), templateIndexPlugin()],
+  plugins: [vue(), templateIndexPlugin(), runtimeBuildPlugin()],
 
   // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"）
   build: {

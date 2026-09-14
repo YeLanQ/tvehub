@@ -28,8 +28,13 @@ export interface CompressedGltfSetup {
   dracoBase: string;
   /** Basis 转码器目录基路径（以 / 结尾；含 basis_transcoder.{js,wasm}） */
   basisBase: string;
-  /** 原始渲染器实例（WebGLRenderer / WebGPURenderer，KTX2 格式探测用） */
-  renderer: unknown;
+  /** Draco 解码器形态：wasm（默认，编辑器内置目录含 wrapper+wasm）/ js（web 运行时
+   * 用——产物经「文本 IPC」通道分发，二进制 wasm 无法安全通过，目录只含
+   * draco_decoder.js） */
+  decoderType?: "js" | "wasm";
+  /** 原始渲染器实例（WebGLRenderer / WebGPURenderer）；缺省跳过 KTX2 探测
+   * （web 运行时无渲染器注入，KTX2 解码保持不可用） */
+  renderer?: unknown;
 }
 
 let dracoLoader: DRACOLoader | null = null;
@@ -40,8 +45,13 @@ let lastRenderer: unknown;
 export function setupCompressedGltfSupport(setup: CompressedGltfSetup): void {
   if (!dracoLoader) {
     dracoLoader = new DRACOLoader().setDecoderPath(setup.dracoBase);
+    if (setup.decoderType === "js") {
+      // r185 起该 API 标记废弃（r194 移除），但 JS 模式仍需它选路 dep_js；
+      // three 版本钉在 0.185.x，告警可忽略
+      dracoLoader.setDecoderConfig({ type: "js" });
+    }
   }
-  if (setup.renderer === lastRenderer) return;
+  if (setup.renderer == null || setup.renderer === lastRenderer) return;
   lastRenderer = setup.renderer;
   try {
     ktx2Loader ??= new KTX2Loader().setTranscoderPath(setup.basisBase);
