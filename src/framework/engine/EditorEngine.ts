@@ -50,6 +50,9 @@ import {
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
+import { TerrainPaintController, type TerrainToolBrush } from "./modules/TerrainPaintController";
+import type { SplatBuffer } from "../terrain/paint";
+import { bakeTerrainHeights, decodeSculptData, encodeSculptData } from "../terrain";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
@@ -147,6 +150,8 @@ export class EditorEngine {
   readonly renderer = new RendererManager();
   readonly synchronizer: SceneSynchronizer;
   readonly helperSystem: HelperSystem;
+  /** 地形绘制控制器（视口左键 → splatmap 笔刷；mount 时初始化，begin/end 由命令切换） */
+  terrainPaint!: TerrainPaintController;
   /** 材质资产参数缓存/解析（网格按引用取参数渲染；应用层注入文件读取器） */
   readonly materials = new MaterialManager();
   /** 着色器文档缓存（渲染分支 + 钩子 + 属性表按引用取；应用层注入文件读取器） */
@@ -581,6 +586,7 @@ export class EditorEngine {
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
     this.setupViewportClickHandler();
+    this.initTerrainPaint();
     // 布局视图 2D 导航：滚轮缩放（指针锚点）+ 右/中键拖拽平移 + 右键菜单抑制
     this.setupLayoutNavigation();
     // gizmo 拖动期间：捕获阶段拦截其它鼠标按下与键位输入（独占变换操作）
@@ -2445,6 +2451,131 @@ export class EditorEngine {
     dom.addEventListener("mousedown", handler);
   }
 
+  // ===================== 地形绘制（splatmap 笔刷） =====================
+
+  /** 初始化地形绘制控制器（mount 后调用；落盘经 onCommit 上抛应用层） */
+  private initTerrainPaint(): void {
+    this.terrainPaint = new TerrainPaintController({
+      dom: this.renderer.domElement,
+      scene: this.renderer.scene,
+      orbit: this.renderer.orbitControls,
+      getCamera: () => this.renderer.camera,
+      getBrush: () => this.paintBrush,
+      onCommitSplat: (buffer, rel) => this.terrainPaintCommitHandler?.(buffer, rel),
+      onCommitSculpt: () => this.commitTerrainSculpt(),
+    });
+  }
+
+  /** 当前工具笔刷参数（应用层经 setTerrainPaintBrush 注入 UI 状态） */
+  private paintBrush: TerrainToolBrush = {
+    tool: "sculpt",
+    layer: 0,
+    radius: 8,
+    strength: 0.6,
+    erase: false,
+    sculptMode: "raise",
+  };
+
+  setTerrainPaintBrush(brush: Partial<TerrainToolBrush>): void {
+    this.paintBrush = { ...this.paintBrush, ...brush };
+  }
+
+  getTerrainPaintBrush(): TerrainToolBrush {
+    return { ...this.paintBrush };
+  }
+
+  /**
+   * 开始地形绘制/雕刻（按当前工具分支）：
+   * - paint（绘制材质层）：要求选中地形已绑定材质并生成 Splatmap，工作缓冲取自
+   *   splatmap 缓存（未加载时等待解码）；
+   * - sculpt（雕刻地形）：只需选中地形；基准高度按设置程序化烘焙，工作偏移层
+   *   从节点 sculpt 解码（网格规模一致时）。
+   */
+  async beginTerrainPaint(): Promise<{ ok: boolean; reason?: string }> {
+    if (this.previewMode) return { ok: false, reason: "预览模式下不可绘制" };
+    const node = this.getSelectedNode();
+    if (!(node instanceof TerrainNode)) return { ok: false, reason: "请先选中地形节点" };
+    const obj = this.synchronizer.getObjectMap().get(node.id);
+    if (!obj) return { ok: false, reason: "地形尚未就绪" };
+
+    if (this.paintBrush.tool === "paint") {
+      const splatRel = node.materialSettings?.splatmap ?? "";
+      if (!node.materialAsset || !node.materialSettings || !splatRel) {
+        return { ok: false, reason: "请先绑定地形材质并生成 Splatmap（检查器 → Terrain Material），或切换到雕刻工具" };
+      }
+      const data = await this.synchronizer.ensureSplatmapData(splatRel);
+      if (!data) return { ok: false, reason: "Splatmap 读取失败" };
+      this.terrainPaint.begin({
+        kind: "paint",
+        node,
+        terrainObj: obj,
+        buffer: { data: new Uint8ClampedArray(data.data), width: data.width, height: data.height },
+        splatRel,
+      });
+      return { ok: true };
+    }
+
+    // sculpt：基准高度程序化烘焙（每次会话一次；segments 上限 256，耗时可接受）
+    const base = bakeTerrainHeights(node.terrain);
+    const offsets = new Float32Array(base.gridSize * base.gridSize);
+    if (node.sculpt && node.sculpt.gridN === base.gridSize) {
+      const prev = decodeSculptData(node.sculpt.data);
+      if (prev && prev.length === offsets.length) offsets.set(prev);
+    }
+    this.terrainPaint.begin({
+      kind: "sculpt",
+      node,
+      terrainObj: obj,
+      base: base.heights,
+      offsets,
+      gridN: base.gridSize,
+    });
+    return { ok: true };
+  }
+
+  /** 结束地形绘制（冲刷未落盘笔画 + 恢复轨道相机/点选） */
+  endTerrainPaint(): void {
+    this.terrainPaint?.end();
+  }
+
+  /** 雕刻提交：工作偏移层写入节点 sculpt 字段并走节点补丁（可撤销） */
+  private commitTerrainSculpt(): void {
+    const session = this.terrainPaint?.getSession();
+    if (!session || session.kind !== "sculpt") return;
+    const node = session.node;
+    const before = node.toJSON() as JsonRecord;
+    node.sculpt = { gridN: session.gridN, data: encodeSculptData(session.offsets) };
+    const after = node.toJSON() as JsonRecord;
+    this.patchNode(node.id, before, after, "雕刻地形");
+  }
+
+  /**
+   * 地形绘制落盘完成后的失效重载（应用层写完 PNG 调用）：
+   * 清纹理缓存与 splatmap 像素缓存 + 推进内容纪元 → 引用地形的节点按新数据
+   * 只重烤颜色纹理（几何不动）。
+   */
+  invalidateTerrainSplatmap(rel: string): void {
+    if (!rel) return;
+    for (const key of [...this.textureCache.keys()]) {
+      if (key.endsWith(`|${rel}`)) this.textureCache.delete(key);
+    }
+    this.synchronizer.bumpSplatmapEpoch();
+    this.synchronizer.clearSplatCache(rel);
+    for (const node of this.graph.all()) {
+      if (node instanceof TerrainNode && node.materialSettings?.splatmap === rel) {
+        const obj = this.synchronizer.getObjectMap().get(node.id);
+        if (obj) this.synchronizer.refreshNodeFor(node);
+      }
+    }
+  }
+
+  /** 应用层注入的绘制落盘（编码 PNG → 写资产 → 调 invalidateTerrainSplatmap） */
+  setTerrainPaintCommitHandler(handler: (buffer: SplatBuffer, rel: string) => void): void {
+    this.terrainPaintCommitHandler = handler;
+  }
+
+  private terrainPaintCommitHandler: ((buffer: SplatBuffer, rel: string) => void) | null = null;
+
   private removeViewportClickHandler(): void {
     if (!this._viewportClickHandler) return;
     this.renderer.domElement.removeEventListener("mousedown", this._viewportClickHandler);
@@ -2544,6 +2675,8 @@ export class EditorEngine {
     // Only handle left-click (button 0) and only when not dragging in orbit/gizmo
     if (e.button !== 0) return;
     if (this.gizmo.isDragging()) return;
+    // 地形绘制模式：左键归笔刷（点选/框选语义暂停）
+    if (this.terrainPaint?.active) return;
     // 预览渲染无编辑器选择语义
     if (this.previewMode) return;
 

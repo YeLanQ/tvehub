@@ -218,7 +218,8 @@ function sampleHeightAt(h: Float32Array, n: number, size: number, wx: number, wz
  * 每纹素按世界坐标从高度场采样高度 + 数值微分法线，执行海拔/坡度色带逻辑。
  * 烘焙后 3×3 箱式模糊 + mipmap，消除锯齿；WebGL/WebGPU 双后端通用（map 内置）。
  */
-function bakeColorTexture(
+/** 表面配色烘焙（导出：地形绘制提交后按缓存高度场单独重烤颜色，几何不动） */
+export function bakeColorTexture(
   heights: Float32Array, n: number, p: TerrainSettings,
   min: number, max: number,
   splatmap: SplatmapData | null,
@@ -356,7 +357,11 @@ function bakeColorTexture(
  * 按设置烘焙地形几何（位置 + UV + 菱形三角索引 + 顶点法线 + 颜色纹理）。
  * 每次调用都产出全新几何和纹理（调用方负责释放旧资源）。
  */
-export function buildTerrain(settings: TerrainSettings, splatmap: SplatmapData | null = null): TerrainBuild {
+/**
+ * 程序化高度场烘焙（不含雕刻偏移；雕刻会话的基准高度用）。
+ * buildTerrain 内部同源：分形高度 + 热侵蚀。
+ */
+export function bakeTerrainHeights(settings: TerrainSettings): { heights: Float32Array; gridSize: number } {
   const p = cloneTerrainSettings(settings);
   const n = p.segments + 1;
   const half = p.size / 2;
@@ -364,7 +369,6 @@ export function buildTerrain(settings: TerrainSettings, splatmap: SplatmapData |
   const coord = new Array<number>(n);
   for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
 
-  // 烘焙高度网格（保留供采样）
   const height = heightField(p);
   const heights = new Float32Array(n * n);
   for (let iz = 0; iz < n; iz++) {
@@ -375,6 +379,29 @@ export function buildTerrain(settings: TerrainSettings, splatmap: SplatmapData |
 
   // 热侵蚀：超过休止角的坡面塌落，消除分形针尖
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
+
+  return { heights, gridSize: n };
+}
+
+export function buildTerrain(
+  settings: TerrainSettings,
+  splatmap: SplatmapData | null = null,
+  sculpt: Float32Array | null = null,
+): TerrainBuild {
+  const p = cloneTerrainSettings(settings);
+  const n = p.segments + 1;
+  const half = p.size / 2;
+
+  const coord = new Array<number>(n);
+  for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
+
+  // 烘焙程序化高度网格（保留供采样；含热侵蚀）
+  const { heights } = bakeTerrainHeights(p);
+
+  // 雕刻偏移层（TerrainNode.sculpt；网格规模一致才叠加）
+  if (sculpt && sculpt.length === heights.length) {
+    for (let i = 0; i < heights.length; i++) heights[i] += sculpt[i];
+  }
 
   // 统计高度范围
   let min = Infinity;

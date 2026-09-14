@@ -7,6 +7,7 @@ import {
   parseTerrainSettings,
   type TerrainSettings,
 } from "../../terrain/types";
+import { parseTerrainSculpt, type TerrainSculptData } from "../../terrain/sculpt";
 import {
 
   cloneTerrainMaterialSettings,
@@ -23,6 +24,8 @@ export interface TerrainNodeInit extends NodeInit {
   materialAsset?: string;
   /** 地形材质设置快照（从 .terrainmat 资产绑定时快照；null = 未绑定，用硬编码默认材质） */
   materialSettings?: TerrainMaterialSettings | null;
+  /** 雕刻高度偏移层（笔刷雕刻；null = 未雕刻） */
+  sculpt?: TerrainSculptData | null;
 }
 
 /** 地形节点能力接口：地形设置 + 地形材质设置（随场景序列化） */
@@ -49,6 +52,8 @@ export class TerrainNode extends Node implements ITerrainNode {
   asset = "";
   materialAsset = "";
   materialSettings: TerrainMaterialSettings | null = null;
+  /** 雕刻高度偏移层（笔刷雕刻；base64 Float32，叠加在程序化高度场上；null = 未雕刻） */
+  sculpt: TerrainSculptData | null = null;
 
   constructor(init: TerrainNodeInit = {}) {
     super(init);
@@ -58,6 +63,7 @@ export class TerrainNode extends Node implements ITerrainNode {
     this.materialSettings = init.materialSettings != null
       ? cloneTerrainMaterialSettings(init.materialSettings)
       : null;
+    this.sculpt = init.sculpt ? parseTerrainSculpt(init.sculpt) : null;
   }
 
   override clone(): TerrainNode {
@@ -75,6 +81,7 @@ export class TerrainNode extends Node implements ITerrainNode {
       materialSettings: this.materialSettings != null
         ? cloneTerrainMaterialSettings(this.materialSettings)
         : null,
+      sculpt: this.sculpt ? { ...this.sculpt } : null,
     });
   }
 
@@ -86,6 +93,7 @@ export class TerrainNode extends Node implements ITerrainNode {
     if (this.materialSettings != null) {
       target.materialSettings = cloneTerrainMaterialSettings(this.materialSettings);
     }
+    if (this.sculpt) target.sculpt = { ...this.sculpt };
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
@@ -95,6 +103,7 @@ export class TerrainNode extends Node implements ITerrainNode {
     this.materialSettings = source.materialSettings != null
       ? parseTerrainMaterialSettings(source.materialSettings)
       : null;
+    this.sculpt = parseTerrainSculpt(source.sculpt);
   }
 }
 

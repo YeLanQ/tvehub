@@ -9,8 +9,10 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
 import { setupCompressedGltfSupport, collectModelMaterialOverrideRels } from "../../framework/mesh";
 import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
+import { api } from "../../lib/api";
 import { loadMaterialDoc } from "../lib/materials";
 import { loadShaderDoc } from "../lib/shaders";
+import { encodeSplatBufferPng } from "../lib/terrain-paint-io";
 import { logStore } from "../stores/log";
 import { getProjectStore } from "../stores/project";
 import { getEditorStore, resetEditorEngine } from "../stores/editor";
@@ -125,6 +127,28 @@ function applyProjectAccess(engine: EditorEngine, root: string | null): void {
   );
 }
 
+/**
+ * 地形绘制落盘：工作缓冲编码 PNG → 覆盖写 splatmap 资产 → 引擎失效缓存
+ * （纹理 + 像素 + 内容纪元），引用该 splatmap 的地形仅重烤颜色纹理。
+ */
+async function commitTerrainPaint(
+  engine: EditorEngine,
+  buffer: Parameters<typeof encodeSplatBufferPng>[0],
+  rel: string,
+): Promise<void> {
+  const root = getProjectStore().currentPath;
+  if (!root) {
+    logStore.log("warn", "未打开项目，无法保存地形绘制");
+    return;
+  }
+  try {
+    await api.writeAssetBinary(root, rel, encodeSplatBufferPng(buffer));
+    engine.invalidateTerrainSplatmap(rel);
+  } catch (e) {
+    logStore.log("error", `保存地形绘制失败: ${e}`);
+  }
+}
+
 export function mountEditor(container: HTMLElement): Promise<void> {
   const store = getEditorStore();
   if (store.state.mounted) return Promise.resolve();
@@ -146,6 +170,10 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         });
         // 挂载期间被销毁（如就绪前点击"关闭"返回首页）→ 不再装载场景/重建
         if (engine.isDisposed()) return;
+        // 地形绘制落盘：工作缓冲编码 PNG → 写 splatmap 资产 → 引擎失效缓存重载
+        engine.setTerrainPaintCommitHandler((buffer, rel) => {
+          void commitTerrainPaint(engine, buffer, rel);
+        });
         // 压缩 glTF 解码器（DRACO/Meshopt/KTX2）：解码器文件随引擎内置
         // （public/engine/runtime/loaders/{draco,basis}），编辑器经相对 HTTP 路径
         // 按需拉取（dev 由 Vite 静态服务、prod 随前端 dist 打包）；

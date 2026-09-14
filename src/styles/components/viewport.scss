@@ -72,3 +72,81 @@
   font-size: 11px;
   color: var(--text-dim);
 }
+// —— 地形绘制浮动面板 ——
+.paint-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg, #252526);
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  .pp-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .pp-tabs,
+  .pp-modes {
+    display: flex;
+    gap: 2px;
+  }
+
+  .pp-layers {
+    display: flex;
+    gap: 4px;
+  }
+
+  .pp-layer {
+    width: 24px;
+    height: 20px;
+    font-size: 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border, #555);
+    color: var(--text);
+    cursor: pointer;
+    background:
+      linear-gradient(0deg, color-mix(in srgb, var(--layer-color) 55%, transparent),
+        color-mix(in srgb, var(--layer-color) 55%, transparent)),
+      var(--bg, #333);
+
+    &:hover {
+      border-color: var(--accent, #4a9eff);
+    }
+
+    &.active {
+      border-color: var(--accent, #4a9eff);
+      box-shadow: 0 0 0 1px var(--accent, #4a9eff);
+      color: #fff;
+      font-weight: 700;
+    }
+  }
+
+  .pp-slider {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-dim);
+
+    input[type="range"] {
+      width: 90px;
+    }
+
+    .mono {
+      min-width: 38px;
+      text-align: right;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      color: var(--text);
+    }
+  }
+}

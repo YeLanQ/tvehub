@@ -32,6 +32,7 @@
     "smoke:terrain": "vite build --ssr scripts/smoke-terrain.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-terrain.js",
     "smoke:fsm": "vite build --ssr scripts/smoke-fsm.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-fsm.js",
     "smoke:nav": "vite build --ssr scripts/smoke-nav.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-nav.js",
+    "smoke:terrain-paint": "vite build --ssr scripts/smoke-terrain-paint.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-terrain-paint.js",
     "smoke:fog": "vite build --ssr scripts/smoke-fog.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-fog.js",
     "smoke:tween-runtime": "node scripts/smoke-tween-runtime.mjs",
     "smoke:script-hooks": "node scripts/smoke-script-hooks.mjs",

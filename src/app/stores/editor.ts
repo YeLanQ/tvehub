@@ -18,6 +18,8 @@ export interface EditorStore {
   /** 场景已保存/已切换 → 清除脏标记 */
   markSaved: () => void;
   setViewMode: (mode: ViewMode) => void;
+  /** 地形绘制模式切换（命令 editor.terrainPaint 写入；面板按此显隐） */
+  setTerrainPaint: (active: boolean, layers?: number[]) => void;
   state: Readonly<{
     selectedId: string | null;
     selectionIds: string[];
@@ -32,6 +34,10 @@ export interface EditorStore {
     historyLabels: string[];
     mounted: boolean;
     dirty: boolean;
+    /** 地形绘制模式（命令 editor.terrainPaint 切换；面板与引擎经此同步） */
+    terrainPaintActive: boolean;
+    /** 激活绘制时捕获的材质层色（RGBA hex 数字；面板层按钮着色，最多 4 层） */
+    terrainPaintLayers: number[];
   }>;
 }
 
@@ -62,6 +68,8 @@ export function getEditorStore(): EditorStore {
     mounted: false,
     revision: 0,
     dirty: false,
+    terrainPaintActive: false,
+    terrainPaintLayers: [] as number[],
   });
 
   const bump = (): void => {
@@ -178,6 +186,11 @@ export function getEditorStore(): EditorStore {
 
   /** 视图模式落地：布局/场景共用引擎编辑渲染路径，差异只在 UI 画布显隐 */
   function applyViewMode(mode: ViewMode): void {
+    // 离开场景视图自动退出地形绘制（避免绘制交互/光标残留到预览等视图）
+    if (mode !== "scene" && state.terrainPaintActive) {
+      engine.endTerrainPaint();
+      state.terrainPaintActive = false;
+    }
     if (mode === "scene" || mode === "layout") {
       engine.setViewMode("scene");
       engine.setRenderingActive(true);
@@ -205,6 +218,10 @@ export function getEditorStore(): EditorStore {
     state: readonly(state) as unknown as EditorStore["state"],
     setViewMode: (mode) => {
       applyViewMode(mode);
+    },
+    setTerrainPaint: (active, layers) => {
+      state.terrainPaintActive = active;
+      if (layers) state.terrainPaintLayers = layers;
     },
     markMounted: () => {
       state.mounted = true;

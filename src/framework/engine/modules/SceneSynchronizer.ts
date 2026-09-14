@@ -39,7 +39,7 @@ import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
-import { buildTerrain, splitTerrainGeometry, terrainSettingsSig, type TerrainMaterialSettings, type SplatmapData } from "../../terrain";
+import { buildTerrain, bakeColorTexture, splitTerrainGeometry, terrainSettingsSig, decodeSculptData, type TerrainMaterialSettings, type SplatmapData, type TerrainSculptData } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { buildNavOverlayGeometry, type NavBakeResult } from "../../navigation";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
@@ -110,6 +110,26 @@ function terrainMaterialSig(ms: TerrainMaterialSettings | null): string {
   return [ms.layerCount, ms.metalness, ms.roughness, ms.splatmap,
     ...ms.layers.map((l) => `${l.color}|${l.tiling}|${l.metalness}|${l.roughness}|${l.albedoMap}|${l.normalMap}`),
   ].join("#");
+}
+
+/** 已加载纹理 → RGBA 像素数据（splatmap 缓存与地形绘制的取数通道共用） */
+function decodeSplatTexture(tex: THREE.Texture): { data: Uint8Array; width: number; height: number } {
+  const img = tex.source.data as ImageBitmap | HTMLImageElement;
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0);
+  const imgData = ctx.getImageData(0, 0, img.width, img.height);
+  return { data: new Uint8Array(imgData.data.buffer.slice(0)), width: img.width, height: img.height };
+}
+
+/** 雕刻层内容签名（采样哈希；雕刻提交 → 签名变化 → 几何重建） */
+function terrainSculptSig(s: TerrainSculptData | null): string {
+  if (!s || !s.data) return "nosculpt";
+  let h = 5381;
+  for (let i = 0; i < s.data.length; i += 8) h = ((h * 33) ^ s.data.charCodeAt(i)) >>> 0;
+  return `sculpt:${s.gridN}:${s.data.length}:${h.toString(36)}`;
 }
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
@@ -255,6 +275,8 @@ export class SceneSynchronizer {
   private splatmapCache = new Map<string, { data: Uint8Array; width: number; height: number } | null>();
   /** Splatmap 异步加载中标记（避免重复触发） */
   private splatmapLoading = new Set<string>();
+  /** Splatmap 内容纪元（绘制提交重载后递增；参与颜色签名 → 只重烤颜色不重建几何） */
+  private splatmapEpoch = 0;
   /** 模型覆盖材质缓存（.mat rel → three 材质；跨实例共享，参数修改时失效重建） */
   private modelOverrideMaterials = new Map<string, THREE.Material>();
   /** 阴影相机待重算（灯光刷新、场景增删后置位；帧循环消费） */
@@ -1263,16 +1285,25 @@ export class SceneSynchronizer {
     }
     // 材质已绑定但 splatmap 图片未就绪：用程序化 4 层混合（data=null）
     if (!splatmap && layerColors) {
-      splatmap = { data: null, width: 0, height: 0, layerColors: layerColors };
+      splatmap = { data: null, width: 0, height: 0, layerColors: layerColors! };
     }
-    const sig = terrainSettingsSig(node.terrain) + "|" + terrainMaterialSig(ms) + "|" + (splatmapReady ? "splat" : "nosplat");
+    // 几何由 地形设置 + 雕刻层 决定；颜色由 材质 + splatmap 就绪态 + splatmap 内容纪元 决定。
+    // 绘制提交只推进纪元 → 走下方"仅重烤颜色"路径，几何（chunk）不重建；
+    // 雕刻提交改变雕刻层 → geomSig 变化 → 几何重build。
+    const sculptSig = terrainSculptSig(node.sculpt);
+    const geomSig = terrainSettingsSig(node.terrain) + "#" + sculptSig;
+    const colorSig = `${terrainMaterialSig(ms)}#${splatmapReady ? "splat" : "nosplat"}#${this.splatmapEpoch}`;
     let terrainGroup = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Group | null;
-    if (!terrainGroup || terrainGroup.userData.terrainSig !== sig) {
+    if (!terrainGroup || terrainGroup.userData.terrainSig !== geomSig) {
       // 地形材质绑定時：用材质图层颜色覆盖地形内置配色
       const ts = ms
         ? { ...node.terrain, grassColor: ms.layers[0].color, rockColor: ms.layers[1].color, snowColor: ms.layers[2].color }
         : node.terrain;
-      const build = buildTerrain(ts, splatmap);
+      const sculptOffsets =
+        node.sculpt && node.sculpt.gridN === node.terrain.segments + 1
+          ? decodeSculptData(node.sculpt.data)
+          : null;
+      const build = buildTerrain(ts, splatmap, sculptOffsets);
       const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, 4);
       build.geometry.dispose();
       const matMetalness = ms ? ms.metalness : 0;
@@ -1320,13 +1351,36 @@ export class SceneSynchronizer {
         const layer = clampLayerIndex(node.layer);
         terrainGroup.traverse((d) => d.layers.set(layer));
       }
-      terrainGroup.userData.terrainSig = sig;
+      terrainGroup.userData.terrainSig = geomSig;
+      terrainGroup.userData.colorSig = colorSig;
       terrainGroup.userData.terrainMinY = build.minY;
       terrainGroup.userData.terrainMaxY = build.maxY;
       terrainGroup.userData.terrainHeights = build.heights;
       terrainGroup.userData.terrainGridSize = build.gridSize;
       terrainGroup.userData.terrainSize = build.size;
       this.shadowCamerasDirty = true;
+    } else if (terrainGroup.userData.colorSig !== colorSig) {
+      // 仅重烤颜色纹理（地形绘制提交 / 材质层色变化）：几何与阴影不变。
+      // 高度场从 chunk userData 缓存读取（全量重建时写入）。
+      const heights = terrainGroup.userData.terrainHeights as Float32Array | undefined;
+      const gridN = terrainGroup.userData.terrainGridSize as number | undefined;
+      const size = terrainGroup.userData.terrainSize as number | undefined;
+      const minY = terrainGroup.userData.terrainMinY as number | undefined;
+      const maxY = terrainGroup.userData.terrainMaxY as number | undefined;
+      const chunk = terrainGroup.children[0] as THREE.Mesh | undefined;
+      if (heights && gridN && size && minY !== undefined && maxY !== undefined && chunk) {
+        const ts = ms
+          ? { ...node.terrain, grassColor: ms.layers[0].color, rockColor: ms.layers[1].color, snowColor: ms.layers[2].color }
+          : node.terrain;
+        const colorTexture = bakeColorTexture(heights, gridN, ts, minY, maxY, splatmap);
+        const mat = terrainGroup.userData.terrainMaterial as THREE.MeshStandardMaterial;
+        if (mat.map) mat.map.dispose();
+        mat.map = colorTexture;
+        mat.metalness = ms ? ms.metalness : 0;
+        mat.roughness = ms ? ms.roughness : 0.95;
+        mat.needsUpdate = true;
+      }
+      terrainGroup.userData.colorSig = colorSig;
     }
   }
 
@@ -1423,25 +1477,48 @@ export class SceneSynchronizer {
   private async loadSplatmap(rel: string, node: TerrainNode, obj: THREE.Object3D): Promise<void> {
     try {
       const tex = await this.lookup.loadTexture?.(rel, false);
-      if (!tex) { this.splatmapCache.set(rel, null); return; }
-      const img = tex.source.data as ImageBitmap | HTMLImageElement;
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0);
-      const imgData = ctx.getImageData(0, 0, img.width, img.height);
-      this.splatmapCache.set(rel, {
-        data: new Uint8Array(imgData.data.buffer.slice(0)),
-        width: img.width,
-        height: img.height,
-      });
+      this.splatmapCache.set(rel, tex ? decodeSplatTexture(tex) : null);
+      if (!tex) return;
     } catch {
       this.splatmapCache.set(rel, null);
     } finally {
       this.splatmapLoading.delete(rel);
       this.refreshTerrain(node, obj);
     }
+  }
+
+  /** 读取已缓存的 splatmap 像素数据（未加载返回 null；地形绘制取工作副本用） */
+  getSplatmapData(rel: string): { data: Uint8Array; width: number; height: number } | null {
+    return this.splatmapCache.get(rel) ?? null;
+  }
+
+  /**
+   * 确保 splatmap 像素数据可用（缓存未命中时同步等待加载；地形绘制开始前调用）。
+   * 返回 null = 读取失败（资产不存在等）。
+   */
+  async ensureSplatmapData(rel: string): Promise<{ data: Uint8Array; width: number; height: number } | null> {
+    const cached = this.splatmapCache.get(rel);
+    if (cached) return cached;
+    try {
+      const tex = await this.lookup.loadTexture?.(rel, false);
+      if (!tex) return null;
+      const decoded = decodeSplatTexture(tex);
+      this.splatmapCache.set(rel, decoded);
+      return decoded;
+    } catch {
+      return null;
+    }
+  }
+
+  /** splatmap 内容纪元 +1（绘制提交重载后调用：颜色签名变化 → 仅重烤颜色纹理） */
+  bumpSplatmapEpoch(): void {
+    this.splatmapEpoch++;
+  }
+
+  /** 清除 splatmap 像素缓存（绘制落盘后调用；下次 refreshTerrain 重新解码新图） */
+  clearSplatCache(rel: string): void {
+    this.splatmapCache.delete(rel);
+    this.splatmapLoading.delete(rel);
   }
 
   /**

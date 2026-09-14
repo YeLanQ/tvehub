@@ -578,7 +578,7 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
  * splatmap 不为空时，颜色纹理按 splatmap RGBA 权重混合 4 个图层颜色。
  * 返回 { geometry, colorTexture, heights, gridSize, size, segments, minY, maxY }。
  */
-function buildTerrain(p, splatmap) {
+function buildTerrain(p, splatmap, sculpt) {
   const n = p.segments + 1;
   const half = p.size / 2;
 
@@ -594,6 +594,11 @@ function buildTerrain(p, splatmap) {
   }
 
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
+
+  // 雕刻偏移层（编辑器笔刷雕刻；TerrainNode.sculpt，网格规模一致才叠加）
+  if (sculpt && sculpt.length === heights.length) {
+    for (let i = 0; i < heights.length; i++) heights[i] += sculpt[i];
+  }
 
   let min = Infinity;
   let max = -Infinity;
@@ -771,7 +776,19 @@ export function createTerrain(json) {
           ms.layers?.[3]?.color ?? 0xffffff,
         ] }
     : null;
-  const data = buildTerrain(ts, splatmap);
+  // 雕刻偏移层：节点 sculpt 字段（base64 Float32，编辑器笔刷雕刻写入）
+  let sculpt = null;
+  if (json.sculpt && typeof json.sculpt.data === "string" && json.sculpt.gridN === settings.segments + 1) {
+    try {
+      const bin = atob(json.sculpt.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      sculpt = new Float32Array(bytes.buffer);
+    } catch {
+      sculpt = null;
+    }
+  }
+  const data = buildTerrain(ts, splatmap, sculpt);
   const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, 4);
   data.geometry.dispose();
 

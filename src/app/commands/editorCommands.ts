@@ -63,9 +63,46 @@ registerCommand({
     ) {
       return { set: false };
     }
+    // 地形绘制期间左键归笔刷：不切换变换工具（避免误触改变交互语义）
+    if (store.state.terrainPaintActive) return { set: false };
     if (!store.state.mounted || store.engine.gizmo?.isDragging()) return { set: false };
     store.engine.setGizmoMode(mode);
     return { set: true, mode };
+  },
+});
+
+registerCommand({
+  id: "editor.terrainPaint",
+  label: "地形绘制",
+  group: "编辑器",
+  canRun: (ctx) => ctx.view === "editor",
+  description:
+    "切换地形表面绘制模式（对已绑定地形材质并生成 Splatmap 的地形，用笔刷把选定材质层画到 splatmap 上；再执行一次退出）",
+  run: async () => {
+    const store = getEditorStore();
+    if (!store.state.mounted || store.state.viewMode !== "scene") {
+      return { set: false };
+    }
+    // 已激活 → 退出
+    if (store.state.terrainPaintActive) {
+      store.engine.endTerrainPaint();
+      store.setTerrainPaint(false);
+      logStore.log("info", "已退出地形绘制模式");
+      return { set: true, active: false };
+    }
+    const r = await store.engine.beginTerrainPaint();
+    if (!r.ok) {
+      logStore.log("warn", `无法开始地形绘制: ${r.reason ?? "未知原因"}`);
+      return { set: false };
+    }
+    // 捕获材质层色（面板层按钮着色；RGBA hex 数字）
+    const node = store.engine.getSelectedNode();
+    const ms = node && "materialSettings" in node
+      ? (node as { materialSettings: { layers: { color: number }[] } | null }).materialSettings
+      : null;
+    store.setTerrainPaint(true, ms ? ms.layers.map((l) => l.color) : []);
+    logStore.log("info", "地形绘制模式：左键涂抹材质层，右键平移/滚轮缩放照常");
+    return { set: true, active: true };
   },
 });
 

@@ -774,7 +774,7 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
   tex.needsUpdate = true;
   return tex;
 }
-function buildTerrain(p, splatmap) {
+function buildTerrain(p, splatmap, sculpt) {
   const n = p.segments + 1;
   const half = p.size / 2;
   const coord = new Array(n);
@@ -787,6 +787,9 @@ function buildTerrain(p, splatmap) {
     }
   }
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
+  if (sculpt && sculpt.length === heights.length) {
+    for (let i = 0; i < heights.length; i++) heights[i] += sculpt[i];
+  }
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < n * n; i++) {
@@ -937,7 +940,18 @@ function createTerrain(json) {
       ((_n = (_m = ms.layers) == null ? void 0 : _m[3]) == null ? void 0 : _n.color) ?? 16777215
     ]
   } : null;
-  const data = buildTerrain(ts, splatmap);
+  let sculpt = null;
+  if (json.sculpt && typeof json.sculpt.data === "string" && json.sculpt.gridN === settings.segments + 1) {
+    try {
+      const bin = atob(json.sculpt.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      sculpt = new Float32Array(bytes.buffer);
+    } catch {
+      sculpt = null;
+    }
+  }
+  const data = buildTerrain(ts, splatmap, sculpt);
   const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, 4);
   data.geometry.dispose();
   const matMetalness = ms ? ms.metalness ?? 0 : 0;

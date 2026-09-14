@@ -9,7 +9,25 @@ export {
   terrainSettingsSig,
   type TerrainSettings,
 } from "./types";
-export { buildTerrain, sampleTerrainHeight, splitTerrainGeometry, type TerrainBuild, type SplatmapData } from "./generate";
+export { buildTerrain, bakeTerrainHeights, sampleTerrainHeight, splitTerrainGeometry, bakeColorTexture, type TerrainBuild, type SplatmapData } from "./generate";
+export {
+  stampSplat,
+  stampSplatLine,
+  worldToSplatPixel,
+  splatPixelToWorld,
+  type SplatBuffer,
+  type SplatBrush,
+} from "./paint";
+export {
+  parseTerrainSculpt,
+  encodeSculptData,
+  decodeSculptData,
+  stampSculpt,
+  stampSculptLine,
+  type TerrainSculptData,
+  type SculptMode,
+  type SculptBrush,
+} from "./sculpt";
 export {
   DEFAULT_TERRAIN_MATERIAL_SETTINGS,
   TERRAIN_MATERIAL_LIMITS,
