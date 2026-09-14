@@ -1,6 +1,7 @@
 // 网格贴图回填：导出产物内的贴图文件按 .mat 通道相对路径异步加载
-// （fetch + ImageBitmap → Texture，带缓存），就地表到材质通道上。
+// （ResourceLoader + ImageBitmap → Texture，带缓存），就地表到材质通道上。
 import * as THREE from "../core/three.module.min.js";
+import { resourceLoader } from "./resource";
 
 // 贴图通道 → 是否 sRGB（颜色贴图 sRGB，数据贴图线性）
 const TEXTURE_CHANNELS = [
@@ -18,9 +19,8 @@ const TEXTURE_CHANNELS = [
 export function loadImageTex(texCache, rel, srgb) {
   const key = `${srgb ? "c" : "n"}|${rel}`;
   if (texCache.has(key)) return texCache.get(key);
-  const p = fetch(rel)
-    .then((r) => (r.ok ? r.blob() : null))
-    .then((blob) => (blob ? createImageBitmap(blob, { imageOrientation: "flipY" }) : null))
+  const p = resourceLoader
+    .loadImageBitmap(rel)
     .then((bmp) => {
       if (!bmp) return null;
       const tex = new THREE.Texture(bmp);

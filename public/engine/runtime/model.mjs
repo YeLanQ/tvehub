@@ -6,6 +6,7 @@ import { OBJLoader } from "./loaders/OBJLoader.js";
 import { clone } from "./loaders/SkeletonUtils.js";
 import { withCompressedGltf } from "./loaders/compressed.mjs";
 import { postLog } from "../core/log.mjs";
+import { resourceLoader } from "./resource.mjs";
 function collectModelRefs(rootJson) {
   const refs = [];
   (function walk(o) {
@@ -127,9 +128,7 @@ async function loadModels(rootJson) {
   await Promise.all(
     refs.map(async (rel) => {
       try {
-        const r = await fetch(rel);
-        if (!r.ok) throw new Error(`模型文件读取失败: HTTP ${r.status}`);
-        const buffer = await r.arrayBuffer();
+        const buffer = await resourceLoader.loadArrayBuffer(rel);
         const { template, clips } = await parseModel(rel, buffer);
         template.traverse((o) => {
           if (o.isMesh) {

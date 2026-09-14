@@ -2,6 +2,7 @@
 // 一算法复刻，保证网页预览与编辑器视口表现一致。
 import * as THREE from "../core/three.module.min.js";
 import { num, matColor } from "../core/utils";
+import { resourceLoader } from "./resource";
 
 /** 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致） */
 export const SKY_DEFAULTS = { top: 0x2f6fbb, horizon: 0xcfe4f7, ground: 0x8fa2b5 };
@@ -175,9 +176,8 @@ export function configureSkyOrientation(backend) {
  * orientation 可显式覆盖（equirect 全景 2D 纹理不分后端统一预翻转，见 loadSkyTexCube）。 */
 async function fetchImageBitmap(rel, orientation = imageOrientation) {
   try {
-    const r = await fetch(rel);
-    if (!r.ok) return null;
-    return await createImageBitmap(await r.blob(), { imageOrientation: orientation });
+    const blob = await resourceLoader.loadBlob(rel);
+    return await createImageBitmap(blob, { imageOrientation: orientation });
   } catch {
     return null;
   }
@@ -203,9 +203,7 @@ function skyKindOfShaderRef(shader) {
 /** 拉取并解析天空盒材质参数（.mat；仅识别天空材质，其它返回 null） */
 export async function loadSkyMatParams(rel) {
   try {
-    const r = await fetch(rel);
-    if (!r.ok) return null;
-    const doc = await r.json();
+    const doc = await resourceLoader.loadJSON(rel);
     if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
     const kind = typeof doc.kind === "string" ? doc.kind : "";
     const shader = typeof doc.shader === "string" ? doc.shader : "";
@@ -654,9 +652,7 @@ export function makeNishitaSkyEquirect(renderer, params) {
  */
 export async function loadSkyTexCube(rel) {
   try {
-    const r = await fetch(rel);
-    if (!r.ok) return null;
-    const doc = await r.json();
+    const doc = await resourceLoader.loadJSON(rel);
     if (!doc || typeof doc !== "object" || doc.$type !== "texcube") return null;
     if (doc.source === "faces") {
       const keys = ["px", "nx", "py", "ny", "pz", "nz"];

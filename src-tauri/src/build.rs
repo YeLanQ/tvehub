@@ -576,6 +576,48 @@ fn is_minifiable_script(rel: &str) -> bool {
 /// 由引导脚本注入的 import map 映射到 Blob URL
 const INLINE_MODULE_PREFIX: &str = "tve:";
 
+/// 多文件产物附带的零依赖静态服务器脚本（node server.mjs [端口]）。
+/// 引导用户走 HTTP 而非 file://（fetch/Worker 在 file:// 下受限）。
+const SERVER_MJS: &str = r#"import { createServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { join, extname, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PORT = Number(process.argv[2]) || 8080;
+const ROOT = fileURLToPath(new URL(".", import.meta.url));
+const MIME = {
+  ".html":"text/html;charset=utf-8",".js":"text/javascript",".mjs":"text/javascript",
+  ".css":"text/css",".json":"application/json",".png":"image/png",".jpg":"image/jpeg",
+  ".jpeg":"image/jpeg",".webp":"image/webp",".gif":"image/gif",".svg":"image/svg+xml",
+  ".glb":"model/gltf-binary",".gltf":"model/gltf+json",".wasm":"application/wasm",
+  ".bin":"application/octet-stream",".mp3":"audio/mpeg",".wav":"audio/wav",
+  ".ogg":"audio/ogg",".shader":"text/plain",".mat":"application/json",".anim":"application/json",
+};
+const server = createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    let p = decodeURIComponent(url.pathname);
+    if (p === "/") p = "/index.html";
+    const safe = normalize(join(ROOT, p));
+    if (!safe.startsWith(ROOT)) { res.writeHead(403); res.end("Forbidden"); return; }
+    const s = await stat(safe).catch(() => null);
+    if (!s || !s.isFile()) { res.writeHead(404); res.end("Not Found"); return; }
+    const data = await readFile(safe);
+    const mime = MIME[extname(safe).toLowerCase()] || "application/octet-stream";
+    res.writeHead(200, { "Content-Type": mime, "Content-Length": data.length });
+    res.end(data);
+  } catch (e) { res.writeHead(500); res.end(String(e?.message ?? e)); }
+});
+server.listen(PORT, () => {
+  const url = `http://localhost:${PORT}`;
+  console.log(`静态服务器已启动: ${url}\n按 Ctrl+C 停止`);
+  import("node:child_process").then(({ exec }) => {
+    const cmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
+    exec(cmd);
+  });
+});
+"#;
+
 fn is_js_word(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
@@ -979,6 +1021,13 @@ fn build_export_impl(
         files.insert(
             "config.json".to_string(),
             serde_json::Value::Object(cfg).to_string(),
+        );
+        // 多文件模式附带零依赖静态服务器（node server.mjs [端口]），
+        // 引导用户走 HTTP 而非 file://（fetch/Worker 在 file:// 下受限）
+        files.insert("server.mjs".to_string(), SERVER_MJS.to_string());
+        files.insert(
+            "README.txt".to_string(),
+            "网页预览产物\n\n运行方式（推荐）：\n  node server.mjs        # 启动本地 HTTP 服务器（默认 8080 端口）\n  node server.mjs 3000   # 指定端口\n\n然后浏览器访问 http://localhost:8080\n\n注意：请勿直接双击 index.html 打开（file:// 协议下\nfetch/Worker 受限，物理和动画将回退主线程，性能下降）。\n".to_string(),
         );
         if gzip {
             // 多文件 gzip：场景/资产在 assets.gzip 归档中，运行时经 fetch 拦截读取

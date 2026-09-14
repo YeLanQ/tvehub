@@ -4,6 +4,7 @@
 // 随监听器（渲染相机）距离/方位衰减。预览只回放，不含编辑器侧的
 // 运行时手动控制（播放/暂停由 engine.audio 提供给脚本）。
 import * as THREE from "../core/three.module.min.js";
+import { resourceLoader } from "./resource";
 
 const DEFAULTS = {
   autoplay: true,
@@ -146,9 +147,7 @@ function loadBuffer(rel) {
   const cached = bufferCache.get(rel);
   if (cached) return cached;
   const task = (async () => {
-    const res = await fetch(rel);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const arr = await res.arrayBuffer();
+    const arr = await resourceLoader.loadArrayBuffer(rel);
     const ctx = getContext();
     return await new Promise((resolve, reject) => {
       void ctx.decodeAudioData(arr, resolve, reject);

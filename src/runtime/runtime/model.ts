@@ -11,6 +11,7 @@ import { OBJLoader } from "./loaders/OBJLoader.js";
 import { clone as skeletonClone } from "./loaders/SkeletonUtils.js";
 import { withCompressedGltf } from "./loaders/compressed";
 import { postLog } from "../core/log";
+import { resourceLoader } from "./resource";
 
 /** 收集场景树里 meshNode(source=model) 的模型引用（去重） */
 export function collectModelRefs(rootJson) {
@@ -158,9 +159,7 @@ export async function loadModels(rootJson) {
   await Promise.all(
     refs.map(async (rel) => {
       try {
-        const r = await fetch(rel);
-        if (!r.ok) throw new Error(`模型文件读取失败: HTTP ${r.status}`);
-        const buffer = await r.arrayBuffer();
+        const buffer = await resourceLoader.loadArrayBuffer(rel);
         const { template, clips } = await parseModel(rel, buffer);
         template.traverse((o) => {
           if (o.isMesh) {

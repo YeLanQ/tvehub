@@ -530,6 +530,9 @@ watch(projectScenes, (next, prev) => {
                 · 场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景
                 {{ result.main_scene_name || result.main_scene || "—" }}
               </div>
+              <div v-if="!result.single_page" class="bp-result-line bp-hint">
+                提示：在输出目录运行 <code>node server.mjs</code> 启动本地 HTTP 服务器后访问（勿直接双击 index.html）
+              </div>
               <div v-if="result.missing.length" class="bp-missing">
                 <span class="bp-missing-title">缺失资产（已跳过 {{ result.missing.length }} 项）：</span>
                 <ul>

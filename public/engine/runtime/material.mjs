@@ -2,6 +2,7 @@
 import * as THREE from "../core/three.module.min.js";
 import { num, matColor, u01 } from "../core/utils.mjs";
 import { parseShader, shaderKind } from "./shader.mjs";
+import { resourceLoader } from "./resource.mjs";
 const MAT_DEFAULTS = {
   type: "physical",
   color: 10134706,
@@ -181,9 +182,8 @@ function parseShaderDoc(text) {
 }
 async function fetchShaderDoc(rel) {
   try {
-    const r = await fetch(rel);
-    if (!r.ok) return null;
-    const doc = parseShaderDoc(await r.text());
+    const text = await resourceLoader.loadText(rel);
+    const doc = parseShaderDoc(text);
     if (!doc) return null;
     if (!doc.kind || !SHADER_KINDS.has(doc.kind)) return null;
     return doc;
@@ -201,25 +201,22 @@ async function loadMaterialParams(rootJson) {
   })(rootJson);
   for (const rel of refs) {
     try {
-      const r = await fetch(rel);
-      if (r.ok) {
-        const j = await r.json();
-        const doc = parseMaterialDoc(j);
-        if (doc.shader) {
-          const shader = await fetchShaderDoc(doc.shader);
-          if (shader) {
-            doc.type = shader.kind;
-            doc.shaderData = {
-              base: shader.base,
-              include: shader.include,
-              hooks: shader.hooks,
-              properties: shader.properties
-            };
-            doc.shaderError = shader.error ?? null;
-          }
+      const j = await resourceLoader.loadJSON(rel);
+      const doc = parseMaterialDoc(j);
+      if (doc.shader) {
+        const shader = await fetchShaderDoc(doc.shader);
+        if (shader) {
+          doc.type = shader.kind;
+          doc.shaderData = {
+            base: shader.base,
+            include: shader.include,
+            hooks: shader.hooks,
+            properties: shader.properties
+          };
+          doc.shaderError = shader.error ?? null;
         }
-        materialParams.set(rel, doc);
       }
+      materialParams.set(rel, doc);
     } catch {
     }
   }

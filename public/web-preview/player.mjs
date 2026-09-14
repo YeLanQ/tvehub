@@ -35,6 +35,8 @@ import { createRenderer, createStage, recreateWebGLRendererPreserveBuffer } from
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
 import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
+import { resourceLoader } from "../engine/runtime/resource.mjs";
+import { AssetBundle } from "../engine/runtime/asset-bundle.mjs";
 
 const app = document.getElementById("app");
 
@@ -155,8 +157,7 @@ async function main() {
     cfg = inline.config;
   } else {
     try {
-      const r = await fetch("./config.json");
-      if (r.ok) cfg = await r.json();
+      cfg = await resourceLoader.loadJSON("./config.json");
     } catch {
       /* 无配置也允许预览 */
     }
@@ -202,13 +203,13 @@ async function main() {
 
   // 资产来源优先级：内联 gzip 包（单页+gzip）→ 内联资产表（单页）→
   // assets.gzip 归档（多文件+gzip）→ 磁盘文件（多文件/编辑器预览）。
-  // 归档命中后安装 fetch 拦截，场景/材质/贴图/模型仍按相对路径 fetch。
+  // AssetBundle 设置到 resourceLoader 供各模块统一加载；
+  // installAssetShim 保留供 GLTFLoader 等内部 fetch 兼容。
+  let bundle = null;
   if (inline && inline.pak) {
-    installAssetShim(parseArchive(await gunzip(base64ToBytes(inline.pak))));
+    bundle = await AssetBundle.fromBase64Gzip(inline.pak);
   } else if (inline && inline.assets) {
-    const map = new Map();
-    for (const [rel, b64] of Object.entries(inline.assets)) map.set(rel, base64ToBytes(b64));
-    installAssetShim(map);
+    bundle = AssetBundle.fromBase64Map(inline.assets);
   } else if (!inline) {
     try {
       // gzip 资源地址（config.gzipBase，与 Three CDN 模式无关）非空时归档从远端
@@ -217,11 +218,14 @@ async function main() {
       const pakBase =
         typeof cfg.gzipBase === "string" ? cfg.gzipBase.trim().replace(/\/+$/, "") : "";
       const pakUrl = pakBase.endsWith("/assets.gzip") ? pakBase : pakBase + "/assets.gzip";
-      const r = await fetch(pakUrl || "./assets.gzip");
-      if (r.ok) installAssetShim(parseArchive(await gunzip(new Uint8Array(await r.arrayBuffer()))));
+      bundle = await AssetBundle.loadGzip(pakUrl || "./assets.gzip");
     } catch {
       /* 无归档则按文件读取 */
     }
+  }
+  if (bundle) {
+    resourceLoader.setBundle(bundle);
+    installAssetShim(bundle.entries);
   }
 
   // 场景文件：编辑器内嵌预览固定 ./scene.json；构建产物按 config.scenes 列表
@@ -232,11 +236,7 @@ async function main() {
     const pick = cfg.scenes.find((s) => s && s.name === wanted) || cfg.scenes[0];
     return "./" + String(pick.file || "scene.json");
   })();
-  const sceneData = await (async () => {
-    const r = await fetch(sceneUrl);
-    if (!r.ok) throw new Error("读取场景文件失败: HTTP " + r.status);
-    return r.json();
-  })();
+  const sceneData = await resourceLoader.loadJSON(sceneUrl);
 
   const rootJson = sceneData && sceneData.root;
   if (!rootJson) throw new Error("scene.json 缺少 root");

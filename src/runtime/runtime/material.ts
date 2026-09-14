@@ -7,6 +7,7 @@
 import * as THREE from "../core/three.module.min.js";
 import { num, u01, matColor } from "../core/utils";
 import { parseShader, shaderKind } from "./shader";
+import { resourceLoader } from "./resource";
 
 // 材质参数兜底：与编辑器内置 internal/materials/Default.mat（含 PBR 默认）一致
 export const MAT_DEFAULTS = {
@@ -215,9 +216,8 @@ function parseShaderDoc(text) {
  * 缺失/损坏/未知分支返回 null（调用方回退默认材质）。 */
 async function fetchShaderDoc(rel) {
   try {
-    const r = await fetch(rel);
-    if (!r.ok) return null;
-    const doc = parseShaderDoc(await r.text());
+    const text = await resourceLoader.loadText(rel);
+    const doc = parseShaderDoc(text);
     if (!doc) return null;
     // 天空程序/未知 Base：不构成网格渲染分支 → 调用方回退默认材质
     if (!doc.kind || !SHADER_KINDS.has(doc.kind)) return null;
@@ -241,25 +241,22 @@ export async function loadMaterialParams(rootJson) {
   })(rootJson);
   for (const rel of refs) {
     try {
-      const r = await fetch(rel);
-      if (r.ok) {
-        const j = await r.json();
-        const doc = parseMaterialDoc(j);
-        if (doc.shader) {
-          const shader = await fetchShaderDoc(doc.shader);
-          if (shader) {
-            doc.type = shader.kind;
-            doc.shaderData = {
-              base: shader.base,
-              include: shader.include,
-              hooks: shader.hooks,
-              properties: shader.properties,
-            };
-            doc.shaderError = shader.error ?? null;
-          }
+      const j = await resourceLoader.loadJSON(rel);
+      const doc = parseMaterialDoc(j);
+      if (doc.shader) {
+        const shader = await fetchShaderDoc(doc.shader);
+        if (shader) {
+          doc.type = shader.kind;
+          doc.shaderData = {
+            base: shader.base,
+            include: shader.include,
+            hooks: shader.hooks,
+            properties: shader.properties,
+          };
+          doc.shaderError = shader.error ?? null;
         }
-        materialParams.set(rel, doc);
       }
+      materialParams.set(rel, doc);
     } catch {
       /* 缺失材质：回退默认 */
     }

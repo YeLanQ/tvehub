@@ -28,6 +28,8 @@ const DEFAULT_TANGENT_WEIGHT = 1 / 3;
 const TANGENT_WEIGHT_MIN = 0.01;
 const TANGENT_WEIGHT_MAX = 1.5;
 
+import { resourceLoader } from "./resource";
+
 function num(v, fb) {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
@@ -330,9 +332,7 @@ function applyClipAt(b, time) {
 
 /** 加载单个剪辑文本（fetch 相对路径，归档/内联产物经 assets shim 命中） */
 async function loadClip(rel) {
-  const res = await fetch(rel);
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  return parseClip(JSON.parse(await res.text()));
+  return parseClip(await resourceLoader.loadJSON(rel));
 }
 
 /** 单个绑定（组件）：播放进度 + 剪辑数据 + 预编译应用项。
