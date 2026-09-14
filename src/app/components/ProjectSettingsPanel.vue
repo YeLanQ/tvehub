@@ -31,12 +31,13 @@ const projectStore = getProjectStore();
 const assetsStore = getAssetsStore();
 const editorStore = getEditorStore();
 
-type SettingsCat = "basic" | "display" | "physics" | "tagsLayers";
+type SettingsCat = "basic" | "display" | "physics" | "resources" | "tagsLayers";
 const cat = ref<SettingsCat>("basic");
 const CATS: { id: SettingsCat; label: string }[] = [
   { id: "basic", label: "基础信息" },
   { id: "display", label: "显示与运行" },
   { id: "physics", label: "物理" },
+  { id: "resources", label: "资源配置" },
   { id: "tagsLayers", label: "标签与层" },
 ];
 
@@ -322,6 +323,35 @@ onMounted(async () => {
                 </div>
                 <p class="ps-note">世界加速度（米/秒²；地球重力约为 -9.81 沿 -Y），影响全部动力学体。</p>
               </div>
+            </section>
+
+            <!-- 资源配置 -->
+            <section v-else-if="cat === 'resources'" class="ps-section">
+              <h3 class="ps-section-title">资源配置</h3>
+              <label class="ps-field ps-physics-toggle">
+                <input
+                  id="ps-draco-enabled"
+                  v-model="draft.dracoCompressionEnabled"
+                  type="checkbox"
+                />
+                <span>启用模型 Draco 压缩</span>
+              </label>
+              <p class="ps-note">
+                开启后导出产物包含 Draco JS 解码器，用于加载 Draco 压缩的 glTF 模型。
+                关闭时解码器不随产物打包，可减小体积。手动 Draco 压缩的模型需开启此项。
+              </p>
+              <label class="ps-field ps-physics-toggle">
+                <input
+                  id="ps-texture-compress-enabled"
+                  v-model="draft.textureCompressionEnabled"
+                  type="checkbox"
+                />
+                <span>启用纹理压缩</span>
+              </label>
+              <p class="ps-note">
+                开启后导出产物包含 Basis 转码器 JS，用于加载 KTX2 压缩纹理。
+                关闭时转码器不随产物打包，可减小体积。使用 KTX2 纹理时需开启此项。
+              </p>
             </section>
 
             <!-- 标签与层 -->

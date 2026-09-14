@@ -42,7 +42,6 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/loaders/OBJLoader.js",
   "engine/runtime/loaders/SkeletonUtils.js",
   "engine/runtime/loaders/compressed.mjs",
-  "engine/runtime/loaders/draco/draco_decoder.js",
   "engine/runtime/loaders/fflate.module.js",
   "engine/runtime/loaders/meshopt_decoder.module.js",
   "engine/runtime/material.mjs",
@@ -80,4 +79,10 @@ export const WEB_PREVIEW_WEBGPU_FILES: string[] = [
   "engine/core/particleNodeMaterial.mjs",
   "engine/core/glslToTsl.mjs",
   "engine/core/nodeMaterialHooks.mjs"
+];
+export const WEB_PREVIEW_DRACO_DECODER_FILES: string[] = [
+  "engine/runtime/loaders/draco/draco_decoder.js"
+];
+export const WEB_PREVIEW_BASIS_DECODER_FILES: string[] = [
+  "engine/runtime/loaders/basis/basis_transcoder.js"
 ];

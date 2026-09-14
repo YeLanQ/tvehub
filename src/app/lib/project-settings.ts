@@ -49,6 +49,10 @@ export interface ProjectDraft {
   tags: string[];
   /** 层表（稠密 32 项，下标即层索引，空串 = 未定义；index 0 恒为内置 Default） */
   layers: LayerTable;
+  /** 模型是否启用 Draco 压缩（true 时导出产物打包 Draco JS 解码器；false 则排除，省体积） */
+  dracoCompressionEnabled: boolean;
+  /** 纹理是否启用压缩处理（true 时导出产物打包 Basis 转码器 JS；false 则排除，省体积） */
+  textureCompressionEnabled: boolean;
 }
 
 /** 常用分辨率预设（label 即「宽 × 高」，竖屏/横屏分组） */
@@ -124,6 +128,8 @@ export function defaultDraft(): ProjectDraft {
     physicsGravity: { x: 0, y: -9.81, z: 0 },
     tags: [],
     layers: parseLayerTable(undefined),
+    dracoCompressionEnabled: false,
+    textureCompressionEnabled: false,
   };
 }
 
@@ -170,6 +176,14 @@ function draftFromConfig(cfg: Record<string, unknown> | null | undefined): Proje
     })(),
     tags: parseTagList(cfg.tags),
     layers: parseLayerTable(cfg.layers),
+    dracoCompressionEnabled: (() => {
+      const r = (cfg.resources ?? {}) as { dracoCompression?: unknown };
+      return r.dracoCompression === true;
+    })(),
+    textureCompressionEnabled: (() => {
+      const r = (cfg.resources ?? {}) as { textureCompression?: unknown };
+      return r.textureCompression === true;
+    })(),
   };
 }
 
@@ -216,6 +230,10 @@ export async function saveProjectDraft(draft: ProjectDraft): Promise<void> {
     // 标签/层表保存前统一收敛（trim / 去重 / 去空；index 0 强制内置 Default）
     tags: parseTagList(draft.tags),
     layers: layerTableToJSON(parseLayerTable(draft.layers)),
+    resources: {
+      dracoCompression: draft.dracoCompressionEnabled,
+      textureCompression: draft.textureCompressionEnabled,
+    },
   };
   await api.writeText(p.currentPath, PROJECT_CONFIG_REL, JSON.stringify(next, null, 2));
   p.setRendererBackend(draft.renderer);

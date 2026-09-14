@@ -42,15 +42,26 @@ const WEBGPU_FILES = [
   "engine/core/nodeMaterialHooks.mjs",
 ];
 
-/** 导出产物排除的解码器文件：web 运行时用 JS 版 Draco（decoderType:"js"），
- *  KTX2/Basis 探测跳过（无渲染器注入）；wasm 版 Draco 与 Basis 转码器仅编辑器用，
- *  随 public/engine 静态服务，不进导出产物（wasm 二进制经文本 IPC 通道还会 UTF-8 损坏）。 */
+/** 导出产物始终排除的解码器文件：wasm 二进制经文本 IPC 通道会 UTF-8 损坏，
+ *  且 web 运行时用 JS 版 Draco（decoderType:"js"），wasm 版与 wrapper 仅编辑器用。
+ *  Basis wasm 同理——转码器 JS 单独按 textureCompressionEnabled 条件打包（见下）。 */
 const EXPORT_EXCLUDED = new Set([
   "engine/runtime/loaders/draco/draco_decoder.wasm",
   "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
-  "engine/runtime/loaders/basis/basis_transcoder.js",
   "engine/runtime/loaders/basis/basis_transcoder.wasm",
 ]);
+
+/** Draco 解码器 JS 文件：仅当项目 resources.dracoCompression === true 时随导出产物。
+ *  运行时用 decoderType:"js"，只需 draco_decoder.js；wasm 版始终排除（见上）。 */
+const DRACO_DECODER_FILES = [
+  "engine/runtime/loaders/draco/draco_decoder.js",
+];
+
+/** Basis 转码器 JS 文件：仅当项目 resources.textureCompression === true 时随导出产物。
+ *  运行时 KTX2 解码需 basis_transcoder.js（wasm 版始终排除，转码器内置 JS 回退）。 */
+const BASIS_DECODER_FILES = [
+  "engine/runtime/loaders/basis/basis_transcoder.js",
+];
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {
@@ -76,9 +87,17 @@ export function generateWebPreviewFiles() {
     .concat(listFilesRecursive("public/engine").map((f) => f.replace(/^public\//, "")));
 
   // 基础清单：web-preview 入口 + engine 运行时
-  // （物理引擎按后端分组、WebGPU 运行时按渲染后端，两者单独分组见下）
+  // （物理引擎按后端分组、WebGPU 运行时按渲染后端、Draco/Basis 解码器按资源配置，
+  //  四者单独分组见下）
+  const conditionalDecoders = new Set([...DRACO_DECODER_FILES, ...BASIS_DECODER_FILES]);
   const base = entries
-    .filter((f) => !f.startsWith(PHYSICS_PREFIX) && !WEBGPU_FILES.includes(f) && !EXPORT_EXCLUDED.has(f))
+    .filter(
+      (f) =>
+        !f.startsWith(PHYSICS_PREFIX) &&
+        !WEBGPU_FILES.includes(f) &&
+        !EXPORT_EXCLUDED.has(f) &&
+        !conditionalDecoders.has(f),
+    )
     .sort();
 
   const byBackend = {};
@@ -99,7 +118,9 @@ export function generateWebPreviewFiles() {
     `// 时重建；请勿手动编辑）\n` +
     `export const WEB_PREVIEW_RUNTIME_FILES: string[] = ${JSON.stringify(base, null, 2)};\n` +
     `export const WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND: Record<string, string[]> = ${JSON.stringify(byBackend, null, 2)};\n` +
-    `export const WEB_PREVIEW_WEBGPU_FILES: string[] = ${JSON.stringify(webgpu, null, 2)};\n`;
+    `export const WEB_PREVIEW_WEBGPU_FILES: string[] = ${JSON.stringify(webgpu, null, 2)};\n` +
+    `export const WEB_PREVIEW_DRACO_DECODER_FILES: string[] = ${JSON.stringify(DRACO_DECODER_FILES, null, 2)};\n` +
+    `export const WEB_PREVIEW_BASIS_DECODER_FILES: string[] = ${JSON.stringify(BASIS_DECODER_FILES, null, 2)};\n`;
   const target = path.join(ROOT, RUNTIME_FILES_PATH);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, content);

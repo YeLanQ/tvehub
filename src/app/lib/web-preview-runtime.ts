@@ -10,9 +10,17 @@ import {
   WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND,
   WEB_PREVIEW_RUNTIME_FILES,
   WEB_PREVIEW_WEBGPU_FILES,
+  WEB_PREVIEW_DRACO_DECODER_FILES,
+  WEB_PREVIEW_BASIS_DECODER_FILES,
 } from "../../generated/web-preview-files";
 
-export { WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND, WEB_PREVIEW_RUNTIME_FILES, WEB_PREVIEW_WEBGPU_FILES };
+export {
+  WEB_PREVIEW_PHYSICS_FILES_BY_BACKEND,
+  WEB_PREVIEW_RUNTIME_FILES,
+  WEB_PREVIEW_WEBGPU_FILES,
+  WEB_PREVIEW_DRACO_DECODER_FILES,
+  WEB_PREVIEW_BASIS_DECODER_FILES,
+};
 
 export interface WebPreviewRuntimeOptions {
   /** 场景启用了物理 → 物理运行时随导出（缺省 false） */
@@ -21,6 +29,10 @@ export interface WebPreviewRuntimeOptions {
   physicsBackend?: string;
   /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出（缺省 false） */
   includeWebgpu?: boolean;
+  /** 项目启用 Draco 压缩 → Draco JS 解码器随导出（缺省 false） */
+  includeDracoDecoder?: boolean;
+  /** 项目启用纹理压缩 → Basis 转码器 JS 随导出（缺省 false） */
+  includeBasisDecoder?: boolean;
 }
 
 /** 运行时单文件文本缓存（key = 产物内相对路径）。
@@ -59,6 +71,8 @@ export async function fetchWebPreviewRuntimeTexts(
         [])
       : []),
     ...(opts?.includeWebgpu ? WEB_PREVIEW_WEBGPU_FILES : []),
+    ...(opts?.includeDracoDecoder ? WEB_PREVIEW_DRACO_DECODER_FILES : []),
+    ...(opts?.includeBasisDecoder ? WEB_PREVIEW_BASIS_DECODER_FILES : []),
   ];
   const texts = await Promise.all(list.map((rel) => fetchRuntimeText(rel)));
   const files: Record<string, string> = {};
@@ -113,6 +127,40 @@ function readPhysicsConfig(configText: string | null | undefined): {
     return { enabled, backend };
   } catch {
     return { enabled: false, backend: null };
+  }
+}
+
+/**
+ * 解析项目配置是否启用 Draco 压缩（resources.dracoCompression === true）。
+ * 文本读取失败/解析失败一律视为未启用（导出不打包 Draco 解码器）。
+ */
+export function configUsesDracoCompression(configText: string | null | undefined): boolean {
+  return readResourcesConfig(configText).dracoCompression;
+}
+
+/**
+ * 解析项目配置是否启用纹理压缩（resources.textureCompression === true）。
+ * 文本读取失败/解析失败一律视为未启用（导出不打包 Basis 转码器）。
+ */
+export function configUsesTextureCompression(configText: string | null | undefined): boolean {
+  return readResourcesConfig(configText).textureCompression;
+}
+
+function readResourcesConfig(configText: string | null | undefined): {
+  dracoCompression: boolean;
+  textureCompression: boolean;
+} {
+  if (!configText) return { dracoCompression: false, textureCompression: false };
+  try {
+    const cfg = JSON.parse(configText) as {
+      resources?: { dracoCompression?: unknown; textureCompression?: unknown };
+    };
+    return {
+      dracoCompression: cfg.resources?.dracoCompression === true,
+      textureCompression: cfg.resources?.textureCompression === true,
+    };
+  } catch {
+    return { dracoCompression: false, textureCompression: false };
   }
 }
 
