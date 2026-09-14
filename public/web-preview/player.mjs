@@ -25,6 +25,7 @@ import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
 import { ensureHeightFogChunk } from "../engine/runtime/heightFog.mjs";
 import { createPhysicsWorker as createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
+import { optimizeScene } from "../engine/runtime/batching.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createUI } from "../engine/runtime/ui.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
@@ -263,6 +264,13 @@ async function main() {
     materialParams,
     models,
     particleMaterial: particleMaterialFactory,
+  });
+
+  // 批处理优化：InstancedMesh + 静态几何合并（减少 DrawCall）
+  const perfSettings = sceneData.settings && sceneData.settings.performance;
+  optimizeScene(scene, meshes, clips, {
+    instancing: perfSettings ? perfSettings.instancing !== false : true,
+    batching: perfSettings ? perfSettings.batching !== false : true,
   });
 
   // 物理 Worker URL：多文件模式下用 import.meta.url 解析 Worker 路径，物理模拟

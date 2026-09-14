@@ -19,6 +19,7 @@ import { buildComponentLight } from "../core/lights";
 import { createParticleEmitter } from "../core/particles";
 import { createMesh } from "./mesh";
 import { createTerrain } from "./terrain";
+import { wrapLOD } from "./lod";
 import { buildUICanvas, buildUIImage, buildUIText, buildUIButton, buildUILayout } from "./ui";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
@@ -116,7 +117,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
   function buildNode(json, parent) {
     const type = json.type;
     const tr = json.transform || {};
-    const obj = buildOwn(type, json);
+    let obj = buildOwn(type, json);
+    if (type === "meshNode") obj = wrapLOD(json, obj, ctx);
     obj.name = json.name ?? type;
     // 节点身份标记（tve SDK 实体寻址用；内部子对象不带）
     obj.userData.nodeId = typeof json.id === "string" ? json.id : "";

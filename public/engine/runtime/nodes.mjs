@@ -5,6 +5,7 @@ import { buildComponentLight } from "../core/lights.mjs";
 import { createParticleEmitter } from "../core/particles.mjs";
 import { createMesh } from "./mesh.mjs";
 import { createTerrain } from "./terrain.mjs";
+import { wrapLOD } from "./lod.mjs";
 import { buildUILayout, buildUIButton, buildUIText, buildUIImage, buildUICanvas } from "./ui.mjs";
 function parseLayerIndex(v) {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0;
@@ -74,7 +75,8 @@ function buildSceneTree(rootJson, scene, ctx) {
   function buildNode(json, parent) {
     const type = json.type;
     const tr = json.transform || {};
-    const obj = buildOwn(type, json);
+    let obj = buildOwn(type, json);
+    if (type === "meshNode") obj = wrapLOD(json, obj);
     obj.name = json.name ?? type;
     obj.userData.nodeId = typeof json.id === "string" ? json.id : "";
     obj.userData.nodeKind = typeof type === "string" ? type : "";
