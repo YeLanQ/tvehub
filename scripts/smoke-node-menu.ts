@@ -45,6 +45,8 @@ function expectedTypeKey(kind: string, subtype?: string): string | null {
       return "skyboxNode";
     case "fog":
       return "fogNode";
+    case "nav":
+      return subtype === "agent" ? "navAgentNode" : "navAreaNode";
     case "audio":
       return "audioNode";
     case "particle":
@@ -126,6 +128,8 @@ console.log("[4] 工厂真能造出对应类型（菜单 → 命令 → 节点�
     { type: "fog:linear", make: (a) => factory.createFog(a?.subtype as FogKind) },
     { type: "fog:exp2", make: (a) => factory.createFog(a?.subtype as FogKind) },
     { type: "fog:height", make: (a) => factory.createFog(a?.subtype as FogKind) },
+    { type: "nav:area", make: () => factory.createNavArea() },
+    { type: "nav:agent", make: () => factory.createNavAgent() },
     { type: "audio", make: () => factory.createAudio() },
     { type: "particle", make: () => factory.createParticleSystem() },
     { type: "ui:canvas", make: () => factory.createUICanvas() },

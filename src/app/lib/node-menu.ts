@@ -85,6 +85,14 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
       { label: "Height Fog", type: "fog:height" },
     ],
   });
+  items.push({ separator: true });
+  items.push({
+    label: "导航",
+    children: [
+      { label: "Nav Area", type: "nav:area" },
+      { label: "Nav Agent", type: "nav:agent" },
+    ],
+  });
   // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点
   if (src.scripts.length > 0) {
     items.push({ separator: true });
@@ -120,6 +128,9 @@ export function addNodeArgs(
   } else if (type.startsWith("fog:")) {
     args.kind = "fog";
     args.subtype = type.slice("fog:".length);
+  } else if (type.startsWith("nav:")) {
+    args.kind = "nav";
+    args.subtype = type.slice("nav:".length);
   } else if (type.startsWith("script:")) {
     args.kind = "script";
     args.subtype = type.slice("script:".length);

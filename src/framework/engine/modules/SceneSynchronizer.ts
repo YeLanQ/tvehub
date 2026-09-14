@@ -5,6 +5,8 @@ import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import {
   AudioNode,
   MeshNode,
+  NavAgentNode,
+  NavAreaNode,
   LightNode,
   PointLightNode,
   DirectionalLightNode,
@@ -39,6 +41,7 @@ import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
 import { buildTerrain, splitTerrainGeometry, terrainSettingsSig, type TerrainMaterialSettings, type SplatmapData } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
+import { buildNavOverlayGeometry, type NavBakeResult } from "../../navigation";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
 import {
   DEFAULT_MATERIAL_TYPE,
@@ -96,6 +99,10 @@ const AUDIO_ICON_COLOR = 0x7ed49a;
 const PARTICLE_ICON_NAME = "__particleIcon";
 /** 地形渲染网格子对象名（节点 Group 下；设置变化按签名重建） */
 const TERRAIN_MESH_NAME = "__terrainMesh";
+/** 导航区域可视化叠层子对象名（烘焙产物渲染；设置/烘焙签名变化重建） */
+const NAV_MESH_NAME = "__navMesh";
+/** 导航代理图标子对象名（编辑器辅助物） */
+const NAV_AGENT_ICON_NAME = "__navAgentIcon";
 
 /** 地形材质设置签名（null = 未绑定，用默认材质） */
 function terrainMaterialSig(ms: TerrainMaterialSettings | null): string {
@@ -452,6 +459,8 @@ export class SceneSynchronizer {
     else if (node instanceof AudioNode) this.refreshAudio(node, obj);
     else if (node instanceof ParticleSystemNode) this.refreshParticleSystem(node, obj);
     else if (node instanceof TerrainNode) this.refreshTerrain(node, obj);
+    else if (node instanceof NavAreaNode) this.refreshNavArea(node, obj);
+    else if (node instanceof NavAgentNode) this.refreshNavAgent(node, obj);
     else if (node instanceof UICanvasNode) this.refreshUICanvas(node, obj);
     else if (UI_IS_WIDGET_KINDS.has(node.typeKey)) this.refreshUIWidget(node, obj as THREE.Mesh);
     else if (node instanceof UILayoutNode) this.refreshUILayout(node, obj);
@@ -483,6 +492,9 @@ export class SceneSynchronizer {
         c.layers.set(layer);
       } else if (c.name === TERRAIN_MESH_NAME) {
         // 地形 chunk 网格是节点的渲染内容：跟随节点层
+        c.traverse((d) => d.layers.set(layer));
+      } else if (c.name === NAV_MESH_NAME) {
+        // 导航可视化叠层是节点的渲染内容：跟随节点层
         c.traverse((d) => d.layers.set(layer));
       } else if (c.name === UI_LABEL_CHILD_NAME) {
         // UI 按钮标签网格是节点的渲染内容：跟随节点层（refreshUIWidget 每次刷新重置位）
@@ -1243,6 +1255,95 @@ export class SceneSynchronizer {
       terrainGroup.userData.terrainSize = build.size;
       this.shadowCamerasDirty = true;
     }
+  }
+
+  /**
+   * 导航区域节点刷新：烘焙产物（可行走网格 + SDF 距离场）→ 顶点色叠层网格
+   * 挂 __navMesh 子对象。烘焙数据由导航系统写节点对象 userData（navBake/
+   * navBakeSig），显示模式随设置变化一起参与签名——设置或重烘焙任一变化即
+   * 重建叠层几何（纯查表着色，无实时碰撞计算）；display = off 时移除叠层。
+   * 叠层顶点是世界系坐标（烘焙产物即世界系）：这里用节点变换的逆补偿，使
+   * 叠层不随导航区域节点位姿漂移（场景级节点语义，与雾/天空盒一致）。
+   */
+  private refreshNavArea(node: NavAreaNode, obj: THREE.Object3D): void {
+    const bake = obj.userData.navBake as NavBakeResult | undefined;
+    const bakeSig = typeof obj.userData.navBakeSig === "string" ? obj.userData.navBakeSig : "";
+    const sig = `${bakeSig}|${node.settings.display}`;
+    let overlay = obj.children.find((c) => c.name === NAV_MESH_NAME) as THREE.Mesh | null;
+
+    if (!bake || node.settings.display === "off") {
+      if (overlay) {
+        overlay.geometry.dispose();
+        (overlay.material as THREE.Material).dispose();
+        obj.remove(overlay);
+      }
+      return;
+    }
+    if (overlay && overlay.userData.navSig === sig) {
+      this.compensateNavOverlay(node, overlay);
+      return;
+    }
+
+    const geo = buildNavOverlayGeometry(bake, node.settings.display);
+    if (!geo) return;
+    if (overlay) {
+      overlay.geometry.dispose();
+      (overlay.material as THREE.Material).dispose();
+    } else {
+      overlay = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      overlay.name = NAV_MESH_NAME;
+      obj.add(overlay);
+      const layer = clampLayerIndex(node.layer);
+      overlay.traverse((d) => d.layers.set(layer));
+    }
+    overlay.geometry = geo;
+    const mat = overlay.material as THREE.MeshBasicMaterial;
+    mat.vertexColors = true;
+    mat.transparent = true;
+    mat.opacity = 0.72;
+    mat.depthWrite = false;
+    mat.side = THREE.DoubleSide;
+    mat.needsUpdate = true;
+    overlay.userData.navSig = sig;
+    overlay.renderOrder = 5;
+    this.compensateNavOverlay(node, overlay);
+  }
+
+  /**
+   * 叠层顶点是世界系坐标：给叠层子对象施加节点变换的逆，使叠层不随导航区域
+   * 节点位姿漂移（场景级节点语义；父级链上另有变换时不适用——导航区域应在
+   * 场景根下）。
+   */
+  private compensateNavOverlay(node: NavAreaNode, overlay: THREE.Mesh): void {
+    const t = node.transform;
+    overlay.position.set(-t.position.x, -t.position.y, -t.position.z);
+    const rot = degToRad(t.rotation);
+    overlay.quaternion
+      .setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, "XYZ"))
+      .invert();
+    overlay.scale.set(
+      1 / (Math.abs(t.scale.x) < 1e-6 ? 1 : t.scale.x),
+      1 / (Math.abs(t.scale.y) < 1e-6 ? 1 : t.scale.y),
+      1 / (Math.abs(t.scale.z) < 1e-6 ? 1 : t.scale.z),
+    );
+  }
+
+  /** 按节点数据强制重刷新（导航系统重烘焙后回调入口） */
+  refreshNodeFor(node: Node): void {
+    this.refreshNode(node);
+  }
+
+  /**
+   * 导航代理节点刷新：定位图标精灵（编辑器辅助物；移动由导航系统驱动渲染对象）。
+   */
+  private refreshNavAgent(_node: NavAgentNode, obj: THREE.Object3D): void {
+    let icon = obj.children.find((c) => c.name === NAV_AGENT_ICON_NAME) as THREE.Sprite | null;
+    if (!icon) {
+      icon = createIconSprite("nav-agent", 0x58a6ff, 1.0);
+      icon.name = NAV_AGENT_ICON_NAME;
+      obj.add(icon);
+    }
+    (icon.material as THREE.SpriteMaterial).color.setHex(0x58a6ff);
   }
 
   /** 异步加载 splatmap 纹理像素数据并缓存，完成后重新刷新地形 */

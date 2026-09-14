@@ -3,6 +3,7 @@ import type { Node } from "../../prototype/Node";
 import type { GraphLike, SceneChange } from "../../scene/SceneClient";
 import { ColliderNodeHelper } from "./helpers/ColliderNodeHelper";
 import { LightNodeHelper } from "./helpers/LightNodeHelper";
+import { NavAgentHelper } from "./helpers/NavAgentHelper";
 import { CameraNodeHelper } from "./helpers/CameraNodeHelper";
 import { createNodeHelper } from "./helpers/createNodeHelper";
 import type { HelperContext, NodeHelper } from "./helpers/types";
@@ -24,7 +25,8 @@ function isSelectionGatedHelper(helper: NodeHelper): boolean {
   return (
     helper instanceof ColliderNodeHelper ||
     helper instanceof LightNodeHelper ||
-    helper instanceof CameraNodeHelper
+    helper instanceof CameraNodeHelper ||
+    helper instanceof NavAgentHelper
   );
 }
 

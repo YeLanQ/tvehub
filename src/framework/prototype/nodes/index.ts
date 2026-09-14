@@ -9,6 +9,8 @@ export { SkyboxNode, type SkyboxNodeInit, type SkyboxKind, type SkySunDisk } fro
 export { AudioNode, type AudioNodeInit } from "./AudioNode";
 export { ParticleSystemNode, type ParticleSystemNodeInit } from "./ParticleSystemNode";
 export { TerrainNode, type TerrainNodeInit } from "./TerrainNode";
+export { NavAreaNode, type NavAreaNodeInit } from "./NavAreaNode";
+export { NavAgentNode, type NavAgentNodeInit } from "./NavAgentNode";
 export { FogNode, type FogNodeInit, type IFogNode } from "./FogNode";
 export {
   UICanvasNode,

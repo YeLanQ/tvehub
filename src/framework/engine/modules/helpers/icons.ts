@@ -100,6 +100,18 @@ export const FOG_ICON_PATHS: string[] = [
   "M4.5 16.5h11.5",
 ];
 
+/** 导航区域：网格叠层（可行走网格/SDF 距离场烘焙语义） */
+export const NAV_AREA_ICON_PATHS: string[] = [
+  "M4 4h16v16H4z",
+  "M4 10.7h16M4 17.3h16",
+  "M10.7 4v16M17.3 4v16",
+];
+
+/** 导航代理：定位箭头（寻路移动体语义） */
+export const NAV_AGENT_ICON_PATHS: string[] = [
+  "M12 2.5l7 18-7-4.2-7 4.2z",
+];
+
 /** UI 画布：层叠矩形画框（Canvas-Widget 的 Canvas 语义） */
 export const UI_CANVAS_ICON_PATHS: string[] = [
   "M3 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",

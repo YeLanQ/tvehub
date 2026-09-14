@@ -47,7 +47,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
   run: async (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
@@ -105,6 +105,15 @@ registerCommand({
       case "particlesystemnode":
         node = engine().addParticleSystem(parentId);
         break;
+      case "nav":
+      case "navarea":
+      case "navagent": {
+        // nav:<area|agent>（裸 "nav" = 区域）；导航区域覆盖范围自动取所采样地形
+        const navKind = kind === "nav" ? (subtype ?? "area") : kind === "navarea" ? "area" : "agent";
+        if (navKind === "agent") node = engine().addNavAgent(parentId);
+        else node = engine().addNavArea(parentId);
+        break;
+      }
       case "terrain":
       case "terrainnode": {
         // 可选 path：直接绑定 .terrain 资产（资产面板「添加到场景」/devtools），
@@ -182,7 +191,7 @@ registerCommand({
       }
       default:
         throw new Error(
-          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/fog/audio/particle/terrain/script/model）`,
+          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/script/model）`,
         );
     }
     // 显式命名：仅在提供了非空 name 时重命名（未提供保持引擎默认名，与历史 UI 一致）

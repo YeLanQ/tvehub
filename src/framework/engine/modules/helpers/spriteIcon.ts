@@ -9,6 +9,8 @@ import {
   AUDIO_ICON_PATHS,
   PARTICLE_ICON_PATHS,
   TERRAIN_ICON_PATHS,
+  NAV_AREA_ICON_PATHS,
+  NAV_AGENT_ICON_PATHS,
 } from "./icons";
 
 export type SpriteIconKind =
@@ -19,7 +21,9 @@ export type SpriteIconKind =
   | "light-spot"
   | "audio"
   | "particle"
-  | "terrain";
+  | "terrain"
+  | "nav-area"
+  | "nav-agent";
 
 const TEXTURE_SIZE = 128;
 
@@ -45,6 +49,10 @@ function iconPaths(kind: SpriteIconKind): string[] {
       return PARTICLE_ICON_PATHS;
     case "terrain":
       return TERRAIN_ICON_PATHS;
+    case "nav-area":
+      return NAV_AREA_ICON_PATHS;
+    case "nav-agent":
+      return NAV_AGENT_ICON_PATHS;
   }
 }
 

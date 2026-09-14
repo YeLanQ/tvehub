@@ -19,6 +19,8 @@ import {
   FogNode,
   LightNode,
   MeshNode,
+  NavAgentNode,
+  NavAreaNode,
   ParticleSystemNode,
   SkyboxNode,
   TerrainNode,
@@ -70,7 +72,9 @@ import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
 import { AudioSystem, isAudioAssetRel } from "../audio";
 import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
-import { PhysicsSystem } from "../physics";
+import { PhysicsSystem, parseRigidBodySettings } from "../physics";
+import { isRigidBodyComponent } from "../prototype/Node";
+import { NavSystem, type NavHeightField, type NavObstacle } from "../navigation";
 import { UISystem, uiParentRectInOwnSpace } from "./modules/ui";
 import {
   uiAnchorFieldsForRect,
@@ -97,6 +101,8 @@ const SCRIPT_NODE_BASE: Record<
   audioNode: (e, p) => e.addAudio(p),
   particleSystemNode: (e, p) => e.addParticleSystem(p),
   terrainNode: (e, p) => e.addTerrain(p),
+  navAreaNode: (e, p) => e.addNavArea(p),
+  navAgentNode: (e, p) => e.addNavAgent(p),
   fogNode: (e, p) => e.addFog("linear", p),
   uiCanvasNode: (e, p) => e.addUICanvas(p),
   uiImageNode: (e, p) => e.addUIImage(p),
@@ -157,6 +163,8 @@ export class EditorEngine {
   readonly physics = new PhysicsSystem();
   /** 粒子系统（粒子节点的 CPU 模拟 + Points 渲染；渲染循环推进） */
   readonly particles = new ParticleSystem();
+  /** 导航系统（导航区域烘焙：可行走网格 + SDF 距离场；代理寻路移动） */
+  readonly nav = new NavSystem();
   /** UI 系统（Canvas-Widget 相机叠加；渲染循环把画布根贴合活动相机并合成渲染序） */
   private readonly uiSystem = new UISystem();
   /** 帧间隔计时器（渲染回调里取帧间隔；THREE.Clock 已在 r183 弃用 → Timer） */
@@ -322,6 +330,18 @@ export class EditorEngine {
     });
     // 物理运行时变化（绑定/世界就绪/模拟启停）→ 广播给面板与工具栏刷新
     this.physics.onChange((nodeId) => this.events.emit("physics:changed", { nodeId }));
+    // 导航系统：烘焙输入来自场景（地形高度场 + 静态碰撞体投影）；烘焙产物
+    // 写节点对象 userData 后回调同步器刷新可视化叠层
+    this.nav.providers = {
+      boundsFor: (area, obj) => this.navTerrainOf(area, obj)?.bounds ?? null,
+      heightFieldFor: (area, obj) => this.navTerrainOf(area, obj)?.field ?? null,
+      obstaclesFor: (area, obj) =>
+        this.collectNavObstacles(this.navTerrainOf(area, obj)?.nodeId ?? ""),
+    };
+    this.nav.onBakeUpdated = (nodeId) => {
+      const n = this.graph.get(nodeId);
+      if (n) this.synchronizer.refreshNodeFor(n);
+    };
     // 粒子运行时变化（播放控制）→ 广播给检查器刷新状态文案
     this.particles.onChange((nodeId) => this.events.emit("particles:changed", { nodeId }));
     // 粒子贴图走与材质贴图同一套 rel → asset:// 加载缓存（颜色贴图 sRGB）
@@ -532,6 +552,8 @@ export class EditorEngine {
       this.physics.update(dt);
       // 粒子模拟推进（发射/积分/回收并写渲染缓冲）；world 空间粒子按节点世界矩阵回本地
       this.particles.update(dt);
+      // 导航代理推进（沿烘焙路径移动，SDF 查表滑移避障；区域改设置即重烘焙）
+      this.nav.update(dt);
       // 着色器 Hook 时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
       // GL 侧走材质 userData 的 uniform 表，GPU 侧走节点 uniform，两条路都要推
       this.shaderTime += dt;
@@ -825,6 +847,27 @@ export class EditorEngine {
   addCamera(parentId?: string): CameraNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createCamera({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /**
+   * 添加导航区域节点（场景级烘焙载体：覆盖范围自动取所采样地形，
+   * 入图即按场景内容烘焙可行走网格 + SDF 距离场）。
+   */
+  addNavArea(parentId?: string): NavAreaNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createNavArea({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加导航代理节点（寻路移动体；目标点经检查器设置或脚本下发） */
+  addNavAgent(parentId?: string): NavAgentNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createNavAgent({ parentId: parent?.id ?? null });
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -1489,6 +1532,18 @@ export class EditorEngine {
         if (obj) this.particles.syncNode(n, obj);
       }
     }
+    // 导航节点：区域入图/属性变更 → 按签名重烘焙（产物写 userData 后回调刷新
+    // 可视化叠层）；代理入图/属性变更 → 重绑；任一移除 → 解绑
+    if (c.kind === "remove") {
+      this.nav.unbind(c.nodeId);
+    } else if (c.kind === "add" || c.kind === "properties" || c.kind === "replace") {
+      const n = this.graph.get(c.nodeId);
+      const obj = this.synchronizer.getObjectMap().get(c.nodeId);
+      if (n && obj) {
+        if (n instanceof NavAreaNode) this.nav.syncArea(n, obj);
+        else if (n instanceof NavAgentNode) this.nav.syncAgent(n, obj);
+      }
+    }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -1563,6 +1618,123 @@ export class EditorEngine {
     if (!obj) return;
     if (hasPhysics) this.physics.syncNode(node, obj);
     else this.physics.unbind(node.id);
+  }
+
+  // ===================== 导航烘焙输入（NavSystem providers） =====================
+
+  /**
+   * 解析导航区域采样的地形：settings.terrainId 指定（空 = 场景第一块地形）。
+   * 高度场从地形网格的 userData 缓存读取（SceneSynchronizer.refreshTerrain 写入，
+   * 与物理 heightfield 碰撞体同通道）；原点取地形对象世界位置（XZ 轴对齐假设与
+   * 物理 heightfield 一致）。
+   */
+  private navTerrainOf(
+    area: NavAreaNode,
+    areaObj: THREE.Object3D,
+  ): { field: NavHeightField & { sig: string }; bounds: { minX: number; maxX: number; minZ: number; maxZ: number }; nodeId: string } | null {
+    void areaObj;
+    let terrainNode: TerrainNode | null = null;
+    if (area.settings.terrainId) {
+      const n = this.graph.get(area.settings.terrainId);
+      terrainNode = n instanceof TerrainNode ? n : null;
+    } else {
+      for (const n of this.graph.all()) {
+        if (n instanceof TerrainNode && n.visible && n.active) {
+          terrainNode = n;
+          break;
+        }
+      }
+    }
+    if (!terrainNode) return null;
+    const obj = this.synchronizer.getObjectMap().get(terrainNode.id);
+    if (!obj) return null;
+
+    // 从地形子树读取高度场缓存（chunk 网格 userData）
+    let heights: Float32Array | null = null;
+    let gridN = 0;
+    let size = 0;
+    let sig = "";
+    obj.traverse((child) => {
+      if (heights) return;
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const ud = mesh.userData as {
+        terrainHeights?: unknown;
+        terrainGridSize?: unknown;
+        terrainSize?: unknown;
+        terrainSig?: unknown;
+      };
+      if (
+        ud.terrainHeights instanceof Float32Array &&
+        typeof ud.terrainGridSize === "number" &&
+        typeof ud.terrainSize === "number"
+      ) {
+        heights = ud.terrainHeights;
+        gridN = ud.terrainGridSize;
+        size = ud.terrainSize;
+        sig = typeof ud.terrainSig === "string" ? ud.terrainSig : String(gridN);
+      }
+    });
+    if (!heights) return null;
+
+    obj.updateMatrixWorld(true);
+    const origin = obj.getWorldPosition(new THREE.Vector3());
+    const half = size / 2;
+    return {
+      field: {
+        heights,
+        gridN,
+        size,
+        originX: origin.x,
+        originZ: origin.z,
+        originY: origin.y,
+        sig,
+      },
+      bounds: {
+        minX: origin.x - half,
+        maxX: origin.x + half,
+        minZ: origin.z - half,
+        maxZ: origin.z + half,
+      },
+      nodeId: terrainNode.id,
+    };
+  }
+
+  /**
+   * 收集静态障碍（世界系 AABB）：带启用碰撞体组件、且不挂动态/运动学刚体的
+   * 节点（静态体 = 隐式静态或 mode=static 的刚体）；地形子树排除（高度场是
+   * 可行走面，不是障碍），导航节点自身无几何自然为空。烘焙期一次性收集，
+   * 运行期碰撞全部查 SDF 表。
+   */
+  private collectNavObstacles(excludeNodeId: string): NavObstacle[] {
+    const out: NavObstacle[] = [];
+    const box = new THREE.Box3();
+    for (const node of this.graph.all()) {
+      if (!node.visible || !node.active) continue;
+      if (node.id === excludeNodeId || node instanceof NavAreaNode || node instanceof NavAgentNode) {
+        continue;
+      }
+      const hasCollider = node.components.some((c) => c.type === "collider" && c.enabled);
+      if (!hasCollider) continue;
+      const rbComp = node.components.find(isRigidBodyComponent);
+      if (rbComp && rbComp.enabled && parseRigidBodySettings(rbComp.rigidBody).mode !== "static") {
+        continue;
+      }
+      const obj = this.synchronizer.getObjectMap().get(node.id);
+      if (!obj) continue;
+      box.setFromObject(obj);
+      if (!box.isEmpty()) {
+        out.push({
+          minX: box.min.x,
+          maxX: box.max.x,
+          minZ: box.min.z,
+          maxZ: box.max.z,
+          minY: box.min.y,
+          maxY: box.max.y,
+        });
+      }
+    }
+    return out;
   }
 
   /**

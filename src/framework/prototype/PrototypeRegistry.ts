@@ -6,6 +6,8 @@ import {
   FogNode,
   LightNode,
   MeshNode,
+  NavAgentNode,
+  NavAreaNode,
   ParticleSystemNode,
   PointLightNode,
   SkyboxNode,
@@ -82,6 +84,9 @@ export function createDefaultRegistry(): PrototypeRegistry {
   registry.register(ParticleSystemNode.kType, () => new ParticleSystemNode());
   // 程序化地形（高度场 + 顶点色烘焙）
   registry.register(TerrainNode.kType, () => new TerrainNode());
+  // 导航（层级「导航」分组）：区域 = 烘焙载体；代理 = 寻路移动体
+  registry.register(NavAreaNode.kType, () => new NavAreaNode());
+  registry.register(NavAgentNode.kType, () => new NavAgentNode());
   // 场景环境雾（线性/指数；场景级节点，与天空盒同语义）
   registry.register(FogNode.kType, () => new FogNode());
   // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器

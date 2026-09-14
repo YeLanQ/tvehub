@@ -10,6 +10,8 @@ export { SkyboxNode, type SkyboxKind, type SkySunDisk, skyMaterialForKind } from
 export { AudioNode } from "../nodes/AudioNode";
 export { ParticleSystemNode } from "../nodes/ParticleSystemNode";
 export { TerrainNode, type TerrainNodeInit } from "../nodes/TerrainNode";
+export { NavAreaNode, type NavAreaNodeInit } from "../nodes/NavAreaNode";
+export { NavAgentNode, type NavAgentNodeInit } from "../nodes/NavAgentNode";
 export { FogNode, type FogKind } from "../nodes/FogNode";
 export { UICanvasNode, type UIRenderMode, type IUICanvasNode } from "../nodes/UICanvasNode";
 export { UIWidgetNode, type UIWidgetNodeInit } from "../nodes/UIWidgetNode";

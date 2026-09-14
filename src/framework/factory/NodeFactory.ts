@@ -5,6 +5,8 @@ import {
   FogNode,
   LightNode,
   MeshNode,
+  NavAgentNode,
+  NavAreaNode,
   ParticleSystemNode,
   SkyboxNode,
   TerrainNode,
@@ -33,6 +35,8 @@ export type EditorNodeType =
   | "audioNode"
   | "particleSystemNode"
   | "terrainNode"
+  | "navAreaNode"
+  | "navAgentNode"
   | "fogNode"
   | "uiCanvasNode"
   | "uiImageNode"
@@ -163,6 +167,22 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建导航区域节点（场景级烘焙载体；覆盖范围自动取所采样地形） */
+  createNavArea(opts: CreateOptions = {}): NavAreaNode {
+    const node = this.registry.create("navAreaNode") as NavAreaNode;
+    node.name = opts.name ?? "Nav Area";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /** 创建导航代理节点（寻路移动体；路径经导航系统按需计算） */
+  createNavAgent(opts: CreateOptions = {}): NavAgentNode {
+    const node = this.registry.create("navAgentNode") as NavAgentNode;
+    node.name = opts.name ?? "Nav Agent";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   /** 按雾类型创建雾节点（线性 Fog / 指数 FogExp2 / 高度雾；场景环境级，参数经检查器调整） */
   createFog(kind: FogKind, opts: CreateOptions = {}): FogNode {
     const node = this.registry.create("fogNode") as FogNode;
@@ -240,10 +260,14 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
             ? ParticleSystemNode
             : K extends "terrainNode"
               ? TerrainNode
-              : K extends "fogNode"
-                ? FogNode
-                : K extends "uiCanvasNode"
-              ? UICanvasNode
+              : K extends "navAreaNode"
+                ? NavAreaNode
+                : K extends "navAgentNode"
+                  ? NavAgentNode
+                  : K extends "fogNode"
+                    ? FogNode
+                    : K extends "uiCanvasNode"
+                  ? UICanvasNode
               : K extends "uiImageNode"
                 ? UIImageNode
                 : K extends "uiTextNode"
@@ -266,6 +290,8 @@ export type {
   AudioNode,
   ParticleSystemNode,
   TerrainNode,
+  NavAreaNode,
+  NavAgentNode,
   FogNode,
   UICanvasNode,
   UIImageNode,
