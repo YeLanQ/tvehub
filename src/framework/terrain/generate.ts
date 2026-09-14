@@ -190,8 +190,10 @@ export interface TerrainBuild {
   geometry: THREE.BufferGeometry;
   /** 表面配色纹理（128×128 RGBA，世界坐标驱动；MeshStandardMaterial.map 消费） */
   colorTexture: THREE.DataTexture;
-  /** 烘焙后的高度网格（行主序，N×N） */
+  /** 烘焙后的高度网格（行主序，N×N；= baseHeights + sculpt） */
   heights: Float32Array;
+  /** 程序化基准高度（不含雕刻；sculpt 增量提交时复用跳过 bakeTerrainHeights） */
+  baseHeights: Float32Array;
   /** 网格边长（N = segments + 1） */
   gridSize: number;
   size: number;
@@ -387,6 +389,8 @@ export function buildTerrain(
   settings: TerrainSettings,
   splatmap: SplatmapData | null = null,
   sculpt: Float32Array | null = null,
+  /** 缓存的基准高度（不含雕刻；sculpt 增量提交时传入跳过程序化生成） */
+  baseHeights?: Float32Array,
 ): TerrainBuild {
   const p = cloneTerrainSettings(settings);
   const n = p.segments + 1;
@@ -395,8 +399,10 @@ export function buildTerrain(
   const coord = new Array<number>(n);
   for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
 
-  // 烘焙程序化高度网格（保留供采样；含热侵蚀）
-  const { heights } = bakeTerrainHeights(p);
+  // 烘焙程序化高度网格（保留供采样；含热侵蚀）。sculpt 增量提交时复用缓存基准，
+  // 跳过最重的分形 + 热侵蚀生成（会话期间 base 不变）。
+  const base = baseHeights && baseHeights.length === n * n ? baseHeights : bakeTerrainHeights(p).heights;
+  const heights = new Float32Array(base);
 
   // 雕刻偏移层（TerrainNode.sculpt；网格规模一致才叠加）
   if (sculpt && sculpt.length === heights.length) {
@@ -476,7 +482,7 @@ export function buildTerrain(
   // —— 颜色纹理烘焙（128×128，世界坐标驱动；替代顶点色，分辨率独立于网格）——
   const colorTexture = bakeColorTexture(heights, n, p, min, max, splatmap);
 
-  return { geometry, colorTexture, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
+  return { geometry, colorTexture, heights, baseHeights: base, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
 }
 
 /** 双线性采样世界高度（x/z 超界钳到边缘；build 结果上调用） */

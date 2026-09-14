@@ -1303,7 +1303,18 @@ export class SceneSynchronizer {
         node.sculpt && node.sculpt.gridN === node.terrain.segments + 1
           ? decodeSculptData(node.sculpt.data)
           : null;
-      const build = buildTerrain(ts, splatmap, sculptOffsets);
+      // sculpt 增量：地形设置未变（仅雕刻层变化）且有缓存基准高度 → 跳过最重的
+      // 程序化生成（分形 + 热侵蚀）。会话期间 base 不变，仅 sculpt 偏移层变化。
+      const settingsSig = terrainSettingsSig(node.terrain);
+      const cachedBase = terrainGroup
+        ? (terrainGroup.userData.terrainBaseHeights as Float32Array | undefined)
+        : undefined;
+      const onlySculpt =
+        !!terrainGroup &&
+        terrainGroup.userData.terrainSettingsSig === settingsSig &&
+        !!cachedBase &&
+        cachedBase.length === (node.terrain.segments + 1) * (node.terrain.segments + 1);
+      const build = buildTerrain(ts, splatmap, sculptOffsets, onlySculpt ? cachedBase : undefined);
       const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, 4);
       build.geometry.dispose();
       const matMetalness = ms ? ms.metalness : 0;
@@ -1352,6 +1363,8 @@ export class SceneSynchronizer {
         terrainGroup.traverse((d) => d.layers.set(layer));
       }
       terrainGroup.userData.terrainSig = geomSig;
+      terrainGroup.userData.terrainSettingsSig = settingsSig;
+      terrainGroup.userData.terrainBaseHeights = build.baseHeights;
       terrainGroup.userData.colorSig = colorSig;
       terrainGroup.userData.terrainMinY = build.minY;
       terrainGroup.userData.terrainMaxY = build.maxY;

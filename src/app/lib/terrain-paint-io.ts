@@ -6,15 +6,29 @@
 
 import type { SplatBuffer } from "../../framework/terrain";
 
+// canvas / ctx / ImageData 在会话期间按尺寸复用（splatmap 尺寸 = gridSize 不变），
+// 避免每次提交都 createElement + createImageData 的分配开销。
+let _canvas: HTMLCanvasElement | null = null;
+let _ctx: CanvasRenderingContext2D | null = null;
+let _imgData: ImageData | null = null;
+let _w = 0;
+let _h = 0;
+
 /** 工作缓冲编码为 PNG（canvas 栅格化 → dataURL 取 base64） */
 export function encodeSplatBufferPng(buf: SplatBuffer): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = buf.width;
-  canvas.height = buf.height;
-  const ctx = canvas.getContext("2d")!;
-  const imgData = ctx.createImageData(buf.width, buf.height);
-  imgData.data.set(buf.data);
-  ctx.putImageData(imgData, 0, 0);
-  const dataUrl = canvas.toDataURL("image/png");
+  if (!_canvas) {
+    _canvas = document.createElement("canvas");
+    _ctx = _canvas.getContext("2d")!;
+  }
+  if (_w !== buf.width || _h !== buf.height) {
+    _canvas.width = buf.width;
+    _canvas.height = buf.height;
+    _imgData = _ctx!.createImageData(buf.width, buf.height);
+    _w = buf.width;
+    _h = buf.height;
+  }
+  _imgData!.data.set(buf.data);
+  _ctx!.putImageData(_imgData!, 0, 0);
+  const dataUrl = _canvas.toDataURL("image/png");
   return dataUrl.slice(dataUrl.indexOf(",") + 1);
 }

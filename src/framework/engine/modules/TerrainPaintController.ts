@@ -9,7 +9,7 @@
 //     引擎 patchNode（节点 sculpt 字段，可撤销）；
 // - "辅助笔刷"光标：贴地的圆环指示笔刷半径与命中位置（命中点 + 面法线偏移，
 //   随面朝向倾斜）；
-// - 落盘节流：绘制中每 400ms / 抬笔时提交一次。
+// - 落盘节流：绘制中每 100ms（rAF 调度）/ 抬笔时提交一次。
 // ---------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -75,8 +75,8 @@ export interface TerrainPaintDeps {
   onCommitSculpt(): void;
 }
 
-/** 笔画中两次提交的最小间隔（ms） */
-const COMMIT_INTERVAL_MS = 400;
+/** 笔画中两次提交的最小间隔（ms）；配合 rAF 调度，降低延迟且不阻塞主线程 */
+const COMMIT_INTERVAL_MS = 100;
 
 const CURSOR_COLOR = 0xffa040;
 const CURSOR_LIFT = 0.15;
@@ -92,6 +92,9 @@ export class TerrainPaintController {
   /** flatten 模式的目标高度（笔画起点处的地形本地高度） */
   private strokeTargetY = 0;
   private lastCommit = 0;
+  /** rAF 调度提交（避免在 pointermove 同步执行重建重活阻塞主线程） */
+  private commitRafId = 0;
+  private commitScheduled = false;
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -138,6 +141,7 @@ export class TerrainPaintController {
   /** 结束绘制（冲刷未落盘的笔画 + 恢复轨道相机） */
   end(): void {
     if (!this.active) return;
+    this.cancelCommitRaf();
     if (this.stroking) this.commit();
     this.active = false;
     this.stroking = false;
@@ -150,6 +154,7 @@ export class TerrainPaintController {
 
   dispose(): void {
     this.end();
+    this.cancelCommitRaf();
     this.deps.scene.remove(this.cursor);
     (this.cursor.material as THREE.Material).dispose();
     this.cursor.geometry.dispose();
@@ -190,6 +195,7 @@ export class TerrainPaintController {
     if (!this.active || !this.stroking) return;
     this.stroking = false;
     this.lastLocal = null;
+    this.cancelCommitRaf();
     this.commit();
   };
 
@@ -257,9 +263,24 @@ export class TerrainPaintController {
   }
 
   private commitThrottled(): void {
+    if (this.commitScheduled) return;
     const now = performance.now();
     if (now - this.lastCommit < COMMIT_INTERVAL_MS) return;
+    // 提交（重建/落盘）放到下一帧 rAF，避免在 pointermove 同步执行阻塞主线程
+    this.commitScheduled = true;
+    this.commitRafId = requestAnimationFrame(this.commitRun);
+  }
+
+  private commitRun = (): void => {
+    this.commitScheduled = false;
+    this.commitRafId = 0;
     this.commit();
+  };
+
+  private cancelCommitRaf(): void {
+    if (this.commitRafId) cancelAnimationFrame(this.commitRafId);
+    this.commitRafId = 0;
+    this.commitScheduled = false;
   }
 
   private commit(): void {
