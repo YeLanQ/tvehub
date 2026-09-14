@@ -19,9 +19,12 @@ import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
 import BuildPanel from "./app/components/BuildPanel.vue";
+import BootMask from "./app/components/BootMask.vue";
 import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
+import { getBootLoadingStore } from "./app/stores/boot-loading";
+import { isTauri } from "./lib/tauri-env";
 import {
   getActivePanel,
   getAssetSelection,
@@ -85,6 +88,10 @@ let unlistenNative: UnlistenFn | null = null;
 
 /** 窗口级快捷键：F2 重命名选中节点 / W-E-R 切换变换工具 / Ctrl+Z 撤销 / Ctrl+S 保存 / Ctrl+W 关闭项目（原生菜单已移除） */
 function onWindowKeyDown(e: KeyboardEvent): void {
+  // 项目装载蒙版期间（standby/loading）编辑器尚未就绪：忽略全部快捷键，
+  // 避免装载中途触发保存/撤销/关闭等操作
+  const bootPhase = getBootLoadingStore().state.phase;
+  if (bootPhase === "loading" || bootPhase === "standby") return;
   const key = e.key.toLowerCase();
   // F2：按最近交互的面板上下文重命名——资产面板内重命名选中资产；
   // 层级/视口/检查器等场景区重命名选中节点。文本焦点下不拦截（保留输入/Monaco 行为）
@@ -145,6 +152,12 @@ onMounted(async () => {
   const container = document.querySelector<HTMLElement>(".center");
   if (container && !editorStore.state.mounted) {
     mountEditor(container);
+  }
+  // Tauri 下布防装载蒙版（编辑器窗口启动时隐藏，Rust 在首页交接项目后才 show）：
+  // 窗口被显示时蒙版已就位，项目装载完成前不露出旧编辑器内容。
+  // 浏览器直开（无窗口系统）不布防，编辑器直接可见。
+  if (isTauri()) {
+    getBootLoadingStore().standby();
   }
 });
 
@@ -239,5 +252,8 @@ onUnmounted(() => {
       <ProjectSettingsPanel v-if="projectStore.settingsOpen" />
       <!-- 构建导出面板（点击工具栏“构建”打开） -->
       <BuildPanel v-if="projectStore.buildOpen" />
+
+      <!-- 项目装载蒙版（顶层：Manager 打开项目 → 资产/场景装载进度，就绪后揭幕） -->
+      <BootMask />
   </div>
 </template>

@@ -1,0 +1,172 @@
+// 编辑器顶层装载蒙版（BootMask.vue）：从 Manager 打开项目期间盖住整个
+// 编辑器窗口，展示装载阶段进度，就绪后淡出揭幕。z-index 高于全部面板与弹窗
+// （确认弹窗 10001），保证装载期间完全遮蔽旧编辑器内容。
+.boot-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 38%, rgba(69, 74, 85, 0.28), transparent 70%),
+    var(--bg);
+  user-select: none;
+}
+
+.boot-card {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.boot-brand {
+  font-size: 12px;
+  letter-spacing: 4px;
+  color: var(--text-dim);
+
+  span {
+    color: var(--hero-glow);
+  }
+}
+
+.boot-title {
+  max-width: 100%;
+  margin: 10px 0 22px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// 阶段清单
+.boot-stages {
+  width: 100%;
+  min-height: 158px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.boot-stages li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+
+  .stage-icon {
+    width: 15px;
+    height: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  .stage-label {
+    flex: 1;
+  }
+
+  .stage-detail {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+
+  &.active {
+    color: var(--text);
+
+    .stage-icon {
+      color: var(--text);
+    }
+  }
+
+  &.done {
+    .stage-icon {
+      color: var(--ok);
+    }
+  }
+
+  &.failed {
+    color: var(--err);
+
+    .stage-icon {
+      color: var(--err);
+    }
+  }
+
+  .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+  }
+}
+
+// 进行中旋转环
+.spin {
+  animation: boot-spin 0.9s linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 总进度条
+.boot-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.boot-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--hero-glow), var(--text-dim));
+  transition: width 0.25s ease;
+}
+
+.boot-percent {
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.boot-hint {
+  margin-top: 18px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+.boot-error {
+  max-width: 100%;
+  margin-top: 18px;
+  font-size: 11.5px;
+  color: var(--err);
+  word-break: break-all;
+  text-align: center;
+}
+
+// 淡出揭幕 / 淡入布防
+.boot-mask-enter-active,
+.boot-mask-leave-active {
+  transition: opacity 0.32s ease;
+}
+
+.boot-mask-enter-from,
+.boot-mask-leave-to {
+  opacity: 0;
+}

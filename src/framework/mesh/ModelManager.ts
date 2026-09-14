@@ -101,12 +101,20 @@ export class ModelManager {
     return skeletonClone(e.template);
   }
 
-  /** 预取一组模型引用并解析入缓存（失败项记为 error 条目，不抛出） */
-  async preload(rels: string[]): Promise<number> {
+  /** 预取一组模型引用并解析入缓存（失败项记为 error 条目，不抛出）。
+   * onProgress 可选：逐项汇报处理进度（含缓存跳过项；项目装载蒙版用）。 */
+  async preload(rels: string[], onProgress?: (done: number, total: number) => void): Promise<number> {
     if (!this.access) return 0;
     let loaded = 0;
+    let processed = 0;
+    const report = () => onProgress?.(processed, rels.length);
+    report();
     for (const rel of rels) {
-      if (!rel || this.cache.has(rel) || this.loading.has(rel)) continue;
+      if (!rel || this.cache.has(rel) || this.loading.has(rel)) {
+        processed += 1;
+        report();
+        continue;
+      }
       this.loading.add(rel);
       try {
         const ok = await this.loadOne(rel);
@@ -126,6 +134,8 @@ export class ModelManager {
         this.notify(rel);
       } finally {
         this.loading.delete(rel);
+        processed += 1;
+        report();
       }
     }
     return loaded;

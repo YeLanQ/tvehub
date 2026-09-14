@@ -1304,10 +1304,22 @@ export class EditorEngine {
   /**
    * 预取材质引用及其挂载的着色器：节点入图即按正确外观渲染
    * （渲染分支与 Hook 都先取到再刷新，避免先默认外观后跳变）。
+   * onProgress 可选：逐项汇报材质预取进度（项目装载蒙版用）。
    */
-  async preloadMaterials(rels: string[]): Promise<void> {
+  async preloadMaterials(
+    rels: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
     if (rels.length === 0) return;
-    await this.materials.preload(rels);
+    if (onProgress) {
+      let done = 0;
+      for (const rel of rels) {
+        await this.materials.preload([rel]);
+        onProgress(++done, rels.length);
+      }
+    } else {
+      await this.materials.preload(rels);
+    }
     if (this.isDisposed()) return;
     const shaderRels = [
       ...new Set(

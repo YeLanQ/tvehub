@@ -13,32 +13,87 @@ import { loadShaderDoc } from "../lib/shaders";
 import { logStore } from "../stores/log";
 import { getProjectStore } from "../stores/project";
 import { getEditorStore, resetEditorEngine } from "../stores/editor";
+import { getBootLoadingStore } from "../stores/boot-loading";
 
 /** 挂载任务去重：引擎挂载是异步的（渲染后端可能动态加载），并发调用共享同一任务 */
 let mountTask: Promise<void> | null = null;
 /** 首页窗口交接的项目挂起项：编辑器尚未挂载完成时暂存，就绪后由 mountEditor 补装载 */
 let pendingProject: { root: string; rel: string } | null = null;
+/** 等待编辑器挂载完成（含挂起项目补装载）的回调：交接早于 App.vue 挂载时排队 */
+let mountWaiters: Array<() => void> = [];
+
+/** mountEditor 任务收尾（含提前返回）时放行全部等待者 */
+function notifyMountSettled(): void {
+  const waiters = mountWaiters;
+  mountWaiters = [];
+  for (const w of waiters) w();
+}
+
+/** 编辑器挂载完成（装载管线结束）时解析：任务在途等任务，否则等布防的等待者 */
+function whenEditorSettled(): Promise<void> {
+  if (mountTask) return mountTask;
+  if (getEditorStore().state.mounted) return Promise.resolve();
+  return new Promise((resolve) => mountWaiters.push(resolve));
+}
 
 /**
  * 收到首页窗口的项目交接（home:project-opened 事件，编辑器窗口入口转发）：
- * 同步本地项目状态后，编辑器已挂载 → 立即重装载场景；
- * 尚在挂载中（编辑器窗口刚启动）→ 挂起，由 mountEditor 在就绪后补装载。
+ * 蒙版进入装载态后按「项目配置 → 场景读取 → 材质/模型预取 → 场景构建」
+ * 逐段汇报进度，全部就绪后 finish() 揭幕（BootMask）。
+ * 编辑器已挂载 → 立即重装载场景；尚在挂载中（编辑器窗口刚启动）→ 挂起，
+ * 由 mountEditor 在就绪后补装载（本函数等挂载任务结束后再揭幕）。
  */
 export async function handleProjectOpenedFromHome(
   root: string,
   name: string,
   rel: string,
 ): Promise<void> {
-  const projectStore = getProjectStore();
-  projectStore.applyOpenedProject(root, name, rel);
-  const store = getEditorStore();
-  if (store.state.mounted && !store.engine.isDisposed()) {
-    // 引擎先于项目挂载（编辑器窗口启动时无项目）：重注入资产访问器后再装载场景
-    applyProjectAccess(store.engine, root);
-    await reloadEditorScene(root, rel);
-  } else {
-    pendingProject = { root, rel };
+  const boot = getBootLoadingStore();
+  boot.begin(name);
+  try {
+    const projectStore = getProjectStore();
+    boot.activate("project");
+    await projectStore.applyOpenedProject(root, name, rel);
+    const store = getEditorStore();
+    if (store.state.mounted && !store.engine.isDisposed()) {
+      // 引擎先于项目挂载（编辑器窗口启动时无项目）：重注入资产访问器后再装载场景
+      boot.complete("engine");
+      boot.complete("project");
+      applyProjectSetup(store.engine, root);
+      await reloadEditorScene(root, rel);
+    } else {
+      pendingProject = { root, rel };
+      boot.activate("engine");
+      await whenEditorSettled();
+      boot.complete("engine");
+      boot.complete("project");
+    }
+    boot.finish();
+  } catch (e) {
+    logStore.log("error", `项目装载失败: ${e}`, "engine");
+    boot.fail(String(e));
   }
+}
+
+/**
+ * 按当前项目状态（重）应用项目级设置：设计分辨率 + 资产访问器 + 物理配置。
+ * 挂载时与首页交接补装载前都要执行——项目切换后旧访问器/配置不可复用
+ * （挂载启动时可能尚无项目，快照全是默认值）。
+ */
+function applyProjectSetup(engine: EditorEngine, root: string | null): void {
+  const projectStore = getProjectStore();
+  // 相机辅助视锥取景宽高比 = 项目设计分辨率（打开/新建项目时已从 project.config.json 读入）
+  engine.designResolution = {
+    width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
+    height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
+  };
+  applyProjectAccess(engine, root);
+  // 物理配置（项目级：引擎/重力/启停）随项目装载生效
+  engine.physics.configure({
+    backend: projectStore.physicsBackend,
+    enabled: projectStore.physicsEnabled,
+    gravity: { ...projectStore.physicsGravity },
+  });
 }
 
 /**
@@ -74,73 +129,73 @@ export function mountEditor(container: HTMLElement): Promise<void> {
   if (store.state.mounted) return Promise.resolve();
   if (!mountTask) {
     mountTask = (async () => {
-      const engine = store.engine;
-      const projectStore = getProjectStore();
-      const root = projectStore.currentPath;
-      // 相机辅助视锥取景宽高比 = 项目设计分辨率（打开/新建项目时已从 project.config.json 读入）
-      engine.designResolution = {
-        width: Math.max(1, Math.min(16384, Math.round(projectStore.designWidth))),
-        height: Math.max(1, Math.min(16384, Math.round(projectStore.designHeight))),
-      };
-      applyProjectAccess(engine, root);
-      // 物理配置（项目级：引擎/重力/启停）随项目装载生效
-      engine.physics.configure({
-        backend: projectStore.physicsBackend,
-        enabled: projectStore.physicsEnabled,
-        gravity: { ...projectStore.physicsGravity },
-      });
-      // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
-      engine.setSceneTransport(sceneApi.transport());
-      await engine.bindSceneEvents(sceneApi.subscribe);
-      await engine.mount(container, {
-        renderer: projectStore.rendererBackend,
-        antialias: projectStore.antiAliasing,
-        hdrMode: projectStore.hdrMode,
-      });
-      // 挂载期间被销毁（如就绪前点击"关闭"返回首页）→ 不再装载场景/重建
-      if (engine.isDisposed()) return;
-      // 场景装载：后端读盘 + 旧格式迁移 + 建图（历史清零），返回规范 doc 与引用清单
-      const sceneRel = projectStore.sceneRel;
-      let loaded = false;
-      if (root && sceneRel) {
-        try {
-          const result = await sceneApi.open(root, sceneRel);
-          if (engine.isDisposed()) return;
-          loaded = await applySceneLoadResult(engine, result);
-        } catch (e) {
-          logStore.log("warn", `场景打开失败（回退初始场景）: ${e}`, "engine");
+      try {
+        const engine = store.engine;
+        const boot = getBootLoadingStore();
+        const projectStore = getProjectStore();
+        const root = projectStore.currentPath;
+        applyProjectSetup(engine, root);
+        // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
+        engine.setSceneTransport(sceneApi.transport());
+        await engine.bindSceneEvents(sceneApi.subscribe);
+        await engine.mount(container, {
+          renderer: projectStore.rendererBackend,
+          antialias: projectStore.antiAliasing,
+          hdrMode: projectStore.hdrMode,
+        });
+        // 挂载期间被销毁（如就绪前点击"关闭"返回首页）→ 不再装载场景/重建
+        if (engine.isDisposed()) return;
+        // 场景装载：后端读盘 + 旧格式迁移 + 建图（历史清零），返回规范 doc 与引用清单
+        const sceneRel = projectStore.sceneRel;
+        let loaded = false;
+        if (root && sceneRel) {
+          try {
+            boot.activate("scene");
+            const result = await sceneApi.open(root, sceneRel);
+            if (engine.isDisposed()) return;
+            loaded = await applySceneLoadResult(engine, result);
+            boot.complete("scene");
+          } catch (e) {
+            logStore.log("warn", `场景打开失败（回退初始场景）: ${e}`, "engine");
+          }
         }
-      }
-      if (!loaded && !engine.isDisposed()) {
-        // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话；
-        // 携带保存目标，新项目首次保存时创建场景文件）
-        try {
-          await engine.materials.preload([DEFAULT_MATERIAL_REL]);
-          if (engine.isDisposed()) return;
-          const result = await sceneApi.loadDoc(
-            buildStarterSceneDoc(engine.factory),
-            root ?? undefined,
-            sceneRel || undefined,
-          );
-          if (engine.isDisposed()) return;
-          await applySceneLoadResult(engine, result);
-        } catch (e) {
-          // 无后端（浏览器直开）或会话异常时保留空场景，编辑器仍视为就绪
-          logStore.log("warn", `初始场景装载失败: ${e}`, "engine");
+        if (!loaded && !engine.isDisposed()) {
+          // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话；
+          // 携带保存目标，新项目首次保存时创建场景文件）
+          try {
+            await engine.materials.preload([DEFAULT_MATERIAL_REL]);
+            if (engine.isDisposed()) return;
+            boot.activate("scene");
+            const result = await sceneApi.loadDoc(
+              buildStarterSceneDoc(engine.factory),
+              root ?? undefined,
+              sceneRel || undefined,
+            );
+            if (engine.isDisposed()) return;
+            await applySceneLoadResult(engine, result);
+            boot.complete("scene");
+          } catch (e) {
+            // 无后端（浏览器直开）或会话异常时保留空场景，编辑器仍视为就绪
+            logStore.log("warn", `初始场景装载失败: ${e}`, "engine");
+          }
         }
-      }
-      store.markMounted();
-      store.markSaved();
-      // 首页窗口在挂载期间交接的项目：就绪后补装载（若挂载流程已按同一项目
-      // 装载成功则跳过，避免重复 scene_open）
-      if (pendingProject) {
-        const p = pendingProject;
-        pendingProject = null;
-        if (!(loaded && root === p.root && sceneRel === p.rel)) {
-          await reloadEditorScene(p.root, p.rel);
+        store.markMounted();
+        store.markSaved();
+        // 首页窗口在挂载期间交接的项目：就绪后补装载（若挂载流程已按同一项目
+        // 装载成功则跳过，避免重复 scene_open）。挂载启动时可能尚无项目
+        //（快照为默认值）→ 补应用项目级设置后再装载
+        if (pendingProject) {
+          const p = pendingProject;
+          pendingProject = null;
+          if (!(loaded && root === p.root && sceneRel === p.rel)) {
+            applyProjectSetup(engine, p.root);
+            await reloadEditorScene(p.root, p.rel);
+          }
         }
+        logStore.log("info", "编辑器已就绪", "engine");
+      } finally {
+        notifyMountSettled();
       }
-      logStore.log("info", "编辑器已就绪", "engine");
     })();
   }
   return mountTask;
@@ -148,18 +203,33 @@ export function mountEditor(container: HTMLElement): Promise<void> {
 
 /**
  * 应用后端装载结果：预取引用（材质/模型）→ 镜像重建 → 历史状态同步。
+ * 装载期间向 boot-loading store 逐段汇报进度（非装载路径的切换场景调用
+ * 处于 idle 态，store 忽略汇报，不弹蒙版）。
  * 返回是否装载了有效根节点（false = 空场景，调用方回退初始场景）。
  */
 async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResult): Promise<boolean> {
+  const boot = getBootLoadingStore();
   const doc = result.doc as { root?: JsonRecord | null; settings?: JsonRecord };
   const rootJson = doc.root ?? null;
   if (!rootJson || (rootJson as { type?: string }).type === "empty") return false;
   // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）；
   // 材质引用的着色器与扩展着色器随材质一并预取
-  if (result.materialRefs.length) await engine.preloadMaterials(result.materialRefs);
-  if (result.modelRefs.length) await engine.models.preload(result.modelRefs);
+  if (result.materialRefs.length) {
+    await engine.preloadMaterials(result.materialRefs, (done, total) =>
+      boot.progress("materials", done, total),
+    );
+  }
+  boot.complete("materials");
+  if (result.modelRefs.length) {
+    await engine.models.preload(result.modelRefs, (done, total) =>
+      boot.progress("models", done, total),
+    );
+  }
+  boot.complete("models");
+  boot.activate("graph");
   engine.applySceneDocRoot(rootJson);
   engine.graph.history.update(result.history);
+  boot.complete("graph");
   return true;
 }
 
@@ -168,18 +238,21 @@ export async function reloadEditorScene(root: string, rel: string): Promise<void
   const store = getEditorStore();
   const engine = store.engine;
   if (!store.state.mounted || engine.isDisposed()) return;
+  const boot = getBootLoadingStore();
   try {
+    boot.activate("scene");
     const result = await sceneApi.open(root, rel);
     if (engine.isDisposed()) return;
-    const ok = await applySceneLoadResult(engine, result);
+    let ok = await applySceneLoadResult(engine, result);
     if (!ok && !engine.isDisposed()) {
       const fallback = await sceneApi.loadDoc(
         buildStarterSceneDoc(engine.factory),
         root,
         rel,
       );
-      if (!engine.isDisposed()) await applySceneLoadResult(engine, fallback);
+      if (!engine.isDisposed()) ok = await applySceneLoadResult(engine, fallback);
     }
+    boot.complete("scene");
     store.markSaved();
     // 切换场景后回到场景编辑视图：若当前处于预览/脚本工作台，自动关闭（预览面板随之卸载并停服）
     if (store.state.viewMode !== "scene") store.setViewMode("scene");

@@ -70,8 +70,9 @@ export interface ProjectStore {
   /**
    * 首页窗口打开/新建项目后由编辑器窗口调用：仅同步本地状态与渲染配置，
    * 不重复后端流程（open_project / 项目根 / 场景会话已在首页窗口侧就绪）。
+   * 等待 project.config.json 读取完成（渲染偏好/设计分辨率就绪后再装载场景）。
    */
-  applyOpenedProject: (root: string, name: string, rel: string) => void;
+  applyOpenedProject: (root: string, name: string, rel: string) => Promise<void>;
   setProjectName: (name: string | null) => void;
   /** 场景资产被移动/重命名后改写当前打开场景指针（保存仍写到新路径） */
   setSceneRel: (rel: string) => void;
@@ -345,13 +346,13 @@ export function getProjectStore(): ProjectStore {
     setView(view) {
       state.view = view;
     },
-    applyOpenedProject(root, name, rel) {
+    async applyOpenedProject(root, name, rel) {
       state.currentPath = root;
       state.projectName = name;
       state.currentSceneRel = rel;
       state.settingsOpen = false;
       state.view = "editor";
-      void loadProjectRenderConfig(root);
+      await loadProjectRenderConfig(root);
     },
     setProjectName(name) {
       state.projectName = name;

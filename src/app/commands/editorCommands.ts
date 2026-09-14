@@ -3,6 +3,7 @@
 
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
+import { getBootLoadingStore } from "../stores/boot-loading";
 import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { sceneApi } from "../../lib/scene-api";
@@ -107,9 +108,11 @@ registerCommand({
     void sceneApi.close().catch(() => {});
     void api.setCurrentProjectRoot(null).catch(() => {});
     // 双窗口：显示首页窗口（Rust 侧隐藏编辑器窗口，保留编辑器前端状态）；
-    // 浏览器环境无窗口系统，回退单窗口内的视图切换
+    // 蒙版重新布防——下次从首页打开项目时编辑器窗口被 show 的瞬间蒙版已就位，
+    // 装载完成前不露出本项目旧内容。浏览器环境无窗口系统，回退单窗口内的视图切换
     if (isTauri()) {
       await api.showHomeWindow();
+      getBootLoadingStore().standby();
     } else {
       project.setView("home");
     }
