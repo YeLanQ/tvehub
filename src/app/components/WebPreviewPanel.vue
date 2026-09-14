@@ -22,6 +22,8 @@ import {
   configUsesPhysics,
   configPhysicsBackend,
   configUsesWebgpu,
+  configUsesDracoCompression,
+  configUsesTextureCompression,
 } from "../lib/web-preview-runtime";
 import { ensureEntryScript } from "../lib/script-compile";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
@@ -227,6 +229,8 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     includePhysics,
     physicsBackend: configPhysicsBackend(configText) ?? undefined,
     includeWebgpu: configUsesWebgpu(configText),
+    includeDracoDecoder: configUsesDracoCompression(configText),
+    includeBasisDecoder: configUsesTextureCompression(configText),
   });
   files["config.json"] = configText;
   // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
