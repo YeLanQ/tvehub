@@ -7,7 +7,7 @@ import { buildStarterSceneDoc } from "../../framework/engine/starterScene";
 import { DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
-import { setupCompressedGltfSupport } from "../../framework/mesh";
+import { setupCompressedGltfSupport, collectModelMaterialOverrideRels } from "../../framework/mesh";
 import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
 import { loadMaterialDoc } from "../lib/materials";
 import { loadShaderDoc } from "../lib/shaders";
@@ -223,9 +223,12 @@ async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResul
   const rootJson = doc.root ?? null;
   if (!rootJson || (rootJson as { type?: string }).type === "empty") return false;
   // 装载前预取全部材质/模型引用：节点入图即渲染到正确外观（避免先默认后跳变）；
-  // 材质引用的着色器与扩展着色器随材质一并预取
-  if (result.materialRefs.length) {
-    await engine.preloadMaterials(result.materialRefs, (done, total) =>
+  // 材质引用的着色器与扩展着色器随材质一并预取；模型内嵌材质覆盖（.mat rel）
+  // 从场景 JSON 收集后并入同批预取
+  const overrideRefs = collectModelMaterialOverrideRels(rootJson);
+  const materialRefs = [...new Set([...result.materialRefs, ...overrideRefs])];
+  if (materialRefs.length) {
+    await engine.preloadMaterials(materialRefs, (done, total) =>
       boot.progress("materials", done, total),
     );
   }

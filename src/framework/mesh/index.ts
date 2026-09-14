@@ -6,6 +6,9 @@ export {
   modelExtOf,
   modelFileName,
   modelFileStem,
+  parseModelMaterialOverrides,
+  cloneModelMaterialOverrides,
+  collectModelMaterialOverrideRels,
 } from "./types";
 export type { MeshSourceKind, ModelExt, ModelMeta, ModelMaterialInfo } from "./types";
 export {

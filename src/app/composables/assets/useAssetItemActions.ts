@@ -27,6 +27,7 @@ import {
   modelFileStem,
 } from "../../../framework/mesh";
 import { bytesToBase64, compressModelToDraco } from "../../lib/model-draco";
+import { extractAndWriteModelMaterials } from "../../lib/model-extract";
 import { isAudioAssetRel } from "../../../framework/audio";
 import { isTerrainAssetRel } from "../../../framework/terrain";
 import { isFsmAssetRel } from "../../../framework/fsm";
@@ -54,6 +55,7 @@ export interface AssetItemActionsApi {
   onItemDblClick: (item: ChildEntry) => void;
   openScriptAsset: (item: ChildEntry) => void;
   openLogicAsset: (item: { path: string }) => void;
+  extractModelMaterials: (item: ChildEntry) => Promise<void>;
   addModelToScene: (item: ChildEntry) => void;
   compressDraco: (item: ChildEntry) => Promise<void>;
   addAudioToScene: (item: ChildEntry) => void;
@@ -141,6 +143,34 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
   function openLogicAsset(item: { path: string }): void {
     if (!openLogicAssetEditor(item.path)) {
       logStore.log("warn", `不是可打开的逻辑资产: ${item.path}`);
+    }
+  }
+
+  /**
+   * glTF/GLB 资产提取内嵌材质为编辑器 .mat 资产（右键动作）：
+   * PBR 参数 + png/jpeg 贴图 → assets/materials 与 assets/textures（重名去重）；
+   * fbx/obj 无 glTF 文档可解析，提示不支持。
+   */
+  async function extractModelMaterials(item: ChildEntry): Promise<void> {
+    const root = projectStore.currentPath;
+    if (!root || item.kind === "dir" || !isGltfAssetRel(item.path)) return;
+    if (getEditorStore().state.mounted !== true) {
+      logStore.log("warn", "编辑器未就绪，无法提取材质");
+      return;
+    }
+    logStore.log("info", `提取模型材质中: ${item.name} …`);
+    try {
+      const usedRels = new Set(assetsStore.assets.map((a) => a.path.toLowerCase()));
+      const result = await extractAndWriteModelMaterials(root, item.path, usedRels);
+      await assetsStore.load(root);
+      logStore.log(
+        "success",
+        `已提取模型材质: ${result.materials} 个材质` +
+          (result.textures ? `、${result.textures} 张贴图` : "") +
+          `（可在模型节点的材质卡中应用替换）`,
+      );
+    } catch (e) {
+      logStore.log("error", `提取模型材质失败: ${e instanceof Error ? e.message : e}`);
     }
   }
 
@@ -308,6 +338,7 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
     onItemDblClick,
     openScriptAsset,
     openLogicAsset,
+    extractModelMaterials,
     addModelToScene,
     compressDraco,
     addAudioToScene,

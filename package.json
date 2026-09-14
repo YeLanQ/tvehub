@@ -22,6 +22,7 @@
     "smoke:node-menu": "vite build --ssr scripts/smoke-node-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-node-menu.js",
     "smoke:asset-menu": "vite build --ssr scripts/smoke-asset-menu.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-asset-menu.js",
     "smoke:model-draco": "vite build --ssr scripts/smoke-model-draco.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-model-draco.js",
+    "smoke:model-extract": "vite build --ssr scripts/smoke-model-extract.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-model-extract.js",
     "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "smoke:materials": "vite build --ssr scripts/smoke-materials.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-materials.js",
     "smoke:layers": "vite build --ssr scripts/smoke-layers.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-layers.js",

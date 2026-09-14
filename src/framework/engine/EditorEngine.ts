@@ -1323,9 +1323,20 @@ export class EditorEngine {
    */
   refreshMaterialNodes(rel?: string | null): void {
     for (const node of this.graph.all()) {
-      if (node instanceof MeshNode && (rel == null || node.material === rel)) {
-        this.synchronizer.refreshMeshMaterial(node);
+      if (!(node instanceof MeshNode)) continue;
+      if (node.source !== "model") {
+        if (rel == null || node.material === rel) {
+          this.synchronizer.refreshMeshMaterial(node);
+        }
+        continue;
       }
+      // 模型覆盖材质：rel 命中覆盖表 → 失效缓存（下一帧应用时按新参数重建）并重刷
+      const overrides = node.modelMaterialOverrides;
+      const hit =
+        rel != null &&
+        Object.values(overrides).some((v) => v === rel);
+      if (hit) this.synchronizer.invalidateModelOverrideMaterial(rel);
+      if (rel == null || hit) this.synchronizer.refreshModelMeshMaterials(node);
     }
     this.events.emit("material:changed", { rel: rel ?? "" });
   }

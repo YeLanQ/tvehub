@@ -255,6 +255,8 @@ export class SceneSynchronizer {
   private splatmapCache = new Map<string, { data: Uint8Array; width: number; height: number } | null>();
   /** Splatmap 异步加载中标记（避免重复触发） */
   private splatmapLoading = new Set<string>();
+  /** 模型覆盖材质缓存（.mat rel → three 材质；跨实例共享，参数修改时失效重建） */
+  private modelOverrideMaterials = new Map<string, THREE.Material>();
   /** 阴影相机待重算（灯光刷新、场景增删后置位；帧循环消费） */
   private shadowCamerasDirty = true;
   /** 阴影相机重算的帧节拍计数 */
@@ -647,7 +649,8 @@ export class SceneSynchronizer {
      回收时只摘除不释放）。
    */
   private refreshModelMesh(mesh: MeshNode, obj: THREE.Mesh): void {
-    // 实例复用：同一模型引用且已就绪 → 保留克隆（动画状态连续）
+    // 实例复用：同一模型引用且已就绪 → 保留克隆（动画状态连续）；材质覆盖表
+    // 可能随属性补丁变化，复用路径同样重刷覆盖槽位
     const existing = obj.children.find((c) => c.name === MODEL_CHILD_NAME);
     if (
       existing &&
@@ -656,6 +659,7 @@ export class SceneSynchronizer {
       (this.lookup.modelReady?.(mesh.model) ?? false)
     ) {
       this.lookup.onModelInstance?.(mesh, existing);
+      this.applyModelMaterialOverrides(mesh, existing);
       return;
     }
     // 模型实例与模板共享资源：摘除即可（dispose 由模板统一管理，不逐实例释放）
@@ -675,6 +679,7 @@ export class SceneSynchronizer {
       inst.traverse((d) => d.layers.set(mesh.layer));
       obj.add(inst);
       this.lookup.onModelInstance?.(mesh, inst);
+      this.applyModelMaterialOverrides(mesh, inst);
       return;
     }
     // 占位体：待加载/失败共用（失败原因经引擎日志输出）
@@ -685,6 +690,74 @@ export class SceneSynchronizer {
     pending.name = MODEL_PENDING_NAME;
     pending.layers.set(mesh.layer);
     obj.add(pending);
+  }
+
+  /**
+   * 应用模型内嵌材质覆盖（MeshNode.modelMaterialOverrides：材质名 → .mat rel）：
+   * - 原始材质是缓存模板的共享实例，覆盖材质按 rel 构建后**替换**子网格的
+   *   material 引用（不改共享实例）；原始材质数组首次触碰时备份到子网格
+   *   userData（__origMaterials），覆盖移除后原样还原；
+   * - 覆盖材质按 rel 缓存复用（同 .mat 的多个槽位/多个实例共享一个 three 材质），
+   *   材质参数修改经 refreshMaterialNodes 失效缓存后重建。
+   */
+  private applyModelMaterialOverrides(mesh: MeshNode, inst: THREE.Object3D): void {
+    const overrides = mesh.modelMaterialOverrides;
+    const hasOverrides = !!overrides && Object.keys(overrides).length > 0;
+    inst.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const current = Array.isArray(m.material) ? m.material : [m.material];
+      const backup = (m.userData.__origMaterials as THREE.Material[] | undefined)
+        ?? (m.userData.__origMaterials = [...current]);
+      if (!hasOverrides) {
+        if (current.some((mat, i) => mat !== backup[i])) {
+          m.material = Array.isArray(m.material) ? [...backup] : backup[0];
+        }
+        return;
+      }
+      let changed = false;
+      const next = backup.map((orig) => {
+        const rel = overrides[orig.name ?? ""];
+        if (!rel) return orig;
+        changed = true;
+        return this.modelOverrideMaterial(rel);
+      });
+      if (changed) m.material = Array.isArray(m.material) ? next : next[0];
+      else if (current.some((mat, i) => mat !== backup[i])) m.material = Array.isArray(m.material) ? [...backup] : backup[0];
+    });
+  }
+
+  /** 覆盖槽位的 three 材质（按 .mat rel 缓存；类型/参数应用与 updateMeshMaterial 同构） */
+  private modelOverrideMaterial(rel: string): THREE.Material {
+    const cached = this.modelOverrideMaterials.get(rel);
+    if (cached) return cached;
+    const typeKey = this.lookup.typeFor?.(rel) ?? DEFAULT_MATERIAL_TYPE;
+    const def = materialTypeRegistry.getOrDefault(typeKey);
+    const mat = def.create();
+    const params = this.lookup.paramsFor(rel);
+    const shaderRel = this.lookup.shaderFor?.(rel) ?? "";
+    def.apply(mat, params, this.lookup, {
+      hooks: shaderRel ? this.lookup.shaderHooksFor?.(shaderRel) ?? null : null,
+      props: params.props,
+    });
+    this.modelOverrideMaterials.set(rel, mat);
+    return mat;
+  }
+
+  /** 覆盖材质缓存失效（.mat 参数被修改保存后调用；下一帧应用时按新参数重建） */
+  invalidateModelOverrideMaterial(rel: string): void {
+    const mat = this.modelOverrideMaterials.get(rel);
+    if (!mat) return;
+    this.modelOverrideMaterials.delete(rel);
+    mat.dispose();
+  }
+
+  /** 仅重刷模型内嵌材质覆盖（覆盖表/材质参数变化后调用；实例与动画不动） */
+  refreshModelMeshMaterials(mesh: MeshNode): void {
+    const obj = this.objectMap.get(mesh.id);
+    if (!obj) return;
+    const inst = obj.children.find((c) => c.name === MODEL_CHILD_NAME);
+    if (inst) this.applyModelMaterialOverrides(mesh, inst);
   }
 
   /** 按名移除并释放子对象（占位体/轮廓体等自有资源的子对象回收） */

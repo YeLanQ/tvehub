@@ -51,6 +51,8 @@ export interface AssetMenuApi {
   onAddModelToScene: (item: ChildEntry) => void;
   /** glTF/GLB 资产：Draco 压缩（弹参数窗，产物 <名>.draco.glb 写同目录） */
   onCompressDraco: (item: ChildEntry) => void;
+  /** glTF/GLB 资产：提取内嵌材质为编辑器 .mat 资产（贴图随提）；fbx/obj 不支持 */
+  onExtractModelMaterials: (item: ChildEntry) => void;
   onAddAudioToScene: (item: ChildEntry) => void;
   /** 地形资产：按资产设置创建地形节点并入场景 */
   onAddTerrainToScene: (item: ChildEntry) => void;
@@ -186,6 +188,7 @@ export function buildEntryMenu(item: ChildEntry, api: AssetMenuApi): CtxMenuItem
   // glTF/GLB 资产：Draco 压缩（生成新文件 <名>.draco.glb；fbx/obj 无此入口）
   if (item.kind !== "dir" && isGltfAssetRel(item.path)) {
     items.push({ label: "Draco 压缩…", onClick: () => api.onCompressDraco(item) });
+    items.push({ label: "提取材质为编辑器材质", onClick: () => api.onExtractModelMaterials(item) });
   }
   // 音频资产：加入当前场景（audioNode 音源节点并绑定该资产）
   if (item.kind !== "dir" && isAudioAssetRel(item.path)) {

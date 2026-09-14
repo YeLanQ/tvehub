@@ -2,7 +2,11 @@ import { Node, type NodeInit } from "../Node";
 import type { INode } from "../interfaces";
 import { cloneRecord, vec3, type Vec3 } from "../types";
 import { DEFAULT_MATERIAL_REL } from "../../material/types";
-import type { MeshSourceKind } from "../../mesh/types";
+import {
+  cloneModelMaterialOverrides,
+  parseModelMaterialOverrides,
+  type MeshSourceKind,
+} from "../../mesh/types";
 import type { GeometryKind } from "../../mesh/geometry";
 import {
   cloneAnimGraph,
@@ -32,6 +36,8 @@ export interface MeshNodeInit extends NodeInit {
   animGraph?: AnimGraph | null;
   /** 骨骼/IK 目标绑定（source=model 时有效；把场景节点绑到骨骼上每帧跟随） */
   boneBindings?: BoneBindingSpec[];
+  /** 模型内嵌材质覆盖表（source=model 时有效；键=内嵌材质名，值=.mat 资产 rel） */
+  modelMaterialOverrides?: Record<string, string>;
 }
 
 /** 网格节点能力接口：网格来源（基元/模型）+ 材质资产引用 */
@@ -82,6 +88,12 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
   animGraph: AnimGraph | null = null;
   /** 骨骼/IK 目标绑定（随场景持久化；运行时由 AnimationSystem 每帧应用） */
   boneBindings: BoneBindingSpec[] = [];
+  /**
+   * 模型内嵌材质覆盖表（随场景持久化；source=model 时有效）：
+   * 键 = 内嵌材质名，值 = 编辑器材质资产 rel；未覆盖的槽位用模型内嵌材质。
+   * 引擎在模型实例挂载/属性变更时应用（编辑器材质经 MaterialManager 解析）。
+   */
+  modelMaterialOverrides: Record<string, string> = {};
 
   constructor(init: MeshNodeInit = {}) {
     super(init);
@@ -93,6 +105,9 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     this.anim = init.anim ? { ...init.anim } : { ...this.anim };
     this.animGraph = init.animGraph ? cloneAnimGraph(init.animGraph) : null;
     this.boneBindings = init.boneBindings ? cloneBoneBindings(init.boneBindings) : [];
+    this.modelMaterialOverrides = init.modelMaterialOverrides
+      ? cloneModelMaterialOverrides(init.modelMaterialOverrides)
+      : this.modelMaterialOverrides;
   }
 
   override clone(): MeshNode {
@@ -112,6 +127,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
       anim: { ...this.anim },
       animGraph: this.animGraph ? cloneAnimGraph(this.animGraph) : null,
       boneBindings: cloneBoneBindings(this.boneBindings),
+      modelMaterialOverrides: cloneModelMaterialOverrides(this.modelMaterialOverrides),
     });
   }
 
@@ -124,6 +140,10 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     target.anim = { ...this.anim };
     target.animGraph = this.animGraph ? cloneAnimGraph(this.animGraph) : null;
     target.boneBindings = cloneBoneBindings(this.boneBindings);
+    // 覆盖表非空才写入（旧场景文件保持字节兼容）
+    if (Object.keys(this.modelMaterialOverrides).length > 0) {
+      target.modelMaterialOverrides = cloneModelMaterialOverrides(this.modelMaterialOverrides);
+    }
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
@@ -138,5 +158,6 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     this.anim = parseClipSettings(source.anim);
     this.animGraph = parseAnimGraph(source.animGraph);
     this.boneBindings = parseBoneBindings(source.boneBindings);
+    this.modelMaterialOverrides = parseModelMaterialOverrides(source.modelMaterialOverrides);
   }
 }

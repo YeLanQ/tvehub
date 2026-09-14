@@ -66,3 +66,46 @@ export interface ModelMeta {
   hasSkeleton: boolean;
   materials: ModelMaterialInfo[];
 }
+
+/**
+ * 模型内嵌材质覆盖表（MeshNode.modelMaterialOverrides 的形状；随场景序列化）：
+ * 键 = 内嵌材质名（three 材质 name，即 glTF 材质名），值 = 编辑器材质资产 rel；
+ * 未覆盖的材质名（或缺表）用模型内嵌材质。
+ */
+export function parseModelMaterialOverrides(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object") return out;
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (k && typeof val === "string" && val) out[k] = val;
+  }
+  return out;
+}
+
+/** 深拷贝覆盖表（节点克隆/整节点快照用） */
+export function cloneModelMaterialOverrides(v: Record<string, string>): Record<string, string> {
+  return { ...v };
+}
+
+/**
+ * 从场景 JSON（任意嵌套）收集模型材质覆盖引用的 .mat rel 列表：
+ * 项目装载预取用（覆盖材质随节点入图即按正确外观渲染，与 materialRefs 同批预取）。
+ */
+export function collectModelMaterialOverrideRels(root: unknown): string[] {
+  const out = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      for (const item of v) walk(item);
+      return;
+    }
+    if (!v || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    if (o.type === "meshNode" && o.modelMaterialOverrides && typeof o.modelMaterialOverrides === "object") {
+      for (const rel of Object.values(o.modelMaterialOverrides as Record<string, unknown>)) {
+        if (typeof rel === "string" && rel) out.add(rel);
+      }
+    }
+    for (const val of Object.values(o)) walk(val);
+  };
+  walk(root);
+  return [...out];
+}

@@ -287,6 +287,7 @@ const menuApi: AssetMenuApi = {
   onOpenDir: (dir) => navigate(dir),
   onAddModelToScene: (item) => itemActions.addModelToScene(item),
   onCompressDraco: (item) => void itemActions.compressDraco(item),
+  onExtractModelMaterials: (item) => void itemActions.extractModelMaterials(item),
   onAddAudioToScene: (item) => itemActions.addAudioToScene(item),
   onAddTerrainToScene: (item) => itemActions.addTerrainToScene(item),
   onInstantiatePrefab: (item) => void itemActions.instantiatePrefab(item),

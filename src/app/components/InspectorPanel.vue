@@ -18,6 +18,7 @@ import { useInspectorCameraSky } from "../composables/inspector/useInspectorCame
 import { useInspectorParticles } from "../composables/inspector/useInspectorParticles";
 import { useInspectorTerrain } from "../composables/inspector/useInspectorTerrain";
 import { useInspectorNav } from "../composables/inspector/useInspectorNav";
+import { useInspectorModelMaterial } from "../composables/inspector/useInspectorModelMaterial";
 import { useInspectorFog } from "../composables/inspector/useInspectorFog";
 import { useInspectorUI } from "../composables/inspector/useInspectorUI";
 import ComponentCard from "./ComponentCard.vue";
@@ -115,6 +116,7 @@ const {
 const { onParticleUpdate } = useInspectorParticles(inspector);
 const { onTerrainUpdate } = useInspectorTerrain(inspector);
 const { onNavAreaUpdate, onNavAgentUpdate } = useInspectorNav(inspector);
+const { onModelMaterialUpdate } = useInspectorModelMaterial(inspector);
 const { onFogUpdate } = useInspectorFog(inspector);
 const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate, onUILayoutUpdate } = useInspectorUI(inspector);
 
@@ -404,7 +406,7 @@ onBeforeUnmount(flushMaterialPersist);
           :open="materialOpen"
           @toggle="materialOpen = !materialOpen"
         >
-          <ModelMaterialSection :node="node" :rev="revision" />
+          <ModelMaterialSection :node="node" :rev="revision" @update="onModelMaterialUpdate" />
         </ComponentCard>
       </template>
     </div>
