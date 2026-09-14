@@ -12,6 +12,7 @@
 import * as THREE from "three";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { cloneTerrainSettings, type TerrainSettings } from "./types";
+import { simplifyTerrainMesh } from "./simplify";
 
 /** 确定性 PRNG（mulberry32）：同种子恒定序列 */
 function createRandom(seed: number): () => number {
@@ -211,43 +212,71 @@ export function buildTerrain(settings: TerrainSettings): TerrainBuild {
   // 热侵蚀：超过休止角的坡面塌落，消除分形针尖
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
 
-  // 顶点位置（XZ 平面网格 + Y 高度），统计高度范围
-  const positions = new Float32Array(n * n * 3);
+  // 统计高度范围
   let min = Infinity;
   let max = -Infinity;
-  for (let iz = 0; iz < n; iz++) {
-    for (let ix = 0; ix < n; ix++) {
-      const o = iz * n + ix;
-      const y = heights[o];
-      positions[o * 3] = coord[ix];
-      positions[o * 3 + 1] = y;
-      positions[o * 3 + 2] = coord[iz];
-      if (y < min) min = y;
-      if (y > max) max = y;
-    }
+  for (let i = 0; i < n * n; i++) {
+    const y = heights[i];
+    if (y < min) min = y;
+    if (y > max) max = y;
   }
 
-  // 菱形三角化：逐 quad 交替对角线方向
-  const indices: number[] = [];
-  for (let iz = 0; iz < p.segments; iz++) {
-    for (let ix = 0; ix < p.segments; ix++) {
-      const a = iz * n + ix;
-      const b = a + 1;
-      const c = a + n;
-      const d = c + 1;
-      if ((ix + iz) % 2 === 0) indices.push(a, c, b, b, c, d);
-      else indices.push(a, c, d, a, d, b);
+  // 自适应四叉树网格简化（segments 是 2 的幂且 ≥ 4 时启用）
+  const hSpan = Math.max(1e-6, max - min);
+  const simplified = simplifyTerrainMesh(heights, n, hSpan * 0.05);
+
+  let positions: Float32Array;
+  let vertCount: number;
+  let indices: Uint32Array | number[];
+
+  if (simplified) {
+    vertCount = simplified.vertices.length / 2;
+    positions = new Float32Array(vertCount * 3);
+    for (let i = 0; i < vertCount; i++) {
+      const gx = simplified.vertices[i * 2];
+      const gz = simplified.vertices[i * 2 + 1];
+      positions[i * 3] = coord[gx];
+      positions[i * 3 + 1] = heights[gz * n + gx];
+      positions[i * 3 + 2] = coord[gz];
     }
+    indices = simplified.indices;
+  } else {
+    vertCount = n * n;
+    positions = new Float32Array(vertCount * 3);
+    for (let iz = 0; iz < n; iz++) {
+      for (let ix = 0; ix < n; ix++) {
+        const o = iz * n + ix;
+        positions[o * 3] = coord[ix];
+        positions[o * 3 + 1] = heights[o];
+        positions[o * 3 + 2] = coord[iz];
+      }
+    }
+    const idx: number[] = [];
+    for (let iz = 0; iz < p.segments; iz++) {
+      for (let ix = 0; ix < p.segments; ix++) {
+        const a = iz * n + ix;
+        const b = a + 1;
+        const c = a + n;
+        const d = c + 1;
+        if ((ix + iz) % 2 === 0) idx.push(a, c, b, b, c, d);
+        else idx.push(a, c, d, a, d, b);
+      }
+    }
+    indices = idx;
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
+  if (indices instanceof Uint32Array) {
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  } else {
+    geometry.setIndex(indices);
+  }
   geometry.computeVertexNormals();
 
   // —— 顶点色烘焙：海拔 + 坡度驱动色带（语义对齐示例的 TSL 着色）——
   const normalAttr = geometry.getAttribute("normal") as THREE.BufferAttribute;
-  const colors = new Float32Array(n * n * 3);
+  const colors = new Float32Array(vertCount * 3);
   const grass = hexToLinear(p.grassColor);
   const rock = hexToLinear(p.rockColor);
   const snow = hexToLinear(p.snowColor);
@@ -261,62 +290,58 @@ export function buildTerrain(settings: TerrainSettings): TerrainBuild {
   mix3(lichen, grass, 0.35);
   const snowDeep = [...snow];
   scale3(snowDeep, 0.88);
-  const hSpan = Math.max(1e-6, max - min);
   const colorSeed = p.seed & 0xffff;
   const tmp = [0, 0, 0];
-  for (let iz = 0; iz < n; iz++) {
-    for (let ix = 0; ix < n; ix++) {
-      const o = iz * n + ix;
-      const wx = positions[o * 3];
-      const wy = positions[o * 3 + 1];
-      const wz = positions[o * 3 + 2];
-      const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
-      const flatness = Math.min(1, Math.max(0, normalAttr.getY(o)));
-      const steep = 1 - flatness;
-      const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
-      const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
-      const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
+  for (let i = 0; i < vertCount; i++) {
+    const wx = positions[i * 3];
+    const wy = positions[i * 3 + 1];
+    const wz = positions[i * 3 + 2];
+    const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
+    const flatness = Math.min(1, Math.max(0, normalAttr.getY(i)));
+    const steep = 1 - flatness;
+    const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
+    const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
+    const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
 
-      // 草地 → 干草斑块（中海拔宏观噪声）
-      const surface = [...grass];
-      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
-      // 缓坡中段的暗林带
-      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-      // 岩石 shading：地层层理明暗 + 地衣斑块
-      const rockShade = [...rock];
-      const strata =
-        (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) *
-          0.5 +
-        0.5;
-      const lichenMask =
-        smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
-      mix3(rockShade, lichen, lichenMask * 0.45);
-      scale3(rockShade, strata * 0.36 + 0.8);
-      // 高海拔或一切陡面 → 岩
-      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
-      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
-      // 陡而未竖直的坡面撒碎石
-      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
-      mix3(surface, scree, screeMask * 0.5);
-      // 高平处积雪（噪声打破雪线，岩石透出）
-      const snowMask =
-        smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
-      tmp[0] = snow[0];
-      tmp[1] = snow[1];
-      tmp[2] = snow[2];
-      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
-      mix3(surface, tmp, snowMask);
-      // 低洼潮暗
-      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
-      scale3(surface, 1 - cavity * 0.32);
-      // 宏观漂移 + 细颗粒斑驳
-      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
-      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+    // 草地 → 干草斑块（中海拔宏观噪声）
+    const surface = [...grass];
+    mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+    // 缓坡中段的暗林带
+    mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+    // 岩石 shading：地层层理明暗 + 地衣斑块
+    const rockShade = [...rock];
+    const strata =
+      (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) *
+        0.5 +
+      0.5;
+    const lichenMask =
+      smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+    mix3(rockShade, lichen, lichenMask * 0.45);
+    scale3(rockShade, strata * 0.36 + 0.8);
+    // 高海拔或一切陡面 → 岩
+    mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+    mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+    // 陡而未竖直的坡面撒碎石
+    const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+    mix3(surface, scree, screeMask * 0.5);
+    // 高平处积雪（噪声打破雪线，岩石透出）
+    const snowMask =
+      smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+    tmp[0] = snow[0];
+    tmp[1] = snow[1];
+    tmp[2] = snow[2];
+    mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+    mix3(surface, tmp, snowMask);
+    // 低洼潮暗
+    const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+    scale3(surface, 1 - cavity * 0.32);
+    // 宏观漂移 + 细颗粒斑驳
+    scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+    scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
 
-      colors[o * 3] = surface[0];
-      colors[o * 3 + 1] = surface[1];
-      colors[o * 3 + 2] = surface[2];
-    }
+    colors[i * 3] = surface[0];
+    colors[i * 3 + 1] = surface[1];
+    colors[i * 3 + 2] = surface[2];
   }
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 

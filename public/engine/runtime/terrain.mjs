@@ -496,6 +496,143 @@ function scale3(a, f) {
   a[1] = Math.min(1, a[1] * f);
   a[2] = Math.min(1, a[2] * f);
 }
+function _quadMaxError(h, n, x0, x1, z0, z1) {
+  const h00 = h[z0 * n + x0], h10 = h[z0 * n + x1], h01 = h[z1 * n + x0], h11 = h[z1 * n + x1];
+  const dx = x1 - x0, dz = z1 - z0;
+  let maxErr = 0;
+  for (let z = z0; z <= z1; z++) {
+    for (let x = x0; x <= x1; x++) {
+      const tx = (x - x0) / dx, tz = (z - z0) / dz;
+      const interp = h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
+      const err = Math.abs(h[z * n + x] - interp);
+      if (err > maxErr) maxErr = err;
+    }
+  }
+  return maxErr;
+}
+function _buildQuad(h, n, x0, x1, z0, z1, threshold, depth, maxDepth) {
+  const q = { x0, z0, x1, z1 };
+  if (x1 - x0 <= 1 || z1 - z0 <= 1 || depth >= maxDepth) return q;
+  if (_quadMaxError(h, n, x0, x1, z0, z1) < threshold) return q;
+  const mx = x0 + x1 >> 1, mz = z0 + z1 >> 1;
+  q.children = [
+    _buildQuad(h, n, x0, mx, z0, mz, threshold, depth + 1, maxDepth),
+    _buildQuad(h, n, mx, x1, z0, mz, threshold, depth + 1, maxDepth),
+    _buildQuad(h, n, x0, mx, mz, z1, threshold, depth + 1, maxDepth),
+    _buildQuad(h, n, mx, x1, mz, z1, threshold, depth + 1, maxDepth)
+  ];
+  return q;
+}
+function _collectLeaves(q, leaves) {
+  if (!q.children) {
+    leaves.push(q);
+    return;
+  }
+  for (const c of q.children) _collectLeaves(c, leaves);
+}
+function _findLeaf(root, x, z) {
+  if (x < root.x0 || x > root.x1 || z < root.z0 || z > root.z1) return null;
+  if (!root.children) return root;
+  for (const c of root.children) {
+    const r = _findLeaf(c, x, z);
+    if (r) return r;
+  }
+  return null;
+}
+function _balanceTree(root) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const leaves = [];
+    _collectLeaves(root, leaves);
+    for (const l of leaves) {
+      if (l.children) continue;
+      const lSize = l.x1 - l.x0;
+      const checks = [
+        [l.x0, l.z0 - 1],
+        [l.x1, l.z0 - 1],
+        [l.x0, l.z1 + 1],
+        [l.x1, l.z1 + 1],
+        [l.x0 - 1, l.z0],
+        [l.x0 - 1, l.z1],
+        [l.x1 + 1, l.z0],
+        [l.x1 + 1, l.z1]
+      ];
+      for (const [cx, cz] of checks) {
+        const neighbor = _findLeaf(root, cx, cz);
+        if (neighbor && !neighbor.children && neighbor.x1 - neighbor.x0 < lSize / 2) {
+          const mx = l.x0 + l.x1 >> 1, mz = l.z0 + l.z1 >> 1;
+          l.children = [
+            { x0: l.x0, x1: mx, z0: l.z0, z1: mz },
+            { x0: mx, x1: l.x1, z0: l.z0, z1: mz },
+            { x0: l.x0, x1: mx, z0: mz, z1: l.z1 },
+            { x0: mx, x1: l.x1, z0: mz, z1: l.z1 }
+          ];
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+}
+function _simplifyTerrainMesh(heights, n, threshold) {
+  const segs = n - 1;
+  if (segs < 4 || (segs & segs - 1) !== 0) return null;
+  const maxDepth = Math.round(Math.log2(segs));
+  const root = _buildQuad(heights, n, 0, segs, 0, segs, threshold, 0, maxDepth);
+  _balanceTree(root);
+  const leaves = [];
+  _collectLeaves(root, leaves);
+  const vertMap = /* @__PURE__ */ new Map();
+  const vertices = [];
+  const indices = [];
+  function getVert(x, z) {
+    const key = x * n + z;
+    let idx = vertMap.get(key);
+    if (idx === void 0) {
+      idx = vertices.length / 2;
+      vertices.push(x, z);
+      vertMap.set(key, idx);
+    }
+    return idx;
+  }
+  for (const l of leaves) {
+    const lSize = l.x1 - l.x0;
+    const mx = l.x0 + l.x1 >> 1, mz = l.z0 + l.z1 >> 1;
+    const A = getVert(l.x0, l.z0), B = getVert(l.x1, l.z0);
+    const C = getVert(l.x1, l.z1), D = getVert(l.x0, l.z1);
+    const M = getVert(mx, mz);
+    const topN = _findLeaf(root, mx, l.z0 - 1);
+    const rightN = _findLeaf(root, l.x1 + 1, mz);
+    const bottomN = _findLeaf(root, mx, l.z1 + 1);
+    const leftN = _findLeaf(root, l.x0 - 1, mz);
+    const topMid = topN && !topN.children && topN.x1 - topN.x0 < lSize ? getVert(mx, l.z0) : -1;
+    const rightMid = rightN && !rightN.children && rightN.x1 - rightN.x0 < lSize ? getVert(l.x1, mz) : -1;
+    const bottomMid = bottomN && !bottomN.children && bottomN.x1 - bottomN.x0 < lSize ? getVert(mx, l.z1) : -1;
+    const leftMid = leftN && !leftN.children && leftN.x1 - leftN.x0 < lSize ? getVert(l.x0, mz) : -1;
+    if (topMid >= 0) {
+      indices.push(A, M, topMid, topMid, M, B);
+    } else {
+      indices.push(A, M, B);
+    }
+    if (rightMid >= 0) {
+      indices.push(B, M, rightMid, rightMid, M, C);
+    } else {
+      indices.push(B, M, C);
+    }
+    if (bottomMid >= 0) {
+      indices.push(C, M, bottomMid, bottomMid, M, D);
+    } else {
+      indices.push(C, M, D);
+    }
+    if (leftMid >= 0) {
+      indices.push(D, M, leftMid, leftMid, M, A);
+    } else {
+      indices.push(D, M, A);
+    }
+  }
+  return { vertices: Int32Array.from(vertices), indices: Uint32Array.from(indices) };
+}
 function buildTerrain(p) {
   const n = p.segments + 1;
   const half = p.size / 2;
@@ -509,37 +646,57 @@ function buildTerrain(p) {
     }
   }
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
-  const positions = new Float32Array(n * n * 3);
   let min = Infinity;
   let max = -Infinity;
-  for (let iz = 0; iz < n; iz++) {
-    for (let ix = 0; ix < n; ix++) {
-      const o = iz * n + ix;
-      const y = heights[o];
-      positions[o * 3] = coord[ix];
-      positions[o * 3 + 1] = y;
-      positions[o * 3 + 2] = coord[iz];
-      if (y < min) min = y;
-      if (y > max) max = y;
-    }
+  for (let i = 0; i < n * n; i++) {
+    const y = heights[i];
+    if (y < min) min = y;
+    if (y > max) max = y;
   }
-  const indices = [];
-  for (let iz = 0; iz < p.segments; iz++) {
-    for (let ix = 0; ix < p.segments; ix++) {
-      const a = iz * n + ix;
-      const b = a + 1;
-      const c = a + n;
-      const d = c + 1;
-      if ((ix + iz) % 2 === 0) indices.push(a, c, b, b, c, d);
-      else indices.push(a, c, d, a, d, b);
+  const hSpan = Math.max(1e-6, max - min);
+  const simplified = _simplifyTerrainMesh(heights, n, hSpan * 0.05);
+  let positions, vertCount, indices;
+  if (simplified) {
+    vertCount = simplified.vertices.length / 2;
+    positions = new Float32Array(vertCount * 3);
+    for (let i = 0; i < vertCount; i++) {
+      const gx = simplified.vertices[i * 2];
+      const gz = simplified.vertices[i * 2 + 1];
+      positions[i * 3] = coord[gx];
+      positions[i * 3 + 1] = heights[gz * n + gx];
+      positions[i * 3 + 2] = coord[gz];
+    }
+    indices = simplified.indices;
+  } else {
+    vertCount = n * n;
+    positions = new Float32Array(vertCount * 3);
+    for (let iz = 0; iz < n; iz++) {
+      for (let ix = 0; ix < n; ix++) {
+        const o = iz * n + ix;
+        positions[o * 3] = coord[ix];
+        positions[o * 3 + 1] = heights[o];
+        positions[o * 3 + 2] = coord[iz];
+      }
+    }
+    indices = [];
+    for (let iz = 0; iz < p.segments; iz++) {
+      for (let ix = 0; ix < p.segments; ix++) {
+        const a = iz * n + ix, b = a + 1, c = a + n, d = c + 1;
+        if ((ix + iz) % 2 === 0) indices.push(a, c, b, b, c, d);
+        else indices.push(a, c, d, a, d, b);
+      }
     }
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
+  if (indices instanceof Uint32Array) {
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  } else {
+    geometry.setIndex(indices);
+  }
   geometry.computeVertexNormals();
   const normalAttr = geometry.getAttribute("normal");
-  const colors = new Float32Array(n * n * 3);
+  const colors = new Float32Array(vertCount * 3);
   const grass = hexToLinear(p.grassColor);
   const rock = hexToLinear(p.rockColor);
   const snow = hexToLinear(p.snowColor);
@@ -553,47 +710,43 @@ function buildTerrain(p) {
   mix3(lichen, grass, 0.35);
   const snowDeep = [...snow];
   scale3(snowDeep, 0.88);
-  const hSpan = Math.max(1e-6, max - min);
   const colorSeed = p.seed & 65535;
   const tmp = [0, 0, 0];
-  for (let iz = 0; iz < n; iz++) {
-    for (let ix = 0; ix < n; ix++) {
-      const o = iz * n + ix;
-      const wx = positions[o * 3];
-      const wy = positions[o * 3 + 1];
-      const wz = positions[o * 3 + 2];
-      const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
-      const flatness = Math.min(1, Math.max(0, normalAttr.getY(o)));
-      const steep = 1 - flatness;
-      const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
-      const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
-      const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
-      const surface = [...grass];
-      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
-      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-      const rockShade = [...rock];
-      const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
-      const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
-      mix3(rockShade, lichen, lichenMask * 0.45);
-      scale3(rockShade, strata * 0.36 + 0.8);
-      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
-      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
-      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
-      mix3(surface, scree, screeMask * 0.5);
-      const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
-      tmp[0] = snow[0];
-      tmp[1] = snow[1];
-      tmp[2] = snow[2];
-      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
-      mix3(surface, tmp, snowMask);
-      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
-      scale3(surface, 1 - cavity * 0.32);
-      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
-      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
-      colors[o * 3] = surface[0];
-      colors[o * 3 + 1] = surface[1];
-      colors[o * 3 + 2] = surface[2];
-    }
+  for (let i = 0; i < vertCount; i++) {
+    const wx = positions[i * 3];
+    const wy = positions[i * 3 + 1];
+    const wz = positions[i * 3 + 2];
+    const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
+    const flatness = Math.min(1, Math.max(0, normalAttr.getY(i)));
+    const steep = 1 - flatness;
+    const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
+    const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
+    const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
+    const surface = [...grass];
+    mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+    mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+    const rockShade = [...rock];
+    const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
+    const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+    mix3(rockShade, lichen, lichenMask * 0.45);
+    scale3(rockShade, strata * 0.36 + 0.8);
+    mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+    mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+    const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+    mix3(surface, scree, screeMask * 0.5);
+    const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+    tmp[0] = snow[0];
+    tmp[1] = snow[1];
+    tmp[2] = snow[2];
+    mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+    mix3(surface, tmp, snowMask);
+    const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+    scale3(surface, 1 - cavity * 0.32);
+    scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+    scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+    colors[i * 3] = surface[0];
+    colors[i * 3 + 1] = surface[1];
+    colors[i * 3 + 2] = surface[2];
   }
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return { geometry, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
