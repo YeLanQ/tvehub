@@ -1217,6 +1217,186 @@ async function createPhysics({ nodes, terrains, settings } = {}) {
   };
   return api;
 }
+function serializeNodes(nodes) {
+  const idSet = new Set(nodes.map((n) => {
+    var _a;
+    return (_a = n.json) == null ? void 0 : _a.id;
+  }));
+  return nodes.map((n) => {
+    var _a, _b, _c;
+    const obj = n.obj;
+    const parentId = obj.parent && idSet.has((_a = obj.parent.userData) == null ? void 0 : _a.__tveNodeId) ? obj.parent.userData.__tveNodeId : null;
+    const isMesh = !!obj.isMesh;
+    let vertices = null;
+    if (isMesh && ((_c = (_b = obj.geometry) == null ? void 0 : _b.attributes) == null ? void 0 : _c.position)) {
+      vertices = obj.geometry.attributes.position.array.slice();
+    }
+    return {
+      nodeId: n.json.id,
+      json: n.json,
+      position: [obj.position.x, obj.position.y, obj.position.z],
+      quaternion: [obj.quaternion.x, obj.quaternion.y, obj.quaternion.z, obj.quaternion.w],
+      scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+      parentId,
+      isMesh,
+      vertices
+    };
+  });
+}
+async function createPhysicsWorker(opts) {
+  const { nodes, terrains, settings, workerUrl } = opts || {};
+  const enabled = (settings == null ? void 0 : settings.physicsEnabled) === true;
+  if (!enabled || !workerUrl) return createPhysics(opts);
+  for (const { json, obj } of nodes) {
+    if (obj && (json == null ? void 0 : json.id)) obj.userData = { ...obj.userData, __tveNodeId: json.id };
+  }
+  const serialized = serializeNodes(nodes);
+  const serializedTerrains = (Array.isArray(terrains) ? terrains : []).filter((t) => {
+    var _a;
+    return ((_a = t == null ? void 0 : t.json) == null ? void 0 : _a.id) && (t == null ? void 0 : t.data);
+  }).map((t) => ({
+    json: { id: t.json.id },
+    data: {
+      heights: t.data.heights,
+      gridSize: t.data.gridSize,
+      size: t.data.size
+    }
+  }));
+  let worker;
+  try {
+    worker = new Worker(workerUrl, { type: "module" });
+    worker.postMessage({ type: "init", nodes: serialized, terrains: serializedTerrains, settings });
+  } catch {
+    return createPhysics(opts);
+  }
+  const ready = await new Promise((resolve) => {
+    worker.onmessage = (e) => {
+      if (e.data.type === "ready") resolve(e.data);
+      else if (e.data.type === "error") resolve(null);
+    };
+    worker.onerror = () => resolve(null);
+  });
+  if (!ready) {
+    worker.terminate();
+    return createPhysics(opts);
+  }
+  const dynamicIds = ready.dynamicIds || [];
+  const dynamicMap = /* @__PURE__ */ new Map();
+  for (const id of dynamicIds) {
+    const node = nodes.find((n) => {
+      var _a;
+      return ((_a = n.json) == null ? void 0 : _a.id) === id;
+    });
+    if (node) dynamicMap.set(id, node.obj);
+  }
+  let pending = null;
+  let workerBusy = false;
+  let cachedCollisions = [];
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === "stepped") {
+      pending = msg;
+      workerBusy = false;
+    } else if (msg.type === "result" && msg.method === "drainCollisions") {
+      cachedCollisions = msg.value;
+    }
+  };
+  const transformBuf = new Float32Array(nodes.length * 7);
+  const api = {
+    update(dt) {
+      if (pending) {
+        const t = pending.transforms;
+        for (let i = 0, j = 0; i < dynamicIds.length; i++, j += 7) {
+          const obj = dynamicMap.get(dynamicIds[i]);
+          if (!obj) continue;
+          obj.position.set(t[j], t[j + 1], t[j + 2]);
+          obj.quaternion.set(t[j + 3], t[j + 4], t[j + 5], t[j + 6]);
+        }
+        cachedCollisions = pending.collisions || [];
+        pending = null;
+      }
+      if (!workerBusy) {
+        for (let i = 0, j = 0; i < nodes.length; i++, j += 7) {
+          const obj = nodes[i].obj;
+          transformBuf[j] = obj.position.x;
+          transformBuf[j + 1] = obj.position.y;
+          transformBuf[j + 2] = obj.position.z;
+          transformBuf[j + 3] = obj.quaternion.x;
+          transformBuf[j + 4] = obj.quaternion.y;
+          transformBuf[j + 5] = obj.quaternion.z;
+          transformBuf[j + 6] = obj.quaternion.w;
+        }
+        try {
+          const copy = transformBuf.slice();
+          worker.postMessage({ type: "step", dt, transforms: copy }, [copy.buffer]);
+          workerBusy = true;
+        } catch {
+        }
+      }
+    },
+    setGravity(x, y, z) {
+      try {
+        worker.postMessage({ type: "command", method: "setGravity", args: [x, y, z] });
+      } catch {
+      }
+    },
+    applyImpulse(nodeId, x, y, z) {
+      try {
+        worker.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] });
+      } catch {
+      }
+    },
+    applyForce(nodeId, x, y, z) {
+      try {
+        worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] });
+      } catch {
+      }
+    },
+    setLinearVelocity(nodeId, x, y, z) {
+      try {
+        worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] });
+      } catch {
+      }
+    },
+    setAngularVelocity(nodeId, x, y, z) {
+      try {
+        worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] });
+      } catch {
+      }
+    },
+    getLinearVelocity(nodeId) {
+      return null;
+    },
+    bodyInfo(nodeId) {
+      const isDynamic = dynamicIds.includes(nodeId);
+      return isDynamic ? { mode: "dynamic", gravityScale: 1, colliderCount: 1 } : null;
+    },
+    setGravityScale(nodeId, scale) {
+      try {
+        worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] });
+      } catch {
+      }
+    },
+    wakeUp(nodeId) {
+      try {
+        worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] });
+      } catch {
+      }
+    },
+    drainCollisions() {
+      const c = cachedCollisions;
+      cachedCollisions = [];
+      return c;
+    },
+    dispose() {
+      worker.postMessage({ type: "dispose" });
+      worker.terminate();
+    }
+  };
+  postLog("info", "[物理] Worker 模式已启动（物理模拟在独立线程）");
+  return api;
+}
 export {
-  createPhysics
+  createPhysics,
+  createPhysicsWorker
 };

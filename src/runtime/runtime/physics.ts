@@ -1370,3 +1370,164 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
 
   return api;
 }
+// ---------------------------------------------------------------------------
+// Worker 代理模式：物理模拟在独立线程运行，主线程经 postMessage 同步变换。
+// 双缓冲策略——update() 应用上一帧 Worker 返回的动力学体变换，同时发送当前帧
+// 全节点变换给 Worker；Worker 并行步进，结果在下一帧 update() 时取用。
+// 单页导出（Blob URL import.meta.url）无法解析 Worker 模块路径，回退主线程。
+// ---------------------------------------------------------------------------
+
+/** 序列化节点为 Worker 可传输的纯数据（obj → position/quaternion/scale/parent/geometry） */
+function serializeNodes(nodes) {
+  const idSet = new Set(nodes.map((n) => n.json?.id));
+  return nodes.map((n) => {
+    const obj = n.obj;
+    const parentId = obj.parent && idSet.has(obj.parent.userData?.__tveNodeId) ? obj.parent.userData.__tveNodeId : null;
+    const isMesh = !!obj.isMesh;
+    let vertices = null;
+    if (isMesh && obj.geometry?.attributes?.position) {
+      vertices = obj.geometry.attributes.position.array.slice();
+    }
+    return {
+      nodeId: n.json.id,
+      json: n.json,
+      position: [obj.position.x, obj.position.y, obj.position.z],
+      quaternion: [obj.quaternion.x, obj.quaternion.y, obj.quaternion.z, obj.quaternion.w],
+      scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+      parentId,
+      isMesh,
+      vertices,
+    };
+  });
+}
+
+/**
+ * 创建物理 Worker 代理（与 createPhysics 同接口）。
+ * 在多文件导出模式下使用 Worker 线程；单页模式回退到 createPhysics。
+ */
+export async function createPhysicsWorker(opts) {
+  const { nodes, terrains, settings, workerUrl } = opts || {};
+  const enabled = settings?.physicsEnabled === true;
+  if (!enabled || !workerUrl) return createPhysics(opts);
+
+  // 标记节点 Object3D 的 nodeId（供 serializeNodes 查找 parent）
+  for (const { json, obj } of nodes) {
+    if (obj && json?.id) obj.userData = { ...obj.userData, __tveNodeId: json.id };
+  }
+
+  const serialized = serializeNodes(nodes);
+  // terrains 含 Three.js 对象（obj/data.geometry），不可结构化克隆，
+  // 只提取 createPhysics 需要的纯数据字段（json.id + data.heights/gridSize/size）
+  const serializedTerrains = (Array.isArray(terrains) ? terrains : [])
+    .filter((t) => t?.json?.id && t?.data)
+    .map((t) => ({
+      json: { id: t.json.id },
+      data: {
+        heights: t.data.heights,
+        gridSize: t.data.gridSize,
+        size: t.data.size,
+      },
+    }));
+  let worker;
+  try {
+    worker = new Worker(workerUrl, { type: "module" });
+    worker.postMessage({ type: "init", nodes: serialized, terrains: serializedTerrains, settings });
+  } catch {
+    return createPhysics(opts);
+  }
+
+  // 等待 Worker ready
+  const ready = await new Promise((resolve) => {
+    worker.onmessage = (e) => {
+      if (e.data.type === "ready") resolve(e.data);
+      else if (e.data.type === "error") resolve(null);
+    };
+    worker.onerror = () => resolve(null);
+  });
+  if (!ready) {
+    worker.terminate();
+    return createPhysics(opts);
+  }
+
+  const dynamicIds = ready.dynamicIds || [];
+  const dynamicMap = new Map();
+  for (const id of dynamicIds) {
+    const node = nodes.find((n) => n.json?.id === id);
+    if (node) dynamicMap.set(id, node.obj);
+  }
+
+  // 双缓冲：pending = Worker 上一帧返回的动力学体变换
+  let pending = null;
+  let workerBusy = false;
+  let cachedCollisions = [];
+
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === "stepped") {
+      pending = msg;
+      workerBusy = false;
+    } else if (msg.type === "result" && msg.method === "drainCollisions") {
+      cachedCollisions = msg.value;
+    }
+  };
+
+  const transformBuf = new Float32Array(nodes.length * 7);
+
+  const api = {
+    update(dt) {
+      // 1) 应用上一帧 Worker 返回的动力学体变换
+      if (pending) {
+        const t = pending.transforms;
+        for (let i = 0, j = 0; i < dynamicIds.length; i++, j += 7) {
+          const obj = dynamicMap.get(dynamicIds[i]);
+          if (!obj) continue;
+          obj.position.set(t[j], t[j + 1], t[j + 2]);
+          obj.quaternion.set(t[j + 3], t[j + 4], t[j + 5], t[j + 6]);
+        }
+        cachedCollisions = pending.collisions || [];
+        pending = null;
+      }
+      // 2) 发送当前帧全节点变换给 Worker（非忙时）
+      if (!workerBusy) {
+        for (let i = 0, j = 0; i < nodes.length; i++, j += 7) {
+          const obj = nodes[i].obj;
+          transformBuf[j] = obj.position.x;
+          transformBuf[j + 1] = obj.position.y;
+          transformBuf[j + 2] = obj.position.z;
+          transformBuf[j + 3] = obj.quaternion.x;
+          transformBuf[j + 4] = obj.quaternion.y;
+          transformBuf[j + 5] = obj.quaternion.z;
+          transformBuf[j + 6] = obj.quaternion.w;
+        }
+        try {
+          const copy = transformBuf.slice();
+          worker.postMessage({ type: "step", dt, transforms: copy }, [copy.buffer]);
+          workerBusy = true;
+        } catch {
+          /* Worker 已终止等，静默忽略 */
+        }
+      }
+    },
+    setGravity(x, y, z) { try { worker.postMessage({ type: "command", method: "setGravity", args: [x, y, z] }); } catch {} },
+    applyImpulse(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] }); } catch {} },
+    applyForce(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
+    setLinearVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    setAngularVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    getLinearVelocity(nodeId) { return null; },
+    bodyInfo(nodeId) {
+      const isDynamic = dynamicIds.includes(nodeId);
+      return isDynamic ? { mode: "dynamic", gravityScale: 1, colliderCount: 1 } : null;
+    },
+    setGravityScale(nodeId, scale) { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
+    wakeUp(nodeId) { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
+    drainCollisions() {
+      const c = cachedCollisions;
+      cachedCollisions = [];
+      return c;
+    },
+    dispose() { worker.postMessage({ type: "dispose" }); worker.terminate(); },
+  };
+
+  postLog("info", "[物理] Worker 模式已启动（物理模拟在独立线程）");
+  return api;
+}

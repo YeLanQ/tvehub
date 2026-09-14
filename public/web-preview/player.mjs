@@ -23,7 +23,7 @@ import { createParticles } from "../engine/runtime/particles.mjs";
 import { createTerrains } from "../engine/runtime/terrain.mjs";
 import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
 import { ensureHeightFogChunk } from "../engine/runtime/heightFog.mjs";
-import { createPhysics } from "../engine/runtime/physics.mjs";
+import { createPhysicsWorker as createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createUI } from "../engine/runtime/ui.mjs";
@@ -265,11 +265,24 @@ async function main() {
     particleMaterial: particleMaterialFactory,
   });
 
+  // 物理 Worker URL：多文件模式下用 import.meta.url 解析 Worker 路径，物理模拟
+  // 在独立线程运行；单页模式（inline）下 import.meta.url 为 blob URL 无法解析，
+  // 不传 workerUrl → createPhysicsWorker 回退主线程
+  let physicsWorkerUrl;
+  if (!inline) {
+    try {
+      physicsWorkerUrl = new URL("../engine/runtime/physics-worker.mjs", import.meta.url).href;
+    } catch {
+      // file:// 等协议下 import.meta.url 可能无法解析相对路径，回退主线程
+    }
+  }
+
   // 物理引擎提前启动：WASM 编译（2-3MB）耗时长，与后续天空盒/贴图/渲染预热并行
   const physicsPromise = createPhysics({
     nodes,
     terrains,
     settings: (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics),
+    workerUrl: physicsWorkerUrl,
   }).catch((e) => {
     postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);
     return null;

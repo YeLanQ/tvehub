@@ -50,6 +50,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/nodes.mjs",
   "engine/runtime/pak.mjs",
   "engine/runtime/particles.mjs",
+  "engine/runtime/physics-worker.mjs",
   "engine/runtime/physics.mjs",
   "engine/runtime/shader.mjs",
   "engine/runtime/shaderHooks.mjs",
