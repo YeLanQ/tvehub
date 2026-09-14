@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // 压缩 glTF/GLB 解码支持（KHR_draco_mesh_compression / EXT_meshopt_compression /
 // KHR_texture_basisu）：解码器单例集中在此管理。
-// - DRACO/Basis 解码器文件随应用内置（public/internal/draco/gltf、
-//   public/internal/basis），运行时经 asset:// 内置资源 URL 按需拉取（应用层在
-//   编辑器挂载后注入基路径）。基路径以 / 结尾由调用方拼接——asset:// 内置作用域
-//   拒绝空路径段，目录本身的 URL 不会被请求，加载器只会取「基路径 + 文件名」；
+// - DRACO/Basis 解码器文件随引擎内置（public/engine/runtime/loaders/draco、
+//   public/engine/runtime/loaders/basis），编辑器经相对 HTTP 路径按需拉取
+//   （dev 由 Vite 静态服务、prod 随前端 dist 打包）；web 运行时同路径由产物
+//   静态服务。基路径以 / 结尾由调用方拼接——加载器只会取「基路径 + 文件名」；
 // - Meshopt 解码器是 three 自带的 JS+内嵌 wasm 模块，随代码分包直接 import；
 // - KTX2 需按渲染器探测压缩纹理格式支持（WebGL/WebGPU 能力面不同），渲染器实例
 //   变化（如重新挂载且后端切换）时重新探测。

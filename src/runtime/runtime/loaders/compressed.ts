@@ -14,7 +14,7 @@ import type { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
   applyCompressedGltfSupport,
   setupCompressedGltfSupport,
-} from "../../framework/mesh/compressed-gltf";
+} from "../../../framework/mesh/compressed-gltf";
 
 const DRACO_DECODER_DIR = "./engine/runtime/loaders/draco/";
 

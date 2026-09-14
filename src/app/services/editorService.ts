@@ -146,12 +146,13 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         });
         // 挂载期间被销毁（如就绪前点击"关闭"返回首页）→ 不再装载场景/重建
         if (engine.isDisposed()) return;
-        // 压缩 glTF 解码器（DRACO/Meshopt/KTX2）：解码器文件走 asset:// 内置资源，
-        // 基路径尾斜杠在此拼接（内置作用域拒绝空路径段；加载器只请求基路径+文件名）；
+        // 压缩 glTF 解码器（DRACO/Meshopt/KTX2）：解码器文件随引擎内置
+        // （public/engine/runtime/loaders/{draco,basis}），编辑器经相对 HTTP 路径
+        // 按需拉取（dev 由 Vite 静态服务、prod 随前端 dist 打包）；
         // KTX2 按实际渲染器探测压缩纹理格式（WebGL/WebGPU 能力面不同）
         setupCompressedGltfSupport({
-          dracoBase: `${assetUrl("internal/draco/gltf")}/`,
-          basisBase: `${assetUrl("internal/basis")}/`,
+          dracoBase: "engine/runtime/loaders/draco/",
+          basisBase: "engine/runtime/loaders/basis/",
           renderer: engine.renderer.raw,
         });
         // 场景装载：后端读盘 + 旧格式迁移 + 建图（历史清零），返回规范 doc 与引用清单

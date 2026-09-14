@@ -115,10 +115,44 @@ function threeExternalPlugin() {
   };
 }
 
-/** DRACOLoader 顶层 new URL 补丁（enforce:pre，先于 Vite 的资产 URL 变换） */
+/** vendor 外部化：源码中对 three 构建 / vendor loaders / 物理引擎等相对路径 import
+ *  （如 "../core/three.module.min.js"、"./loaders/GLTFLoader.js"）在 src/ 下不存在，
+ *  但在 public/engine/ 对应位置存在 → 外部化为 public/engine 下的绝对路径。
+ *  与 threeExternalPlugin（处理 "three"/"three/webgpu" 裸说明符）协同：
+ *  手写 .ts 源码保持与原 .mjs 相同的相对 import 路径，由本插件在构建期外部化。 */
+function vendorExternalPlugin() {
+  return {
+    name: "tve-runtime-vendor-external",
+    enforce: "pre",
+    resolveId(id, importer) {
+      if (!id.startsWith(".")) return null;
+      if (!importer) return null;
+      const normImporter = path.resolve(importer);
+      if (!normImporter.startsWith(RUNTIME_SRC + path.sep)) return null;
 
-/** 递归收集 src/runtime 下的入口（每个 .ts 文件 = public/engine/runtime/** 同名 .mjs；
- *  键 = 产物内相对路径（不含扩展名），如 "runtime/loaders/compressed"） */
+      // src/ 下能解析到（含 Vite extensions 补全）→ 正常 .ts 间 import，不外部化
+      const srcDir = path.dirname(normImporter);
+      const srcResolved = path.resolve(srcDir, id);
+      if (fs.existsSync(srcResolved)) return null;
+      for (const ext of [".ts", ".tsx", ".js", ".mjs"]) {
+        if (fs.existsSync(srcResolved + ext)) return null;
+      }
+
+      // 映射到 public/engine/ 对应位置：src/runtime/<rel> → public/engine/<rel>
+      const relImporter = path.relative(RUNTIME_SRC, normImporter);
+      const outDir = path.dirname(path.join(ENGINE_DIR, relImporter));
+      const engineResolved = path.resolve(outDir, id);
+      if (fs.existsSync(engineResolved)) {
+        return { id: engineResolved, external: "relative" };
+      }
+      return null;
+    },
+  };
+}
+
+/** 递归收集 src/runtime 下的入口，保留目录结构映射到 public/engine/：
+ *  src/runtime/core/log.ts   → public/engine/core/log.mjs   （键 "core/log"）
+ *  src/runtime/runtime/stage.ts → public/engine/runtime/stage.mjs （键 "runtime/stage"） */
 function collectInputs() {
   const input = {};
   (function walk(dir, rel) {
@@ -127,7 +161,7 @@ function collectInputs() {
       const relName = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(abs, relName);
       else if (e.name.endsWith(".ts")) {
-        input[`runtime/${relName.replace(/\.ts$/, "")}`] = abs;
+        input[relName.replace(/\.ts$/, "")] = abs;
       }
     }
   })(RUNTIME_SRC, "");
@@ -135,7 +169,8 @@ function collectInputs() {
   return input;
 }
 
-/** 产物自检：相对 three 说明符存在、无 import.meta.url 残留（单页内联 blob 安全） */
+/** 产物自检：无 import.meta.url 残留（单页内联 blob 安全）。
+ *  three 相对说明符仅对 import three 的产物校验（log/utils 等纯工具模块不 import three）。 */
 function verifyOutput(input) {
   for (const name of Object.keys(input)) {
     const file = path.join(ENGINE_DIR, `${name}.mjs`);
@@ -144,25 +179,48 @@ function verifyOutput(input) {
     if (text.includes("import.meta.url")) {
       throw new Error(`[build-runtime] 产物残留 import.meta.url（单页内联 blob 下会抛 Invalid URL）: ${file}`);
     }
-    if (!/from\s+["'](\.\.\/)+core\/three(\.module\.min|\.webgpu\.min)?\.js["']/.test(text)) {
-      throw new Error(`[build-runtime] 产物缺少 three 相对说明符（外部化失效？）: ${file}`);
+    // 若产物引用了 three，校验说明符为相对路径（外部化生效）
+    if (/from\s+["']three(?:\/webgpu)?["']/.test(text)) {
+      throw new Error(`[build-runtime] 产物残留裸 three 说明符（外部化失效）: ${file}`);
     }
   }
 }
 
-/** 外部 three 说明符修正：Vite/Rollup 对绝对外部 id 的相对化基准不可控（曾产出
- *  按错误基准算出的多层向上路径），统一在后处理按「产物文件自身目录」重算。 */
+/** 外部说明符修正：Vite/Rollup 对绝对外部 id 的相对化基准不可控（曾产出
+ *  `../../../public/engine/...` 等错误路径），统一在后处理按「产物文件自身目录」
+ *  重算所有指向 public/engine/ 下真实文件的 import 为正确的相对路径。
+ *  覆盖 three 构建（core/three.*.min.js）与 vendor（loaders/*.js、physics-engines/*.mjs）。 */
 function fixExternalSpecifiers(input) {
-  const targets = ["three.module.min.js", "three.webgpu.min.js"];
+  const engineRoot = path.resolve(ENGINE_DIR);
+  for (const name of Object.keys(input)) {
+    const file = path.join(ENGINE_DIR, `${name}.mjs`);
+    const dir = path.dirname(file);
+    let text = fs.readFileSync(file, "utf8");
+    text = text.replace(
+      /(from\s+["'])([^"']*)(["'])/g,
+      (match, pre, spec, post) => {
+        if (!spec.startsWith(".")) return match;
+        const resolved = path.resolve(dir, spec);
+        if (resolved.startsWith(engineRoot + path.sep) && fs.existsSync(resolved)) {
+          let rel = path.relative(dir, resolved).split(path.sep).join("/");
+          if (!rel.startsWith(".")) rel = "./" + rel;
+          if (rel !== spec) return `${pre}${rel}${post}`;
+        }
+        return match;
+      },
+    );
+    fs.writeFileSync(file, text);
+  }
+}
+
+/** 给产物添加 AUTO-GENERATED banner（Vite lib 模式不生效 rollupOptions.output.banner，
+ *  统一在后处理注入）。幂等：已有 banner 跳过。 */
+function addBanner(input) {
   for (const name of Object.keys(input)) {
     const file = path.join(ENGINE_DIR, `${name}.mjs`);
     let text = fs.readFileSync(file, "utf8");
-    for (const t of targets) {
-      const rel = path.relative(path.dirname(file), path.join(CORE_DIR, t)).split(path.sep).join("/");
-      const re = new RegExp(`(from\\s+["'])[^"']*core[/\\\\]${t.replace(/\./g, "\\.")}(["'])`, "g");
-      text = text.replace(re, (_m, pre, post) => `${pre}${rel}${post}`);
-    }
-    fs.writeFileSync(file, text);
+    if (text.startsWith(BANNER)) continue;
+    fs.writeFileSync(file, BANNER + text);
   }
 }
 
@@ -177,7 +235,7 @@ export function buildRuntime(why = "") {
       configFile: false,
       root: ROOT,
       logLevel: "warn",
-      plugins: [threeExternalPlugin(), patchDracoLoaderPlugin()],
+      plugins: [threeExternalPlugin(), vendorExternalPlugin(), patchDracoLoaderPlugin()],
       build: {
         // lib 模式：产物是可 import 的模块库，入口导出必须保留（app 模式会把
         // 无 HTML 消费的入口导出整体摇掉，产出空文件）
@@ -204,6 +262,7 @@ export function buildRuntime(why = "") {
       },
     });
     fixExternalSpecifiers(input);
+    addBanner(input);
     verifyOutput(input);
     console.log(
       `[build-runtime] web 运行时已编译（${why || "手动"}，${Date.now() - t0}ms）→ public/engine`,

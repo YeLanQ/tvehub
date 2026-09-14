@@ -136,6 +136,7 @@ fn is_runtime_code(rel: &str) -> bool {
 /// 改名（DRACOLoader 按固定文件名 decoderPath + "draco_decoder.js" 拉取）。
 fn is_runtime_support_data(rel: &str) -> bool {
     rel.starts_with("engine/runtime/loaders/draco/")
+        || rel.starts_with("engine/runtime/loaders/basis/")
 }
 
 /// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html
