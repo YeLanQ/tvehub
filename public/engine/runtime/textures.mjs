@@ -21,43 +21,45 @@ function loadImageTex(texCache, rel, srgb) {
   return p;
 }
 async function applyMeshTextures(meshes, materialParams) {
-  var _a, _b;
   const texCache = /* @__PURE__ */ new Map();
-  for (const entry of meshes) {
-    const mat = entry.obj.material;
-    if (!mat) continue;
-    const m = materialParams.get(entry.json.material);
-    if (!m) continue;
-    if (m.shaderData) {
-      const table = ((_a = mat.userData) == null ? void 0 : _a.__tveHookUniforms) ?? (((_b = mat.userData) == null ? void 0 : _b.__tveNodeHooks) ? mat.userData.__tveNodeHooks.uniforms : void 0);
-      const props = m.props || {};
-      for (const prop of m.shaderData.properties || []) {
-        if (prop.kind !== "texture") continue;
-        const uniform = table ? table[prop.key] : null;
-        if (!uniform) continue;
-        const rel = typeof props[prop.key] === "string" ? props[prop.key] : "";
-        if (!rel) {
-          uniform.value = null;
-          continue;
+  await Promise.all(
+    meshes.map(async (entry) => {
+      var _a, _b;
+      const mat = entry.obj.material;
+      if (!mat) return;
+      const m = materialParams.get(entry.json.material);
+      if (!m) return;
+      if (m.shaderData) {
+        const table = ((_a = mat.userData) == null ? void 0 : _a.__tveHookUniforms) ?? (((_b = mat.userData) == null ? void 0 : _b.__tveNodeHooks) ? mat.userData.__tveNodeHooks.uniforms : void 0);
+        const props = m.props || {};
+        for (const prop of m.shaderData.properties || []) {
+          if (prop.kind !== "texture") continue;
+          const uniform = table ? table[prop.key] : null;
+          if (!uniform) continue;
+          const rel = typeof props[prop.key] === "string" ? props[prop.key] : "";
+          if (!rel) {
+            uniform.value = null;
+            continue;
+          }
+          uniform.value = await loadImageTex(texCache, rel, true);
         }
-        uniform.value = await loadImageTex(texCache, rel, true);
       }
-    }
-    const basicOnly = mat.type === "MeshBasicMaterial";
-    const isToon = mat.type === "MeshToonMaterial";
-    for (const [field, srgb] of TEXTURE_CHANNELS) {
-      if (basicOnly && field !== "map") continue;
-      if (isToon && (field === "metalnessMap" || field === "roughnessMap")) continue;
-      if (isToon && field === "emissiveMap" && !m.emissionEnabled) continue;
-      const rel = m[field];
-      if (!rel) continue;
-      const tex = await loadImageTex(texCache, rel, srgb);
-      if (!tex) continue;
-      mat[field] = tex;
-      if (field === "normalMap") mat.normalScale.set(1, 1);
-      mat.needsUpdate = true;
-    }
-  }
+      const basicOnly = mat.type === "MeshBasicMaterial";
+      const isToon = mat.type === "MeshToonMaterial";
+      for (const [field, srgb] of TEXTURE_CHANNELS) {
+        if (basicOnly && field !== "map") continue;
+        if (isToon && (field === "metalnessMap" || field === "roughnessMap")) continue;
+        if (isToon && field === "emissiveMap" && !m.emissionEnabled) continue;
+        const rel = m[field];
+        if (!rel) continue;
+        const tex = await loadImageTex(texCache, rel, srgb);
+        if (!tex) continue;
+        mat[field] = tex;
+        if (field === "normalMap") mat.normalScale.set(1, 1);
+        mat.needsUpdate = true;
+      }
+    })
+  );
 }
 export {
   applyMeshTextures,

@@ -123,24 +123,27 @@ async function parseModel(rel, buffer) {
 }
 async function loadModels(rootJson) {
   const models = /* @__PURE__ */ new Map();
-  for (const rel of collectModelRefs(rootJson)) {
-    try {
-      const r = await fetch(rel);
-      if (!r.ok) throw new Error(`模型文件读取失败: HTTP ${r.status}`);
-      const buffer = await r.arrayBuffer();
-      const { template, clips } = await parseModel(rel, buffer);
-      template.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = true;
-          o.receiveShadow = true;
-        }
-      });
-      models.set(rel, { template, clips });
-    } catch (e) {
-      models.set(rel, null);
-      postLog("warn", `模型加载失败 ${rel}: ${String(e instanceof Error ? e.message : e)}`);
-    }
-  }
+  const refs = collectModelRefs(rootJson);
+  await Promise.all(
+    refs.map(async (rel) => {
+      try {
+        const r = await fetch(rel);
+        if (!r.ok) throw new Error(`模型文件读取失败: HTTP ${r.status}`);
+        const buffer = await r.arrayBuffer();
+        const { template, clips } = await parseModel(rel, buffer);
+        template.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        models.set(rel, { template, clips });
+      } catch (e) {
+        models.set(rel, null);
+        postLog("warn", `模型加载失败 ${rel}: ${String(e instanceof Error ? e.message : e)}`);
+      }
+    })
+  );
   return models;
 }
 function instantiateModel(models, rel) {

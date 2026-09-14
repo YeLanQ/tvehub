@@ -265,6 +265,16 @@ async function main() {
     particleMaterial: particleMaterialFactory,
   });
 
+  // 物理引擎提前启动：WASM 编译（2-3MB）耗时长，与后续天空盒/贴图/渲染预热并行
+  const physicsPromise = createPhysics({
+    nodes,
+    terrains,
+    settings: (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics),
+  }).catch((e) => {
+    postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);
+    return null;
+  });
+
   // UI（Canvas-Widget，屏幕叠加）：画布根贴合渲染相机由 update 每帧完成；
   // 主渲染各 pass 隐藏画布、主渲染后由专属叠加渲染绘制（beginRender/endRender）；
   // 图片/按钮背景贴图按相对路径异步回填（与网格贴图同一 fetch 链路）
@@ -343,10 +353,13 @@ async function main() {
   }
 
   // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）
-  await applyMeshTextures(meshes, materialParams);
-  await uiApi.applyTextures().catch((e) => {
-    postLog("warn", `UI 贴图回填失败: ${e?.message ?? e}`);
-  });
+  // 网格贴图与 UI 贴图互不依赖，并行加载
+  await Promise.all([
+    applyMeshTextures(meshes, materialParams),
+    uiApi.applyTextures().catch((e) => {
+      postLog("warn", `UI 贴图回填失败: ${e?.message ?? e}`);
+    }),
+  ]);
 
   // 渲染相机（含清除标志：skybox/solidColor/depthOnly/colorOnly）
   const { cam, applyProjection, syncPose, clear, nodeId: renderCamNodeId } = createRenderCamera(cameras);
@@ -556,17 +569,8 @@ async function main() {
   // 地形（静态高度场网格，无逐帧更新；脚本经 TerrainNode SDK 贴地采样）
   const terrainsApi = createTerrains(terrains);
 
-  // 物理（刚体/碰撞体节点模拟）。配置取项目设置（config.json 的 physics 字段：
-  // 引擎/重力/physicsEnabled）；旧产物无项目配置时回退场景 settings.physics。
-  // physicsEnabled 为 true 时自动开始模拟，后端 rapier|jolt|ammo 惰性加载。
-  const physicsApi = await createPhysics({
-    nodes,
-    terrains,
-    settings: (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics),
-  }).catch((e) => {
-    postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);
-    return null;
-  });
+  // 物理：await 提前启动的 promise（WASM 编译已与天空盒/贴图/渲染预热并行完成）
+  const physicsApi = await physicsPromise;
 
   // 关键帧动画剪辑（节点 animationClip 组件；autoplay 绑定自动应用）。
   // 传渲染相机（camera.* 投影通道按节点匹配写入）与 UI 系统（ui.* 数据通道）
