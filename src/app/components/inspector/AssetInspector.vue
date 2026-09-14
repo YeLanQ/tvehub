@@ -45,7 +45,7 @@ import {
 } from "../../lib/texcube";
 import { loadSkyMatDoc, saveSkyMatDoc, type SkyMatDoc } from "../../lib/sky-mat";
 import { isAudioAssetRel } from "../../../framework/audio";
-import { parseTerrainSettings } from "../../../framework/terrain";
+import { parseTerrainSettings, parseTerrainMaterialSettings, type TerrainMaterialSettings } from "../../../framework/terrain";
 import { dispatchCommand } from "../../commands";
 import type { MaterialParams } from "../../../framework/material";
 import AssetPreview3D from "./AssetPreview3D.vue";
@@ -61,6 +61,7 @@ import ModelAssetInfo from "./asset/ModelAssetInfo.vue";
 import PrefabAssetInfo from "./asset/PrefabAssetInfo.vue";
 import AnimClipInfo from "./asset/AnimClipInfo.vue";
 import TerrainAssetFields from "./asset/TerrainAssetFields.vue";
+import TerrainMaterialAssetFields from "./asset/TerrainMaterialAssetFields.vue";
 import PlainAssetHints from "./asset/PlainAssetHints.vue";
 
 const props = defineProps<{ rel: string }>();
@@ -267,6 +268,9 @@ const modelInfo = ref<{ clips: number; materials: number; hasSkeleton: boolean }
 // —— 地形资产（.terrain：设置概览；读取失败为 null）——
 const terrainSettings = ref<Record<string, number> | null>(null);
 
+// —— 地形材质资产（.terrainmat：设置概览；读取失败为 null）——
+const terrainMaterialSettings = ref<TerrainMaterialSettings | null>(null);
+
 // —— 图片尺寸（onload 后填充）——
 const imgSize = ref<{ w: number; h: number } | null>(null);
 
@@ -389,6 +393,18 @@ async function reload(): Promise<void> {
     }
     return;
   }
+  if (kind.value === "terrainmat") {
+    try {
+      if (!root.value) return;
+      const text = await api.readText(root.value, rel);
+      const doc = JSON.parse(text) as { settings?: unknown };
+      terrainMaterialSettings.value = parseTerrainMaterialSettings(doc.settings);
+    } catch {
+      terrainMaterialSettings.value = null;
+    }
+    return;
+  }
+
   if (MODEL_KINDS.has(kind.value)) {
     const engine = editorStore.engine;
     if (!engine.models.has(rel)) await engine.models.preload([rel]);
@@ -634,6 +650,14 @@ function onAddTerrainToScene(): void {
       :settings="terrainSettings"
       :readonly="isInternal"
       @addToScene="onAddTerrainToScene"
+    />
+
+    <!-- 地形材质：设置概览 -->
+    <TerrainMaterialAssetFields
+      v-else-if="kind === 'terrainmat'"
+      :settings="terrainMaterialSettings"
+      :rel="props.rel"
+      :readonly="isInternal"
     />
 
     <!-- 着色器源码编辑器（.shader；弹层 Monaco GLSL） -->

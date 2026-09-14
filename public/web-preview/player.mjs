@@ -20,7 +20,7 @@ import { loadModels } from "../engine/runtime/model.mjs";
 import { createAnimationsWorker as createAnimations } from "../engine/runtime/animation.mjs";
 import { createAudios } from "../engine/runtime/audio.mjs";
 import { createParticles } from "../engine/runtime/particles.mjs";
-import { createTerrains } from "../engine/runtime/terrain.mjs";
+import { createTerrains, applyTerrainSplatmaps } from "../engine/runtime/terrain.mjs";
 import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
 import { ensureHeightFogChunk } from "../engine/runtime/heightFog.mjs";
 import { createPhysicsWorker as createPhysics } from "../engine/runtime/physics.mjs";
@@ -393,6 +393,7 @@ async function main() {
   // 网格贴图与 UI 贴图互不依赖，并行加载
   await Promise.all([
     applyMeshTextures(meshes, materialParams),
+    applyTerrainSplatmaps(terrains),
     uiApi.applyTextures().catch((e) => {
       postLog("warn", `UI 贴图回填失败: ${e?.message ?? e}`);
     }),

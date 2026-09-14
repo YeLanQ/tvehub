@@ -26,7 +26,7 @@ export const ASSET_TYPE_FILTERS: { id: string; label: string; kinds?: string[] }
   { id: "model", label: "模型", kinds: ["glb", "gltf", "fbx", "obj"] },
   { id: "prefab", label: "预制体", kinds: ["prefab"] },
   { id: "anim", label: "动画", kinds: ["anim"] },
-  { id: "terrain", label: "地形", kinds: ["terrain"] },
+  { id: "terrain", label: "地形", kinds: ["terrain", "terrainmat"] },
 ];
 
 /** 资产 kind 是否命中某类型筛选（"all" 或未注册的筛选 id 一律通过） */

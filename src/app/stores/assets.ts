@@ -79,6 +79,12 @@ export interface AssetsStore {
     /** 显式指定名称（devtools/外部调用按名创建）；缺省用 "Terrain"（资产面板「新建地形」） */
     preferStem?: string | null,
   ) => Promise<string | null>;
+  createTerrainMaterialAsset: (
+    root: string,
+    destDir: string,
+    /** 显式指定名称；缺省用 "TerrainMaterial"（资产面板「新建地形材质」） */
+    preferStem?: string | null,
+  ) => Promise<string | null>;
   readText: (root: string, rel: string) => Promise<string | null>;
 }
 
@@ -276,6 +282,11 @@ export function getAssetsStore(): AssetsStore {
     },
     async createTerrainAsset(root, destDir, preferStem = null) {
       const r = await assetService.createTerrainAsset(root, destDir, state.assets, preferStem);
+      if (r) await reload(root);
+      return r;
+    },
+    async createTerrainMaterialAsset(root, destDir, preferStem = null) {
+      const r = await assetService.createTerrainMaterialAsset(root, destDir, state.assets, preferStem);
       if (r) await reload(root);
       return r;
     },

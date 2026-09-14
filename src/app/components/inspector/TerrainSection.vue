@@ -19,6 +19,7 @@ import type { TerrainNode } from "../../../framework/prototype/derived/Primitive
 import {
   TERRAIN_LIMITS,
   isTerrainAssetRel,
+  buildTerrain,
 } from "../../../framework/terrain";
 import NumberField from "../NumberField.vue";
 
@@ -44,6 +45,20 @@ const terrainAssets = computed(() =>
     (a) => a.kind === "terrain" && !isInternalAsset(a.path) && a.path.startsWith("assets/"),
   ),
 );
+
+/** 项目内 .terrainmat 资产（地形材质） */
+const terrainMaterialAssets = computed(() =>
+  assetsStore.assets.filter(
+    (a) => a.kind === "terrainmat" && !isInternalAsset(a.path) && a.path.startsWith("assets/"),
+  ),
+);
+
+/** 当前地形材质绑定是否在候选里 */
+const materialAssetListed = computed(() => {
+  const cur = props.node.materialAsset;
+  if (!cur) return true;
+  return terrainMaterialAssets.value.some((a) => a.path === cur);
+});
 
 /** 当前绑定是否不在候选里（资产被删/移走时仍回显路径，不静默丢失） */
 const assetListed = computed(() => {
@@ -95,6 +110,82 @@ function stemOf(rel: string): string {
   return base.endsWith(".terrain") ? base.slice(0, -".terrain".length) : base;
 }
 
+/** 选择地形材质资产 → 读取其设置 → 绑定（快照设置到节点，一次撤销） */
+async function onBindMaterialAsset(rel: string): Promise<void> {
+  if (!rel) {
+    emit("update", "Bind Terrain Material", { rel: "", settings: null });
+    return;
+  }
+  const root = projectStore.currentPath;
+  if (!root || binding.value) return;
+  binding.value = true;
+  try {
+    const text = await api.readText(root, rel);
+    const doc = JSON.parse(text) as { settings?: unknown };
+    emit("update", "Bind Terrain Material", { rel, settings: doc.settings ?? null });
+  } catch {
+    logStore.log("error", `读取地形材质资产失败: ${rel}`);
+  } finally {
+    binding.value = false;
+  }
+}
+
+/** 生成 Splatmap：根据当前地形高度场烘焙 RGBA 权重纹理 → 写 .png → 更新材质 */
+const generatingSplat = ref(false);
+async function onGenerateSplatmap(): Promise<void> {
+  const root = projectStore.currentPath;
+  const matRel = props.node.materialAsset;
+  const ms = props.node.materialSettings;
+  if (!root || !matRel || !ms || generatingSplat.value) return;
+  generatingSplat.value = true;
+  try {
+    const build = buildTerrain(props.node.terrain);
+    const { heights, gridSize, minY, maxY } = build;
+    const range = Math.max(0.001, maxY - minY);
+    const canvas = document.createElement("canvas");
+    canvas.width = gridSize;
+    canvas.height = gridSize;
+    const ctx = canvas.getContext("2d")!;
+    const imgData = ctx.createImageData(gridSize, gridSize);
+    const cellSize = build.size / (gridSize - 1);
+    for (let z = 0; z < gridSize; z++) {
+      for (let x = 0; x < gridSize; x++) {
+        const idx = z * gridSize + x;
+        const h = heights[idx];
+        const hn = (h - minY) / range;
+        const hx = x < gridSize - 1 ? Math.abs(heights[idx + 1] - h) / cellSize : 0;
+        const hz = z < gridSize - 1 ? Math.abs(heights[idx + gridSize] - h) / cellSize : 0;
+        const slope = Math.min(1, Math.sqrt(hx * hx + hz * hz) / 2);
+        const wR = (1 - hn) * (1 - slope);
+        const wG = slope * 0.8;
+        const wB = hn * (1 - slope);
+        const wA = (1 - Math.abs(2 * hn - 1)) * slope * 0.5;
+        const sum = Math.max(0.001, wR + wG + wB + wA);
+        const p = idx * 4;
+        imgData.data[p] = Math.round((wR / sum) * 255);
+        imgData.data[p + 1] = Math.round((wG / sum) * 255);
+        imgData.data[p + 2] = Math.round((wB / sum) * 255);
+        imgData.data[p + 3] = Math.round((wA / sum) * 255);
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    const matDir = matRel.slice(0, matRel.lastIndexOf("/"));
+    const matStem = matRel.slice(matRel.lastIndexOf("/") + 1, matRel.length - ".terrainmat".length);
+    const pngRel = `${matDir}/${matStem}_splat.png`;
+    await api.writeAssetBinary(root, pngRel, b64);
+    const updated = { ...ms, splatmap: pngRel };
+    await api.terrainmatWrite(root, matRel, matStem, updated as unknown as Record<string, unknown>);
+    emit("update", "Bind Terrain Material", { rel: matRel, settings: updated });
+    logStore.log("success", `已生成 Splatmap: ${pngRel}`);
+  } catch (e) {
+    logStore.log("error", `生成 Splatmap 失败: ${e}`);
+  } finally {
+    generatingSplat.value = false;
+  }
+}
+
 function numToHex(v: number): string {
   return "#" + (v & 0xffffff).toString(16).padStart(6, "0");
 }
@@ -140,6 +231,41 @@ function onColor(label: string, e: Event): void {
         保存到资产
       </button>
       <span v-if="!props.node.asset" class="hint">未绑定资产（可在资产面板右键「新建地形」）</span>
+    </div>
+
+    <!-- ===== Terrain Material ===== -->
+    <div class="ts-group">Terrain Material</div>
+    <div class="field">
+      <label title="绑定 .terrainmat 地形材质资产；绑定时把材质设置快照到节点">
+        Material
+      </label>
+      <select
+        :value="props.node.materialAsset"
+        :disabled="binding"
+        @change="onBindMaterialAsset(($event.target as HTMLSelectElement).value)"
+      >
+        <option value="">（未绑定）</option>
+        <option v-if="!materialAssetListed" :value="props.node.materialAsset" :title="props.node.materialAsset">
+          {{ props.node.materialAsset.slice(props.node.materialAsset.lastIndexOf('/') + 1) }}（未找到）
+        </option>
+        <option v-for="a in terrainMaterialAssets" :key="a.path" :value="a.path" :title="a.path">
+          {{ a.name }}
+        </option>
+      </select>
+    </div>
+    <div class="ts-actions">
+      <span v-if="!props.node.materialAsset" class="hint">未绑定材质（使用内置默认材质）</span>
+      <span v-else-if="props.node.materialSettings" class="hint">
+        已绑定：{{ props.node.materialSettings.layerCount }} 层
+      </span>
+      <button
+        v-if="props.node.materialAsset && props.node.materialSettings"
+        :disabled="generatingSplat"
+        title="根据当前地形海拔/坡度烘焙 RGBA Splatmap 纹理"
+        @click="onGenerateSplatmap"
+      >
+        生成 Splatmap
+      </button>
     </div>
 
     <!-- ===== Heightfield ===== -->
@@ -311,19 +437,39 @@ function onColor(label: string, e: Event): void {
     <div class="ts-group">Surface</div>
     <div class="field">
       <label title="Grass Color：低平草地基色">Grass</label>
-      <input type="color" :value="numToHex(s.grassColor)" @change="onColor('Set Grass Color', $event)" />
+      <input
+        type="color"
+        :value="numToHex(props.node.materialSettings ? props.node.materialSettings.layers[0].color : s.grassColor)"
+        :disabled="!!props.node.materialSettings"
+        @change="onColor('Set Grass Color', $event)"
+      />
     </div>
     <div class="field">
       <label title="Rock Color：陡坡/高海拔岩石基色">Rock</label>
-      <input type="color" :value="numToHex(s.rockColor)" @change="onColor('Set Rock Color', $event)" />
+      <input
+        type="color"
+        :value="numToHex(props.node.materialSettings ? props.node.materialSettings.layers[1].color : s.rockColor)"
+        :disabled="!!props.node.materialSettings"
+        @change="onColor('Set Rock Color', $event)"
+      />
     </div>
     <div class="field">
       <label title="Snow Color：高平处积雪基色">Snow</label>
-      <input type="color" :value="numToHex(s.snowColor)" @change="onColor('Set Snow Color', $event)" />
+      <input
+        type="color"
+        :value="numToHex(props.node.materialSettings ? props.node.materialSettings.layers[2].color : s.snowColor)"
+        :disabled="!!props.node.materialSettings"
+        @change="onColor('Set Snow Color', $event)"
+      />
     </div>
     <div class="hint">
-      表面按海拔/坡度在 CPU 烘焙为顶点色（草/林/岩/碎石/雪带）；改任何高度场参数都会重建几何（Segments 越大越慢）。
-      设置可存为 .terrain 资产复用（资产面板右键「新建地形」）。
+      <template v-if="props.node.materialSettings">
+        颜色由绑定的地形材质控制（在资产面板选中 .terrainmat 编辑图层颜色）。
+      </template>
+      <template v-else>
+        表面按海拔/坡度在 CPU 烘焙为顶点色（草/林/岩/碎石/雪带）；改任何高度场参数都会重建几何（Segments 越大越慢）。
+        设置可存为 .terrain 资产复用（资产面板右键「新建地形」）。
+      </template>
     </div>
   </div>
 </template>

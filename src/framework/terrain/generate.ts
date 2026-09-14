@@ -14,6 +14,16 @@ import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { cloneTerrainSettings, type TerrainSettings } from "./types";
 import { simplifyTerrainMesh } from "./simplify";
 
+/** Splatmap 像素数据（RGBA，用于 CPU 端图层混合） */
+export interface SplatmapData {
+  /** RGBA 像素数据（行主序）；null = 程序化（按海拔/坡度生成 4 层权重） */
+  data: Uint8Array | Uint8ClampedArray | null;
+  width: number;
+  height: number;
+  /** 4 个图层的颜色（RGB hex） */
+  layerColors: [number, number, number, number];
+}
+
 /** 确定性 PRNG（mulberry32）：同种子恒定序列 */
 function createRandom(seed: number): () => number {
   let s = (seed >>> 0) || 1;
@@ -211,6 +221,7 @@ function sampleHeightAt(h: Float32Array, n: number, size: number, wx: number, wz
 function bakeColorTexture(
   heights: Float32Array, n: number, p: TerrainSettings,
   min: number, max: number,
+  splatmap: SplatmapData | null,
 ): THREE.DataTexture {
   const res = 256;
   const data = new Uint8Array(res * res * 4);
@@ -246,26 +257,62 @@ function bakeColorTexture(
       const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
       const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
 
-      const surface = [...grass];
-      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
-      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-      const rockShade = [...rock];
-      const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
-      const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
-      mix3(rockShade, lichen, lichenMask * 0.45);
-      scale3(rockShade, strata * 0.36 + 0.8);
-      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
-      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
-      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
-      mix3(surface, scree, screeMask * 0.5);
-      const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
-      tmp[0] = snow[0]; tmp[1] = snow[1]; tmp[2] = snow[2];
-      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
-      mix3(surface, tmp, snowMask);
-      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
-      scale3(surface, 1 - cavity * 0.32);
-      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
-      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      let surface: number[];
+      if (splatmap) {
+        const lc = splatmap.layerColors;
+        const c0 = hexToLinear(lc[0]), c1 = hexToLinear(lc[1]), c2 = hexToLinear(lc[2]), c3 = hexToLinear(lc[3]);
+        if (splatmap.data) {
+          const su = Math.min(1, Math.max(0, (wx / p.size) + 0.5));
+          const sv = Math.min(1, Math.max(0, (wz / p.size) + 0.5));
+          const sx = Math.min(splatmap.width - 1, Math.max(0, Math.round(su * (splatmap.width - 1))));
+          const sy = Math.min(splatmap.height - 1, Math.max(0, Math.round(sv * (splatmap.height - 1))));
+          const si = (sy * splatmap.width + sx) * 4;
+          const wR = splatmap.data[si] / 255;
+          const wG = splatmap.data[si + 1] / 255;
+          const wB = splatmap.data[si + 2] / 255;
+          const wA = splatmap.data[si + 3] / 255;
+          const wSum = Math.max(1e-6, wR + wG + wB + wA);
+          surface = [
+            (c0[0] * wR + c1[0] * wG + c2[0] * wB + c3[0] * wA) / wSum,
+            (c0[1] * wR + c1[1] * wG + c2[1] * wB + c3[1] * wA) / wSum,
+            (c0[2] * wR + c1[2] * wG + c2[2] * wB + c3[2] * wA) / wSum,
+          ];
+        } else {
+          const w0 = smoothstep(0.5, 0.2, altitude) * flatness;
+          const w1 = steep;
+          const w2 = smoothstep(0.5, 0.8, altitude) * flatness;
+          const w3 = smoothstep(0.2, 0.5, altitude) * smoothstep(0.7, 0.3, altitude) * flatness;
+          const wSum = Math.max(1e-6, w0 + w1 + w2 + w3);
+          surface = [
+            (c0[0] * w0 + c1[0] * w1 + c2[0] * w2 + c3[0] * w3) / wSum,
+            (c0[1] * w0 + c1[1] * w1 + c2[1] * w2 + c3[1] * w3) / wSum,
+            (c0[2] * w0 + c1[2] * w1 + c2[2] * w2 + c3[2] * w3) / wSum,
+          ];
+        }
+        scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+        scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      } else {
+        surface = [...grass];
+        mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+        mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+        const rockShade = [...rock];
+        const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
+        const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+        mix3(rockShade, lichen, lichenMask * 0.45);
+        scale3(rockShade, strata * 0.36 + 0.8);
+        mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+        mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+        const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+        mix3(surface, scree, screeMask * 0.5);
+        const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+        tmp[0] = snow[0]; tmp[1] = snow[1]; tmp[2] = snow[2];
+        mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+        mix3(surface, tmp, snowMask);
+        const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+        scale3(surface, 1 - cavity * 0.32);
+        scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+        scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      }
 
       const idx = (j * res + i) * 4;
       data[idx] = Math.round(surface[0] * 255);
@@ -309,7 +356,7 @@ function bakeColorTexture(
  * 按设置烘焙地形几何（位置 + UV + 菱形三角索引 + 顶点法线 + 颜色纹理）。
  * 每次调用都产出全新几何和纹理（调用方负责释放旧资源）。
  */
-export function buildTerrain(settings: TerrainSettings): TerrainBuild {
+export function buildTerrain(settings: TerrainSettings, splatmap: SplatmapData | null = null): TerrainBuild {
   const p = cloneTerrainSettings(settings);
   const n = p.segments + 1;
   const half = p.size / 2;
@@ -400,7 +447,7 @@ export function buildTerrain(settings: TerrainSettings): TerrainBuild {
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
 
   // —— 颜色纹理烘焙（128×128，世界坐标驱动；替代顶点色，分辨率独立于网格）——
-  const colorTexture = bakeColorTexture(heights, n, p, min, max);
+  const colorTexture = bakeColorTexture(heights, n, p, min, max, splatmap);
 
   return { geometry, colorTexture, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
 }

@@ -70,6 +70,7 @@ export interface AssetMenuApi {
   onNewShader: (dir: string, kind: string) => void;
   onNewSkybox: (dir: string, kind: "procedural" | "cube") => void;
   onNewTerrain: (dir: string) => void;
+  onNewTerrainMaterial: (dir: string) => void;
   onNewTextureCube: (dir: string) => void;
   onNewPrefab: (dir: string) => void;
   onNewAnim: (dir: string) => void;
@@ -105,7 +106,13 @@ function newAssetItems(dir: string, api: AssetMenuApi): CtxMenuItem[] {
       ],
     },
     { label: "新建 TextureCube", onClick: () => api.onNewTextureCube(dir) },
-    { label: "新建地形", onClick: () => api.onNewTerrain(dir) },
+    {
+      label: "地形",
+      children: [
+        { label: "地形数据", onClick: () => api.onNewTerrain(dir) },
+        { label: "地形材质", onClick: () => api.onNewTerrainMaterial(dir) },
+      ],
+    },
     { label: "新建预制体", onClick: () => api.onNewPrefab(dir) },
     { label: "新建动画", onClick: () => api.onNewAnim(dir) },
   ];
@@ -246,7 +253,9 @@ export function buildContentMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] 
       items.push(menuSeparator(), ...importMenuItems(dir, api));
     }
   }
-  items.push(menuSeparator(), { label: "刷新资产", onClick: () => api.onRefresh() });
+  items.push(menuSeparator());
+  items.push({ label: "复制路径", onClick: () => api.onCopyPath(dir) });
+  items.push({ label: "刷新资产", onClick: () => api.onRefresh() });
   return items;
 }
 
@@ -255,7 +264,11 @@ export function buildBlankMenu(api: AssetMenuApi): CtxMenuItem[] {
   return buildContentMenu("assets", api);
 }
 
-/** 只读目录下的「仅刷新」菜单（分隔线 + 刷新资产） */
-export function buildRefreshOnlyMenu(api: AssetMenuApi): CtxMenuItem[] {
-  return [menuSeparator(), { label: "刷新资产", onClick: () => api.onRefresh() }];
+/** 只读目录下的「仅刷新」菜单（复制路径 + 刷新资产） */
+export function buildRefreshOnlyMenu(dir: string, api: AssetMenuApi): CtxMenuItem[] {
+  return [
+    menuSeparator(),
+    { label: "复制路径", onClick: () => api.onCopyPath(dir) },
+    { label: "刷新资产", onClick: () => api.onRefresh() },
+  ];
 }

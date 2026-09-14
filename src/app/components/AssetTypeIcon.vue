@@ -76,6 +76,12 @@ defineProps<{ kind: string }>();
     <template v-else-if="kind === 'terrain'">
       <path v-for="d in TERRAIN_ICON_PATHS" :key="d" :d="d" />
     </template>
+    <!-- 地形材质（.terrainmat）：山形 + 图层堆叠指示 -->
+    <template v-else-if="kind === 'terrainmat'">
+      <path v-for="d in TERRAIN_ICON_PATHS" :key="d" :d="d" />
+      <path d="M15.5 14.5h5v5h-5z" />
+      <path d="M15.5 17h5" />
+    </template>
     <!-- 预制体（.prefab）：立方体 + 子树分支（区别于纯模型立方体） -->
     <template v-else-if="kind === 'prefab'">
       <path d="M9 3.5l5 2.8v5.4l-5 2.8-5-2.8V6.3l5-2.8z" />

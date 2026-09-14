@@ -7,18 +7,30 @@ import {
   parseTerrainSettings,
   type TerrainSettings,
 } from "../../terrain/types";
+import {
+
+  cloneTerrainMaterialSettings,
+  parseTerrainMaterialSettings,
+  type TerrainMaterialSettings,
+} from "../../terrain/terrainMaterialTypes";
 
 export interface TerrainNodeInit extends NodeInit {
   /** 程序化地形设置（高度场 + 表面配色；随场景序列化） */
   terrain?: TerrainSettings;
   /** 地形资产引用（.terrain 相对路径；空串 = 未绑定，仅作来源记录与回读） */
   asset?: string;
+  /** 地形材质资产引用（.terrainmat 相对路径；空串 = 未绑定） */
+  materialAsset?: string;
+  /** 地形材质设置快照（从 .terrainmat 资产绑定时快照；null = 未绑定，用硬编码默认材质） */
+  materialSettings?: TerrainMaterialSettings | null;
 }
 
-/** 地形节点能力接口：地形设置（随场景序列化） */
+/** 地形节点能力接口：地形设置 + 地形材质设置（随场景序列化） */
 export interface ITerrainNode extends INode {
   terrain: TerrainSettings;
   asset: string;
+  materialAsset: string;
+  materialSettings: TerrainMaterialSettings | null;
 }
 
 /**
@@ -35,11 +47,17 @@ export class TerrainNode extends Node implements ITerrainNode {
 
   terrain: TerrainSettings = { ...DEFAULT_TERRAIN_SETTINGS };
   asset = "";
+  materialAsset = "";
+  materialSettings: TerrainMaterialSettings | null = null;
 
   constructor(init: TerrainNodeInit = {}) {
     super(init);
     this.terrain = init.terrain ? cloneTerrainSettings(init.terrain) : this.terrain;
     this.asset = init.asset ?? "";
+    this.materialAsset = init.materialAsset ?? "";
+    this.materialSettings = init.materialSettings != null
+      ? cloneTerrainMaterialSettings(init.materialSettings)
+      : null;
   }
 
   override clone(): TerrainNode {
@@ -53,6 +71,10 @@ export class TerrainNode extends Node implements ITerrainNode {
       components: this.components,
       terrain: cloneTerrainSettings(this.terrain),
       asset: this.asset,
+      materialAsset: this.materialAsset,
+      materialSettings: this.materialSettings != null
+        ? cloneTerrainMaterialSettings(this.materialSettings)
+        : null,
     });
   }
 
@@ -60,11 +82,19 @@ export class TerrainNode extends Node implements ITerrainNode {
     target.terrain = cloneTerrainSettings(this.terrain);
     // 资产引用非空才写入（旧场景文件保持字节兼容）
     if (this.asset) target.asset = this.asset;
+    if (this.materialAsset) target.materialAsset = this.materialAsset;
+    if (this.materialSettings != null) {
+      target.materialSettings = cloneTerrainMaterialSettings(this.materialSettings);
+    }
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
     this.terrain = parseTerrainSettings(source.terrain);
     this.asset = typeof source.asset === "string" ? source.asset : "";
+    this.materialAsset = typeof source.materialAsset === "string" ? source.materialAsset : "";
+    this.materialSettings = source.materialSettings != null
+      ? parseTerrainMaterialSettings(source.materialSettings)
+      : null;
   }
 }
 

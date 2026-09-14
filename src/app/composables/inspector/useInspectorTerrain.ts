@@ -10,6 +10,7 @@
 import { TerrainNode } from "../../../framework/prototype/derived/Primitives";
 import {
   parseTerrainSettings,
+  parseTerrainMaterialSettings,
   type TerrainSettings,
 } from "../../../framework/terrain";
 import type { InspectorNodeApi } from "./useInspectorNode";
@@ -54,6 +55,17 @@ export function useInspectorTerrain(ctx: InspectorNodeApi): InspectorTerrainApi 
         t.asset = rel;
         if (v?.settings) t.terrain = parseTerrainSettings(v.settings);
       }, rel ? `绑定地形资产: ${rel}` : "解绑地形资产");
+      return;
+    }
+    // 绑定地形材质资产：记录引用 + 快照材质设置到节点
+    if (label === "Bind Terrain Material") {
+      const v = value as { rel: string; settings: unknown };
+      const rel = String(v?.rel ?? "");
+      commit((m) => {
+        const t = m as TerrainNode;
+        t.materialAsset = rel;
+        t.materialSettings = v?.settings ? parseTerrainMaterialSettings(v.settings) : null;
+      }, rel ? `绑定地形材质: ${rel}` : "解绑地形材质");
       return;
     }
     const field = LABEL_FIELD[label];

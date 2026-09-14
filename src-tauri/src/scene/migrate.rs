@@ -629,6 +629,58 @@ pub fn collect_ui_image_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集 terrainNode 地形材质引用的贴图（splatmap + 各层 albedoMap/normalMap；
+/// 图片二进制资产；去重）。空串不收集。
+pub fn collect_terrain_texture_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_image_rel(rel: &str) -> bool {
+        let ext = rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tga" | "svg"
+        ) && rel.contains('.')
+    }
+    fn push(rel: &str, out: &mut Vec<String>) {
+        if is_image_rel(rel) && !out.iter().any(|r| r == rel) {
+            out.push(rel.to_string());
+        }
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_terrain_texture_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            if o.get("type").and_then(Value::as_str) == Some("terrainNode") {
+                if let Some(ms) = o.get("materialSettings").and_then(Value::as_object) {
+                    if let Some(s) = ms.get("splatmap").and_then(Value::as_str) {
+                        push(s, out);
+                    }
+                    if let Some(layers) = ms.get("layers").and_then(Value::as_array) {
+                        for l in layers {
+                            if let Some(lo) = l.as_object() {
+                                if let Some(s) = lo.get("albedoMap").and_then(Value::as_str) {
+                                    push(s, out);
+                                }
+                                if let Some(s) = lo.get("normalMap").and_then(Value::as_str) {
+                                    push(s, out);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_terrain_texture_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_terrain_texture_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {

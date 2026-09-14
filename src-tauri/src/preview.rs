@@ -321,6 +321,21 @@ pub(crate) fn collect_scene_assets(
             Err(_) => missing.push(rel.clone()),
         }
     }
+    // 地形节点地形材质引用的贴图（splatmap + 图层 albedoMap/normalMap）：
+    // 图片二进制随导出（缺失跳过，player 侧 splatmap 回退程序化混合）
+    let mut terrain_tex_refs = Vec::new();
+    crate::scene::migrate::collect_terrain_texture_refs(&scene_json, &mut terrain_tex_refs);
+    for rel in &terrain_tex_refs {
+        if binaries.contains_key(rel) {
+            continue;
+        }
+        match read_asset_bytes(root_path, rel) {
+            Ok(bytes) => {
+                binaries.insert(rel.clone(), bytes);
+            }
+            Err(_) => missing.push(rel.clone()),
+        }
+    }
     missing
 }
 

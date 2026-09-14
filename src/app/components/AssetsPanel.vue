@@ -271,7 +271,7 @@ async function onBlankContext(e: MouseEvent) {
   e.stopPropagation();
   await refreshWorkshopMenu();
   const items = isInternalAsset(currentDir.value)
-    ? buildRefreshOnlyMenu(menuApi)
+    ? buildRefreshOnlyMenu(currentDir.value, menuApi)
     : buildBlankMenu(menuApi);
   openContextMenu(e, items);
 }
@@ -304,6 +304,7 @@ const menuApi: AssetMenuApi = {
   onNewShader: (dir, kind) => void assetActions.doNewShader(dir, kind),
   onNewSkybox: (dir, kind) => void assetActions.doNewSkybox(dir, kind),
   onNewTerrain: (dir) => void assetActions.doNewTerrain(dir),
+  onNewTerrainMaterial: (dir) => void assetActions.doNewTerrainMaterial(dir),
   onNewTextureCube: (dir) => void assetActions.doNewTextureCube(dir),
   onNewPrefab: (dir) => void assetActions.doNewPrefab(dir),
   onNewAnim: (dir) => void assetActions.doNewAnim(dir),

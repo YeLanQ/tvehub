@@ -220,6 +220,24 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
                     if let Some(new) = renames.get(val.as_str().unwrap_or("")) {
                         *val = serde_json::Value::String(new.clone());
                     }
+                } else if k == "materialSettings" {
+                    // 地形节点：materialSettings.splatmap + layers[].albedoMap/normalMap
+                    if let Some(ms) = val.as_object_mut() {
+                        if let Some(new) = ms.get("splatmap").and_then(|v| v.as_str()).and_then(|s| renames.get(s)) {
+                            *ms.get_mut("splatmap").unwrap() = serde_json::Value::String(new.clone());
+                        }
+                        if let Some(layers) = ms.get_mut("layers").and_then(|v| v.as_array_mut()) {
+                            for l in layers.iter_mut() {
+                                if let Some(lo) = l.as_object_mut() {
+                                    for field in ["albedoMap", "normalMap"] {
+                                        if let Some(new) = lo.get(field).and_then(|v| v.as_str()).and_then(|s| renames.get(s)) {
+                                            *lo.get_mut(field).unwrap() = serde_json::Value::String(new.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else {
                     rewrite_scene_refs(val, renames);
                 }

@@ -183,6 +183,9 @@ export const api = {
   /** 序列化并写入地形资产（.terrain；程序化地形设置预设；后端持有格式，自动补 .meta） */
   terrainWrite: (root: string, rel: string, name: string, settings: Record<string, unknown>) =>
     invoke<void>("terrain_write", { root, rel, name, settings }),
+  /** 序列化并写入地形材质资产（.terrainmat；4 纹理图层 + splatmap + 全局 PBR；后端持有格式，自动补 .meta） */
+  terrainmatWrite: (root: string, rel: string, name: string, settings: Record<string, unknown>) =>
+    invoke<void>("terrainmat_write", { root, rel, name, settings }),
   /** 从当前场景导出网页预览产物（scene.json/.mat/贴图由后端直接读盘写入；
    *  files 仅为 WebView 打包的网页运行时 + config.json 文本） */
   exportWebPreviewFromScene: (root: string, sceneRel: string, files: Record<string, string>) =>

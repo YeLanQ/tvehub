@@ -37,7 +37,7 @@ import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
-import { buildTerrain, splitTerrainGeometry, terrainSettingsSig } from "../../terrain";
+import { buildTerrain, splitTerrainGeometry, terrainSettingsSig, type TerrainMaterialSettings, type SplatmapData } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
 import {
@@ -96,6 +96,14 @@ const AUDIO_ICON_COLOR = 0x7ed49a;
 const PARTICLE_ICON_NAME = "__particleIcon";
 /** 地形渲染网格子对象名（节点 Group 下；设置变化按签名重建） */
 const TERRAIN_MESH_NAME = "__terrainMesh";
+
+/** 地形材质设置签名（null = 未绑定，用默认材质） */
+function terrainMaterialSig(ms: TerrainMaterialSettings | null): string {
+  if (!ms) return "default";
+  return [ms.layerCount, ms.metalness, ms.roughness, ms.splatmap,
+    ...ms.layers.map((l) => `${l.color}|${l.tiling}|${l.metalness}|${l.roughness}|${l.albedoMap}|${l.normalMap}`),
+  ].join("#");
+}
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
 /** UI 按钮标签子网格名（文本光栅化贴图；随按钮背景同序渲染） */
@@ -236,6 +244,10 @@ export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
   private scene: THREE.Scene;
   private lookup: MaterialParamsLookup;
+  /** Splatmap 像素数据缓存（rel → data；null = 加载中/失败） */
+  private splatmapCache = new Map<string, { data: Uint8Array; width: number; height: number } | null>();
+  /** Splatmap 异步加载中标记（避免重复触发） */
+  private splatmapLoading = new Set<string>();
   /** 阴影相机待重算（灯光刷新、场景增删后置位；帧循环消费） */
   private shadowCamerasDirty = true;
   /** 阴影相机重算的帧节拍计数 */
@@ -1147,12 +1159,39 @@ export class SceneSynchronizer {
    * 拖值按提交粒度触发）；签名未变只同步阴影/层等既有路径。
    */
   private refreshTerrain(node: TerrainNode, obj: THREE.Object3D): void {
-    const sig = terrainSettingsSig(node.terrain);
+    const ms = node.materialSettings;
+    // Splatmap 数据：缓存命中则用，未缓存且未在加载则触发异步加载
+    let splatmap: SplatmapData | null = null;
+    let splatmapReady = false;
+    const layerColors: [number, number, number, number] | null = ms
+      ? [ms.layers[0].color, ms.layers[1].color, ms.layers[2].color, ms.layers[3].color]
+      : null;
+    if (ms?.splatmap) {
+      const cached = this.splatmapCache.get(ms.splatmap);
+      if (cached) {
+        splatmap = { data: cached.data, width: cached.width, height: cached.height, layerColors: layerColors! };
+        splatmapReady = true;
+      } else if (!this.splatmapLoading.has(ms.splatmap) && !this.splatmapCache.has(ms.splatmap)) {
+        this.splatmapLoading.add(ms.splatmap);
+        void this.loadSplatmap(ms.splatmap, node, obj);
+      }
+    }
+    // 材质已绑定但 splatmap 图片未就绪：用程序化 4 层混合（data=null）
+    if (!splatmap && layerColors) {
+      splatmap = { data: null, width: 0, height: 0, layerColors: layerColors };
+    }
+    const sig = terrainSettingsSig(node.terrain) + "|" + terrainMaterialSig(ms) + "|" + (splatmapReady ? "splat" : "nosplat");
     let terrainGroup = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Group | null;
     if (!terrainGroup || terrainGroup.userData.terrainSig !== sig) {
-      const build = buildTerrain(node.terrain);
+      // 地形材质绑定時：用材质图层颜色覆盖地形内置配色
+      const ts = ms
+        ? { ...node.terrain, grassColor: ms.layers[0].color, rockColor: ms.layers[1].color, snowColor: ms.layers[2].color }
+        : node.terrain;
+      const build = buildTerrain(ts, splatmap);
       const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, 4);
       build.geometry.dispose();
+      const matMetalness = ms ? ms.metalness : 0;
+      const matRoughness = ms ? ms.roughness : 0.95;
 
       if (terrainGroup) {
         for (const child of terrainGroup.children) {
@@ -1162,6 +1201,8 @@ export class SceneSynchronizer {
         const mat = terrainGroup.userData.terrainMaterial as THREE.MeshStandardMaterial;
         if (mat.map) mat.map.dispose();
         mat.map = build.colorTexture;
+        mat.metalness = matMetalness;
+        mat.roughness = matRoughness;
         mat.needsUpdate = true;
         for (const geom of chunkGeoms) {
           const chunkMesh = new THREE.Mesh(geom, mat);
@@ -1175,8 +1216,8 @@ export class SceneSynchronizer {
       } else {
         const material = new THREE.MeshStandardMaterial({
           map: build.colorTexture,
-          metalness: 0,
-          roughness: 0.95,
+          metalness: matMetalness,
+          roughness: matRoughness,
         });
         terrainGroup = new THREE.Group();
         terrainGroup.name = TERRAIN_MESH_NAME;
@@ -1201,6 +1242,31 @@ export class SceneSynchronizer {
       terrainGroup.userData.terrainGridSize = build.gridSize;
       terrainGroup.userData.terrainSize = build.size;
       this.shadowCamerasDirty = true;
+    }
+  }
+
+  /** 异步加载 splatmap 纹理像素数据并缓存，完成后重新刷新地形 */
+  private async loadSplatmap(rel: string, node: TerrainNode, obj: THREE.Object3D): Promise<void> {
+    try {
+      const tex = await this.lookup.loadTexture?.(rel, false);
+      if (!tex) { this.splatmapCache.set(rel, null); return; }
+      const img = tex.source.data as ImageBitmap | HTMLImageElement;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, img.width, img.height);
+      this.splatmapCache.set(rel, {
+        data: new Uint8Array(imgData.data.buffer.slice(0)),
+        width: img.width,
+        height: img.height,
+      });
+    } catch {
+      this.splatmapCache.set(rel, null);
+    } finally {
+      this.splatmapLoading.delete(rel);
+      this.refreshTerrain(node, obj);
     }
   }
 

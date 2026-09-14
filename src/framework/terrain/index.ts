@@ -9,4 +9,14 @@ export {
   terrainSettingsSig,
   type TerrainSettings,
 } from "./types";
-export { buildTerrain, sampleTerrainHeight, splitTerrainGeometry, type TerrainBuild } from "./generate";
+export { buildTerrain, sampleTerrainHeight, splitTerrainGeometry, type TerrainBuild, type SplatmapData } from "./generate";
+export {
+  DEFAULT_TERRAIN_MATERIAL_SETTINGS,
+  TERRAIN_MATERIAL_LIMITS,
+  TERRAIN_MAT_EXT,
+  cloneTerrainMaterialSettings,
+  isTerrainMaterialAssetRel,
+  parseTerrainMaterialSettings,
+  type TerrainMaterialLayer,
+  type TerrainMaterialSettings,
+} from "./terrainMaterialTypes";

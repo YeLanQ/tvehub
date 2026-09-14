@@ -14,7 +14,9 @@ import {
 } from "../../framework/material";
 import {
   DEFAULT_TERRAIN_SETTINGS,
+  DEFAULT_TERRAIN_MATERIAL_SETTINGS,
   TERRAIN_EXT,
+  TERRAIN_MAT_EXT,
 } from "../../framework/terrain";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
@@ -119,6 +121,7 @@ const INTERNAL_COPY_DIRS: Record<string, string> = {
   hdr: "assets/textures",
   texcube: "assets/textures",
   terrain: "assets",
+  terrainmat: "assets",
   glb: "assets/models",
   gltf: "assets/models",
   fbx: "assets/models",
@@ -502,6 +505,34 @@ export const assetService = {
       return rel;
     } catch (e) {
       logStore.log("error", `新建地形失败: ${e}`);
+      return null;
+    }
+  },
+
+  /**
+   * 新建地形材质资产（.terrainmat）：默认 4 纹理图层 + splatmap + 全局 PBR 设置；
+   * 序列化/落盘由后端 terrainmat_write 完成（自动补 .meta）。
+   * 创建即可从地形节点检查器绑定。
+   */
+  async createTerrainMaterialAsset(
+    root: string,
+    destDir: string,
+    assets: AssetEntry[],
+    preferStem: string | null = null,
+  ): Promise<string | null> {
+    if (isInternalAsset(destDir) || destDir === "src" || destDir.startsWith("src/")) {
+      logStore.log("warn", "内置目录与 src 目录不允许新建地形材质");
+      return null;
+    }
+    const baseName = preferStem && preferStem.trim() ? sanitizeAssetStem(preferStem) : "TerrainMaterial";
+    const rel = uniqueRel(assets, destDir, baseName, TERRAIN_MAT_EXT);
+    const name = rel.slice(rel.lastIndexOf("/") + 1, rel.length - TERRAIN_MAT_EXT.length);
+    try {
+      await api.terrainmatWrite(root, rel, name, { ...DEFAULT_TERRAIN_MATERIAL_SETTINGS });
+      logStore.log("success", `已新建地形材质: ${rel}`);
+      return rel;
+    } catch (e) {
+      logStore.log("error", `新建地形材质失败: ${e}`);
       return null;
     }
   },

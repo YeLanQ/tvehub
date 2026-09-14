@@ -6,6 +6,7 @@
 // 脚本经 engine SDK 的 TerrainNode.sampleHeight / sampleSlope 贴地采样。
 import * as THREE from "../core/three.module.min.js";
 import { num } from "../core/utils";
+import { resourceLoader } from "./resource";
 
 // ---------------------------------------------------------------------------
 // ImprovedNoise（Ken Perlin 2002；置换表固定 → 种子只能位移采样窗口）
@@ -439,7 +440,7 @@ function _sampleHeightAt(h, n, size, wx, wz) {
          (h[(iz + 1) * n + ix] * (1 - tx) + h[(iz + 1) * n + ix + 1] * tx) * tz;
 }
 
-function _bakeColorTexture(heights, n, p, min, max) {
+function _bakeColorTexture(heights, n, p, min, max, splatmap) {
   const res = 256;
   const data = new Uint8Array(res * res * 4);
   const hSpan = Math.max(1e-6, max - min);
@@ -474,26 +475,62 @@ function _bakeColorTexture(heights, n, p, min, max) {
       const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
       const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
 
-      const surface = [...grass];
-      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
-      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-      const rockShade = [...rock];
-      const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
-      const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
-      mix3(rockShade, lichen, lichenMask * 0.45);
-      scale3(rockShade, strata * 0.36 + 0.8);
-      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
-      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
-      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
-      mix3(surface, scree, screeMask * 0.5);
-      const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
-      tmp[0] = snow[0]; tmp[1] = snow[1]; tmp[2] = snow[2];
-      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
-      mix3(surface, tmp, snowMask);
-      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
-      scale3(surface, 1 - cavity * 0.32);
-      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
-      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      let surface;
+      if (splatmap) {
+        const lc = splatmap.layerColors;
+        const c0 = hexToLinear(lc[0]), c1 = hexToLinear(lc[1]), c2 = hexToLinear(lc[2]), c3 = hexToLinear(lc[3]);
+        if (splatmap.data) {
+          const su = Math.min(1, Math.max(0, (wx / p.size) + 0.5));
+          const sv = Math.min(1, Math.max(0, (wz / p.size) + 0.5));
+          const sx = Math.min(splatmap.width - 1, Math.max(0, Math.round(su * (splatmap.width - 1))));
+          const sy = Math.min(splatmap.height - 1, Math.max(0, Math.round(sv * (splatmap.height - 1))));
+          const si = (sy * splatmap.width + sx) * 4;
+          const wR = splatmap.data[si] / 255;
+          const wG = splatmap.data[si + 1] / 255;
+          const wB = splatmap.data[si + 2] / 255;
+          const wA = splatmap.data[si + 3] / 255;
+          const wSum = Math.max(1e-6, wR + wG + wB + wA);
+          surface = [
+            (c0[0] * wR + c1[0] * wG + c2[0] * wB + c3[0] * wA) / wSum,
+            (c0[1] * wR + c1[1] * wG + c2[1] * wB + c3[1] * wA) / wSum,
+            (c0[2] * wR + c1[2] * wG + c2[2] * wB + c3[2] * wA) / wSum,
+          ];
+        } else {
+          const w0 = smoothstep(0.5, 0.2, altitude) * flatness;
+          const w1 = steep;
+          const w2 = smoothstep(0.5, 0.8, altitude) * flatness;
+          const w3 = smoothstep(0.2, 0.5, altitude) * smoothstep(0.7, 0.3, altitude) * flatness;
+          const wSum = Math.max(1e-6, w0 + w1 + w2 + w3);
+          surface = [
+            (c0[0] * w0 + c1[0] * w1 + c2[0] * w2 + c3[0] * w3) / wSum,
+            (c0[1] * w0 + c1[1] * w1 + c2[1] * w2 + c3[1] * w3) / wSum,
+            (c0[2] * w0 + c1[2] * w1 + c2[2] * w2 + c3[2] * w3) / wSum,
+          ];
+        }
+        scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+        scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      } else {
+        surface = [...grass];
+        mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+        mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+        const rockShade = [...rock];
+        const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
+        const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+        mix3(rockShade, lichen, lichenMask * 0.45);
+        scale3(rockShade, strata * 0.36 + 0.8);
+        mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+        mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+        const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+        mix3(surface, scree, screeMask * 0.5);
+        const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+        tmp[0] = snow[0]; tmp[1] = snow[1]; tmp[2] = snow[2];
+        mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+        mix3(surface, tmp, snowMask);
+        const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+        scale3(surface, 1 - cavity * 0.32);
+        scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+        scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+      }
 
       const idx = (j * res + i) * 4;
       data[idx] = Math.round(surface[0] * 255);
@@ -538,9 +575,10 @@ function _bakeColorTexture(heights, n, p, min, max) {
 
 /**
  * 烘焙地形几何与采样数据（位置/顶点色/法线/菱形索引）。
- * 返回 { geometry, heights, gridSize, size, segments, minY, maxY }。
+ * splatmap 不为空时，颜色纹理按 splatmap RGBA 权重混合 4 个图层颜色。
+ * 返回 { geometry, colorTexture, heights, gridSize, size, segments, minY, maxY }。
  */
-function buildTerrain(p) {
+function buildTerrain(p, splatmap) {
   const n = p.segments + 1;
   const half = p.size / 2;
 
@@ -618,10 +656,11 @@ function buildTerrain(p) {
   }
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
 
-  const colorTexture = _bakeColorTexture(heights, n, p, min, max);
+  const colorTexture = _bakeColorTexture(heights, n, p, min, max, splatmap ?? null);
 
   return { geometry, colorTexture, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
 }
+
 
 /** 双线性采样世界高度（x/z 超界钳到边缘） */
 function sampleHeight(data, x, z) {
@@ -715,11 +754,30 @@ function _splitTerrainGeometry(geometry, size, chunks) {
  */
 export function createTerrain(json) {
   const settings = parseSettings(json.terrain);
-  const data = buildTerrain(settings);
+  // 地形材质绑定時：用材质图层颜色覆盖地形内置配色 + PBR 参数
+  const ms = json.materialSettings ?? null;
+  const ts = ms
+    ? { ...settings, grassColor: ms.layers?.[0]?.color ?? settings.grassColor,
+                   rockColor: ms.layers?.[1]?.color ?? settings.rockColor,
+                   snowColor: ms.layers?.[2]?.color ?? settings.snowColor }
+    : settings;
+  // 材质已绑定：传程序化 splatmap（data=null → 按海拔/坡度 4 层混合）
+  const splatmap = ms
+    ? { data: null, width: 0, height: 0,
+        layerColors: [
+          ms.layers?.[0]?.color ?? 0x6e7253,
+          ms.layers?.[1]?.color ?? 0x736a5f,
+          ms.layers?.[2]?.color ?? 0xe9ecf0,
+          ms.layers?.[3]?.color ?? 0xffffff,
+        ] }
+    : null;
+  const data = buildTerrain(ts, splatmap);
   const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, 4);
   data.geometry.dispose();
 
-  const material = new THREE.MeshStandardMaterial({ map: data.colorTexture, metalness: 0, roughness: 0.95 });
+  const matMetalness = ms ? (ms.metalness ?? 0) : 0;
+  const matRoughness = ms ? (ms.roughness ?? 0.95) : 0.95;
+  const material = new THREE.MeshStandardMaterial({ map: data.colorTexture, metalness: matMetalness, roughness: matRoughness });
   const group = new THREE.Group();
   group.name = "__terrainMesh";
   for (const geom of chunkGeoms) {
@@ -734,6 +792,63 @@ export function createTerrain(json) {
   group.userData.terrainMinY = data.minY;
   group.userData.terrainMaxY = data.maxY;
   return { obj: group, data, settings };
+}
+
+/**
+ * 异步回填地形 splatmap：对绑定了地形材质且材质引用了 splatmap 的地形节点，
+ * 加载 splatmap 图片像素数据，按 RGBA 权重重新烘焙颜色纹理并替换材质 map。
+ * 与 applyMeshTextures 同一异步 pass（buildSceneTree 后执行）。
+ * terrains = buildSceneTree 收集的 [{ json, obj, data, settings }]。
+ */
+export async function applyTerrainSplatmaps(terrains) {
+  await Promise.all(
+    terrains.map(async (entry) => {
+      const ms = entry.json?.materialSettings;
+      const rel = ms?.splatmap;
+      if (!rel || typeof rel !== "string") return;
+
+      let bmp;
+      try {
+        bmp = await resourceLoader.loadImageBitmap(rel, false);
+      } catch {
+        return;
+      }
+      if (!bmp) return;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      const ctx2d = canvas.getContext("2d");
+      if (!ctx2d) return;
+      ctx2d.drawImage(bmp, 0, 0);
+      const imgData = ctx2d.getImageData(0, 0, bmp.width, bmp.height);
+
+      const layerColors = [
+        ms.layers?.[0]?.color ?? 0x6e7253,
+        ms.layers?.[1]?.color ?? 0x736a5f,
+        ms.layers?.[2]?.color ?? 0xe9ecf0,
+        ms.layers?.[3]?.color ?? 0xffffff,
+      ];
+      const splatmap = {
+        data: new Uint8Array(imgData.data.buffer.slice(0)),
+        width: bmp.width,
+        height: bmp.height,
+        layerColors,
+      };
+
+      const d = entry.data;
+      const p = entry.settings;
+      const newTex = _bakeColorTexture(d.heights, d.gridSize, p, d.minY, d.maxY, splatmap);
+
+      const terrainGroup = entry.obj.children.find((c) => c.name === "__terrainMesh");
+      if (!terrainGroup) return;
+      const mat = terrainGroup.children[0]?.material;
+      if (!mat) return;
+      if (mat.map) mat.map.dispose();
+      mat.map = newTex;
+      mat.needsUpdate = true;
+    }),
+  );
 }
 
 /**

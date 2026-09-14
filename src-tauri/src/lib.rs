@@ -666,6 +666,7 @@ pub fn run() {
             scene::material::shader_write_source,
             scene::texcube::texcube_write,
             scene::terrain::terrain_write,
+            scene::terrain_material::terrainmat_write,
             devtools::devtools_start,
             devtools::devtools_stop,
             devtools::devtools_status,
