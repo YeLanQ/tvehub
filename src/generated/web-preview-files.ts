@@ -26,6 +26,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/core/tve/ui-api.mjs",
   "engine/core/tween.mjs",
   "engine/core/utils.mjs",
+  "engine/runtime/animation-worker.mjs",
   "engine/runtime/animation.mjs",
   "engine/runtime/animclip.mjs",
   "engine/runtime/audio.mjs",

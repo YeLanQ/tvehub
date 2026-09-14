@@ -17,7 +17,7 @@ import {
 } from "../engine/runtime/sky.mjs";
 import { loadMaterialParams } from "../engine/runtime/material.mjs";
 import { loadModels } from "../engine/runtime/model.mjs";
-import { createAnimations } from "../engine/runtime/animation.mjs";
+import { createAnimationsWorker as createAnimations } from "../engine/runtime/animation.mjs";
 import { createAudios } from "../engine/runtime/audio.mjs";
 import { createParticles } from "../engine/runtime/particles.mjs";
 import { createTerrains } from "../engine/runtime/terrain.mjs";
@@ -277,6 +277,16 @@ async function main() {
     }
   }
 
+  // 动画 Worker URL：同物理 Worker 模式，骨骼动画 + IK 在独立线程运行
+  let animationWorkerUrl;
+  if (!inline) {
+    try {
+      animationWorkerUrl = new URL("../engine/runtime/animation-worker.mjs", import.meta.url).href;
+    } catch {
+      // 同上回退主线程
+    }
+  }
+
   // 物理引擎提前启动：WASM 编译（2-3MB）耗时长，与后续天空盒/贴图/渲染预热并行
   const physicsPromise = createPhysics({
     nodes,
@@ -285,6 +295,12 @@ async function main() {
     workerUrl: physicsWorkerUrl,
   }).catch((e) => {
     postLog("error", `物理运行时启动失败: ${e?.message ?? e}`);
+    return null;
+  });
+
+  // 动画 Worker 提前启动（与物理同模式：Worker 初始化与后续天空盒/贴图/渲染预热并行）
+  const animationPromise = createAnimations(meshes, models, animationWorkerUrl).catch((e) => {
+    postLog("error", `动画运行时启动失败: ${e?.message ?? e}`);
     return null;
   });
 
@@ -547,20 +563,23 @@ async function main() {
   }
 
   // 模型动画（单剪辑/动画图，autoplay 的节点随渲染循环播放）
-  const animations = createAnimations(meshes, models);
+  // Worker 初始化已提前启动，此处 await 拿到 API 后绑定骨骼/IK 目标
+  const animations = await animationPromise;
 
   // 骨骼/IK 目标绑定（MeshNode.boneBindings 随场景数据；场景树已建全，目标对象可直接解析。
   // 编辑器皮肤面板写入的绑定在此生效——与 anim/animGraph 同为节点持久化数据）
-  for (const { json, obj } of nodes) {
-    if (json.source !== "model" || !Array.isArray(json.boneBindings) || !json.boneBindings.length) {
-      continue;
-    }
-    for (const def of json.boneBindings) {
-      if (!def || typeof def !== "object" || typeof def.target !== "string" || typeof def.bone !== "string") {
+  if (animations) {
+    for (const { json, obj } of nodes) {
+      if (json.source !== "model" || !Array.isArray(json.boneBindings) || !json.boneBindings.length) {
         continue;
       }
-      const target = nodes.find((n) => n.json.id === def.target)?.obj;
-      if (target && obj) animations.attachObject(json.id, target, def.bone, def);
+      for (const def of json.boneBindings) {
+        if (!def || typeof def !== "object" || typeof def.target !== "string" || typeof def.bone !== "string") {
+          continue;
+        }
+        const target = nodes.find((n) => n.json.id === def.target)?.obj;
+        if (target && obj) animations.attachObject(json.id, target, def.bone, def);
+      }
     }
   }
 
@@ -601,7 +620,7 @@ async function main() {
     scripts = await createScripts({
       nodes,
       cfg,
-      animations,
+      animations: animations || { update() {} },
       audios: audiosApi,
       physics: physicsApi,
       clipAnims,
@@ -669,7 +688,7 @@ async function main() {
     // 与物理步进同频，物理相关的确定性逻辑在 onFixedUpdate）
     scripts.fixedUpdate(dt);
     scripts.update(dt);
-    animations.update(dt);
+    animations?.update(dt);
     physicsApi?.update(dt);
     clipAnims.update(dt);
     audiosApi.update();

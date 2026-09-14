@@ -21,6 +21,7 @@
 // 除 nodeJson.anim/animGraph（同旧语义）外全部为运行时控制，不写入场景数据。
 import * as THREE from "../core/three.module.min.js";
 import { CCDIKSolver } from "./loaders/CCDIKSolver.js";
+import { postLog } from "../core/log";
 
 const LOOP_MODES = ["loop", "once", "pingpong"];
 
@@ -1056,6 +1057,565 @@ export function createAnimations(meshes, models) {
       }
       applySettings(b, b.nodeJson ?? {});
       return b.playing;
+    },
+  };
+}
+// ---------------------------------------------------------------------------
+// Worker 模式：骨骼动画 + IK 在独立线程运行（与物理 Worker 同一设计模式）。
+// 主线程维护轻量绑定（真实骨骼 + 附件 + 形态键），每帧应用 Worker 回写的
+// 骨骼变换；命令转发到 Worker，同步 API 从镜像状态读取（一帧延迟可接受）。
+// ---------------------------------------------------------------------------
+
+/** 序列化单个 AnimationClip 为纯数据（track 的 TypedArray 可结构化克隆） */
+function serializeClip(clip) {
+  return {
+    name: clip.name,
+    duration: clip.duration,
+    tracks: clip.tracks.map((t) => ({
+      name: t.name,
+      times: t.times.slice(),
+      values: t.values.slice(),
+      interpolation: t.interpolation,
+      valueSize: t.valueSize,
+    })),
+    blendMode: clip.blendMode,
+  };
+}
+
+/** 序列化模型节点场景树（骨骼层级 + 形态键字典）供 Worker 重建代理 */
+function serializeMeshEntry(entry) {
+  const root = entry.obj.getObjectByName("__modelRoot");
+  if (!root) return null;
+  const skinnedMeshes = [];
+  root.traverse((o) => { if (o.isSkinnedMesh) skinnedMeshes.push(o); });
+  const skeleton = skinnedMeshes[0]?.skeleton ?? null;
+  const bones = [];
+  if (skeleton) {
+    const boneIndexMap = new Map();
+    for (let i = 0; i < skeleton.bones.length; i++) boneIndexMap.set(skeleton.bones[i], i);
+    for (const bone of skeleton.bones) {
+      const parentBone = bone.parent?.isBone ? bone.parent : null;
+      const parentIndex = parentBone && boneIndexMap.has(parentBone) ? boneIndexMap.get(parentBone) : -1;
+      bones.push({
+        name: bone.name || `bone${bones.length}`,
+        parentIndex,
+        position: [bone.position.x, bone.position.y, bone.position.z],
+        quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+        scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+      });
+    }
+  }
+  const morphMeshes = [];
+  root.traverse((o) => {
+    if (o.morphTargetDictionary && o.morphTargetInfluences) {
+      morphMeshes.push({
+        name: o.name || `mesh${morphMeshes.length}`,
+        dictionary: { ...o.morphTargetDictionary },
+        influenceCount: o.morphTargetInfluences.length,
+      });
+    }
+  });
+  return { json: entry.json, modelRoot: { bones, morphMeshes } };
+}
+
+/** 轻量绑定结构（无 mixer/actions：仅骨骼/形态键/IK 目标/附件管理） */
+function createBindingStructure(nodeJson, root) {
+  const skinnedMeshes = [];
+  root.traverse((o) => { if (o.isSkinnedMesh) skinnedMeshes.push(o); });
+  const skeleton = skinnedMeshes[0]?.skeleton ?? null;
+  const bones = [];
+  const boneNames = [];
+  const boneByName = new Map();
+  const boneNameOf = new Map();
+  const restPose = new Map();
+  if (skeleton) {
+    for (const bone of skeleton.bones) {
+      const name = bone.name || `bone${bones.length}`;
+      bones.push(bone);
+      boneNames.push(name);
+      if (!boneByName.has(name)) boneByName.set(name, bone);
+      if (!boneNameOf.has(bone)) boneNameOf.set(bone, name);
+      restPose.set(bone, {
+        position: bone.position.clone(),
+        quaternion: bone.quaternion.clone(),
+        scale: bone.scale.clone(),
+      });
+    }
+  }
+  const morphTable = [];
+  root.traverse((o) => {
+    if (o.morphTargetDictionary && o.morphTargetInfluences) {
+      morphTable.push({
+        mesh: o,
+        name: o.name || `mesh${morphTable.length}`,
+        dictionary: o.morphTargetDictionary,
+      });
+    }
+  });
+  return {
+    nodeJson, root,
+    skinnedMeshes, skeleton,
+    bones, boneNames, boneByName, boneNameOf, restPose, morphTable,
+    iks: [], ikSeq: 0, attachments: [],
+    finishedCbs: new Set(), loopCbs: new Set(),
+  };
+}
+
+/**
+ * 创建骨骼动画 Worker 代理（与 createAnimations 同接口）。
+ * 在多文件导出模式下使用 Worker 线程；单页模式或 Worker 失败回退到 createAnimations。
+ * @param meshes buildSceneTree 收集的 meshNode 列表
+ * @param models 模型 Map（name → { clips }）
+ * @param workerUrl Worker 脚本 URL（缺省/null → 回退主线程）
+ * @returns {Promise<AnimationsApi>} 与 createAnimations 同接口的动画 API
+ */
+export async function createAnimationsWorker(meshes, models, workerUrl) {
+  if (!workerUrl) return createAnimations(meshes, models);
+
+  // 筛选模型节点 + 序列化场景数据
+  const modelEntries = [];
+  for (const entry of meshes) {
+    const json = entry.json;
+    if (json.source !== "model" || typeof json.model !== "string" || !json.model) continue;
+    const root = entry.obj.getObjectByName("__modelRoot");
+    if (!root) continue;
+    const clips = models.get(json.model)?.clips;
+    if (!clips) continue;
+    modelEntries.push(entry);
+  }
+  if (!modelEntries.length) return createAnimations(meshes, models);
+
+  const serializedMeshes = modelEntries.map(serializeMeshEntry).filter(Boolean);
+  const serializedModels = [];
+  const seenModels = new Set();
+  for (const entry of modelEntries) {
+    const name = entry.json.model;
+    if (seenModels.has(name)) continue;
+    seenModels.add(name);
+    const model = models.get(name);
+    if (model?.clips) {
+      serializedModels.push({ name, clips: model.clips.map(serializeClip) });
+    }
+  }
+
+  // 创建 Worker + 发送 init
+  let worker;
+  try {
+    worker = new Worker(workerUrl, { type: "module" });
+    worker.postMessage({
+      type: "init",
+      meshEntries: serializedMeshes,
+      modelMap: serializedModels,
+    });
+  } catch {
+    return createAnimations(meshes, models);
+  }
+
+  // 等待 Worker ready
+  const ready = await new Promise((resolve) => {
+    worker.onmessage = (e) => {
+      if (e.data.type === "ready") resolve(e.data);
+      else if (e.data.type === "error") resolve(null);
+    };
+    worker.onerror = () => resolve(null);
+  });
+  if (!ready) {
+    worker.terminate();
+    return createAnimations(meshes, models);
+  }
+
+  // 主线程轻量绑定（真实骨骼，供变换回写 + 附件 + 形态键 + 同步读取）
+  const mainBindings = new Map();
+  const bindingLayouts = ready.bindingLayouts || [];
+  for (const layout of bindingLayouts) {
+    const entry = modelEntries.find((e) => e.json.id === layout.nodeId);
+    if (!entry) continue;
+    const root = entry.obj.getObjectByName("__modelRoot");
+    if (!root) continue;
+    const b = createBindingStructure(entry.json, root);
+    mainBindings.set(layout.nodeId, b);
+  }
+
+  // 双缓冲：pending = Worker 上一帧返回的骨骼变换 + 形态键 + 状态
+  let pending = null;
+  let workerBusy = false;
+  let mirrorState = new Map(); // nodeId → { weights, iks, ikTargets }
+
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === "stepped") {
+      pending = msg;
+      workerBusy = false;
+    }
+  };
+
+  // 命令转发辅助
+  const send = (method, ...args) => {
+    try { worker.postMessage({ type: "command", method, args }); } catch { /* Worker 已终止 */ }
+  };
+
+  postLog("info", "[动画] Worker 模式已启动（骨骼动画 + IK 在独立线程）");
+
+  return {
+    /** 每帧：应用 Worker 回写的骨骼变换 → 附件跟随 → 事件分发 → 发 dt 给 Worker */
+    update(dt) {
+      if (dt <= 0) return;
+      // 1) 应用上一帧 Worker 返回的变换
+      if (pending) {
+        const { transforms, morphs, state, events } = pending;
+        // 骨骼变换
+        let tOff = 0;
+        for (const layout of bindingLayouts) {
+          const b = mainBindings.get(layout.nodeId);
+          if (!b) { tOff += layout.boneCount * 7; continue; }
+          for (let i = 0; i < layout.boneCount; i++) {
+            const bone = b.bones[i];
+            if (!bone) { tOff += 7; continue; }
+            bone.position.set(transforms[tOff], transforms[tOff + 1], transforms[tOff + 2]);
+            bone.quaternion.set(transforms[tOff + 3], transforms[tOff + 4], transforms[tOff + 5], transforms[tOff + 6]);
+            tOff += 7;
+          }
+        }
+        // 形态键权重
+        let mOff = 0;
+        for (const layout of bindingLayouts) {
+          const b = mainBindings.get(layout.nodeId);
+          if (!b) {
+            for (const mm of layout.morphMeshes || []) mOff += mm.influenceCount;
+            continue;
+          }
+          for (const mm of layout.morphMeshes || []) {
+            const entry = b.morphTable.find((m) => m.name === mm.name);
+            if (entry?.mesh?.morphTargetInfluences) {
+              const inf = entry.mesh.morphTargetInfluences;
+              for (let i = 0; i < mm.influenceCount; i++) inf[i] = morphs[mOff + i];
+            }
+            mOff += mm.influenceCount;
+          }
+        }
+        // 状态镜像（供同步 API 读取）
+        if (state) {
+          for (const [nodeId, s] of Object.entries(state)) {
+            mirrorState.set(nodeId, s);
+            // 同步 IK 目标骨骼位置（供 getBoneWorldPosition）
+            const b = mainBindings.get(nodeId);
+            if (b && s.ikTargets) {
+              for (const r of b.iks) {
+                const pos = s.ikTargets[r.id];
+                if (pos) r.targetBone.position.set(pos.x, pos.y, pos.z);
+              }
+            }
+          }
+        }
+        // 事件分发
+        if (events?.length) {
+          for (const ev of events) {
+            const b = mainBindings.get(ev.nodeId);
+            if (!b) continue;
+            const cbs = ev.type === "finished" ? b.finishedCbs : b.loopCbs;
+            for (const cb of [...cbs]) {
+              try { cb({ clip: ev.clip }); } catch (err) { console.error("[animation] 事件回调异常:", err); }
+            }
+          }
+        }
+        pending = null;
+      }
+      // 2) 附件跟随 + IK 后包围球重算（主线程，需真实对象）
+      for (const [, b] of mainBindings) {
+        updateAttachments(b);
+        // IK 在 Worker 侧运行；有启用 IK 时重算蒙皮包围球防视锥误剔除
+        const ms = mirrorState.get(b.nodeId ?? "");
+        if (ms?.iks?.some((ik) => ik.enabled)) {
+          for (const mesh of b.skinnedMeshes) mesh.computeBoundingSphere();
+        }
+      }
+      // 3) 发 dt 给 Worker（非忙时）
+      if (!workerBusy) {
+        try {
+          worker.postMessage({ type: "step", dt });
+          workerBusy = true;
+        } catch { /* Worker 已终止 */ }
+      }
+    },
+
+    bindingOf(nodeId) { return mainBindings.get(nodeId) ?? null; },
+    clipsOf(nodeId) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      const entry = modelEntries.find((e) => e.json.id === nodeId);
+      if (!entry) return null;
+      const clips = models.get(entry.json.model)?.clips;
+      return clips ? clips.map((c) => c.name || "clip") : null;
+    },
+    skinInfoOf(nodeId) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      return { boneCount: b.bones.length, boneNames: [...b.boneNames], morphMeshes: b.morphTable.length };
+    },
+
+    // —— 动作级控制（转发 Worker）——
+    setWeight(nodeId, clip, w) { send("setWeight", nodeId, clip, w); return true; },
+    getWeight(nodeId, clip) {
+      const s = mirrorState.get(nodeId);
+      return s?.weights?.[clip] ?? null;
+    },
+    fadeIn(nodeId, clip, dur) { send("fadeIn", nodeId, clip, dur); return true; },
+    fadeOut(nodeId, clip, dur) { send("fadeOut", nodeId, clip, dur); return true; },
+    crossFade(nodeId, from, to, dur, warp) { send("crossFade", nodeId, from, to, dur, warp); return true; },
+    setActionSpeed(nodeId, clip, scale) { send("setActionSpeed", nodeId, clip, scale); return true; },
+    setActionLoop(nodeId, clip, mode) { send("setActionLoop", nodeId, clip, mode); return true; },
+    stopAction(nodeId, clip) { send("stopAction", nodeId, clip); return true; },
+    playOneShot(nodeId, clip, fade) { send("playOneShot", nodeId, clip, fade); return true; },
+    globalSpeed(nodeId, scale) { send("globalSpeed", nodeId, scale); return true; },
+    onFinished(nodeId, cb) {
+      const b = mainBindings.get(nodeId);
+      if (!b || typeof cb !== "function") return () => {};
+      b.finishedCbs.add(cb);
+      return () => b.finishedCbs.delete(cb);
+    },
+    onLoop(nodeId, cb) {
+      const b = mainBindings.get(nodeId);
+      if (!b || typeof cb !== "function") return () => {};
+      b.loopCbs.add(cb);
+      return () => b.loopCbs.delete(cb);
+    },
+
+    // —— 加法层（转发 Worker）——
+    playAdditive(nodeId, clip, weight) { send("playAdditive", nodeId, clip, weight); return true; },
+    stopAdditive(nodeId, clip) { send("stopAdditive", nodeId, clip); return true; },
+
+    // —— 骨骼级控制 ——
+    bonesOf(nodeId) {
+      const b = mainBindings.get(nodeId);
+      return b ? [...b.boneNames] : null;
+    },
+    boneHierarchy(nodeId) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      return b.bones.map((bone) => {
+        const parent = bone.parent?.isBone ? (b.boneNameOf.get(bone.parent) ?? null) : null;
+        const children = [];
+        for (const child of bone.children) {
+          if (child.isBone) children.push(b.boneNameOf.get(child) ?? null);
+        }
+        return { name: b.boneNameOf.get(bone) ?? "", parent, children: children.filter(Boolean) };
+      });
+    },
+    getBoneTransform(nodeId, name) {
+      const b = mainBindings.get(nodeId);
+      const bone = b?.boneByName.get(name);
+      if (!bone) return null;
+      const deg = THREE.MathUtils.radToDeg;
+      return {
+        position: { x: bone.position.x, y: bone.position.y, z: bone.position.z },
+        rotation: { x: deg(bone.rotation.x), y: deg(bone.rotation.y), z: deg(bone.rotation.z) },
+        scale: { x: bone.scale.x, y: bone.scale.y, z: bone.scale.z },
+      };
+    },
+    setBonePosition(nodeId, name, x, y, z) {
+      send("setBonePosition", nodeId, name, x, y, z);
+      const b = mainBindings.get(nodeId);
+      const bone = b?.boneByName.get(name);
+      if (bone) bone.position.set(fin(x, 0), fin(y, 0), fin(z, 0));
+      return true;
+    },
+    setBoneRotation(nodeId, name, x, y, z) {
+      send("setBoneRotation", nodeId, name, x, y, z);
+      const b = mainBindings.get(nodeId);
+      const bone = b?.boneByName.get(name);
+      if (bone) {
+        const rad = THREE.MathUtils.degToRad;
+        bone.rotation.set(rad(fin(x, 0)), rad(fin(y, 0)), rad(fin(z, 0)));
+      }
+      return true;
+    },
+    setBoneScale(nodeId, name, x, y, z) {
+      send("setBoneScale", nodeId, name, x, y, z);
+      const b = mainBindings.get(nodeId);
+      const bone = b?.boneByName.get(name);
+      if (bone) bone.scale.set(fin(x, 1), fin(y, 1), fin(z, 1));
+      return true;
+    },
+    resetBone(nodeId, name) {
+      send("resetBone", nodeId, name);
+      const b = mainBindings.get(nodeId);
+      const bone = b?.boneByName.get(name);
+      const snap = bone && b.restPose.get(bone);
+      if (bone && snap) {
+        bone.position.copy(snap.position);
+        bone.quaternion.copy(snap.quaternion);
+        bone.scale.copy(snap.scale);
+      }
+      return true;
+    },
+    resetPose(nodeId) {
+      send("resetPose", nodeId);
+      const b = mainBindings.get(nodeId);
+      if (b) for (const [bone, snap] of b.restPose) {
+        bone.position.copy(snap.position);
+        bone.quaternion.copy(snap.quaternion);
+        bone.scale.copy(snap.scale);
+      }
+      return true;
+    },
+    getBoneWorldPosition(nodeId, name) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      const bone = resolveBone(b, name);
+      if (!bone) return null;
+      bone.updateWorldMatrix(true, false);
+      return {
+        x: bone.matrixWorld.elements[12],
+        y: bone.matrixWorld.elements[13],
+        z: bone.matrixWorld.elements[14],
+      };
+    },
+
+    // —— 附件（主线程，需真实对象）——
+    attachObject(nodeId, targetObj, bone, opts) {
+      const b = mainBindings.get(nodeId);
+      if (!b || !targetObj || !targetObj.isObject3D) return false;
+      const boneObj = resolveBone(b, bone);
+      if (!boneObj || !attachmentTargetAllowed(b, targetObj)) return false;
+      const o = opts && typeof opts === "object" ? opts : {};
+      const at = {
+        obj: targetObj, bone: boneObj, boneName: bone,
+        syncRotation: o.syncRotation !== false,
+        syncScale: o.syncScale === true,
+        keepOffset: o.keepOffset !== false,
+        offset: new THREE.Matrix4(),
+      };
+      if (at.keepOffset) {
+        boneObj.updateWorldMatrix(true, false);
+        targetObj.updateWorldMatrix(true, false);
+        at.offset.copy(boneObj.matrixWorld).invert().multiply(targetObj.matrixWorld);
+      }
+      const prev = b.attachments.findIndex((a) => a.obj === targetObj);
+      if (prev >= 0) b.attachments.splice(prev, 1);
+      b.attachments.push(at);
+      return true;
+    },
+    detachObject(nodeId, targetObj) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return false;
+      const i = b.attachments.findIndex((a) => a.obj === targetObj);
+      if (i < 0) return false;
+      b.attachments.splice(i, 1);
+      return true;
+    },
+    attachmentsOf(nodeId) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      return b.attachments.map((at) => ({
+        node: at.obj.userData?.nodeId ?? at.obj.name ?? "",
+        bone: at.boneName,
+        syncRotation: at.syncRotation,
+        syncScale: at.syncScale,
+        keepOffset: at.keepOffset,
+      }));
+    },
+
+    // —— 形态键（主线程直接写真实网格 + 转发 Worker 保持代理同步）——
+    morphsOf(nodeId) {
+      const b = mainBindings.get(nodeId);
+      if (!b) return null;
+      return b.morphTable.map((m) => ({ mesh: m.name, targets: Object.keys(m.dictionary) }));
+    },
+    setMorphWeight(nodeId, mesh, target, v) {
+      const b = mainBindings.get(nodeId);
+      if (!b || typeof target !== "string" || !target) return false;
+      const entry =
+        (mesh ? b.morphTable.find((m) => m.name === mesh) : null) ??
+        b.morphTable.find((m) => target in m.dictionary);
+      if (!entry || !(target in entry.dictionary)) return false;
+      entry.mesh.morphTargetInfluences[entry.dictionary[target]] = clamp01(fin(v, 0));
+      send("setMorphWeight", nodeId, mesh, target, v);
+      return true;
+    },
+    getMorphWeight(nodeId, mesh, target) {
+      const b = mainBindings.get(nodeId);
+      if (!b || typeof target !== "string" || !target) return null;
+      const entry =
+        (mesh ? b.morphTable.find((m) => m.name === mesh) : null) ??
+        b.morphTable.find((m) => target in m.dictionary);
+      if (!entry || !(target in entry.dictionary)) return null;
+      return entry.mesh.morphTargetInfluences[entry.dictionary[target]] ?? null;
+    },
+
+    // —— IK（主线程建真实目标骨骼供 getBoneWorldPosition；求解在 Worker）——
+    addIK(nodeId, def) {
+      const b = mainBindings.get(nodeId);
+      if (!b || !b.skeleton || !def || typeof def !== "object") return false;
+      const effectorName = typeof def.effector === "string" ? def.effector : "";
+      const effector = effectorName ? b.boneByName.get(effectorName) : null;
+      if (!effector) return false;
+      b.ikSeq += 1;
+      const id = `ik${b.ikSeq}`;
+      const targetBone = new THREE.Bone();
+      targetBone.name = `__ikTarget_${id}`;
+      b.root.add(targetBone);
+      b.skeleton.bones.push(targetBone);
+      b.skeleton.boneInverses.push(new THREE.Matrix4());
+      b.iks.push({
+        id,
+        name: typeof def.name === "string" && def.name ? def.name : id,
+        solver: null,
+        targetBone,
+        effector: effectorName,
+        enabled: true,
+      });
+      send("addIK", nodeId, def);
+      return id;
+    },
+    removeIK(nodeId, id) {
+      send("removeIK", nodeId, id);
+      const b = mainBindings.get(nodeId);
+      if (b) {
+        const i = b.iks.findIndex((r) => r.id === id);
+        if (i >= 0) b.iks.splice(i, 1);
+      }
+      return true;
+    },
+    setIKEnabled(nodeId, id, v) {
+      send("setIKEnabled", nodeId, id, v);
+      const b = mainBindings.get(nodeId);
+      const rec = b && b.iks.find((r) => r.id === id);
+      if (rec) rec.enabled = v === true;
+      return true;
+    },
+    setIKTargetPosition(nodeId, id, x, y, z) {
+      send("setIKTargetPosition", nodeId, id, x, y, z);
+      const b = mainBindings.get(nodeId);
+      const rec = b && b.iks.find((r) => r.id === id);
+      if (rec) rec.targetBone.position.set(fin(x, 0), fin(y, 0), fin(z, 0));
+      return true;
+    },
+    getIKTargetPosition(nodeId, id) {
+      const s = mirrorState.get(nodeId);
+      return s?.ikTargets?.[id] ?? null;
+    },
+    iksOf(nodeId) {
+      const s = mirrorState.get(nodeId);
+      return s?.iks ?? null;
+    },
+
+    // —— 设置重应用 / 播放控制（转发 Worker）——
+    reapply(nodeId) { send("reapply", nodeId); return true; },
+    applyAnim(nodeId, settings) { send("applyAnim", nodeId, settings); return true; },
+    applyGraph(nodeId, def) { send("applyGraph", nodeId, def); return true; },
+    removeGraph(nodeId) { send("removeGraph", nodeId); return true; },
+    setSpeed(nodeId, v) { send("setSpeed", nodeId, v); return true; },
+    setLoop(nodeId, mode) { send("setLoop", nodeId, mode); return true; },
+    setAutoplay(nodeId, v) { send("setAutoplay", nodeId, v); return true; },
+    setParam(nodeId, name, value) { send("setParam", nodeId, name, value); return true; },
+    play(nodeId, clip) { send("play", nodeId, clip); return true; },
+    stop(nodeId) { send("stop", nodeId); return true; },
+    pause(nodeId) { send("pause", nodeId); return true; },
+    resume(nodeId) { send("resume", nodeId); return true; },
+
+    dispose() {
+      try { worker.postMessage({ type: "dispose" }); } catch {}
+      worker.terminate();
     },
   };
 }
