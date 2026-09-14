@@ -1,19 +1,26 @@
 <script setup lang="ts">
 /**
  * 行为树可视化编辑器（弹窗；.bt 资产）：
- * - SVG 画布：树自顶向下自动布局（子树宽度递归），滚轮缩放 / 拖拽平移；
+ * - SVG 画布：树自顶向下自动布局（子树宽度递归），滚轮缩放 /
+ *   左键拖空白或中键任意处拖拽平移；右键为自定义菜单（弹窗内屏蔽浏览器默认菜单）；
  * - 右侧属性面板：根为空时选类型建根；选中节点显示类型说明 + 注册表字段表单，
  *   并给出「添加子节点」类型按钮（装饰 ≤1 子、叶子无子，按注册表校验）；
  * - 保存：改动防抖自动写盘 + Ctrl+S / 按钮手动保存，关闭前冲刷未保存改动。
  *   序列化经 parseBehaviorTree 收敛（api.behaviorTreeWrite，格式所有权在后端）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { getProjectStore } from "../../stores/project";
 import { logStore } from "../../stores/log";
 import { api } from "../../../lib/api";
 import { closeBehaviorTreeEditor } from "../../composables/logic-editor";
 import { useGraphCanvas } from "../../composables/graph-canvas";
 import { isEditingText } from "../../commands/context";
+import {
+  closeContextMenu,
+  ctxMenu,
+  openContextMenu,
+  type CtxMenuItem,
+} from "../../../lib/editor/context-menu";
 import "../../../styles/components/logic-editor.scss";
 import {
   BT_NODE_DEFS,
@@ -50,7 +57,7 @@ const LEVEL_H = 104;
 const SIBLING_GAP = 26;
 
 const svgEl = ref<SVGSVGElement | null>(null);
-const { view, transform, panBy, resetView, bindWheel } = useGraphCanvas(svgEl);
+const { view, transform, resetView, bindWheel } = useGraphCanvas(svgEl);
 
 const loading = ref(true);
 const loadError = ref("");
@@ -194,9 +201,8 @@ function isBgTarget(e: Event): boolean {
   return !t || t === svgEl.value || t.dataset?.bg === "1";
 }
 
-function onSvgPointerDown(e: PointerEvent): void {
-  if (e.button !== 0 || !isBgTarget(e)) return;
-  selectedId.value = null;
+/** 从指针按下处开始平移（move 中按起点绝对定位 view，避免增量累加漂移） */
+function startPan(e: PointerEvent): void {
   panning = {
     startClientX: e.clientX,
     startClientY: e.clientY,
@@ -205,13 +211,66 @@ function onSvgPointerDown(e: PointerEvent): void {
   };
 }
 
+function onSvgPointerDown(e: PointerEvent): void {
+  // 中键：任意位置（含节点上）拖拽平移；preventDefault 阻止自动滚动
+  if (e.button === 1) {
+    e.preventDefault();
+    startPan(e);
+    return;
+  }
+  if (e.button !== 0 || !isBgTarget(e)) return;
+  selectedId.value = null;
+  startPan(e);
+}
+
+function onNodePointerDown(e: PointerEvent, n: BTNode): void {
+  if (e.button === 1) {
+    e.preventDefault();
+    startPan(e);
+    return;
+  }
+  if (e.button !== 0) return;
+  selectedId.value = n.id;
+}
+
 function onPointerMove(e: PointerEvent): void {
-  if (!panning) return;
-  panBy(e.clientX - panning.startClientX, e.clientY - panning.startClientY);
+  const p = panning;
+  if (!p) return;
+  // 绝对定位：起点视图 + 指针相对起点的位移（不可用增量累加，否则漂移）
+  view.x = p.startViewX + (e.clientX - p.startClientX);
+  view.y = p.startViewY + (e.clientY - p.startClientY);
 }
 
 function onPointerUp(): void {
   panning = null;
+}
+
+// —— 右键菜单（屏蔽浏览器默认菜单，按目标给出编辑动作） ——
+
+function onBgContext(e: MouseEvent): void {
+  openContextMenu(e, [{ label: "重置视图", onClick: resetView }]);
+}
+
+function onNodeContext(e: MouseEvent, n: BTNode): void {
+  selectedId.value = n.id;
+  const items: CtxMenuItem[] = [];
+  if (btCanAcceptChildren(n)) {
+    items.push({
+      label: "添加子节点",
+      children: BT_NODE_DEFS.map((d) => ({ label: d.label, onClick: () => addChild(d.type) })),
+    });
+  }
+  if (findBtParent(tree.value, n.id)) {
+    items.push({
+      label: "选中父节点",
+      onClick: () => {
+        selectedId.value = findBtParent(tree.value, n.id)?.id ?? null;
+      },
+    });
+  }
+  items.push({ separator: true });
+  items.push({ label: "删除节点", danger: true, shortcut: "Del", onClick: deleteSelected });
+  openContextMenu(e, items);
 }
 
 // —— 树编辑 ——
@@ -252,16 +311,16 @@ function deleteSelected(): void {
   markDirty();
 }
 
-function selectNode(n: BTNode): void {
-  selectedId.value = n.id;
-}
-
 // —— 键盘 ——
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
+    if (ctxMenu.open) {
+      closeContextMenu();
+      return;
+    }
     void requestClose();
     return;
   }
@@ -284,6 +343,8 @@ onMounted(async () => {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   await load();
+  // svg 在 loading 结束后才渲染，等一帧再绑 wheel，避免绑到空引用
+  await nextTick();
   unbindWheel = bindWheel();
 });
 
@@ -298,7 +359,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div class="logic-modal-backdrop">
+    <div class="logic-modal-backdrop" @contextmenu.prevent>
       <div class="logic-modal">
         <div class="logic-modal-head">
           <span class="logic-modal-title">行为树编辑器 · {{ title }}</span>
@@ -325,7 +386,7 @@ onBeforeUnmount(() => {
             删除选中
           </button>
           <button class="logic-modal-btn" title="重置平移与缩放" @click="resetView">重置视图</button>
-          <span class="logic-tool-hint">点击节点选中 · 拖拽平移 · 滚轮缩放 · Del 删除</span>
+          <span class="logic-tool-hint">点击节点选中 · 左键拖空白 / 中键拖拽平移 · 滚轮缩放 · 右键菜单 · Del 删除</span>
         </div>
 
         <div class="logic-modal-body">
@@ -333,7 +394,12 @@ onBeforeUnmount(() => {
           <div v-else-if="!tree" class="logic-empty">读取失败：{{ loadError }}</div>
           <template v-else>
             <div class="logic-canvas-wrap">
-              <svg ref="svgEl" class="logic-canvas" @pointerdown="onSvgPointerDown">
+              <svg
+                ref="svgEl"
+                class="logic-canvas"
+                @pointerdown="onSvgPointerDown"
+                @contextmenu.prevent="onBgContext"
+              >
                 <defs>
                   <pattern
                     id="bt-grid"
@@ -354,7 +420,8 @@ onBeforeUnmount(() => {
                     class="logic-bt-card"
                     :class="{ selected: selectedId === n.node.id }"
                     :transform="`translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})`"
-                    @pointerdown.stop="selectNode(n.node)"
+                    @pointerdown.stop="onNodePointerDown($event, n.node)"
+                    @contextmenu.prevent.stop="onNodeContext($event, n.node)"
                   >
                     <rect
                       class="logic-bt-box"

@@ -3,7 +3,7 @@
 // - view：画布视图变换（平移 px + 缩放系数），经顶层 <g :transform> 应用；
 // - toGraph：屏幕坐标 → 画布逻辑坐标（几何/命中计算共用）；
 // - wheel 缩放以指针为锚点（放大后指针下的图点保持不动），手动注册非被动监听。
-// 平移由组件自行驱动（背景按下拖拽 → panBy）。
+// 平移由组件自行驱动：拖拽中按按下起点直接绝对定位 view（不可用增量累加，会漂移）。
 // ---------------------------------------------------------------------------
 import { computed, reactive, type Ref } from "vue";
 
@@ -41,12 +41,6 @@ export function useGraphCanvas(svgEl: Ref<SVGSVGElement | null>) {
     view.k = k;
   }
 
-  /** 视口平移增量（px） */
-  function panBy(dx: number, dy: number): void {
-    view.x += dx;
-    view.y += dy;
-  }
-
   /** 重置视图（回到 1:1、原点） */
   function resetView(): void {
     view.x = 0;
@@ -67,5 +61,5 @@ export function useGraphCanvas(svgEl: Ref<SVGSVGElement | null>) {
     return () => el.removeEventListener("wheel", onWheel);
   }
 
-  return { view, transform, toGraph, zoomAt, panBy, resetView, bindWheel };
+  return { view, transform, toGraph, zoomAt, resetView, bindWheel };
 }

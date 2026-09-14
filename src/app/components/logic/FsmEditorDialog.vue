@@ -1,20 +1,27 @@
 <script setup lang="ts">
 /**
  * 状态机可视化编辑器（弹窗；.fsm 资产）：
- * - SVG 画布：状态卡片拖拽布局、过渡曲线（双向对错开）、滚轮缩放 / 拖拽平移；
+ * - SVG 画布：状态卡片拖拽布局、过渡曲线（双向对错开）、滚轮缩放 /
+ *   左键拖空白或中键任意处拖拽平移；右键为自定义菜单（弹窗内屏蔽浏览器默认菜单）；
  * - 双击空白新建状态；「连接到…」进入连线模式后点击目标状态建过渡；
  * - 右侧属性面板：状态（名称/颜色/入口）与过渡（事件/定时/参数条件）编辑，
  *   未选中时编辑图参数（条件用的黑板默认值）；
  * - 保存：改动防抖自动写盘 + Ctrl+S / 按钮手动保存，关闭前冲刷未保存改动。
  *   序列化经 parseFsmGraph 收敛（api.fsmWrite，格式所有权在后端）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { getProjectStore } from "../../stores/project";
 import { logStore } from "../../stores/log";
 import { api } from "../../../lib/api";
 import { closeFsmEditor } from "../../composables/logic-editor";
 import { useGraphCanvas } from "../../composables/graph-canvas";
 import { isEditingText } from "../../commands/context";
+import {
+  closeContextMenu,
+  ctxMenu,
+  openContextMenu,
+  type CtxMenuItem,
+} from "../../../lib/editor/context-menu";
 import "../../../styles/components/logic-editor.scss";
 import {
   FSM_STATE_COLORS,
@@ -39,7 +46,7 @@ const CARD_W = 132;
 const CARD_H = 46;
 
 const svgEl = ref<SVGSVGElement | null>(null);
-const { view, transform, toGraph, panBy, resetView, bindWheel } = useGraphCanvas(svgEl);
+const { view, transform, toGraph, resetView, bindWheel } = useGraphCanvas(svgEl);
 
 const loading = ref(true);
 const loadError = ref("");
@@ -239,12 +246,8 @@ function isBgTarget(e: Event): boolean {
   return !t || t === svgEl.value || t.dataset?.bg === "1";
 }
 
-function onSvgPointerDown(e: PointerEvent): void {
-  if (e.button !== 0) return;
-  if (!isBgTarget(e)) return;
-  // 空白按下：退出连线、清除选中，进入平移
-  if (linking.value) linking.value = null;
-  else selection.value = null;
+/** 从指针按下处开始平移（move 中按起点绝对定位 view，避免增量累加漂移） */
+function startPan(e: PointerEvent): void {
   interaction = {
     kind: "pan",
     startClientX: e.clientX,
@@ -254,7 +257,27 @@ function onSvgPointerDown(e: PointerEvent): void {
   };
 }
 
+function onSvgPointerDown(e: PointerEvent): void {
+  // 中键：任意位置（含卡片/连线上）拖拽平移；preventDefault 阻止自动滚动
+  if (e.button === 1) {
+    e.preventDefault();
+    startPan(e);
+    return;
+  }
+  if (e.button !== 0) return;
+  if (!isBgTarget(e)) return;
+  // 空白左键按下：退出连线、清除选中，进入平移
+  if (linking.value) linking.value = null;
+  else selection.value = null;
+  startPan(e);
+}
+
 function onStatePointerDown(e: PointerEvent, s: FsmState): void {
+  if (e.button === 1) {
+    e.preventDefault();
+    startPan(e);
+    return;
+  }
   if (e.button !== 0) return;
   // 连线模式：点击其它状态 → 建过渡；点击自身 → 取消
   if (linking.value) {
@@ -272,7 +295,9 @@ function onPointerMove(e: PointerEvent): void {
   const it = interaction;
   if (!it) return;
   if (it.kind === "pan") {
-    panBy(e.clientX - it.startClientX, e.clientY - it.startClientY);
+    // 绝对定位：起点视图 + 指针相对起点的位移（不可用 panBy 累加，否则漂移）
+    view.x = it.startViewX + (e.clientX - it.startClientX);
+    view.y = it.startViewY + (e.clientY - it.startClientY);
     return;
   }
   const s = states.value.find((x) => x.id === it.id);
@@ -290,6 +315,37 @@ function onPointerUp(): void {
 function onSvgDblClick(e: MouseEvent): void {
   if (!isBgTarget(e) || !graph.value) return;
   addStateAt(toGraph(e.clientX, e.clientY));
+}
+
+// —— 右键菜单（屏蔽浏览器默认菜单，按目标给出编辑动作） ——
+
+function onBgContext(e: MouseEvent): void {
+  if (!graph.value) return;
+  const pos = toGraph(e.clientX, e.clientY);
+  openContextMenu(e, [
+    { label: "新建状态", onClick: () => addStateAt(pos) },
+    { separator: true },
+    { label: "重置视图", onClick: resetView },
+  ]);
+}
+
+function onStateContext(e: MouseEvent, s: FsmState): void {
+  if (!graph.value) return;
+  selection.value = { kind: "state", id: s.id };
+  const items: CtxMenuItem[] = [
+    { label: "连接到…", disabled: linking.value === s.id, onClick: () => toggleLinking() },
+    { label: "设为入口", disabled: s.id === graph.value?.entry, onClick: setEntry },
+    { separator: true },
+    { label: "删除状态", danger: true, shortcut: "Del", onClick: deleteSelection },
+  ];
+  openContextMenu(e, items);
+}
+
+function onEdgeContext(e: MouseEvent, id: string): void {
+  selection.value = { kind: "transition", id };
+  openContextMenu(e, [
+    { label: "删除过渡", danger: true, shortcut: "Del", onClick: deleteSelection },
+  ]);
 }
 
 // —— 编辑动作 ——
@@ -397,6 +453,10 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
+    if (ctxMenu.open) {
+      closeContextMenu();
+      return;
+    }
     if (linking.value) linking.value = null;
     else void requestClose();
     return;
@@ -422,6 +482,8 @@ onMounted(async () => {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   await load();
+  // svg 在 loading 结束后才渲染，等一帧再绑 wheel，避免绑到空引用
+  await nextTick();
   unbindWheel = bindWheel();
 });
 
@@ -436,7 +498,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div class="logic-modal-backdrop">
+    <div class="logic-modal-backdrop" @contextmenu.prevent>
       <div class="logic-modal">
         <div class="logic-modal-head">
           <span class="logic-modal-title">状态机编辑器 · {{ title }}</span>
@@ -473,7 +535,7 @@ onBeforeUnmount(() => {
           </button>
           <div class="logic-tool-sep"></div>
           <button class="logic-modal-btn" title="重置平移与缩放" @click="resetView">重置视图</button>
-          <span class="logic-tool-hint">双击空白新建状态 · 拖拽平移 · 滚轮缩放 · Del 删除</span>
+          <span class="logic-tool-hint">双击空白新建状态 · 左键拖空白 / 中键拖拽平移 · 滚轮缩放 · 右键菜单 · Del 删除</span>
         </div>
 
         <div class="logic-modal-body">
@@ -486,6 +548,7 @@ onBeforeUnmount(() => {
                 class="logic-canvas"
                 @pointerdown="onSvgPointerDown"
                 @dblclick="onSvgDblClick"
+                @contextmenu.prevent="onBgContext"
               >
                 <defs>
                   <pattern
@@ -527,6 +590,7 @@ onBeforeUnmount(() => {
                       class="logic-edge-hit"
                       :d="e.d"
                       @pointerdown.stop="selection = { kind: 'transition', id: e.id }"
+                      @contextmenu.prevent.stop="onEdgeContext($event, e.id)"
                     />
                     <path
                       class="logic-edge"
@@ -543,6 +607,7 @@ onBeforeUnmount(() => {
                     :class="{ selected: selection?.kind === 'state' && selection.id === s.id }"
                     :transform="`translate(${s.x},${s.y})`"
                     @pointerdown.stop="onStatePointerDown($event, s)"
+                    @contextmenu.prevent.stop="onStateContext($event, s)"
                   >
                     <rect
                       class="logic-state-box"
