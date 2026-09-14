@@ -9,4 +9,4 @@ export {
   terrainSettingsSig,
   type TerrainSettings,
 } from "./types";
-export { buildTerrain, sampleTerrainHeight, type TerrainBuild } from "./generate";
+export { buildTerrain, sampleTerrainHeight, splitTerrainGeometry, type TerrainBuild } from "./generate";

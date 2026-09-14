@@ -37,7 +37,7 @@ import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
-import { buildTerrain, terrainSettingsSig } from "../../terrain";
+import { buildTerrain, splitTerrainGeometry, terrainSettingsSig } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
 import {
@@ -470,8 +470,8 @@ export class SceneSynchronizer {
         // 粒子 Points 是节点的渲染内容：跟随节点层（ParticleSystem 首次挂载时也置位）
         c.layers.set(layer);
       } else if (c.name === TERRAIN_MESH_NAME) {
-        // 地形网格是节点的渲染内容：跟随节点层
-        c.layers.set(layer);
+        // 地形 chunk 网格是节点的渲染内容：跟随节点层
+        c.traverse((d) => d.layers.set(layer));
       } else if (c.name === UI_LABEL_CHILD_NAME) {
         // UI 按钮标签网格是节点的渲染内容：跟随节点层（refreshUIWidget 每次刷新重置位）
         c.layers.set(layer);
@@ -1148,32 +1148,58 @@ export class SceneSynchronizer {
    */
   private refreshTerrain(node: TerrainNode, obj: THREE.Object3D): void {
     const sig = terrainSettingsSig(node.terrain);
-    let mesh = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Mesh | null;
-    if (!mesh || mesh.userData.terrainSig !== sig) {
+    let terrainGroup = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Group | null;
+    if (!terrainGroup || terrainGroup.userData.terrainSig !== sig) {
       const build = buildTerrain(node.terrain);
-      if (mesh) {
-        mesh.geometry.dispose();
-        mesh.geometry = build.geometry;
+      const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, 4);
+      build.geometry.dispose();
+
+      if (terrainGroup) {
+        for (const child of terrainGroup.children) {
+          (child as THREE.Mesh).geometry.dispose();
+        }
+        terrainGroup.clear();
+        const mat = terrainGroup.userData.terrainMaterial as THREE.MeshStandardMaterial;
+        if (mat.map) mat.map.dispose();
+        mat.map = build.colorTexture;
+        mat.needsUpdate = true;
+        for (const geom of chunkGeoms) {
+          const chunkMesh = new THREE.Mesh(geom, mat);
+          chunkMesh.castShadow = true;
+          chunkMesh.receiveShadow = true;
+          chunkMesh.userData.terrainHeights = build.heights;
+          chunkMesh.userData.terrainGridSize = build.gridSize;
+          chunkMesh.userData.terrainSize = build.size;
+          terrainGroup.add(chunkMesh);
+        }
       } else {
-        mesh = new THREE.Mesh(build.geometry, new THREE.MeshStandardMaterial({
-          vertexColors: true,
+        const material = new THREE.MeshStandardMaterial({
+          map: build.colorTexture,
           metalness: 0,
           roughness: 0.95,
-        }));
-        mesh.name = TERRAIN_MESH_NAME;
-        obj.add(mesh);
-        // 首建后补层（applyNodeLayer 在本函数之前跑）
-        mesh.layers.set(clampLayerIndex(node.layer));
+        });
+        terrainGroup = new THREE.Group();
+        terrainGroup.name = TERRAIN_MESH_NAME;
+        terrainGroup.userData.terrainMaterial = material;
+        for (const geom of chunkGeoms) {
+          const chunkMesh = new THREE.Mesh(geom, material);
+          chunkMesh.castShadow = true;
+          chunkMesh.receiveShadow = true;
+          chunkMesh.userData.terrainHeights = build.heights;
+          chunkMesh.userData.terrainGridSize = build.gridSize;
+          chunkMesh.userData.terrainSize = build.size;
+          terrainGroup.add(chunkMesh);
+        }
+        obj.add(terrainGroup);
+        const layer = clampLayerIndex(node.layer);
+        terrainGroup.traverse((d) => d.layers.set(layer));
       }
-      mesh.userData.terrainSig = sig;
-      mesh.userData.terrainMinY = build.minY;
-      mesh.userData.terrainMaxY = build.maxY;
-      // 高度网格缓存（行主序 N×N）：高度场碰撞体直接读取，避免重复烘焙
-      mesh.userData.terrainHeights = build.heights;
-      mesh.userData.terrainGridSize = build.gridSize;
-      mesh.userData.terrainSize = build.size;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      terrainGroup.userData.terrainSig = sig;
+      terrainGroup.userData.terrainMinY = build.minY;
+      terrainGroup.userData.terrainMaxY = build.maxY;
+      terrainGroup.userData.terrainHeights = build.heights;
+      terrainGroup.userData.terrainGridSize = build.gridSize;
+      terrainGroup.userData.terrainSize = build.size;
       this.shadowCamerasDirty = true;
     }
   }

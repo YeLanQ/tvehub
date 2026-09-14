@@ -2,7 +2,7 @@
 // 算法语义移植自 three.js 示例 TerrainGenerator.js（导数阻尼分形 + 域扭曲 +
 // 热侵蚀 + 菱形网格 + 海拔/坡度色带），与编辑器 framework/terrain/generate.ts
 // 同一套参数与算法（两边改参数需同步）。表面配色在 CPU 烘焙为顶点色，
-// MeshStandardMaterial(vertexColors) 在 WebGL/WebGPU 双后端一致可用。
+// MeshStandardMaterial(map=colorTexture) 在 WebGL/WebGPU 双后端一致可用。
 // 脚本经 engine SDK 的 TerrainNode.sampleHeight / sampleSlope 贴地采样。
 import * as THREE from "../core/three.module.min.js";
 import { num } from "../core/utils";
@@ -427,6 +427,111 @@ function _simplifyTerrainMesh(heights, n, threshold) {
   return { vertices: Int32Array.from(vertices), indices: Uint32Array.from(indices) };
 }
 
+function _sampleHeightAt(h, n, size, wx, wz) {
+  const half = size / 2;
+  const segs = n - 1;
+  const fx = Math.min(segs, Math.max(0, ((wx + half) / size) * segs));
+  const fz = Math.min(segs, Math.max(0, ((wz + half) / size) * segs));
+  const ix = Math.min(n - 2, Math.floor(fx));
+  const iz = Math.min(n - 2, Math.floor(fz));
+  const tx = fx - ix, tz = fz - iz;
+  return (h[iz * n + ix] * (1 - tx) + h[iz * n + ix + 1] * tx) * (1 - tz) +
+         (h[(iz + 1) * n + ix] * (1 - tx) + h[(iz + 1) * n + ix + 1] * tx) * tz;
+}
+
+function _bakeColorTexture(heights, n, p, min, max) {
+  const res = 256;
+  const data = new Uint8Array(res * res * 4);
+  const hSpan = Math.max(1e-6, max - min);
+  const cellSize = p.size / (n - 1);
+
+  const grass = hexToLinear(p.grassColor);
+  const rock = hexToLinear(p.rockColor);
+  const snow = hexToLinear(p.snowColor);
+  const dryGrass = [...grass]; scale3(dryGrass, 1.28);
+  const forest = [...grass]; scale3(forest, 0.55);
+  const scree = [...rock]; scale3(scree, 1.15);
+  const lichen = [...rock]; mix3(lichen, grass, 0.35);
+  const snowDeep = [...snow]; scale3(snowDeep, 0.88);
+  const colorSeed = p.seed & 0xffff;
+  const tmp = [0, 0, 0];
+
+  for (let j = 0; j < res; j++) {
+    for (let i = 0; i < res; i++) {
+      const wx = ((i / (res - 1)) - 0.5) * p.size;
+      const wz = ((j / (res - 1)) - 0.5) * p.size;
+      const wy = _sampleHeightAt(heights, n, p.size, wx, wz);
+
+      const e = cellSize * 0.5;
+      const dx = (_sampleHeightAt(heights, n, p.size, wx + e, wz) - _sampleHeightAt(heights, n, p.size, wx - e, wz)) / (2 * e);
+      const dz = (_sampleHeightAt(heights, n, p.size, wx, wz + e) - _sampleHeightAt(heights, n, p.size, wx, wz - e)) / (2 * e);
+      const ny = 1 / Math.sqrt(dx * dx + 1 + dz * dz);
+
+      const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
+      const flatness = Math.min(1, Math.max(0, ny));
+      const steep = 1 - flatness;
+      const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
+      const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
+      const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
+
+      const surface = [...grass];
+      mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
+      mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
+      const rockShade = [...rock];
+      const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
+      const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
+      mix3(rockShade, lichen, lichenMask * 0.45);
+      scale3(rockShade, strata * 0.36 + 0.8);
+      mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
+      mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
+      const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
+      mix3(surface, scree, screeMask * 0.5);
+      const snowMask = smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
+      tmp[0] = snow[0]; tmp[1] = snow[1]; tmp[2] = snow[2];
+      mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
+      mix3(surface, tmp, snowMask);
+      const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
+      scale3(surface, 1 - cavity * 0.32);
+      scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
+      scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
+
+      const idx = (j * res + i) * 4;
+      data[idx] = Math.round(surface[0] * 255);
+      data[idx + 1] = Math.round(surface[1] * 255);
+      data[idx + 2] = Math.round(surface[2] * 255);
+      data[idx + 3] = 255;
+    }
+  }
+
+  const blurred = new Uint8Array(res * res * 4);
+  for (let j = 0; j < res; j++) {
+    for (let i = 0; i < res; i++) {
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          const ni = Math.min(res - 1, Math.max(0, i + di));
+          const nj = Math.min(res - 1, Math.max(0, j + dj));
+          const sIdx = (nj * res + ni) * 4;
+          r += data[sIdx]; g += data[sIdx + 1]; b += data[sIdx + 2]; count++;
+        }
+      }
+      const dIdx = (j * res + i) * 4;
+      blurred[dIdx] = Math.round(r / count);
+      blurred[dIdx + 1] = Math.round(g / count);
+      blurred[dIdx + 2] = Math.round(b / count);
+      blurred[dIdx + 3] = 255;
+    }
+  }
+
+  const tex = new THREE.DataTexture(blurred, res, res, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.colorSpace = THREE.LinearSRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 // ---------------------------------------------------------------------------
 // 构建
 // ---------------------------------------------------------------------------
@@ -506,67 +611,16 @@ function buildTerrain(p) {
   }
   geometry.computeVertexNormals();
 
-  const normalAttr = geometry.getAttribute("normal");
-  const colors = new Float32Array(vertCount * 3);
-  const grass = hexToLinear(p.grassColor);
-  const rock = hexToLinear(p.rockColor);
-  const snow = hexToLinear(p.snowColor);
-  const dryGrass = [...grass];
-  scale3(dryGrass, 1.28);
-  const forest = [...grass];
-  scale3(forest, 0.55);
-  const scree = [...rock];
-  scale3(scree, 1.15);
-  const lichen = [...rock];
-  mix3(lichen, grass, 0.35);
-  const snowDeep = [...snow];
-  scale3(snowDeep, 0.88);
-  const colorSeed = p.seed & 0xffff;
-  const tmp = [0, 0, 0];
+  const uvs = new Float32Array(vertCount * 2);
   for (let i = 0; i < vertCount; i++) {
-    const wx = positions[i * 3];
-    const wy = positions[i * 3 + 1];
-    const wz = positions[i * 3 + 2];
-    const altitude = Math.min(1, Math.max(0, (wy - min) / hSpan));
-    const flatness = Math.min(1, Math.max(0, normalAttr.getY(i)));
-    const steep = 1 - flatness;
-    const detail = valueNoise2(wx * 0.05, wz * 0.05, colorSeed);
-    const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
-    const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
-
-    const surface = [...grass];
-    mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
-    mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-    const rockShade = [...rock];
-    const strata =
-      (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
-    const lichenMask =
-      smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
-    mix3(rockShade, lichen, lichenMask * 0.45);
-    scale3(rockShade, strata * 0.36 + 0.8);
-    mix3(surface, rockShade, smoothstep(0.46, 0.64, altitude + detail * 0.06));
-    mix3(surface, rockShade, smoothstep(0.34, 0.62, steep));
-    const screeMask = smoothstep(0.42, 0.7, steep) * smoothstep(0.35, 0.7, flatness) * (detail * 0.5 + 0.5);
-    mix3(surface, scree, screeMask * 0.5);
-    const snowMask =
-      smoothstep(0.56, 0.78, altitude + detail * 0.08 + grain * 0.05) * smoothstep(0.3, 0.6, flatness);
-    tmp[0] = snow[0];
-    tmp[1] = snow[1];
-    tmp[2] = snow[2];
-    mix3(tmp, snowDeep, smoothstep(0.2, 0.7, grain) * 0.6);
-    mix3(surface, tmp, snowMask);
-    const cavity = smoothstep(0.24, 0.06, altitude) * flatness;
-    scale3(surface, 1 - cavity * 0.32);
-    scale3(surface, (macro * 0.5 + 0.5) * 0.3 + 0.84);
-    scale3(surface, (grain * 0.5 + 0.5) * 0.12 + 0.94);
-
-    colors[i * 3] = surface[0];
-    colors[i * 3 + 1] = surface[1];
-    colors[i * 3 + 2] = surface[2];
+    uvs[i * 2] = positions[i * 3] / p.size + 0.5;
+    uvs[i * 2 + 1] = positions[i * 3 + 2] / p.size + 0.5;
   }
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
 
-  return { geometry, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
+  const colorTexture = _bakeColorTexture(heights, n, p, min, max);
+
+  return { geometry, colorTexture, heights, gridSize: n, size: p.size, segments: p.segments, minY: min, maxY: max };
 }
 
 /** 双线性采样世界高度（x/z 超界钳到边缘） */
@@ -596,25 +650,90 @@ function sampleSlope(data, x, z) {
   return (2 * e) / Math.sqrt(hx * hx + 4 * e * e + hz * hz);
 }
 
+function _splitTerrainGeometry(geometry, size, chunks) {
+  if (chunks <= 1) return [geometry];
+
+  const pos = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
+  const origNormal = geometry.getAttribute("normal");
+  const index = geometry.getIndex();
+  if (!index) return [geometry];
+
+  const chunkSize = size / chunks;
+  const half = size / 2;
+
+  const chunkTriArrays = [];
+  for (let i = 0; i < chunks * chunks; i++) chunkTriArrays.push([]);
+  const triCount = index.count / 3;
+  for (let t = 0; t < triCount; t++) {
+    const a = index.getX(t * 3), b = index.getX(t * 3 + 1), c = index.getX(t * 3 + 2);
+    const cx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3;
+    const cz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+    const ix = Math.min(chunks - 1, Math.max(0, Math.floor((cx + half) / chunkSize)));
+    const iz = Math.min(chunks - 1, Math.max(0, Math.floor((cz + half) / chunkSize)));
+    chunkTriArrays[iz * chunks + ix].push(a, b, c);
+  }
+
+  const result = [];
+  for (let ci = 0; ci < chunks * chunks; ci++) {
+    const tris = chunkTriArrays[ci];
+    if (tris.length === 0) continue;
+
+    const vertMap = new Map();
+    const newPositions = [], newUVs = [], newNormals = [], newIndices = [];
+
+    for (let i = 0; i < tris.length; i += 3) {
+      for (let j = 0; j < 3; j++) {
+        const oldIdx = tris[i + j];
+        let newIdx = vertMap.get(oldIdx);
+        if (newIdx === undefined) {
+          newIdx = newPositions.length / 3;
+          vertMap.set(oldIdx, newIdx);
+          newPositions.push(pos.getX(oldIdx), pos.getY(oldIdx), pos.getZ(oldIdx));
+          if (uv) newUVs.push(uv.getX(oldIdx), uv.getY(oldIdx));
+          if (origNormal) newNormals.push(origNormal.getX(oldIdx), origNormal.getY(oldIdx), origNormal.getZ(oldIdx));
+        }
+        newIndices.push(newIdx);
+      }
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.Float32BufferAttribute(newPositions, 3));
+    if (newUVs.length > 0) geom.setAttribute("uv", new THREE.Float32BufferAttribute(newUVs, 2));
+    if (newNormals.length > 0) geom.setAttribute("normal", new THREE.Float32BufferAttribute(newNormals, 3));
+    geom.setIndex(newIndices);
+    result.push(geom);
+  }
+
+  return result;
+}
+
 /**
- * 构建 terrainNode 的渲染网格：烘焙高度场几何 + 顶点色材质（默认投射/接收阴影，
- * 与网格节点同策略）。返回 { obj, data, settings }；obj 为名为 __terrainMesh 的
- * 网格（由 nodes.mjs 挂到节点 Group 下，与编辑器同结构），data 供
- * createTerrains 的贴地采样 API 使用。
+ * 构建 terrainNode 的渲染网格：烘焙高度场几何 + 颜色纹理材质，拆分 4×4 chunk
+ * 供视锥剔除（每 chunk 独立 boundingBox，three.js 自动剔除不可见 chunk）。
+ * 返回 { obj, data, settings }；obj 为名为 __terrainMesh 的 Group（含 chunk 子网格）。
  */
 export function createTerrain(json) {
   const settings = parseSettings(json.terrain);
   const data = buildTerrain(settings);
-  const mesh = new THREE.Mesh(
-    data.geometry,
-    new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.95 }),
-  );
-  mesh.name = "__terrainMesh";
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.userData.terrainMinY = data.minY;
-  mesh.userData.terrainMaxY = data.maxY;
-  return { obj: mesh, data, settings };
+  const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, 4);
+  data.geometry.dispose();
+
+  const material = new THREE.MeshStandardMaterial({ map: data.colorTexture, metalness: 0, roughness: 0.95 });
+  const group = new THREE.Group();
+  group.name = "__terrainMesh";
+  for (const geom of chunkGeoms) {
+    const chunkMesh = new THREE.Mesh(geom, material);
+    chunkMesh.castShadow = true;
+    chunkMesh.receiveShadow = true;
+    chunkMesh.userData.terrainHeights = data.heights;
+    chunkMesh.userData.terrainGridSize = data.gridSize;
+    chunkMesh.userData.terrainSize = data.size;
+    group.add(chunkMesh);
+  }
+  group.userData.terrainMinY = data.minY;
+  group.userData.terrainMaxY = data.maxY;
+  return { obj: group, data, settings };
 }
 
 /**
