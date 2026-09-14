@@ -189,25 +189,32 @@ function verifyOutput(input) {
 /** 外部说明符修正：Vite/Rollup 对绝对外部 id 的相对化基准不可控（曾产出
  *  `../../../public/engine/...` 等错误路径），统一在后处理按「产物文件自身目录」
  *  重算所有指向 public/engine/ 下真实文件的 import 为正确的相对路径。
- *  覆盖 three 构建（core/three.*.min.js）与 vendor（loaders/*.js、physics-engines/*.mjs）。 */
+ *  覆盖静态 import（from "..."）与动态 import（import("...")，物理引擎惰性加载）。 */
 function fixExternalSpecifiers(input) {
   const engineRoot = path.resolve(ENGINE_DIR);
   for (const name of Object.keys(input)) {
     const file = path.join(ENGINE_DIR, `${name}.mjs`);
     const dir = path.dirname(file);
     let text = fs.readFileSync(file, "utf8");
+    const fixSpec = (spec) => {
+      if (!spec.startsWith(".")) return spec;
+      const resolved = path.resolve(dir, spec);
+      if (resolved.startsWith(engineRoot + path.sep) && fs.existsSync(resolved)) {
+        let rel = path.relative(dir, resolved).split(path.sep).join("/");
+        if (!rel.startsWith(".")) rel = "./" + rel;
+        return rel;
+      }
+      return spec;
+    };
+    // 静态 import: from "..."
     text = text.replace(
       /(from\s+["'])([^"']*)(["'])/g,
-      (match, pre, spec, post) => {
-        if (!spec.startsWith(".")) return match;
-        const resolved = path.resolve(dir, spec);
-        if (resolved.startsWith(engineRoot + path.sep) && fs.existsSync(resolved)) {
-          let rel = path.relative(dir, resolved).split(path.sep).join("/");
-          if (!rel.startsWith(".")) rel = "./" + rel;
-          if (rel !== spec) return `${pre}${rel}${post}`;
-        }
-        return match;
-      },
+      (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`,
+    );
+    // 动态 import: import("...")
+    text = text.replace(
+      /(import\s*\(\s*["'])([^"']*)(["']\s*\))/g,
+      (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`,
     );
     fs.writeFileSync(file, text);
   }

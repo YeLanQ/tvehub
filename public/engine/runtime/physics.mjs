@@ -218,7 +218,7 @@ function colliderDescFor(col, obj, terrainGrid) {
   return desc;
 }
 async function loadRapier() {
-  const mod = await import("../../../public/engine/runtime/physics-engines/rapier.mjs");
+  const mod = await import("./physics-engines/rapier.mjs");
   const R = mod.default;
   await R.init();
   return {
@@ -370,7 +370,7 @@ async function loadRapier() {
   };
 }
 async function loadJolt() {
-  const mod = await import("../../../public/engine/runtime/physics-engines/jolt.mjs");
+  const mod = await import("./physics-engines/jolt.mjs");
   const Jolt = await mod.default();
   const LAYER_MOVING = 0;
   const LAYER_NON_MOVING = 1;
@@ -659,7 +659,7 @@ async function loadJolt() {
   };
 }
 async function loadAmmo() {
-  const { initAmmo } = await import("../../../public/engine/runtime/physics-engines/ammo/ammo-esm.mjs");
+  const { initAmmo } = await import("./physics-engines/ammo/ammo-esm.mjs");
   const Ammo = await initAmmo();
   return {
     createWorld(gravity) {

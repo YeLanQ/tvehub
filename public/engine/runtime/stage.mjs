@@ -21,7 +21,7 @@ async function createRenderer(cfg) {
   const want = typeof cfg.renderer === "string" ? cfg.renderer : "webgl";
   if (want === "webgl") return { renderer: applyCommon(cfg, makeWebGL(cfg, false)), backend: "webgl" };
   try {
-    const mod = await import("../../../public/engine/core/three.webgpu.min.js");
+    const mod = await import("../core/three.webgpu.min.js");
     const Ctor = mod.WebGPURenderer;
     if (typeof Ctor !== "function") throw new Error("WebGPURenderer not exported");
     const renderer = new Ctor({
