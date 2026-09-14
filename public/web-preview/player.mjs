@@ -678,6 +678,92 @@ async function main() {
   // 着色器时间（钩子 _Time；按帧间隔累加，与 timer 的 getDelta 取值互不干扰）
   let shaderTime = 0;
 
+  // —— 调试统计面板（编辑器 postMessage 或 F3 键切换）——
+  let debugVisible = false;
+  let debugFps = 0;
+  let debugLastTime = 0;
+  let debugMeshes = 0;
+  let debugVertices = 0;
+  let debugPanel = null;
+  let debugTimer = 0;
+
+  function fmtNum(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+    return String(n);
+  }
+
+  function buildDebugPanel() {
+    const el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;top:8px;right:8px;z-index:9999;pointer-events:none;" +
+      "background:rgba(0,0,0,0.55);border-radius:4px;padding:6px 10px;" +
+      "font:11px/1.6 monospace;color:#ddd;min-width:120px;";
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">FPS</span><b id="dbg-fps">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">DrawCalls</span><b id="dbg-calls">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">网格</span><b id="dbg-meshes">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">顶点</span><b id="dbg-verts">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">三角面</span><b id="dbg-tris">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">几何体</span><b id="dbg-geos">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">纹理</span><b id="dbg-texs">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">着色器</span><b id="dbg-progs">0</b></div>';
+    return el;
+  }
+
+  function updateDebugPanel() {
+    if (!debugPanel) return;
+    const info = renderer.info;
+    const fpsEl = debugPanel.querySelector("#dbg-fps");
+    fpsEl.textContent = Math.round(debugFps);
+    fpsEl.style.color = debugFps < 30 ? "#f44" : debugFps < 50 ? "#fa0" : "#ddd";
+    debugPanel.querySelector("#dbg-calls").textContent = info?.render?.calls ?? 0;
+    debugPanel.querySelector("#dbg-meshes").textContent = debugMeshes;
+    debugPanel.querySelector("#dbg-verts").textContent = fmtNum(debugVertices);
+    debugPanel.querySelector("#dbg-tris").textContent = fmtNum(info?.render?.triangles ?? 0);
+    debugPanel.querySelector("#dbg-geos").textContent = info?.memory?.geometries ?? 0;
+    debugPanel.querySelector("#dbg-texs").textContent = info?.memory?.textures ?? 0;
+    debugPanel.querySelector("#dbg-progs").textContent = info?.programs?.length ?? 0;
+  }
+
+  function toggleDebugPanel() {
+    debugVisible = !debugVisible;
+    if (debugVisible && !debugPanel) {
+      debugPanel = buildDebugPanel();
+      if (app) app.appendChild(debugPanel);
+      debugTimer = setInterval(updateDebugPanel, 200);
+    } else if (debugVisible && debugPanel) {
+      debugPanel.style.display = "";
+      if (!debugTimer) debugTimer = setInterval(updateDebugPanel, 200);
+    } else if (debugPanel) {
+      debugPanel.style.display = "none";
+      if (debugTimer) { clearInterval(debugTimer); debugTimer = 0; }
+    }
+  }
+
+  // 编辑器经 postMessage 切换调试面板（设备仿真条"调试"按钮）
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (d && d.__editorPreviewDebug === true) {
+      debugVisible = d.visible === true;
+      if (debugVisible && !debugPanel) {
+        debugPanel = buildDebugPanel();
+        if (app) app.appendChild(debugPanel);
+        debugTimer = setInterval(updateDebugPanel, 200);
+      } else if (debugVisible && debugPanel) {
+        debugPanel.style.display = "";
+        if (!debugTimer) debugTimer = setInterval(updateDebugPanel, 200);
+      } else if (debugPanel) {
+        debugPanel.style.display = "none";
+        if (debugTimer) { clearInterval(debugTimer); debugTimer = 0; }
+      }
+    }
+  });
+  // F3 键快捷切换
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "F3") { e.preventDefault(); toggleDebugPanel(); }
+  });
+
   function frame(now) {
     requestAnimationFrame(frame);
     timer.update(now);
@@ -710,6 +796,27 @@ async function main() {
     if (!bits) renderer.render(scene, cam);
     else renderLayerPasses(renderer, scene, cam, bits);
     if (uiHidden > 0) uiApi.endRender(cam);
+    // 调试统计：FPS（EMA 平滑）+ 场景网格/顶点遍历
+    if (debugVisible) {
+      const t = performance.now();
+      if (debugLastTime > 0) {
+        const d = t - debugLastTime;
+        if (d > 0) {
+          const inst = 1000 / d;
+          debugFps = debugFps > 0 ? debugFps * 0.9 + inst * 0.1 : inst;
+        }
+      }
+      debugLastTime = t;
+      let m = 0, v = 0;
+      scene.traverse((o) => {
+        if (o.isMesh && o.geometry) {
+          const pos = o.geometry.getAttribute("position");
+          if (pos) { m++; v += pos.count; }
+        }
+      });
+      debugMeshes = m;
+      debugVertices = v;
+    }
   }
   frame();
 

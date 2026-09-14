@@ -51,6 +51,12 @@
     background: var(--btn-hover);
   }
 
+  &.active {
+    background: var(--bg-active);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
   &:disabled {
     opacity: 0.45;
     cursor: default;

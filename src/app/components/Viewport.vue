@@ -3,9 +3,11 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { disposeEditor, mountEditor } from "../services/editorService";
 import { dispatchCommand } from "../commands";
+import DebugStatsPanel from "./DebugStatsPanel.vue";
 import "../../styles/components/viewport.scss";
 
 const host = ref<HTMLDivElement | null>(null);
+const showDebugStats = ref(false);
 
 const store = getEditorStore();
 const { state, engine } = store;
@@ -133,7 +135,22 @@ onBeforeUnmount(() => {
           世界
         </button>
       </div>
+
+      <div class="spacer"></div>
+
+      <div class="tool-group" title="调试">
+        <button
+          class="mini"
+          :class="{ active: showDebugStats }"
+          title="显示/隐藏渲染统计信息"
+          @click="showDebugStats = !showDebugStats"
+        >
+          调试
+        </button>
+      </div>
     </div>
+
+    <DebugStatsPanel v-if="showDebugStats" />
 
     <div v-if="isEditMode()" class="viewport__hint mono">
       {{

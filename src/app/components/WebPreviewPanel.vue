@@ -34,6 +34,8 @@ const projectStore = getProjectStore();
 const phase = ref<"idle" | "starting" | "ok" | "error">("idle");
 const baseUrl = ref("");
 const frameKey = ref(0);
+const frameRef = ref<HTMLIFrameElement | null>(null);
+const debugStats = ref(false);
 const errorText = ref("");
 const refreshing = ref(false);
 const hint = ref("正在导出并启动网页预览…");
@@ -344,6 +346,15 @@ function close(): void {
   emit("close");
 }
 
+/** 切换预览页调试统计面板（经 postMessage 通知 iframe 内 player.mjs） */
+function toggleDebugStats(): void {
+  debugStats.value = !debugStats.value;
+  frameRef.value?.contentWindow?.postMessage(
+    { __editorPreviewDebug: true, visible: debugStats.value },
+    "*",
+  );
+}
+
 /** 预览页 console/错误 → 编辑器控制台（player.mjs 经 postMessage 转发） */
 function onPreviewLog(e: MessageEvent): void {
   const d = e.data as { __editorPreviewLog?: boolean; level?: string; text?: string } | null;
@@ -483,6 +494,14 @@ onUnmounted(() => {
       <span v-if="deviceActive" class="wpd-info">
         {{ devW }}×{{ devH }} · {{ deviceDpr }}x · 缩放 {{ Math.round(scale * 100) }}%
       </span>
+      <button
+        class="wp-btn wpd-debug"
+        :class="{ active: debugStats }"
+        title="显示/隐藏渲染统计信息"
+        @click="toggleDebugStats"
+      >
+        调试
+      </button>
     </div>
 
     <!-- 预览内容（设备仿真时套设备框架并等比缩放，iframe 不重建避免重载） -->
@@ -495,6 +514,7 @@ onUnmounted(() => {
             :style="deviceActive ? frameStyle : null"
           >
             <iframe
+              ref="frameRef"
               :key="frameKey"
               :src="previewUrl"
               class="wp-frame"

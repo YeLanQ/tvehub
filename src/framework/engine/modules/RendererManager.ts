@@ -7,6 +7,20 @@ export type RendererBackend = "webgl" | "webgpu" | "auto";
 /** 编辑器视口默认清屏色（无天空盒节点时的场景背景） */
 export const EDITOR_BACKGROUND_COLOR = 0x141414;
 
+/** 渲染统计快照（调试面板每帧/定时拉取） */
+export interface RenderStats {
+  fps: number;
+  drawCalls: number;
+  triangles: number;
+  lines: number;
+  points: number;
+  geometries: number;
+  textures: number;
+  programs: number;
+  meshes: number;
+  vertices: number;
+}
+
 /** 与具体后端解耦的最小渲染器接口（WebGLRenderer / WebGPURenderer 共用） */
 interface RendererHandle {
   domElement: HTMLCanvasElement;
@@ -85,6 +99,13 @@ export class RendererManager {
   private appliedH = 0;
   /** 渲染循环暂停（预览/脚本等中央区域被独立面板接管时暂停后台渲染） */
   private paused = false;
+
+  /** 渲染统计：FPS（EMA 平滑）+ 帧时间戳 */
+  private statsFps = 0;
+  private statsLastTime = 0;
+  /** 场景遍历统计缓存（renderActive 后更新） */
+  private statsMeshes = 0;
+  private statsVertices = 0;
 
   async mount(
     container: HTMLElement,
@@ -292,7 +313,54 @@ export class RendererManager {
     this.orbit?.update();
     this.renderCb?.();
     if (this.renderer) this.renderActive();
+    this.tickStats();
   };
+
+  /** 每帧统计：FPS（EMA 平滑）+ 场景网格/顶点遍历 */
+  private tickStats(): void {
+    const now = performance.now();
+    if (this.statsLastTime > 0) {
+      const dt = now - this.statsLastTime;
+      if (dt > 0) {
+        const instant = 1000 / dt;
+        this.statsFps = this.statsFps > 0 ? this.statsFps * 0.9 + instant * 0.1 : instant;
+      }
+    }
+    this.statsLastTime = now;
+    // 场景遍历统计（兼容 WebGPU：不依赖 renderer.info）
+    let meshes = 0;
+    let vertices = 0;
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry) {
+        const pos = mesh.geometry.getAttribute("position");
+        if (pos) {
+          meshes++;
+          vertices += pos.count;
+        }
+      }
+    });
+    this.statsMeshes = meshes;
+    this.statsVertices = vertices;
+  }
+
+  /** 获取渲染统计快照（调试面板用） */
+  getStats(): RenderStats {
+    const gl = this.glRenderer;
+    const info = gl?.info;
+    return {
+      fps: Math.round(this.statsFps),
+      drawCalls: info?.render.calls ?? 0,
+      triangles: info?.render.triangles ?? 0,
+      lines: info?.render.lines ?? 0,
+      points: info?.render.points ?? 0,
+      geometries: info?.memory.geometries ?? 0,
+      textures: info?.memory.textures ?? 0,
+      programs: info?.programs?.length ?? 0,
+      meshes: this.statsMeshes,
+      vertices: this.statsVertices,
+    };
+  }
 
   /**
    * 渲染当前活动相机（含分层多 pass）：

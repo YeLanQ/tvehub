@@ -1,0 +1,38 @@
+.debug-stats-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text);
+  min-width: 120px;
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .stat-label {
+    color: var(--text-dim);
+  }
+
+  .stat-value {
+    color: var(--text);
+    font-weight: 600;
+    text-align: right;
+
+    &.low {
+      color: var(--err);
+    }
+
+    &.mid {
+      color: var(--warn);
+    }
+  }
+}
