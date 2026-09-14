@@ -163,11 +163,11 @@ export class NodeFactory {
     return node;
   }
 
-  /** 按雾类型创建雾节点（线性 Fog / 指数 FogExp2；场景环境级，参数经检查器调整） */
+  /** 按雾类型创建雾节点（线性 Fog / 指数 FogExp2 / 高度雾；场景环境级，参数经检查器调整） */
   createFog(kind: FogKind, opts: CreateOptions = {}): FogNode {
     const node = this.registry.create("fogNode") as FogNode;
     node.fogKind = kind;
-    node.name = opts.name ?? (kind === "exp2" ? "Exponential Fog" : "Linear Fog");
+    node.name = opts.name ?? (kind === "exp2" ? "Exponential Fog" : kind === "height" ? "Height Fog" : "Linear Fog");
     this.decorate(node, { ...opts, name: undefined });
     return node;
   }

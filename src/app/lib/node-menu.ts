@@ -82,6 +82,7 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
     children: [
       { label: "Linear Fog", type: "fog:linear" },
       { label: "Exponential Fog", type: "fog:exp2" },
+      { label: "Height Fog", type: "fog:height" },
     ],
   });
   // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点

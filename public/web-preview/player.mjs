@@ -22,6 +22,7 @@ import { createAudios } from "../engine/runtime/audio.mjs";
 import { createParticles } from "../engine/runtime/particles.mjs";
 import { createTerrains } from "../engine/runtime/terrain.mjs";
 import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
+import { ensureHeightFogChunk } from "../engine/runtime/heightFog.mjs";
 import { createPhysics } from "../engine/runtime/physics.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
@@ -240,6 +241,10 @@ async function main() {
   const rootJson = sceneData && sceneData.root;
   if (!rootJson) throw new Error("scene.json 缺少 root");
 
+  // 高度雾 fog chunk patch：必须先于任何材质 program 编译（buildSceneTree /
+  // renderer.compile 预热之前；幂等，与编辑器 ensureHeightFogChunk 同一算法）
+  ensureHeightFogChunk();
+
   const renderSettings = sceneData.settings && sceneData.settings.rendering;
   const bgColor =
     typeof renderSettings?.backgroundColor === "number"
@@ -319,10 +324,22 @@ async function main() {
   scene.updateMatrixWorld(true);
 
   // 场景环境雾：场景里有 启用且可见 的 fogNode → 应用 scene.fog
-  // （线性 Fog / 指数 FogExp2，与编辑器 applyFogFromGraph 同一规则）
+  // （线性 Fog / 指数 FogExp2 / 高度雾，与编辑器 applyFogFromGraph 同一规则；
+  // 高度雾在 WebGPU 后端下改走 scene.fogNode —— TSL 来自已随渲染器加载的
+  // WebGPU 构建，经典 WebGL 构建不包含 TSL、不参与加载）
   {
     const fog = findFogNode(rootJson);
-    if (fog) applyFogFromNode(scene, fog);
+    if (fog) {
+      let webgpuTsl = null;
+      if (fog.fogKind === "height" && backend === "webgpu") {
+        try {
+          webgpuTsl = (await import("../engine/core/three.webgpu.min.js")).TSL;
+        } catch {
+          webgpuTsl = null;
+        }
+      }
+      applyFogFromNode(scene, fog, { webgpuTsl });
+    }
   }
 
   // 贴图回填（贴图文件已在导出产物内，按相对路径 fetch）

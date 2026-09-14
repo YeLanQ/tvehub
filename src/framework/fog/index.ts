@@ -9,3 +9,10 @@ export {
   type FogKind,
   type FogSettings,
 } from "./types";
+export {
+  applyHeightFogWebGPU,
+  clearHeightFogWebGPU,
+  ensureHeightFogChunk,
+  setHeightFogParams,
+  setHeightFogStrength,
+} from "./heightFog";

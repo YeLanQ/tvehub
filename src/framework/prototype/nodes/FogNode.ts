@@ -28,7 +28,9 @@ export interface IFogNode extends INode {
  * 雾节点：场景环境级节点（不属于实体网格，与天空盒同语义）。
  * 场景中第一个"启用且可见"的雾节点决定渲染雾（scene.fog）：
  * - linear（线性雾）：near→far 距离间线性过渡到雾色（THREE.Fog）；
- * - exp2（指数雾）：按相机距离指数衰减（THREE.FogExp2）。
+ * - exp2（指数雾）：按相机距离指数衰减（THREE.FogExp2）；
+ * - height（高度雾）：exp2 基础浓度 + 海拔衰减（谷浓山淡；着色器级注入，
+ *   见 framework/fog/heightFog.ts，WebGL 走 fog chunk patch、WebGPU 走 TSL 雾节点）。
  * 类型在创建时由菜单固定（"新建 > 雾 > 雾类型"），检查器只调参数。
  */
 export class FogNode extends Node implements IFogNode {
@@ -40,7 +42,9 @@ export class FogNode extends Node implements IFogNode {
 
   constructor(init: FogNodeInit = {}) {
     super(init);
-    if (init.fogKind === "linear" || init.fogKind === "exp2") this.fogKind = init.fogKind;
+    if (init.fogKind === "linear" || init.fogKind === "exp2" || init.fogKind === "height") {
+      this.fogKind = init.fogKind;
+    }
     this.fog = init.fog ? cloneFogSettings(init.fog) : this.fog;
   }
 
@@ -65,7 +69,7 @@ export class FogNode extends Node implements IFogNode {
 
   protected override readOwnData(source: Record<string, unknown>): void {
     const kind = source.fogKind as FogKind | undefined;
-    if (kind === "linear" || kind === "exp2") this.fogKind = kind;
+    if (kind === "linear" || kind === "exp2" || kind === "height") this.fogKind = kind;
     this.fog = parseFogSettings(source.fog);
   }
 }

@@ -37,7 +37,14 @@ import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
 import { clampCameraParam } from "../camera";
 import { parseCullingMask } from "../layers";
 import { cloneTerrainSettings, type TerrainSettings } from "../terrain";
-import { fogSettingsSig } from "../fog/types";
+import {
+  applyHeightFogWebGPU,
+  clearHeightFogWebGPU,
+  ensureHeightFogChunk,
+  fogSettingsSig,
+  setHeightFogParams,
+  setHeightFogStrength,
+} from "../fog";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
 import { HelperSystem } from "./modules/HelperSystem";
@@ -266,6 +273,8 @@ export class EditorEngine {
   private previewFallbackLogged = false;
 
   constructor() {
+    // 高度雾 chunk patch：必须先于任何材质 program 编译（此时尚无渲染发生）
+    ensureHeightFogChunk();
     // 接入页面可见性 API：窗口隐藏期间 delta 置零、恢复时重置，避免巨大补帧间隔
     // （浏览器外的冒烟环境无 document，跳过即可，Timer 照常工作）
     if (typeof document !== "undefined") this.timer.connect(document);
@@ -1931,11 +1940,14 @@ export class EditorEngine {
 
   /**
    * 依据场景图应用/移除渲染雾：
-   * 场景中第一个 启用且可见 的雾节点决定 scene.fog（线性 Fog / 指数 FogExp2，
-   * 与 three.js 官网 fog 示例同一用法），节点增删、属性修改、启停切换都会触发
-   * 重算；无雾节点时清掉场景雾。签名未变化的重复调用是空操作（脏检查）。
+   * 场景中第一个 启用且可见 的雾节点决定 scene.fog（线性 Fog / 指数 FogExp2 /
+   * 高度雾，高度雾着色器实现见 framework/fog/heightFog.ts），节点增删、属性
+   * 修改、启停切换都会触发重算；无雾节点时清掉场景雾。签名未变化的重复调用
+   * 是空操作（脏检查）。
    * three 的渲染器按「材质记录的雾引用 vs scene.fog」自动重编译着色器，
    * 雾对象热替换/清空无需手动标记材质 needsUpdate。
+   * 高度雾 = FogExp2 距离衰减 + 海拔衰减：WebGL 端海拔参数走共享 uniform
+   * （heightFog.ts 的 chunk patch），WebGPU 端改设 scene.fogNode（TSL）。
    */
   private applyFogFromGraph(): void {
     const scene = this.renderer.scene;
@@ -1945,16 +1957,30 @@ export class EditorEngine {
         this.fogAppliedSig = null;
         scene.fog = null;
       }
+      setHeightFogStrength(0);
+      clearHeightFogWebGPU(scene);
       return;
     }
     const sig = [fog.id, fog.fogKind, fogSettingsSig(fog.fog)].join("|");
     if (this.fogAppliedSig === sig) return;
     this.fogAppliedSig = sig;
     const color = fog.fog.color & 0xffffff;
+    if (fog.fogKind === "height") {
+      // 高度雾：普通 FogExp2 撑起 three 的雾管线（颜色/密度同步 + FOG_EXP2
+      // define），海拔衰减由 heightFog.ts 注入；WebGPU 端整体走 TSL 雾节点
+      scene.fog = new THREE.FogExp2(color, fog.fog.density);
+      setHeightFogParams(fog.fog.heightY, fog.fog.heightFalloff, 1);
+      // TSL 仅 WebGPU 后端加载（WebGL 下 three/tsl 不参与渲染，避免无谓加载）
+      if (this.renderer.activeBackend === "webgpu") applyHeightFogWebGPU(scene, fog.fog);
+      return;
+    }
     scene.fog =
       fog.fogKind === "exp2"
         ? new THREE.FogExp2(color, fog.fog.density)
         : new THREE.Fog(color, fog.fog.near, fog.fog.far);
+    // 高度衰减显式归零：防止上一个高度雾节点的参数残留影响普通雾
+    setHeightFogStrength(0);
+    clearHeightFogWebGPU(scene);
   }
 
   /** 深度优先查找第一个 启用且可见 的雾节点（场景树的文档序，与 findSkyboxNode 同规则） */

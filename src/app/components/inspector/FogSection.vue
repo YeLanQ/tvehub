@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
  * 雾节点卡（场景环境雾设置）：
- * - 类型：创建时固定（线性 Fog / 指数 FogExp2），只读展示；
+ * - 类型：创建时固定（线性 Fog / 指数 FogExp2 / 高度雾），只读展示；
  * - 颜色：雾色（远处物体向此色过渡；与背景/天空地平线同色时无缝融合）；
  * - 线性雾：Near（起始距离）/ Far（终止距离）；
- * - 指数雾：Density（密度，越大衰减越快）。
+ * - 指数雾：Density（密度，越大衰减越快）；
+ * - 高度雾：Density + Base Height（基准海拔，以下最浓）+ Falloff（向上衰减标度）。
  * 事件统一 emit("update", label, value)，label 即撤销历史文案；
  * 场景中第一个"启用且可见"的雾节点生效（与天空盒同语义）。
  */
@@ -80,20 +81,46 @@ function onColor(e: Event): void {
       </div>
     </template>
     <div v-else class="field">
-      <label title="Density：指数雾密度。越大随距离衰减越快（典型 0.001~0.1）">Density</label>
+      <label title="Density：指数/高度雾密度。越大随距离衰减越快（典型 0.001~0.1）">Density</label>
       <NumberField
         :model-value="s.density"
         :step="0.005"
         :min="L.density.min"
         :max="L.density.max"
-        title="指数雾密度"
+        title="雾密度"
         @commit="(v) => emit('update', 'Set Fog Density', clamp(v, L.density.min, L.density.max))"
       />
     </div>
 
+    <template v-if="props.node.fogKind === 'height'">
+      <div class="field">
+        <label title="Base Height：基准海拔（世界 Y）。此高度以下雾保持基础浓度，往上逐渐变薄">Base Height</label>
+        <NumberField
+          :model-value="s.heightY"
+          :step="1"
+          :min="L.heightY.min"
+          :max="L.heightY.max"
+          title="基准海拔（世界单位）"
+          @commit="(v) => emit('update', 'Set Fog Height', clamp(v, L.heightY.min, L.heightY.max))"
+        />
+      </div>
+      <div class="field">
+        <label title="Falloff：衰减标度（世界单位）。雾带中点高出基准面这么多时浓度约剩 1/e；越大向上衰减越缓">Falloff</label>
+        <NumberField
+          :model-value="s.heightFalloff"
+          :step="5"
+          :min="L.heightFalloff.min"
+          :max="L.heightFalloff.max"
+          title="高度衰减标度（世界单位）"
+          @commit="(v) => emit('update', 'Set Fog Falloff', clamp(v, L.heightFalloff.min, L.heightFalloff.max))"
+        />
+      </div>
+    </template>
+
     <div class="hint">
       场景中第一个"启用且可见"的雾节点生效（与天空盒同语义）。线性雾在 Near→Far 间线性过渡到雾色，
-      指数雾按相机距离指数衰减（Density 越大越浓）。把天空盒地平线色/背景色调成雾色，远处物体可与背景无缝融合。
+      指数雾按相机距离指数衰减（Density 越大越浓），高度雾在此之上按海拔衰减（谷浓山淡，
+      Base Height 以下最浓、Falloff 控制向上衰减快慢）。把天空盒地平线色调成雾色，远处物体可与背景无缝融合。
     </div>
   </div>
 </template>

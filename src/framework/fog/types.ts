@@ -9,13 +9,18 @@
 // fog 示例：颜色即雾色，near→far 线性过渡 / 按距离指数衰减）。
 // ---------------------------------------------------------------------------
 
-/** 雾类型：线性雾（THREE.Fog）| 指数雾（THREE.FogExp2） */
-export type FogKind = "linear" | "exp2";
+/** 雾类型：线性雾（THREE.Fog）| 指数雾（THREE.FogExp2）| 高度雾（exp2 基础 + 海拔衰减） */
+export type FogKind = "linear" | "exp2" | "height";
 
 /** 全部雾类型（创建菜单/命令层校验共用） */
-export const FOG_KINDS: FogKind[] = ["linear", "exp2"];
+export const FOG_KINDS: FogKind[] = ["linear", "exp2", "height"];
 
-/** 雾设置（FogNode.fog 的形状；全部字段随场景序列化，按 fogKind 取用） */
+/**
+ * 雾设置（FogNode.fog 的形状；全部字段随场景序列化，按 fogKind 取用）。
+ * height 类型复用 color/density 作雾色与基础浓度（exp2 式距离衰减），
+ * 叠加海拔衰减：雾带中点（相机与片元中点）海拔高出 heightY 越多雾越薄，
+ * heightFalloff 为衰减标度（越大向上衰减越缓）。
+ */
 export interface FogSettings {
   /** 雾色（RGB hex；远处物体向此色过渡，与背景/天空地平线同色时无缝融合） */
   color: number;
@@ -23,8 +28,12 @@ export interface FogSettings {
   near: number;
   /** 线性雾终止距离（此距离外完全为雾色） */
   far: number;
-  /** 指数雾密度（越大衰减越快；典型 0.001~0.1） */
+  /** 指数/高度雾密度（越大衰减越快；典型 0.001~0.1） */
   density: number;
+  /** 高度雾基准海拔（世界 Y；此高度以下雾最浓） */
+  heightY: number;
+  /** 高度雾衰减标度（世界单位；雾带中点高出基准面这么多时浓度约剩 1/e） */
+  heightFalloff: number;
 }
 
 /** 雾默认参数（线性 near/far 与旧场景渲染设置同款；指数密度给可见但不呛人的雾） */
@@ -33,6 +42,8 @@ export const DEFAULT_FOG_SETTINGS: FogSettings = {
   near: 1,
   far: 100,
   density: 0.02,
+  heightY: 0,
+  heightFalloff: 20,
 };
 
 /** 各数值字段的取值域（检查器钳制 / parse 收敛 / 运行时镜像共用同一份边界） */
@@ -40,6 +51,8 @@ export const FOG_LIMITS = {
   near: { min: 0, max: 100000 },
   far: { min: 0, max: 100000 },
   density: { min: 0, max: 1 },
+  heightY: { min: -5000, max: 5000 },
+  heightFalloff: { min: 0.1, max: 2000 },
 } as const;
 
 function clampNum(v: unknown, lo: number, hi: number, fb: number): number {
@@ -65,6 +78,8 @@ export function parseFogSettings(v: unknown): FogSettings {
     near: clampNum(o.near, L.near.min, L.near.max, d.near),
     far: clampNum(o.far, L.far.min, L.far.max, d.far),
     density: clampNum(o.density, L.density.min, L.density.max, d.density),
+    heightY: clampNum(o.heightY, L.heightY.min, L.heightY.max, d.heightY),
+    heightFalloff: clampNum(o.heightFalloff, L.heightFalloff.min, L.heightFalloff.max, d.heightFalloff),
   };
 }
 
@@ -78,10 +93,10 @@ export function cloneFogSettings(v: FogSettings): FogSettings {
  * 全字段参与：任何设置变化都换一个雾实例（three 按雾引用差异自动重编译材质）。
  */
 export function fogSettingsSig(s: FogSettings): string {
-  return [s.color, s.near, s.far, s.density].join("|");
+  return [s.color, s.near, s.far, s.density, s.heightY, s.heightFalloff].join("|");
 }
 
 /** 雾类型显示名（菜单/检查器共用） */
 export function fogKindLabel(kind: FogKind): string {
-  return kind === "exp2" ? "Exponential Fog" : "Linear Fog";
+  return kind === "exp2" ? "Exponential Fog" : kind === "height" ? "Height Fog" : "Linear Fog";
 }

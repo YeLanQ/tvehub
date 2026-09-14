@@ -15,7 +15,7 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
-import type { FogKind } from "../../framework/fog/types";
+import { FOG_KINDS } from "../../framework/fog/types";
 import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
 
 const GEOMETRY_KINDS: GeometryKind[] = [
@@ -23,7 +23,6 @@ const GEOMETRY_KINDS: GeometryKind[] = [
 ];
 const LIGHT_KINDS: LightKind[] = ["point", "directional", "ambient", "spot"];
 const SKYBOX_KINDS: SkyboxKind[] = ["cube", "procedural"];
-const FOG_KINDS: FogKind[] = ["linear", "exp2"];
 
 function editor() {
   return getEditorStore();

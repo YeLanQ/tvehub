@@ -19,6 +19,8 @@ const LABEL_FIELD: Record<string, keyof FogSettings> = {
   "Set Fog Near": "near",
   "Set Fog Far": "far",
   "Set Fog Density": "density",
+  "Set Fog Height": "heightY",
+  "Set Fog Falloff": "heightFalloff",
 };
 
 export interface InspectorFogApi {
