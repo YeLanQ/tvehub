@@ -1602,13 +1602,14 @@ function applyCompressedGltfSupport(loader) {
   loader.setMeshoptDecoder(MeshoptDecoder);
 }
 const DRACO_DECODER_DIR = "./engine/runtime/loaders/draco/";
+const BASIS_TRANSCODER_DIR = "./engine/runtime/loaders/basis/";
 let ready = false;
 function ensureSetup() {
   if (ready) return;
   ready = true;
   setupCompressedGltfSupport({
     dracoBase: DRACO_DECODER_DIR,
-    basisBase: DRACO_DECODER_DIR,
+    basisBase: BASIS_TRANSCODER_DIR,
     decoderType: "js"
   });
 }

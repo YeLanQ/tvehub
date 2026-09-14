@@ -42,6 +42,16 @@ const WEBGPU_FILES = [
   "engine/core/nodeMaterialHooks.mjs",
 ];
 
+/** 导出产物排除的解码器文件：web 运行时用 JS 版 Draco（decoderType:"js"），
+ *  KTX2/Basis 探测跳过（无渲染器注入）；wasm 版 Draco 与 Basis 转码器仅编辑器用，
+ *  随 public/engine 静态服务，不进导出产物（wasm 二进制经文本 IPC 通道还会 UTF-8 损坏）。 */
+const EXPORT_EXCLUDED = new Set([
+  "engine/runtime/loaders/draco/draco_decoder.wasm",
+  "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+  "engine/runtime/loaders/basis/basis_transcoder.js",
+  "engine/runtime/loaders/basis/basis_transcoder.wasm",
+]);
+
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {
   const abs = path.join(ROOT, rel);
@@ -68,7 +78,7 @@ export function generateWebPreviewFiles() {
   // 基础清单：web-preview 入口 + engine 运行时
   // （物理引擎按后端分组、WebGPU 运行时按渲染后端，两者单独分组见下）
   const base = entries
-    .filter((f) => !f.startsWith(PHYSICS_PREFIX) && !WEBGPU_FILES.includes(f))
+    .filter((f) => !f.startsWith(PHYSICS_PREFIX) && !WEBGPU_FILES.includes(f) && !EXPORT_EXCLUDED.has(f))
     .sort();
 
   const byBackend = {};
