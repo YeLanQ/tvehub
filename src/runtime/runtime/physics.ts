@@ -1451,20 +1451,26 @@ export async function createPhysicsWorker(opts) {
 
   const dynamicIds = ready.dynamicIds || [];
   const dynamicMap = new Map();
-  for (const id of dynamicIds) {
+  const dynamicIndex = new Map();
+  for (let i = 0; i < dynamicIds.length; i++) {
+    const id = dynamicIds[i];
+    dynamicIndex.set(id, i);
     const node = nodes.find((n) => n.json?.id === id);
     if (node) dynamicMap.set(id, node.obj);
   }
+  const cachedBodyInfos = ready.bodyInfos || {};
 
   // 双缓冲：pending = Worker 上一帧返回的动力学体变换
   let pending = null;
   let workerBusy = false;
   let cachedCollisions = [];
+  let cachedVelocities = new Float32Array(dynamicIds.length * 3);
 
   worker.onmessage = (e) => {
     const msg = e.data;
     if (msg.type === "stepped") {
       pending = msg;
+      if (msg.velocities) cachedVelocities = msg.velocities;
       workerBusy = false;
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
       cachedCollisions = msg.value;
@@ -1513,11 +1519,13 @@ export async function createPhysicsWorker(opts) {
     applyForce(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
     setLinearVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
     setAngularVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
-    getLinearVelocity(nodeId) { return null; },
-    bodyInfo(nodeId) {
-      const isDynamic = dynamicIds.includes(nodeId);
-      return isDynamic ? { mode: "dynamic", gravityScale: 1, colliderCount: 1 } : null;
+    getLinearVelocity(nodeId) {
+      const idx = dynamicIndex.get(nodeId);
+      if (idx === undefined) return null;
+      const k = idx * 3;
+      return { x: cachedVelocities[k], y: cachedVelocities[k + 1], z: cachedVelocities[k + 2] };
     },
+    bodyInfo(nodeId) { return cachedBodyInfos[nodeId] || null; },
     setGravityScale(nodeId, scale) { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
     wakeUp(nodeId) { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
     drainCollisions() {

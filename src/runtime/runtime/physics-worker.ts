@@ -4,9 +4,9 @@
 //
 // 消息协议：
 // → { type: "init", nodes, terrains, settings }
-// ← { type: "ready", dynamicIds: string[] }
+// ← { type: "ready", dynamicIds: string[], bodyInfos: Record<string, {mode,gravityScale,colliderCount}> }
 // → { type: "step", dt, transforms: Float32Array }
-// ← { type: "stepped", transforms: Float32Array, collisions: any[] }
+// ← { type: "stepped", transforms: Float32Array, velocities: Float32Array, collisions: any[] }
 // → { type: "command", method: string, args: any[] }
 // ← { type: "result", method: string, value: any }
 
@@ -27,11 +27,15 @@ self.onmessage = async (e: MessageEvent) => {
         const proxyNodes = buildProxyTree(nodes);
         allNodes = proxyNodes;
         api = await createPhysics({ nodes: proxyNodes, terrains, settings });
+        const bodyInfos: Record<string, any> = {};
         for (const { nodeId } of proxyNodes) {
           const info = api.bodyInfo(nodeId);
-          if (info && info.mode === "dynamic") dynamicIds.push(nodeId);
+          if (info && info.mode === "dynamic") {
+            dynamicIds.push(nodeId);
+            bodyInfos[nodeId] = info;
+          }
         }
-        (self as any).postMessage({ type: "ready", dynamicIds });
+        (self as any).postMessage({ type: "ready", dynamicIds, bodyInfos });
       } catch (err) {
         (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
       }
@@ -48,7 +52,8 @@ self.onmessage = async (e: MessageEvent) => {
         }
         api.update(dt);
         const out = new Float32Array(dynamicIds.length * 7);
-        for (let i = 0, j = 0; i < dynamicIds.length; i++, j += 7) {
+        const vel = new Float32Array(dynamicIds.length * 3);
+        for (let i = 0, j = 0, k = 0; i < dynamicIds.length; i++, j += 7, k += 3) {
           const obj = proxyMap.get(dynamicIds[i]);
           if (!obj) continue;
           out[j] = obj.position.x;
@@ -58,9 +63,11 @@ self.onmessage = async (e: MessageEvent) => {
           out[j + 4] = obj.quaternion.y;
           out[j + 5] = obj.quaternion.z;
           out[j + 6] = obj.quaternion.w;
+          const v = api.getLinearVelocity(dynamicIds[i]);
+          if (v) { vel[k] = v.x; vel[k + 1] = v.y; vel[k + 2] = v.z; }
         }
         const collisions = api.drainCollisions();
-        (self as any).postMessage({ type: "stepped", transforms: out, collisions }, [out.buffer]);
+        (self as any).postMessage({ type: "stepped", transforms: out, velocities: vel, collisions }, [out.buffer, vel.buffer]);
       } catch (err) {
         (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
       }

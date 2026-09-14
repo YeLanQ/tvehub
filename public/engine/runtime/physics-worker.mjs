@@ -14,11 +14,15 @@ self.onmessage = async (e) => {
         const proxyNodes = buildProxyTree(nodes);
         allNodes = proxyNodes;
         api = await createPhysics({ nodes: proxyNodes, terrains, settings });
+        const bodyInfos = {};
         for (const { nodeId } of proxyNodes) {
           const info = api.bodyInfo(nodeId);
-          if (info && info.mode === "dynamic") dynamicIds.push(nodeId);
+          if (info && info.mode === "dynamic") {
+            dynamicIds.push(nodeId);
+            bodyInfos[nodeId] = info;
+          }
         }
-        self.postMessage({ type: "ready", dynamicIds });
+        self.postMessage({ type: "ready", dynamicIds, bodyInfos });
       } catch (err) {
         self.postMessage({ type: "error", message: String((err == null ? void 0 : err.message) ?? err) });
       }
@@ -35,7 +39,8 @@ self.onmessage = async (e) => {
         }
         api.update(dt);
         const out = new Float32Array(dynamicIds.length * 7);
-        for (let i = 0, j = 0; i < dynamicIds.length; i++, j += 7) {
+        const vel = new Float32Array(dynamicIds.length * 3);
+        for (let i = 0, j = 0, k = 0; i < dynamicIds.length; i++, j += 7, k += 3) {
           const obj = proxyMap.get(dynamicIds[i]);
           if (!obj) continue;
           out[j] = obj.position.x;
@@ -45,9 +50,15 @@ self.onmessage = async (e) => {
           out[j + 4] = obj.quaternion.y;
           out[j + 5] = obj.quaternion.z;
           out[j + 6] = obj.quaternion.w;
+          const v = api.getLinearVelocity(dynamicIds[i]);
+          if (v) {
+            vel[k] = v.x;
+            vel[k + 1] = v.y;
+            vel[k + 2] = v.z;
+          }
         }
         const collisions = api.drainCollisions();
-        self.postMessage({ type: "stepped", transforms: out, collisions }, [out.buffer]);
+        self.postMessage({ type: "stepped", transforms: out, velocities: vel, collisions }, [out.buffer, vel.buffer]);
       } catch (err) {
         self.postMessage({ type: "error", message: String((err == null ? void 0 : err.message) ?? err) });
       }

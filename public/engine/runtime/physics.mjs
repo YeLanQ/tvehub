@@ -1282,20 +1282,26 @@ async function createPhysicsWorker(opts) {
   }
   const dynamicIds = ready.dynamicIds || [];
   const dynamicMap = /* @__PURE__ */ new Map();
-  for (const id of dynamicIds) {
+  const dynamicIndex = /* @__PURE__ */ new Map();
+  for (let i = 0; i < dynamicIds.length; i++) {
+    const id = dynamicIds[i];
+    dynamicIndex.set(id, i);
     const node = nodes.find((n) => {
       var _a;
       return ((_a = n.json) == null ? void 0 : _a.id) === id;
     });
     if (node) dynamicMap.set(id, node.obj);
   }
+  const cachedBodyInfos = ready.bodyInfos || {};
   let pending = null;
   let workerBusy = false;
   let cachedCollisions = [];
+  let cachedVelocities = new Float32Array(dynamicIds.length * 3);
   worker.onmessage = (e) => {
     const msg = e.data;
     if (msg.type === "stepped") {
       pending = msg;
+      if (msg.velocities) cachedVelocities = msg.velocities;
       workerBusy = false;
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
       cachedCollisions = msg.value;
@@ -1365,11 +1371,13 @@ async function createPhysicsWorker(opts) {
       }
     },
     getLinearVelocity(nodeId) {
-      return null;
+      const idx = dynamicIndex.get(nodeId);
+      if (idx === void 0) return null;
+      const k = idx * 3;
+      return { x: cachedVelocities[k], y: cachedVelocities[k + 1], z: cachedVelocities[k + 2] };
     },
     bodyInfo(nodeId) {
-      const isDynamic = dynamicIds.includes(nodeId);
-      return isDynamic ? { mode: "dynamic", gravityScale: 1, colliderCount: 1 } : null;
+      return cachedBodyInfos[nodeId] || null;
     },
     setGravityScale(nodeId, scale) {
       try {
