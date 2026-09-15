@@ -31,6 +31,18 @@ watch([tool, brushLayer, brushSize, brushStrength, brushErase, sculptMode], () =
   });
 });
 
+watch(tool, async (newTool, oldTool) => {
+  if (newTool === oldTool || !state.terrainPaintActive) return;
+  // 绘制中切换工具 → 重建会话（paint/sculpt 的 session 数据结构不同；
+  // 不重建则 stampAt 仍走旧 session kind，绘制层/雕刻互不生效）
+  engine.endTerrainPaint();
+  const r = await engine.beginTerrainPaint();
+  if (r.ok) return;
+  // 切换失败（如 paint 需 splatmap 但未绑定）→ 退出绘制并回退工具
+  store.setTerrainPaint(false);
+  tool.value = oldTool;
+});
+
 function numToHex(v: number): string {
   return "#" + (v & 0xffffff).toString(16).padStart(6, "0");
 }
