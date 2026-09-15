@@ -18,6 +18,7 @@ import {
   sampleNavHeight,
   sampleNavSdf,
   sampleNavSdfGradient,
+  sampleHeightField,
   NAV_SURFACE_LIFT,
   type NavBakeResult,
   type NavHeightField,
@@ -154,7 +155,7 @@ export class NavSystem {
       bounds,
       obstacles,
       settings: binding.settings,
-      heightAt: (x, z) => heightFieldSample(hf, x, z),
+      heightAt: (x, z) => sampleHeightField(hf, x, z),
     });
     // 产物挂到节点对象 userData（同步器渲染叠层 / 检查器读统计共用）
     binding.obj.userData.navBake = binding.bake;
@@ -363,26 +364,3 @@ export class NavSystem {
   }
 }
 
-/** 高度场采样：世界 XZ → 绝对 Y；出界返回 null */
-function heightFieldSample(hf: NavHeightField, x: number, z: number): number | null {
-  const half = hf.size / 2;
-  const lx = x - hf.originX;
-  const lz = z - hf.originZ;
-  if (lx < -half || lx > half || lz < -half || lz > half) return null;
-  const segs = hf.gridN - 1;
-  const fx = Math.min(segs, Math.max(0, ((lx + half) / hf.size) * segs));
-  const fz = Math.min(segs, Math.max(0, ((lz + half) / hf.size) * segs));
-  const ix = Math.min(hf.gridN - 2, Math.floor(fx));
-  const iz = Math.min(hf.gridN - 2, Math.floor(fz));
-  const tx = fx - ix;
-  const tz = fz - iz;
-  const h = hf.heights;
-  const n = hf.gridN;
-  const h00 = h[iz * n + ix];
-  const h10 = h[iz * n + ix + 1];
-  const h01 = h[(iz + 1) * n + ix];
-  const h11 = h[(iz + 1) * n + ix + 1];
-  const rel =
-    (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
-  return rel + hf.originY;
-}

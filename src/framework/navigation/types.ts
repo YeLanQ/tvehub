@@ -21,8 +21,11 @@ export interface NavAreaSettings {
   maxSlope: number;
   /** 相邻格最大高差（世界单位；跨不过去的坎/崖判定为不可行走） */
   maxHeightStep: number;
-  /** 采样地形节点 id（空 = 自动使用场景中第一块地形） */
-  terrainId: string;
+  /**
+   * 采样源节点 id（地形或网格；空 = 自动使用场景中第一块地形）。
+   * 多源按 2.5D 合并：每格取所有源的最高表面（不支持悬挑下层）。
+   */
+  sourceIds: string[];
   /** 障碍收集：auto = 收集场景静态碰撞体投影；ignore = 仅按地形坡度烘焙 */
   obstaclesMode: "auto" | "ignore";
   /** 调试可视化模式（SDF 热力图 = 烘焙距离场渲染） */
@@ -34,7 +37,7 @@ export const DEFAULT_NAV_AREA_SETTINGS: NavAreaSettings = {
   agentRadius: 0.5,
   maxSlope: 45,
   maxHeightStep: 1.5,
-  terrainId: "",
+  sourceIds: [],
   obstaclesMode: "auto",
   display: "walkable",
 };
@@ -79,17 +82,36 @@ function clampStr(v: unknown, fb = ""): string {
   return typeof v === "string" ? v : fb;
 }
 
-/** 任意来源 → 收敛的导航区域设置 */
+/** 采样源数量上限（防误粘贴超长数组；超过截断） */
+const NAV_MAX_SOURCE_IDS = 32;
+
+function clampSourceIds(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "string" || !item) continue;
+    if (!out.includes(item)) out.push(item);
+    if (out.length >= NAV_MAX_SOURCE_IDS) break;
+  }
+  return out;
+}
+
+/** 任意来源 → 收敛的导航区域设置（旧场景 terrainId 迁移为单元素 sourceIds） */
 export function parseNavAreaSettings(v: unknown): NavAreaSettings {
   const d = DEFAULT_NAV_AREA_SETTINGS;
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   const L = NAV_AREA_LIMITS;
+  const sourceIds = clampSourceIds(o.sourceIds);
+  // 旧版场景（采样源仅支持地形）：terrainId → sourceIds
+  if (sourceIds.length === 0 && typeof o.terrainId === "string" && o.terrainId) {
+    sourceIds.push(o.terrainId);
+  }
   return {
     cellSize: clampNum(o.cellSize, L.cellSize.min, L.cellSize.max, d.cellSize),
     agentRadius: clampNum(o.agentRadius, L.agentRadius.min, L.agentRadius.max, d.agentRadius),
     maxSlope: clampNum(o.maxSlope, L.maxSlope.min, L.maxSlope.max, d.maxSlope),
     maxHeightStep: clampNum(o.maxHeightStep, L.maxHeightStep.min, L.maxHeightStep.max, d.maxHeightStep),
-    terrainId: clampStr(o.terrainId),
+    sourceIds,
     obstaclesMode: o.obstaclesMode === "ignore" ? "ignore" : "auto",
     display: NAV_DISPLAY_MODES.includes(o.display as NavDisplayMode) ? (o.display as NavDisplayMode) : d.display,
   };
@@ -108,7 +130,7 @@ export function parseNavAgentSettings(v: unknown): NavAgentSettings {
 }
 
 export function cloneNavAreaSettings(v: NavAreaSettings): NavAreaSettings {
-  return { ...v };
+  return { ...v, sourceIds: [...v.sourceIds] };
 }
 
 export function cloneNavAgentSettings(v: NavAgentSettings): NavAgentSettings {
@@ -120,7 +142,7 @@ export function cloneNavAgentSettings(v: NavAgentSettings): NavAgentSettings {
  * 地形内容签名与障碍数量由调用方（NavSystem）拼接，一并在签名里体现。
  */
 export function navAreaSettingsSig(s: NavAreaSettings): string {
-  return [s.cellSize, s.agentRadius, s.maxSlope, s.maxHeightStep, s.terrainId, s.obstaclesMode].join("|");
+  return [s.cellSize, s.agentRadius, s.maxSlope, s.maxHeightStep, s.sourceIds.join(","), s.obstaclesMode].join("|");
 }
 
 /** 导航代理绑定签名（区域绑定/半径变化 → 代理状态重置） */

@@ -20,7 +20,7 @@ const AREA_LABEL_FIELD: Record<string, keyof NavAreaSettings> = {
   "Set Agent Radius": "agentRadius",
   "Set Max Slope": "maxSlope",
   "Set Max Height Step": "maxHeightStep",
-  "Bind Nav Terrain": "terrainId",
+  "Set Nav Sources": "sourceIds",
   "Set Obstacles Mode": "obstaclesMode",
   "Set Display Mode": "display",
 };

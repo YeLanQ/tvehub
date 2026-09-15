@@ -105,6 +105,34 @@ export function worldToCellZ(b: NavBakeResult, z: number): number {
   return (z - b.originZ) / b.cellSize;
 }
 
+/**
+ * 高度场网格采样（双线性）：世界 XZ → 绝对 Y。
+ * 出界或该处无表面（NaN，网格光栅化源的未覆盖格）返回 null。
+ */
+export function sampleHeightField(hf: NavHeightField, x: number, z: number): number | null {
+  const half = hf.size / 2;
+  const lx = x - hf.originX;
+  const lz = z - hf.originZ;
+  if (lx < -half || lx > half || lz < -half || lz > half) return null;
+  const segs = hf.gridN - 1;
+  const fx = Math.min(segs, Math.max(0, ((lx + half) / hf.size) * segs));
+  const fz = Math.min(segs, Math.max(0, ((lz + half) / hf.size) * segs));
+  const ix = Math.min(hf.gridN - 2, Math.floor(fx));
+  const iz = Math.min(hf.gridN - 2, Math.floor(fz));
+  const tx = fx - ix;
+  const tz = fz - iz;
+  const h = hf.heights;
+  const n = hf.gridN;
+  const h00 = h[iz * n + ix];
+  const h10 = h[iz * n + ix + 1];
+  const h01 = h[(iz + 1) * n + ix];
+  const h11 = h[(iz + 1) * n + ix + 1];
+  const rel =
+    (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+  if (Number.isNaN(rel)) return null;
+  return rel + hf.originY;
+}
+
 /** 网格内双线性采样高度（世界 XZ → 绝对 Y；越界钳边） */
 export function sampleNavHeight(b: NavBakeResult, x: number, z: number): number {
   const fx = Math.min(b.w - 1, Math.max(0, worldToCellX(b, x)));

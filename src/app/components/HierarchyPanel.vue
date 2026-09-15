@@ -24,6 +24,8 @@ import {
   UI_TEXT_ICON_PATHS,
   UI_BUTTON_ICON_PATHS,
   UI_LAYOUT_ICON_PATHS,
+  NAV_AREA_ICON_PATHS,
+  NAV_AGENT_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 import {
   openContextMenu,
@@ -61,6 +63,8 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   particleSystemNode: { d: PARTICLE_ICON_PATHS, color: "#e0a0ff" },
   terrainNode: { d: TERRAIN_ICON_PATHS, color: "#7fbf7f" },
   fogNode: { d: FOG_ICON_PATHS, color: "#b7c6d6" },
+  navAreaNode: { d: NAV_AREA_ICON_PATHS, color: "#9fd48a" },
+  navAgentNode: { d: NAV_AGENT_ICON_PATHS, color: "#6fd6ff" },
   uiCanvasNode: { d: UI_CANVAS_ICON_PATHS, color: "#f4a261" },
   uiImageNode: { d: UI_IMAGE_ICON_PATHS, color: "#90be6d" },
   uiTextNode: { d: UI_TEXT_ICON_PATHS, color: "#6ea8fe" },
@@ -82,6 +86,8 @@ const FALLBACK_BADGE: Record<string, string> = {
   particleSystemNode: "FX",
   terrainNode: "T",
   fogNode: "F",
+  navAreaNode: "NA",
+  navAgentNode: "AG",
   uiCanvasNode: "UI",
   uiImageNode: "IM",
   uiTextNode: "TX",

@@ -1,15 +1,18 @@
 // ---------------------------------------------------------------------------
 // 导航系统冒烟测试（headless，无需 GPU）。
-// 覆盖五段：
-// ① 数据层：导航区域/代理设置默认值 / parse 收敛（缺失、非法、越界、模式收敛）/ 签名；
+// 覆盖六段：
+// ① 数据层：导航区域/代理设置默认值 / parse 收敛（缺失、非法、越界、模式收敛、
+//    sourceIds 去重截断、旧 terrainId 迁移）/ 签名；
 // ② 节点层：注册表登记、工厂产出、toJSON→createFromJSON 往返、旧场景兼容、clone 深拷贝；
 // ③ 烘焙：确定性、SDF 数值（平地方形障碍的精确格距/障碍内负值）、坡度/高差阻挡、
 //    代理半径净空、障碍过滤（高架障碍不阻挡地面）；
+// ③b 网格光栅化：任意 mesh 顶面光栅化（indexed/non-indexed）、重叠取最高、
+//    NaN 无表面 → 阻挡、地形 + 网格合并（脚印内取网格、外回退地形）；
 // ④ 寻路与代理：直线/绕墙/不可达、终点吸附最近可行走格、视线拉直平滑、
 //    NavSystem 代理推进（贴地/到达/清路径）与 SDF 滑移；
 // ⑤ 契约：层级菜单（导航分组 → node.add kind nav → 注册表）、nodeCommands 分支、
-//    同步器（refreshNavArea/__navMesh）、引擎（SCRIPT_NODE_BASE/addNavArea/nav.update）、
-//    检查器（NavArea/NavAgent 卡）、smoke:nav 脚本登记。
+//    同步器（refreshNavArea/__navMesh）、引擎（SCRIPT_NODE_BASE/addNavArea/nav.update/
+//    多源 providers）、检查器（NavArea/NavAgent 卡 + Sources 多选）、smoke:nav 脚本登记。
 // 跑法：npm run smoke:nav
 // ---------------------------------------------------------------------------
 
@@ -22,11 +25,15 @@ import {
   NAV_AGENT_LIMITS,
   NAV_AREA_LIMITS,
   bakeNavArea,
+  mergeHeightFields,
   navAgentSettingsSig,
   navAreaSettingsSig,
   parseNavAgentSettings,
   parseNavAreaSettings,
+  rasterizeMeshesToHeightField,
+  sampleHeightField,
   sampleNavSdf,
+  type NavHeightField,
   type NavObstacle,
 } from "../src/framework/navigation";
 import { findNavPath } from "../src/framework/navigation/pathfinding";
@@ -73,9 +80,15 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 签名");
   check("设置签名逐字段变化", (() => {
     const a = navAreaSettingsSig(d);
     const b = navAreaSettingsSig({ ...d, cellSize: 2 });
-    const c = navAreaSettingsSig({ ...d, terrainId: "t1" });
-    return a !== b && a !== c;
+    const c = navAreaSettingsSig({ ...d, sourceIds: ["t1"] });
+    const e = navAreaSettingsSig({ ...d, sourceIds: ["t1", "t2"] });
+    return a !== b && a !== c && c !== e;
   })());
+  check("sourceIds 收敛（去重/滤非法/截断）", (() => {
+    const p = parseNavAreaSettings({ sourceIds: ["a", "a", 5, "", "b"] });
+    return p.sourceIds.length === 2 && p.sourceIds[0] === "a" && p.sourceIds[1] === "b";
+  })());
+  check("旧场景 terrainId 迁移为 sourceIds", parseNavAreaSettings({ terrainId: "t-old" }).sourceIds.join() === "t-old");
   check("代理签名变化", navAgentSettingsSig({ areaId: "", speed: 4, radius: 0.5 })
     !== navAgentSettingsSig({ areaId: "", speed: 5, radius: 0.5 }));
 }
@@ -93,27 +106,33 @@ console.log("[2] 节点层：注册表 / 工厂 / 序列化往返");
 
   // toJSON → fromJSON 往返
   area.settings.cellSize = 2;
-  area.settings.terrainId = "terrain-1";
+  area.settings.sourceIds = ["terrain-1", "mesh-1"];
   const doc = area.toJSON();
   const back = registry.createFromJSON(JSON.parse(JSON.stringify(doc)));
   check("区域节点 JSON 往返", back instanceof NavAreaNode
-    && back.settings.cellSize === 2 && back.settings.terrainId === "terrain-1");
+    && back.settings.cellSize === 2 && back.settings.sourceIds.join() === "terrain-1,mesh-1");
   agent.settings.speed = 7.5;
   const agentBack = registry.createFromJSON(JSON.parse(JSON.stringify(agent.toJSON())));
   check("代理节点 JSON 往返", agentBack instanceof NavAgentNode && agentBack.settings.speed === 7.5);
 
-  // 旧场景兼容：无 settings 字段 → 默认
+  // 旧场景兼容：无 settings 字段 → 默认；旧字段 terrainId → sourceIds 迁移
   const legacy = registry.createFromJSON({ type: "navAreaNode", id: "n1", name: "Old" });
   check("旧场景缺 settings 兼容", legacy instanceof NavAreaNode
     && legacy.settings.cellSize === DEFAULT_NAV_AREA_SETTINGS.cellSize);
+  const legacyTerrain = registry.createFromJSON({
+    type: "navAreaNode", id: "n1b", name: "Old2",
+    settings: { cellSize: 1, agentRadius: 0.5, maxSlope: 45, maxHeightStep: 1.5, terrainId: "terrain-legacy", obstaclesMode: "auto", display: "off" },
+  });
+  check("旧场景 terrainId 设置迁移", legacyTerrain instanceof NavAreaNode
+    && legacyTerrain.settings.sourceIds.join() === "terrain-legacy");
   const legacyAgent = registry.createFromJSON({ type: "navAgentNode", id: "n2", name: "Old" });
   check("代理旧场景兼容", legacyAgent instanceof NavAgentNode
     && legacyAgent.settings.speed === DEFAULT_NAV_AGENT_SETTINGS.speed);
 
-  // clone 深拷贝
+  // clone 深拷贝（含 sourceIds 数组隔离）
   const cloned = area.clone();
-  cloned.settings.terrainId = "changed";
-  check("clone 深拷贝（settings 隔离）", area.settings.terrainId === "terrain-1");
+  cloned.settings.sourceIds.push("changed");
+  check("clone 深拷贝（sourceIds 数组隔离）", area.settings.sourceIds.join() === "terrain-1,mesh-1");
 }
 
 // ===========================================================================
@@ -195,6 +214,74 @@ console.log("[3] 烘焙：SDF 数值 / 坡度 / 高差 / 净空");
     settings: { ...DEFAULT_NAV_AREA_SETTINGS, agentRadius: 0 },
   });
   check("高架障碍不阻挡地面", bakeElevated.stats.blockedCells === 0);
+}
+
+// ===========================================================================
+console.log("[3b] 网格光栅化：meshField（任意 mesh 作为采样源）");
+{
+  // ① 平顶盒：顶面等高 = 2（取最高面），方形场内脚印外 NaN → null
+  const box = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 4));
+  box.position.set(10, 1, 10);
+  const boxField = rasterizeMeshesToHeightField([box], { minX: 6, maxX: 14, minZ: 6, maxZ: 14 }, 0.5);
+  check("光栅化产物非空", !!boxField);
+  if (boxField) {
+    const f: NavHeightField = { ...boxField, originY: 0 };
+    check("盒顶面等高（indexed 几何）", sampleHeightField(f, 10, 10) === 2 && sampleHeightField(f, 8.2, 8.2) === 2);
+    check("脚印外无表面（NaN → null）", sampleHeightField(f, 6.5, 10) === null && sampleHeightField(f, 13.8, 13.8) === null);
+
+    // ② 用光栅化场烘焙：脚印边缘一圈（邻格 null → 高差判定）阻挡，内圈可行走
+    const bakeBox = bakeNavArea({
+      bounds: { minX: 8, maxX: 12, minZ: 8, maxZ: 12 },
+      heightAt: (x, z) => sampleHeightField(f, x, z),
+      obstacles: [],
+      settings: { ...DEFAULT_NAV_AREA_SETTINGS, agentRadius: 0 },
+    });
+    check("网格源烘焙：外圈阻挡 + 内圈可行走（2×2）", bakeBox.stats.walkableCells === 4,
+      `walkable=${bakeBox.stats.walkableCells}`);
+
+    // ⑤ 地形 + 网格合并：脚印内取盒顶（2），脚印外回退地形（0）
+    const terrainField: NavHeightField = {
+      heights: new Float32Array(41 * 41), gridN: 41, size: 40,
+      originX: 10, originZ: 10, originY: 0,
+    };
+    mergeHeightFields(boxField, [terrainField]);
+    check("合并：脚印内取网格最高面", sampleHeightField(f, 10, 10) === 2);
+    check("合并：脚印外回退地形面", sampleHeightField(f, 6.5, 10) === 0);
+  }
+
+  // ③ 斜坡（non-indexed 几何）：y = 0.5z（≈26.6° < 45°）→ 可行走
+  const rampGeom = new THREE.BufferGeometry();
+  rampGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array([
+    0, 0, 0, 10, 0, 0, 10, 5, 10,
+    0, 0, 0, 10, 5, 10, 0, 5, 10,
+  ]), 3));
+  const ramp = new THREE.Mesh(rampGeom);
+  const rampField = rasterizeMeshesToHeightField([ramp], { minX: 0, maxX: 10, minZ: 0, maxZ: 10 }, 0.5);
+  check("斜坡光栅化产物非空", !!rampField);
+  if (rampField) {
+    const rf: NavHeightField = { ...rampField, originY: 0 };
+    const mid = sampleHeightField(rf, 5, 5);
+    check("斜坡高度 = 0.5·z（non-indexed）", mid !== null && Math.abs(mid - 2.5) < 0.2, String(mid));
+    const bakeRamp = bakeNavArea({
+      bounds: { minX: 0, maxX: 10, minZ: 0, maxZ: 10 },
+      heightAt: (x, z) => sampleHeightField(rf, x, z),
+      obstacles: [],
+      settings: { ...DEFAULT_NAV_AREA_SETTINGS, agentRadius: 0 },
+    });
+    check("缓坡网格源大面积可行走", bakeRamp.stats.walkableCells >= 60, `walkable=${bakeRamp.stats.walkableCells}`);
+  }
+
+  // ④ 两盒 XZ 重叠、顶面不同高 → 取最高
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 4));
+  lower.position.set(10, 1, 10);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 4));
+  upper.position.set(10, 3, 10);
+  const overlapField = rasterizeMeshesToHeightField([lower, upper], { minX: 8, maxX: 12, minZ: 8, maxZ: 12 }, 0.5);
+  check("重叠取最高面", overlapField !== null
+    && sampleHeightField({ ...overlapField, originY: 0 }, 10, 10) === 3.5);
+
+  // 退化输入：零尺寸范围 → null
+  check("退化范围返回 null", rasterizeMeshesToHeightField([box], { minX: 5, maxX: 5, minZ: 5, maxZ: 5 }, 0.5) === null);
 }
 
 // ===========================================================================
@@ -321,13 +408,27 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
     && /navAgentNode: \(e, p\) => e.addNavAgent\(p\)/.test(engineSrc));
   check("引擎：渲染循环推进 nav", /this\.nav\.update\(dt\)/.test(engineSrc));
   check("引擎：图事件接线（烘焙/解绑）", /this\.nav\.unbind/.test(engineSrc) && /this\.nav\.syncArea/.test(engineSrc));
-  check("引擎：烘焙输入提供者（地形高度场 + 静态障碍）", /collectNavObstacles/.test(engineSrc) && /navTerrainOf/.test(engineSrc));
+  check("引擎：烘焙输入提供者（多源解析 + 网格光栅化 + 障碍收集）", /navSourcesOf/.test(engineSrc)
+    && /rasterizeMeshesToHeightField/.test(engineSrc) && /navObstaclesFor/.test(engineSrc));
+  check("引擎：场景变化重检 + 模型加载失效缓存", /resyncNavAreas/.test(engineSrc)
+    && /navFieldCache\.clear\(\)/.test(engineSrc));
+
+  const meshFieldSrc = readFileSync(resolve(process.cwd(), "src/framework/navigation/meshField.ts"), "utf8");
+  check("光栅化器：顶面优先 + NaN 无表面语义", /mergeHeightFields/.test(meshFieldSrc) && /NaN/.test(meshFieldSrc));
 
   const helperSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/modules/helpers/createNodeHelper.ts"), "utf8");
   check("代理助手线已注册", /NavAgentHelper/.test(helperSrc));
 
   const panel = readFileSync(resolve(process.cwd(), "src/app/components/InspectorPanel.vue"), "utf8");
   check("检查器：Nav Area / Nav Agent 卡", /NavAreaSection/.test(panel) && /NavAgentSection/.test(panel));
+
+  const sectionSrc = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NavAreaSection.vue"), "utf8");
+  check("检查器：Sources 多选（地形 + 网格）", /sourceIds/.test(sectionSrc) && /MeshNode/.test(sectionSrc)
+    && /Set Nav Sources/.test(sectionSrc));
+
+  const hierarchySrc = readFileSync(resolve(process.cwd(), "src/app/components/HierarchyPanel.vue"), "utf8");
+  check("层级：导航节点图标登记", /navAreaNode: \{ d: NAV_AREA_ICON_PATHS/.test(hierarchySrc)
+    && /navAgentNode: \{ d: NAV_AGENT_ICON_PATHS/.test(hierarchySrc));
 
   const pkg = readFileSync(resolve(process.cwd(), "package.json"), "utf8");
   check("smoke:nav 脚本已登记", /"smoke:nav"/.test(pkg));

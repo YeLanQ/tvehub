@@ -77,7 +77,13 @@ import { AudioSystem, isAudioAssetRel } from "../audio";
 import { ParticleSystem, loadParticleNodeMaterialFactory } from "../particles";
 import { PhysicsSystem, parseRigidBodySettings } from "../physics";
 import { isRigidBodyComponent } from "../prototype/Node";
-import { NavSystem, type NavHeightField, type NavObstacle } from "../navigation";
+import {
+  NavSystem,
+  mergeHeightFields,
+  rasterizeMeshesToHeightField,
+  type NavHeightField,
+  type NavObstacle,
+} from "../navigation";
 import { UISystem, uiParentRectInOwnSpace } from "./modules/ui";
 import {
   uiAnchorFieldsForRect,
@@ -170,6 +176,12 @@ export class EditorEngine {
   readonly particles = new ParticleSystem();
   /** 导航系统（导航区域烘焙：可行走网格 + SDF 距离场；代理寻路移动） */
   readonly nav = new NavSystem();
+  /** 导航多源合并高度场缓存（areaId → {签名键, 场}；源未变不重光栅） */
+  private readonly navFieldCache = new Map<string, { key: string; field: NavHeightField & { sig: string } }>();
+  /** 导航网格源 XZ 范围缓存（nodeId → {签名, AABB}；几何遍历只在签名变化时做） */
+  private readonly navMeshBoundsCache = new Map<string, { sig: string; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null }>();
+  /** 导航障碍缓存（场景级；候选 + 签名比对后按需重收集，AABB 计算不重复做） */
+  private navObstacleCache: { sig: string; items: { id: string; box: NavObstacle }[] } | null = null;
   /** UI 系统（Canvas-Widget 相机叠加；渲染循环把画布根贴合活动相机并合成渲染序） */
   private readonly uiSystem = new UISystem();
   /** 帧间隔计时器（渲染回调里取帧间隔；THREE.Clock 已在 r183 弃用 → Timer） */
@@ -335,13 +347,14 @@ export class EditorEngine {
     });
     // 物理运行时变化（绑定/世界就绪/模拟启停）→ 广播给面板与工具栏刷新
     this.physics.onChange((nodeId) => this.events.emit("physics:changed", { nodeId }));
-    // 导航系统：烘焙输入来自场景（地形高度场 + 静态碰撞体投影）；烘焙产物
-    // 写节点对象 userData 后回调同步器刷新可视化叠层
+    // 导航系统：烘焙输入来自场景（地形高度场 + 网格光栅化高度场 + 静态碰撞体
+    // 投影）；烘焙产物写节点对象 userData 后回调同步器刷新可视化叠层。
+    // 采样源 = settings.sourceIds（地形或网格，空 = 自动第一块地形），引擎侧带
+    // 缓存（合并高度场 / 网格 AABB / 障碍列表按签名复用，避免每次签名比对重算）。
     this.nav.providers = {
-      boundsFor: (area, obj) => this.navTerrainOf(area, obj)?.bounds ?? null,
-      heightFieldFor: (area, obj) => this.navTerrainOf(area, obj)?.field ?? null,
-      obstaclesFor: (area, obj) =>
-        this.collectNavObstacles(this.navTerrainOf(area, obj)?.nodeId ?? ""),
+      boundsFor: (area) => this.navBoundsFor(area),
+      heightFieldFor: (area) => this.navHeightFieldFor(area),
+      obstaclesFor: (area) => this.navObstaclesFor(area),
     };
     this.nav.onBakeUpdated = (nodeId) => {
       const n = this.graph.get(nodeId);
@@ -1400,6 +1413,7 @@ export class EditorEngine {
    * 并广播 model:changed。rel 为空时刷新全部模型网格。
    */
   refreshModelNodes(rel?: string | null): void {
+    let touched = false;
     for (const node of this.graph.all()) {
       if (
         node instanceof MeshNode &&
@@ -1407,9 +1421,17 @@ export class EditorEngine {
         (rel == null || node.model === rel)
       ) {
         this.synchronizer.refreshMeshNode(node);
+        touched = true;
       }
     }
     this.animation.setSelected(this.selectedId);
+    // 模型几何换入（占位体 → 实例）：网格源范围、合并高度场与障碍 AABB 缓存可能过期
+    if (touched) {
+      this.navMeshBoundsCache.clear();
+      this.navFieldCache.clear();
+      this.navObstacleCache = null;
+      this.resyncNavAreas();
+    }
     this.events.emit("model:changed", { rel: rel ?? "" });
   }
 
@@ -1550,9 +1572,14 @@ export class EditorEngine {
       }
     }
     // 导航节点：区域入图/属性变更 → 按签名重烘焙（产物写 userData 后回调刷新
-    // 可视化叠层）；代理入图/属性变更 → 重绑；任一移除 → 解绑
+    // 可视化叠层）；代理入图/属性变更 → 重绑；任一移除 → 解绑 + 清缓存。
+    // 其余节点变化（网格移动/编辑、地形雕刻、障碍增删、重挂）→ 全部区域重检
+    // 签名：采样源与障碍变了才真正重烘焙（地形时代这些不触发，需手动点重烘焙）。
     if (c.kind === "remove") {
       this.nav.unbind(c.nodeId);
+      this.navFieldCache.delete(c.nodeId);
+      this.navMeshBoundsCache.delete(c.nodeId);
+      this.resyncNavAreas();
     } else if (c.kind === "add" || c.kind === "properties" || c.kind === "replace") {
       const n = this.graph.get(c.nodeId);
       const obj = this.synchronizer.getObjectMap().get(c.nodeId);
@@ -1560,6 +1587,9 @@ export class EditorEngine {
         if (n instanceof NavAreaNode) this.nav.syncArea(n, obj);
         else if (n instanceof NavAgentNode) this.nav.syncAgent(n, obj);
       }
+      if (!(n instanceof NavAreaNode) && !(n instanceof NavAgentNode)) this.resyncNavAreas();
+    } else if (c.kind === "reparent") {
+      this.resyncNavAreas();
     }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
@@ -1639,30 +1669,56 @@ export class EditorEngine {
 
   // ===================== 导航烘焙输入（NavSystem providers） =====================
 
+  /** XZ 平面范围（世界系） */
+  private navXZBoundsOf(min: THREE.Vector3, max: THREE.Vector3): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    return { minX: min.x, maxX: max.x, minZ: min.z, maxZ: max.z };
+  }
+
   /**
-   * 解析导航区域采样的地形：settings.terrainId 指定（空 = 场景第一块地形）。
-   * 高度场从地形网格的 userData 缓存读取（SceneSynchronizer.refreshTerrain 写入，
-   * 与物理 heightfield 碰撞体同通道）；原点取地形对象世界位置（XZ 轴对齐假设与
-   * 物理 heightfield 一致）。
+   * 解析导航区域的采样源（settings.sourceIds：地形或网格；空 = 场景第一块地形）。
+   * - 地形读现有高度场缓存（SceneSynchronizer.refreshTerrain 写入 chunk mesh
+   *   userData，与物理 heightfield 碰撞体同通道）；内容签名取地形组上的
+   *   terrainSig（几何/雕刻变化 → 失效）；
+   * - 网格源记录对象 + 缓存的 XZ 范围（签名含几何参数与世界矩阵，未变不重算）；
+   * - excludeIds 供障碍收集排除采样源（可行走面不是障碍）。
    */
-  private navTerrainOf(
-    area: NavAreaNode,
-    areaObj: THREE.Object3D,
-  ): { field: NavHeightField & { sig: string }; bounds: { minX: number; maxX: number; minZ: number; maxZ: number }; nodeId: string } | null {
-    void areaObj;
-    let terrainNode: TerrainNode | null = null;
-    if (area.settings.terrainId) {
-      const n = this.graph.get(area.settings.terrainId);
-      terrainNode = n instanceof TerrainNode ? n : null;
-    } else {
-      for (const n of this.graph.all()) {
-        if (n instanceof TerrainNode && n.visible && n.active) {
-          terrainNode = n;
-          break;
-        }
+  private navSourcesOf(area: NavAreaNode): {
+    terrains: { id: string; field: NavHeightField & { sig: string }; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } }[];
+    meshes: { id: string; obj: THREE.Object3D; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null }[];
+    excludeIds: string[];
+  } {
+    const terrains: { id: string; field: NavHeightField & { sig: string }; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } }[] = [];
+    const meshes: { id: string; obj: THREE.Object3D; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null }[] = [];
+    const ids = area.settings.sourceIds.length > 0 ? area.settings.sourceIds : [this.navAutoTerrainId()].filter(Boolean);
+    for (const id of ids) {
+      const n = this.graph.get(id);
+      if (n instanceof TerrainNode) {
+        const t = this.navTerrainFieldOf(n);
+        if (t) terrains.push({ id, field: t.field, bounds: t.bounds });
+      } else if (n instanceof MeshNode) {
+        const obj = this.synchronizer.getObjectMap().get(id);
+        if (obj) meshes.push({ id, obj, bounds: this.navMeshSourceBounds(id, n, obj) });
       }
     }
-    if (!terrainNode) return null;
+    return { terrains, meshes, excludeIds: ids };
+  }
+
+  /** 自动模式：场景中第一块可见且启用的地形节点 id（无则空串） */
+  private navAutoTerrainId(): string {
+    for (const n of this.graph.all()) {
+      if (n instanceof TerrainNode && n.visible && n.active) return n.id;
+    }
+    return "";
+  }
+
+  /**
+   * 读取地形节点的高度场（XZ 轴对齐假设与物理 heightfield 一致）。内容签名取
+   * 地形组 userData.terrainSig（几何 + 雕刻签名；chunk mesh 上未写，旧版从 mesh
+   * 读会退化成 gridN 导致雕刻不触发重烘焙，这里直接从组上读）。
+   */
+  private navTerrainFieldOf(
+    terrainNode: TerrainNode,
+  ): { field: NavHeightField & { sig: string }; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } } | null {
     const obj = this.synchronizer.getObjectMap().get(terrainNode.id);
     if (!obj) return null;
 
@@ -1670,7 +1726,6 @@ export class EditorEngine {
     let heights: Float32Array | null = null;
     let gridN = 0;
     let size = 0;
-    let sig = "";
     obj.traverse((child) => {
       if (heights) return;
       const mesh = child as THREE.Mesh;
@@ -1679,7 +1734,6 @@ export class EditorEngine {
         terrainHeights?: unknown;
         terrainGridSize?: unknown;
         terrainSize?: unknown;
-        terrainSig?: unknown;
       };
       if (
         ud.terrainHeights instanceof Float32Array &&
@@ -1689,13 +1743,14 @@ export class EditorEngine {
         heights = ud.terrainHeights;
         gridN = ud.terrainGridSize;
         size = ud.terrainSize;
-        sig = typeof ud.terrainSig === "string" ? ud.terrainSig : String(gridN);
       }
     });
     if (!heights) return null;
-
+    const groupSig = (obj.userData as { terrainSig?: unknown }).terrainSig;
     obj.updateMatrixWorld(true);
     const origin = obj.getWorldPosition(new THREE.Vector3());
+    // 签名含几何/雕刻内容 + 量化原点（移动地形 → 失效重烘焙）
+    const sig = `${typeof groupSig === "string" ? groupSig : String(gridN)}@${origin.x.toFixed(2)},${origin.z.toFixed(2)}`;
     const half = size / 2;
     return {
       field: {
@@ -1713,24 +1768,142 @@ export class EditorEngine {
         minZ: origin.z - half,
         maxZ: origin.z + half,
       },
-      nodeId: terrainNode.id,
     };
+  }
+
+  /** 网格源的世界 XZ 范围（签名门控缓存；Box3 几何遍历只在签名变化时做） */
+  private navMeshSourceBounds(
+    id: string,
+    node: MeshNode,
+    obj: THREE.Object3D,
+  ): { minX: number; maxX: number; minZ: number; maxZ: number } | null {
+    const sig = this.navMeshSig(node, obj);
+    const cached = this.navMeshBoundsCache.get(id);
+    if (cached && cached.sig === sig) return cached.bounds;
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const bounds = box.isEmpty() ? null : this.navXZBoundsOf(box.min, box.max);
+    this.navMeshBoundsCache.set(id, { sig, bounds });
+    return bounds;
+  }
+
+  /** 网格源变更签名：几何相关字段 + 量化世界矩阵（移动/旋转/缩放 → 失效） */
+  private navMeshSig(node: MeshNode, obj: THREE.Object3D): string {
+    const sz = node.size ?? { x: 0, y: 0, z: 0 };
+    return `${node.source}|${node.geometry}|${sz.x},${sz.y},${sz.z}|${node.model}@${this.navMatrixSig(obj)}`;
+  }
+
+  /** 世界矩阵量化签名（2 位小数；亚厘米级变化不触发重烘焙） */
+  private navMatrixSig(obj: THREE.Object3D): string {
+    obj.updateWorldMatrix(false, false);
+    const e = obj.matrixWorld.elements;
+    let s = "";
+    for (let k = 0; k < 16; k++) s += (k ? "," : "") + e[k].toFixed(2);
+    return s;
+  }
+
+  /**
+   * 区域覆盖范围：单地形走原快速路径（正方形）；多源取并集后扩展为正方形
+   * （NavHeightField 为方格约定）。无可采样源返回 null。
+   */
+  private navBoundsFor(area: NavAreaNode): { minX: number; maxX: number; minZ: number; maxZ: number } | null {
+    const src = this.navSourcesOf(area);
+    if (src.terrains.length === 0 && src.meshes.length === 0) return null;
+    if (src.meshes.length === 0 && src.terrains.length === 1) return src.terrains[0].bounds;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const t of src.terrains) {
+      minX = Math.min(minX, t.bounds.minX);
+      maxX = Math.max(maxX, t.bounds.maxX);
+      minZ = Math.min(minZ, t.bounds.minZ);
+      maxZ = Math.max(maxZ, t.bounds.maxZ);
+    }
+    for (const m of src.meshes) {
+      if (!m.bounds) continue;
+      minX = Math.min(minX, m.bounds.minX);
+      maxX = Math.max(maxX, m.bounds.maxX);
+      minZ = Math.min(minZ, m.bounds.minZ);
+      maxZ = Math.max(maxZ, m.bounds.maxZ);
+    }
+    if (!Number.isFinite(minX)) return null;
+    // 并集 → 以中心为原点的正方形
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const half = Math.max(maxX - minX, maxZ - minZ) / 2;
+    return { minX: cx - half, maxX: cx + half, minZ: cz - half, maxZ: cz + half };
+  }
+
+  /**
+   * 区域采样高度场：单地形直接返回地形缓存场（零开销快速路径）；含网格源时
+   * 光栅化网格 + 合并地形（每格取最高面），按签名键缓存（源未变不重光栅）。
+   * 全场无表面（如模型未加载完）返回 null（与"没有地形"同语义）。
+   */
+  private navHeightFieldFor(area: NavAreaNode): (NavHeightField & { sig: string }) | null {
+    const src = this.navSourcesOf(area);
+    if (src.terrains.length === 0 && src.meshes.length === 0) return null;
+    if (src.meshes.length === 0 && src.terrains.length === 1) return src.terrains[0].field;
+
+    const bounds = this.navBoundsFor(area);
+    if (!bounds) return null;
+    const spacing = Math.min(2, Math.max(0.25, area.settings.cellSize / 2));
+    const key = [
+      src.terrains.map((t) => `${t.id}:${t.field.sig}:${t.field.originX.toFixed(2)},${t.field.originZ.toFixed(2)},${t.field.size}`),
+      src.meshes.map((m) => `${m.id}:${this.navMeshSigOfObj(m.id, m.obj)}`),
+      spacing.toFixed(3),
+      `${bounds.minX.toFixed(2)},${bounds.maxX.toFixed(2)},${bounds.minZ.toFixed(2)},${bounds.maxZ.toFixed(2)}`,
+    ].join("#");
+    const cached = this.navFieldCache.get(area.id);
+    if (cached && cached.key === key) return cached.field;
+
+    const raster = rasterizeMeshesToHeightField(
+      src.meshes.map((m) => m.obj),
+      bounds,
+      spacing,
+    );
+    if (!raster) return null;
+    mergeHeightFields(raster, src.terrains.map((t) => t.field));
+    let hasSurface = false;
+    for (let k = 0; k < raster.heights.length; k++) {
+      if (!Number.isNaN(raster.heights[k])) {
+        hasSurface = true;
+        break;
+      }
+    }
+    if (!hasSurface) return null;
+    const field: NavHeightField & { sig: string } = {
+      heights: raster.heights,
+      gridN: raster.gridN,
+      size: raster.size,
+      originX: raster.originX,
+      originZ: raster.originZ,
+      originY: 0,
+      sig: key,
+    };
+    this.navFieldCache.set(area.id, { key, field });
+    return field;
+  }
+
+  /** 网格对象的世界矩阵签名（源解析处未持节点时按缓存签名兜底） */
+  private navMeshSigOfObj(id: string, obj: THREE.Object3D): string {
+    const n = this.graph.get(id);
+    if (n instanceof MeshNode) return this.navMeshSig(n, obj);
+    return this.navMatrixSig(obj);
   }
 
   /**
    * 收集静态障碍（世界系 AABB）：带启用碰撞体组件、且不挂动态/运动学刚体的
-   * 节点（静态体 = 隐式静态或 mode=static 的刚体）；地形子树排除（高度场是
-   * 可行走面，不是障碍），导航节点自身无几何自然为空。烘焙期一次性收集，
-   * 运行期碰撞全部查 SDF 表。
+   * 节点（静态体 = 隐式静态或 mode=static 的刚体）；采样源子树排除（高度场是
+   * 可行走面，不是障碍），导航节点自身无几何自然为空。候选 + 签名比对后按需
+   * 重算 AABB（场景级缓存；障碍移动 → 矩阵签名变化 → 失效）。
    */
-  private collectNavObstacles(excludeNodeId: string): NavObstacle[] {
-    const out: NavObstacle[] = [];
-    const box = new THREE.Box3();
+  private navObstaclesFor(area: NavAreaNode): NavObstacle[] {
+    const cand: { id: string; obj: THREE.Object3D }[] = [];
+    const parts: string[] = [];
     for (const node of this.graph.all()) {
       if (!node.visible || !node.active) continue;
-      if (node.id === excludeNodeId || node instanceof NavAreaNode || node instanceof NavAgentNode) {
-        continue;
-      }
+      if (node instanceof NavAreaNode || node instanceof NavAgentNode) continue;
       const hasCollider = node.components.some((c) => c.type === "collider" && c.enabled);
       if (!hasCollider) continue;
       const rbComp = node.components.find(isRigidBodyComponent);
@@ -1739,19 +1912,48 @@ export class EditorEngine {
       }
       const obj = this.synchronizer.getObjectMap().get(node.id);
       if (!obj) continue;
-      box.setFromObject(obj);
-      if (!box.isEmpty()) {
-        out.push({
-          minX: box.min.x,
-          maxX: box.max.x,
-          minZ: box.min.z,
-          maxZ: box.max.z,
-          minY: box.min.y,
-          maxY: box.max.y,
-        });
+      cand.push({ id: node.id, obj });
+      parts.push(`${node.id}@${this.navMatrixSig(obj)}`);
+    }
+    const sig = parts.join(";");
+    let items: { id: string; box: NavObstacle }[];
+    if (this.navObstacleCache && this.navObstacleCache.sig === sig) {
+      items = this.navObstacleCache.items;
+    } else {
+      const box = new THREE.Box3();
+      items = [];
+      for (const { id, obj } of cand) {
+        box.setFromObject(obj);
+        if (box.isEmpty()) continue;
+        items.push({ id, box: this.navObstacleOf(box) });
+      }
+      this.navObstacleCache = { sig, items };
+    }
+    const exclude = new Set(this.navSourcesOf(area).excludeIds);
+    return items.filter((it) => !exclude.has(it.id)).map((it) => it.box);
+  }
+
+  private navObstacleOf(box: THREE.Box3): NavObstacle {
+    return {
+      minX: box.min.x,
+      maxX: box.max.x,
+      minZ: box.min.z,
+      maxZ: box.max.z,
+      minY: box.min.y,
+      maxY: box.max.y,
+    };
+  }
+
+  /** 场景内容变化（网格/地形/障碍/模型加载完成）→ 全部区域按签名重检（未变不重烤） */
+  private resyncNavAreas(): void {
+    // 世界矩阵刷新：确保签名与烘焙输入读到最新变换（同步器只写本地变换）
+    this.renderer.scene.updateMatrixWorld(true);
+    for (const n of this.graph.all()) {
+      if (n instanceof NavAreaNode) {
+        const obj = this.synchronizer.getObjectMap().get(n.id);
+        if (obj) this.nav.syncArea(n, obj);
       }
     }
-    return out;
   }
 
   /**
