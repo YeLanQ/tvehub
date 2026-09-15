@@ -370,6 +370,13 @@ export class NavSystem {
     }
   }
 
+  /** 解除全部绑定（场景整体重建/切换：绑定持有旧场景对象，必须整体重绑） */
+  unbindAll(): void {
+    this.areas.clear();
+    this.agents.clear();
+    navAgentPathVisuals.clear();
+  }
+
   /** 推进全部代理（编辑器渲染回调调用；路径/碰撞全部查烘焙表） */
   update(dt: number): void {
     if (dt <= 0) return;

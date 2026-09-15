@@ -441,6 +441,11 @@ console.log("[4] 寻路与代理：A* / 平滑 / 移动 / SDF 滑移");
   sys.unbind(agentNode.id);
   sys.unbind(areaNode.id);
   check("解绑后路径清除", sys.getAgentPath(agentNode.id) === null && sys.getAreaBake(areaNode.id) === null);
+  sys.syncArea(areaNode, areaObj);
+  sys.syncAgent(agentNode, agentObj);
+  sys.unbindAll();
+  check("unbindAll 清空全部绑定（场景整体重建用）", sys.firstAreaId() === ""
+    && sys.getAreaBake(areaNode.id) === null && sys.getAgentPath(agentNode.id) === null);
 }
 
 // ===========================================================================
@@ -488,6 +493,13 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
     && /advanceSequence/.test(navSysSrc) && /repathNearest/.test(navSysSrc) && /targetFor\?/.test(navSysSrc));
   check("引擎：代理目标位置提供者", /navTargetOf/.test(engineSrc)
     && /targetFor: \(nodeId\) => this\.navTargetOf\(nodeId\)/.test(engineSrc));
+  check("引擎：整体重建重绑导航（打开项目后勾选/绑定不丢）", (() => {
+    const rb = engineSrc.match(/rebuildAll\(\): void \{[\s\S]*?\n  \}/);
+    return !!rb && /nav\.unbindAll\(\)/.test(rb[0])
+      && /navFieldCache\.clear\(\)/.test(rb[0])
+      && /nav\.syncArea\(node, obj\)/.test(rb[0])
+      && /nav\.syncAgent\(node, obj\)/.test(rb[0]);
+  })());
 
   const agentSectionSrc = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NavAgentSection.vue"), "utf8");
   check("检查器：代理目标多选 + 移动模式", /NodeMultiSelect/.test(agentSectionSrc)

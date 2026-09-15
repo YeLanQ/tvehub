@@ -1637,6 +1637,13 @@ export class EditorEngine {
     this.physics.unbindAll();
     // 粒子发射器挂在旧场景对象下：整体重建后按新对象重建
     this.particles.unbindAll();
+    // 导航绑定同样指向旧场景对象（replace 事件阶段同步器不重建对象，打开
+    // 项目时的绑定会落在旧/空对象表上）；烘焙输入缓存按内容/矩阵签名，跨
+    // 场景节点 id 可能重复 → 一并清空，重建后按新对象重绑重烘焙
+    this.nav.unbindAll();
+    this.navFieldCache.clear();
+    this.navMeshBoundsCache.clear();
+    this.navObstacleCache = null;
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
@@ -1649,6 +1656,14 @@ export class EditorEngine {
       if (node instanceof ParticleSystemNode) {
         const obj = this.synchronizer.getObjectMap().get(node.id);
         if (obj) this.particles.syncNode(node, obj);
+      }
+      // 导航区域/代理：按新对象重绑（区域按签名重烘焙，设置/源未变不重烤）
+      if (node instanceof NavAreaNode || node instanceof NavAgentNode) {
+        const obj = this.synchronizer.getObjectMap().get(node.id);
+        if (obj) {
+          if (node instanceof NavAreaNode) this.nav.syncArea(node, obj);
+          else this.nav.syncAgent(node, obj);
+        }
       }
       this.syncAudioComponents(node);
       this.syncPhysicsNode(node);
