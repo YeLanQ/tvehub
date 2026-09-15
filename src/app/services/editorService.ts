@@ -143,7 +143,8 @@ async function commitTerrainPaint(
   }
   try {
     await api.writeAssetBinary(root, rel, encodeSplatBufferPng(buffer));
-    engine.invalidateTerrainSplatmap(rel);
+    // 只清纹理缓存（防止旧缓存），不刷新地形 —— 盖章时实时预览已更新颜色纹理
+    engine.invalidateTerrainSplatmapCache(rel);
   } catch (e) {
     logStore.log("error", `保存地形绘制失败: ${e}`);
   }

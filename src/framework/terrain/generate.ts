@@ -220,14 +220,22 @@ function sampleHeightAt(h: Float32Array, n: number, size: number, wx: number, wz
  * 每纹素按世界坐标从高度场采样高度 + 数值微分法线，执行海拔/坡度色带逻辑。
  * 烘焙后 3×3 箱式模糊 + mipmap，消除锯齿；WebGL/WebGPU 双后端通用（map 内置）。
  */
-/** 表面配色烘焙（导出：地形绘制提交后按缓存高度场单独重烤颜色，几何不动） */
+/** 颜色纹理分辨率（固定 256×256） */
+const COLOR_TEX_RES = 256;
+/** 模糊前临时缓冲（模块级复用，避免每次烘焙分配 256KB；同步调用不并发） */
+const _colorTemp = new Uint8Array(COLOR_TEX_RES * COLOR_TEX_RES * 4);
+
+/** 表面配色烘焙（导出：地形绘制提交后按缓存高度场单独重烤颜色，几何不动）。
+ *  reuse 传入时写入 reuse.data（= texture.image.data）并标记 needsUpdate，返回该纹理，
+ *  避免 dispose + 新建（绘制实时预览用）；不传则新建 DataTexture（原行为）。 */
 export function bakeColorTexture(
   heights: Float32Array, n: number, p: TerrainSettings,
   min: number, max: number,
   splatmap: SplatmapData | null,
+  reuse?: { texture: THREE.DataTexture; data: Uint8Array },
 ): THREE.DataTexture {
-  const res = 256;
-  const data = new Uint8Array(res * res * 4);
+  const res = COLOR_TEX_RES;
+  const data = _colorTemp;
   const hSpan = Math.max(1e-6, max - min);
   const cellSize = p.size / (n - 1);
 
@@ -325,8 +333,8 @@ export function bakeColorTexture(
     }
   }
 
-  // 3×3 箱式模糊（平滑颜色过渡，消除锯齿）
-  const blurred = new Uint8Array(res * res * 4);
+  // 3×3 箱式模糊（平滑颜色过渡，消除锯齿）。复用模式下直接写入 texture.image.data
+  const out = reuse?.data ?? new Uint8Array(res * res * 4);
   for (let j = 0; j < res; j++) {
     for (let i = 0; i < res; i++) {
       let r = 0, g = 0, b = 0, count = 0;
@@ -339,14 +347,18 @@ export function bakeColorTexture(
         }
       }
       const dIdx = (j * res + i) * 4;
-      blurred[dIdx] = Math.round(r / count);
-      blurred[dIdx + 1] = Math.round(g / count);
-      blurred[dIdx + 2] = Math.round(b / count);
-      blurred[dIdx + 3] = 255;
+      out[dIdx] = Math.round(r / count);
+      out[dIdx + 1] = Math.round(g / count);
+      out[dIdx + 2] = Math.round(b / count);
+      out[dIdx + 3] = 255;
     }
   }
 
-  const tex = new THREE.DataTexture(blurred, res, res, THREE.RGBAFormat, THREE.UnsignedByteType);
+  if (reuse) {
+    reuse.texture.needsUpdate = true;
+    return reuse.texture;
+  }
+  const tex = new THREE.DataTexture(out, res, res, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.colorSpace = THREE.LinearSRGBColorSpace;
   tex.generateMipmaps = true;
   tex.minFilter = THREE.LinearMipmapLinearFilter;

@@ -39,7 +39,7 @@ import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
 import { buildGeometry } from "../../mesh";
-import { buildTerrain, bakeColorTexture, splitTerrainGeometry, terrainSettingsSig, decodeSculptData, type TerrainMaterialSettings, type SplatmapData, type TerrainSculptData } from "../../terrain";
+import { buildTerrain, bakeColorTexture, splitTerrainGeometry, terrainSettingsSig, decodeSculptData, type TerrainMaterialSettings, type SplatmapData, type TerrainSculptData, type SplatBuffer } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { buildNavOverlayGeometry, type NavBakeResult } from "../../navigation";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
@@ -1385,10 +1385,17 @@ export class SceneSynchronizer {
         const ts = ms
           ? { ...node.terrain, grassColor: ms.layers[0].color, rockColor: ms.layers[1].color, snowColor: ms.layers[2].color }
           : node.terrain;
-        const colorTexture = bakeColorTexture(heights, gridN, ts, minY, maxY, splatmap);
         const mat = terrainGroup.userData.terrainMaterial as THREE.MeshStandardMaterial;
-        if (mat.map) mat.map.dispose();
-        mat.map = colorTexture;
+        // 复用现有 DataTexture（写入 image.data + needsUpdate，不 dispose+新建）；
+        // 绘制实时预览时不刷新地形 GPU 资源
+        const reuse = mat.map instanceof THREE.DataTexture
+          ? { texture: mat.map, data: (mat.map.image as { data: Uint8Array }).data }
+          : undefined;
+        const colorTexture = bakeColorTexture(heights, gridN, ts, minY, maxY, splatmap, reuse);
+        if (!reuse) {
+          if (mat.map) mat.map.dispose();
+          mat.map = colorTexture;
+        }
         mat.metalness = ms ? ms.metalness : 0;
         mat.roughness = ms ? ms.roughness : 0.95;
         mat.needsUpdate = true;
@@ -1526,6 +1533,20 @@ export class SceneSynchronizer {
   /** splatmap 内容纪元 +1（绘制提交重载后调用：颜色签名变化 → 仅重烤颜色纹理） */
   bumpSplatmapEpoch(): void {
     this.splatmapEpoch++;
+  }
+
+  /**
+   * 绘制实时预览：把工作缓冲写入 splatmapCache + 推进纪元 + 刷新节点（仅重烤颜色，
+   * 几何不动；复用 DataTexture 不 dispose+新建）。不写盘、不重新加载 —— 盖章后调，
+   * 让用户立即看到权重变化，不等提交。
+   */
+  previewTerrainSplatmap(node: TerrainNode, buffer: SplatBuffer): void {
+    const rel = node.materialSettings?.splatmap;
+    if (!rel) return;
+    this.splatmapCache.set(rel, { data: new Uint8Array(buffer.data), width: buffer.width, height: buffer.height });
+    this.splatmapEpoch++;
+    const obj = this.getObjectMap().get(node.id);
+    if (obj) this.refreshNodeFor(node);
   }
 
   /** 清除 splatmap 像素缓存（绘制落盘后调用；下次 refreshTerrain 重新解码新图） */

@@ -73,6 +73,8 @@ export interface TerrainPaintDeps {
   onCommitSplat(buffer: SplatBuffer, splatRel: string): void;
   /** sculpt 会话节流提交（引擎写节点 sculpt 字段并 patch） */
   onCommitSculpt(): void;
+  /** paint 盖章后实时预览（把工作缓冲写入 splatmapCache + 重烤颜色纹理，不写盘） */
+  onStamp?: () => void;
 }
 
 /** 笔画中两次提交的最小间隔（ms）；配合 rAF 调度，降低延迟且不阻塞主线程 */
@@ -95,6 +97,9 @@ export class TerrainPaintController {
   /** rAF 调度提交（避免在 pointermove 同步执行重建重活阻塞主线程） */
   private commitRafId = 0;
   private commitScheduled = false;
+  /** paint 盖章实时预览 rAF 调度（每帧最多一次，避免每次 pointermove 都重烤颜色） */
+  private stampDirty = false;
+  private stampRafId = 0;
 
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -142,6 +147,7 @@ export class TerrainPaintController {
   end(): void {
     if (!this.active) return;
     this.cancelCommitRaf();
+    this.cancelStampRaf();
     if (this.stroking) this.commit();
     this.active = false;
     this.stroking = false;
@@ -155,6 +161,7 @@ export class TerrainPaintController {
   dispose(): void {
     this.end();
     this.cancelCommitRaf();
+    this.cancelStampRaf();
     this.deps.scene.remove(this.cursor);
     (this.cursor.material as THREE.Material).dispose();
     this.cursor.geometry.dispose();
@@ -242,6 +249,7 @@ export class TerrainPaintController {
     if (s.kind === "paint") {
       const brush: SplatBrush = { layer: b.layer, radius: b.radius, strength: b.strength, erase: b.erase };
       stampSplat(s.buffer, this.sessionTerrainSize(), wx, wz, brush);
+      this.onStampDirty();
     } else {
       const brush: SculptBrush = { mode: b.sculptMode, radius: b.radius, strength: b.strength };
       stampSculpt(s.offsets, s.base, s.gridN, this.sessionTerrainSize(), wx, wz, brush, this.strokeTargetY);
@@ -256,11 +264,28 @@ export class TerrainPaintController {
     if (s.kind === "paint") {
       const brush: SplatBrush = { layer: b.layer, radius: b.radius, strength: b.strength, erase: b.erase };
       stampSplatLine(s.buffer, this.sessionTerrainSize(), x0, z0, x1, z1, brush);
+      this.onStampDirty();
     } else {
       const brush: SculptBrush = { mode: b.sculptMode, radius: b.radius, strength: b.strength };
       stampSculptLine(s.offsets, s.base, s.gridN, this.sessionTerrainSize(), x0, z0, x1, z1, brush, this.strokeTargetY);
     }
   }
+
+  /** paint 盖章后标记 dirty，rAF 里批量实时预览（每帧最多一次，不阻塞 pointermove） */
+  private onStampDirty(): void {
+    if (this.stampDirty) return;
+    this.stampDirty = true;
+    if (!this.stampRafId) {
+      this.stampRafId = requestAnimationFrame(this.stampFlush);
+    }
+  }
+
+  private stampFlush = (): void => {
+    this.stampRafId = 0;
+    if (!this.stampDirty) return;
+    this.stampDirty = false;
+    this.deps.onStamp?.();
+  };
 
   private commitThrottled(): void {
     if (this.commitScheduled) return;
@@ -281,6 +306,12 @@ export class TerrainPaintController {
     if (this.commitRafId) cancelAnimationFrame(this.commitRafId);
     this.commitRafId = 0;
     this.commitScheduled = false;
+  }
+
+  private cancelStampRaf(): void {
+    if (this.stampRafId) cancelAnimationFrame(this.stampRafId);
+    this.stampRafId = 0;
+    this.stampDirty = false;
   }
 
   private commit(): void {

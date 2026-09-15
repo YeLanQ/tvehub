@@ -2463,6 +2463,11 @@ export class EditorEngine {
       getBrush: () => this.paintBrush,
       onCommitSplat: (buffer, rel) => this.terrainPaintCommitHandler?.(buffer, rel),
       onCommitSculpt: () => this.commitTerrainSculpt(),
+      onStamp: () => {
+        const session = this.terrainPaint?.getSession();
+        if (!session || session.kind !== "paint") return;
+        this.synchronizer.previewTerrainSplatmap(session.node, session.buffer);
+      },
     });
   }
 
@@ -2572,6 +2577,14 @@ export class EditorEngine {
   /** 应用层注入的绘制落盘（编码 PNG → 写资产 → 调 invalidateTerrainSplatmap） */
   setTerrainPaintCommitHandler(handler: (buffer: SplatBuffer, rel: string) => void): void {
     this.terrainPaintCommitHandler = handler;
+  }
+
+  /** 轻量缓存失效：只清纹理加载缓存（防止旧缓存），不刷新地形（绘制实时预览已更新视觉） */
+  invalidateTerrainSplatmapCache(rel: string): void {
+    if (!rel) return;
+    for (const key of [...this.textureCache.keys()]) {
+      if (key.endsWith(`|${rel}`)) this.textureCache.delete(key);
+    }
   }
 
   private terrainPaintCommitHandler: ((buffer: SplatBuffer, rel: string) => void) | null = null;
