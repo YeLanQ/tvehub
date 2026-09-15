@@ -17,6 +17,14 @@ export interface GraphView {
   k: number;
 }
 
+/** 画布逻辑坐标下的内容包围盒 */
+export interface GraphBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 export function useGraphCanvas(svgEl: Ref<SVGSVGElement | null>) {
   const view = reactive<GraphView>({ x: 0, y: 0, k: 1 });
 
@@ -48,6 +56,20 @@ export function useGraphCanvas(svgEl: Ref<SVGSVGElement | null>) {
     view.k = 1;
   }
 
+  /** 调整视图使内容包围盒完整居中可见（空/无效边界回 1:1 原点） */
+  function fitTo(b: GraphBounds | null, viewportW: number, viewportH: number, pad = 48): void {
+    if (!b || b.maxX < b.minX || b.maxY < b.minY || viewportW <= 0 || viewportH <= 0) {
+      resetView();
+      return;
+    }
+    const w = Math.max(1, b.maxX - b.minX);
+    const h = Math.max(1, b.maxY - b.minY);
+    const k = Math.min(K_MAX, Math.max(K_MIN, Math.min((viewportW - pad * 2) / w, (viewportH - pad * 2) / h)));
+    view.k = k;
+    view.x = (viewportW - w * k) / 2 - b.minX * k;
+    view.y = (viewportH - h * k) / 2 - b.minY * k;
+  }
+
   /** 挂到 svg 元素的滚轮缩放（非被动，需 preventDefault） */
   function bindWheel(): () => void {
     const el = svgEl.value;
@@ -61,5 +83,5 @@ export function useGraphCanvas(svgEl: Ref<SVGSVGElement | null>) {
     return () => el.removeEventListener("wheel", onWheel);
   }
 
-  return { view, transform, toGraph, zoomAt, resetView, bindWheel };
+  return { view, transform, toGraph, zoomAt, resetView, fitTo, bindWheel };
 }

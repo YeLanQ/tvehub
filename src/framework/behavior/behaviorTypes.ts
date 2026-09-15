@@ -52,6 +52,8 @@ export interface BTFieldDef {
   min?: number;
   max?: number;
   step?: number;
+  /** 输入框占位提示（label 放不下的补充说明，如「0 = 无限」） */
+  placeholder?: string;
   /** 缺省值（新建节点时填充；parse 缺字段回退） */
   fallback: number | string;
 }
@@ -130,7 +132,7 @@ export const BT_NODE_DEFS: BTNodeDef[] = [
     category: "decorator",
     maxChildren: 1,
     color: "#c586c0",
-    fields: [{ key: "count", label: "次数（0 = 无限）", kind: "number", min: 0, step: 1, fallback: 0 }],
+    fields: [{ key: "count", label: "次数", placeholder: "0 = 无限", kind: "number", min: 0, step: 1, fallback: 0 }],
   },
   {
     type: "retry",
@@ -139,7 +141,7 @@ export const BT_NODE_DEFS: BTNodeDef[] = [
     category: "decorator",
     maxChildren: 1,
     color: "#c586c0",
-    fields: [{ key: "count", label: "次数（0 = 无限）", kind: "number", min: 0, step: 1, fallback: 0 }],
+    fields: [{ key: "count", label: "次数", placeholder: "0 = 无限", kind: "number", min: 0, step: 1, fallback: 0 }],
   },
   {
     type: "timeout",

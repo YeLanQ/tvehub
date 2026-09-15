@@ -13,7 +13,7 @@ import { getProjectStore } from "../../stores/project";
 import { logStore } from "../../stores/log";
 import { api } from "../../../lib/api";
 import { closeBehaviorTreeEditor } from "../../composables/logic-editor";
-import { useGraphCanvas } from "../../composables/graph-canvas";
+import { useGraphCanvas, type GraphBounds } from "../../composables/graph-canvas";
 import { isEditingText } from "../../commands/context";
 import {
   closeContextMenu,
@@ -57,7 +57,7 @@ const LEVEL_H = 104;
 const SIBLING_GAP = 26;
 
 const svgEl = ref<SVGSVGElement | null>(null);
-const { view, transform, resetView, bindWheel } = useGraphCanvas(svgEl);
+const { view, transform, resetView, fitTo, bindWheel } = useGraphCanvas(svgEl);
 
 const loading = ref(true);
 const loadError = ref("");
@@ -89,9 +89,10 @@ async function load(): Promise<void> {
   }
 }
 
-async function save(): Promise<void> {
+/** 写盘；返回是否成功（失败由调用方决定是否保持打开） */
+async function save(): Promise<boolean> {
   const root = projectStore.currentPath;
-  if (!root || !tree.value || saving.value) return;
+  if (!root || !tree.value || saving.value) return false;
   saving.value = true;
   try {
     const name = title.value.replace(/\.bt$/i, "");
@@ -103,8 +104,10 @@ async function save(): Promise<void> {
     );
     dirty.value = false;
     logStore.log("success", `已保存行为树: ${props.rel}`);
+    return true;
   } catch (e) {
     logStore.log("error", `保存行为树失败: ${e}`);
+    return false;
   } finally {
     saving.value = false;
   }
@@ -117,12 +120,13 @@ function markDirty(): void {
   autoSaveTimer = setTimeout(() => void save(), 800);
 }
 
+/** 关闭前冲刷未保存改动；保存失败保持打开（避免丢改动），可再次保存或放弃 */
 async function requestClose(): Promise<void> {
   if (autoSaveTimer) {
     clearTimeout(autoSaveTimer);
     autoSaveTimer = null;
   }
-  if (dirty.value && tree.value) await save();
+  if (dirty.value && tree.value && !(await save())) return;
   closeBehaviorTreeEditor();
 }
 
@@ -245,6 +249,32 @@ function onPointerUp(): void {
   panning = null;
 }
 
+// —— 视图适配 ——
+
+/** 全部节点卡的逻辑包围盒 */
+function treeBounds(): GraphBounds | null {
+  const nodes = layout.value.nodes;
+  if (!nodes.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x - NODE_W / 2);
+    maxX = Math.max(maxX, n.x + NODE_W / 2);
+    minY = Math.min(minY, n.y - NODE_H / 2);
+    maxY = Math.max(maxY, n.y + NODE_H / 2);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** 缩放平移视图使整棵树完整居中可见 */
+function fitView(): void {
+  const r = svgEl.value?.getBoundingClientRect();
+  if (!r) return;
+  fitTo(treeBounds(), r.width, r.height);
+}
+
 // —— 右键菜单（屏蔽浏览器默认菜单，按目标给出编辑动作） ——
 
 function onBgContext(e: MouseEvent): void {
@@ -343,9 +373,10 @@ onMounted(async () => {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   await load();
-  // svg 在 loading 结束后才渲染，等一帧再绑 wheel，避免绑到空引用
+  // svg 在 loading 结束后才渲染，等一帧再绑 wheel 并适配视图（此时才有布局尺寸）
   await nextTick();
   unbindWheel = bindWheel();
+  fitView();
 });
 
 onBeforeUnmount(() => {
@@ -363,8 +394,8 @@ onBeforeUnmount(() => {
       <div class="logic-modal">
         <div class="logic-modal-head">
           <span class="logic-modal-title">行为树编辑器 · {{ title }}</span>
-          <span v-if="dirty" class="logic-modal-dirty">未保存</span>
           <span class="logic-modal-rel mono">{{ rel }}</span>
+          <span v-if="dirty" class="logic-modal-dirty">未保存</span>
           <button
             class="logic-modal-btn primary"
             :disabled="saving || !dirty"
@@ -373,7 +404,7 @@ onBeforeUnmount(() => {
           >
             {{ saving ? "保存中…" : "保存" }}
           </button>
-          <button class="logic-modal-close" title="关闭（Esc）" @click="requestClose">✕</button>
+          <button class="logic-modal-close" title="关闭（Esc）；有未保存改动会先保存" @click="requestClose">✕</button>
         </div>
 
         <div class="logic-toolbar">
@@ -385,6 +416,7 @@ onBeforeUnmount(() => {
           >
             删除选中
           </button>
+          <button class="logic-modal-btn" title="缩放平移使整棵树居中可见" @click="fitView">适配视图</button>
           <button class="logic-modal-btn" title="重置平移与缩放" @click="resetView">重置视图</button>
           <span class="logic-tool-hint">点击节点选中 · 左键拖空白 / 中键拖拽平移 · 滚轮缩放 · 右键菜单 · Del 删除</span>
         </div>
@@ -489,25 +521,31 @@ onBeforeUnmount(() => {
                   <span class="logic-props-title">参数</span>
                   <template v-for="f in selectedDef.fields" :key="f.key">
                     <div v-if="f.kind === 'number'" class="logic-field">
-                      <label>{{ f.label }}</label>
+                      <label :title="f.label">{{ f.label }}</label>
                       <input
                         v-model.number="selectedNode[f.key]"
                         type="number"
                         :min="f.min"
                         :step="f.step"
+                        :placeholder="f.placeholder"
                         class="logic-input"
                         @change="markDirty"
                       />
                     </div>
                     <div v-else-if="f.kind === 'option'" class="logic-field">
-                      <label>{{ f.label }}</label>
+                      <label :title="f.label">{{ f.label }}</label>
                       <select v-model="selectedNode[f.key]" class="logic-input" @change="markDirty">
                         <option v-for="op in f.options ?? CONDITION_OPS" :key="op" :value="op">{{ op }}</option>
                       </select>
                     </div>
                     <div v-else class="logic-field">
-                      <label>{{ f.label }}</label>
-                      <input v-model="selectedNode[f.key]" class="logic-input mono" @change="markDirty" />
+                      <label :title="f.label">{{ f.label }}</label>
+                      <input
+                        v-model="selectedNode[f.key]"
+                        :placeholder="f.placeholder"
+                        class="logic-input mono"
+                        @change="markDirty"
+                      />
                     </div>
                   </template>
                 </div>

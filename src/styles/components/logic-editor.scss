@@ -36,9 +36,11 @@
 }
 
 .logic-modal-title {
+  flex: none;
   font-size: 12px;
   font-weight: 600;
   color: var(--text, #ddd);
+  white-space: nowrap;
 }
 
 .logic-modal-dirty {
@@ -101,13 +103,19 @@
   flex: none;
   width: 22px;
   height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   color: var(--text-dim, #999);
   border: none;
+  border-radius: 3px;
   cursor: pointer;
   font-size: 13px;
+  line-height: 1;
 
   &:hover {
+    background: #3c3c3c;
     color: var(--text, #ddd);
   }
 }
@@ -129,8 +137,12 @@
   }
   .logic-tool-hint {
     margin-left: auto;
+    min-width: 0;
     font-size: 11px;
     color: var(--text-dim, #888);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -214,6 +226,9 @@
     width: 64px;
     font-size: 11px;
     color: var(--text-dim, #aaa);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   > .logic-input,
@@ -247,16 +262,27 @@ select.logic-input {
 
 .logic-cond-row {
   display: grid;
-  grid-template-columns: 1fr 52px 64px 20px;
+  // minmax(0, 1fr)：允许首列收缩到 0，否则输入框的固有 min-width 会把行撑出面板
+  grid-template-columns: minmax(0, 1fr) 52px 64px 20px;
   gap: 4px;
   align-items: center;
+
+  > .logic-input {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .logic-param-row {
   display: grid;
-  grid-template-columns: 1fr 52px 72px 20px;
+  grid-template-columns: minmax(0, 1fr) 52px 72px 20px;
   gap: 4px;
   align-items: center;
+
+  > .logic-input {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .logic-icon-btn {

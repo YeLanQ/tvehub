@@ -14,7 +14,7 @@ import { getProjectStore } from "../../stores/project";
 import { logStore } from "../../stores/log";
 import { api } from "../../../lib/api";
 import { closeFsmEditor } from "../../composables/logic-editor";
-import { useGraphCanvas } from "../../composables/graph-canvas";
+import { useGraphCanvas, type GraphBounds } from "../../composables/graph-canvas";
 import { isEditingText } from "../../commands/context";
 import {
   closeContextMenu,
@@ -46,7 +46,7 @@ const CARD_W = 132;
 const CARD_H = 46;
 
 const svgEl = ref<SVGSVGElement | null>(null);
-const { view, transform, toGraph, resetView, bindWheel } = useGraphCanvas(svgEl);
+const { view, transform, toGraph, resetView, fitTo, bindWheel } = useGraphCanvas(svgEl);
 
 const loading = ref(true);
 const loadError = ref("");
@@ -116,9 +116,10 @@ async function load(): Promise<void> {
   }
 }
 
-async function save(): Promise<void> {
+/** 写盘；返回是否成功（失败由调用方决定是否保持打开） */
+async function save(): Promise<boolean> {
   const root = projectStore.currentPath;
-  if (!root || !graph.value || saving.value) return;
+  if (!root || !graph.value || saving.value) return false;
   saving.value = true;
   try {
     const name = title.value.replace(/\.fsm$/i, "");
@@ -127,8 +128,10 @@ async function save(): Promise<void> {
     await api.fsmWrite(root, props.rel, name, JSON.parse(JSON.stringify(graph.value)));
     dirty.value = false;
     logStore.log("success", `已保存状态机: ${props.rel}`);
+    return true;
   } catch (e) {
     logStore.log("error", `保存状态机失败: ${e}`);
+    return false;
   } finally {
     saving.value = false;
   }
@@ -142,13 +145,13 @@ function markDirty(): void {
   autoSaveTimer = setTimeout(() => void save(), 800);
 }
 
-/** 关闭前冲刷未保存改动 */
+/** 关闭前冲刷未保存改动；保存失败保持打开（避免丢改动），可再次保存或放弃 */
 async function requestClose(): Promise<void> {
   if (autoSaveTimer) {
     clearTimeout(autoSaveTimer);
     autoSaveTimer = null;
   }
-  if (dirty.value && graph.value) await save();
+  if (dirty.value && graph.value && !(await save())) return;
   closeFsmEditor();
 }
 
@@ -317,6 +320,32 @@ function onSvgDblClick(e: MouseEvent): void {
   addStateAt(toGraph(e.clientX, e.clientY));
 }
 
+// —— 视图适配 ——
+
+/** 全部状态卡的逻辑包围盒 */
+function graphBounds(): GraphBounds | null {
+  const ss = graph.value?.states;
+  if (!ss || !ss.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of ss) {
+    minX = Math.min(minX, s.x - CARD_W / 2);
+    maxX = Math.max(maxX, s.x + CARD_W / 2);
+    minY = Math.min(minY, s.y - CARD_H / 2);
+    maxY = Math.max(maxY, s.y + CARD_H / 2);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** 缩放平移视图使全部状态完整居中可见 */
+function fitView(): void {
+  const r = svgEl.value?.getBoundingClientRect();
+  if (!r) return;
+  fitTo(graphBounds(), r.width, r.height);
+}
+
 // —— 右键菜单（屏蔽浏览器默认菜单，按目标给出编辑动作） ——
 
 function onBgContext(e: MouseEvent): void {
@@ -482,9 +511,10 @@ onMounted(async () => {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   await load();
-  // svg 在 loading 结束后才渲染，等一帧再绑 wheel，避免绑到空引用
+  // svg 在 loading 结束后才渲染，等一帧再绑 wheel 并适配视图（此时才有布局尺寸）
   await nextTick();
   unbindWheel = bindWheel();
+  fitView();
 });
 
 onBeforeUnmount(() => {
@@ -502,8 +532,8 @@ onBeforeUnmount(() => {
       <div class="logic-modal">
         <div class="logic-modal-head">
           <span class="logic-modal-title">状态机编辑器 · {{ title }}</span>
-          <span v-if="dirty" class="logic-modal-dirty">未保存</span>
           <span class="logic-modal-rel mono">{{ rel }}</span>
+          <span v-if="dirty" class="logic-modal-dirty">未保存</span>
           <button
             class="logic-modal-btn primary"
             :disabled="saving || !dirty"
@@ -512,7 +542,7 @@ onBeforeUnmount(() => {
           >
             {{ saving ? "保存中…" : "保存" }}
           </button>
-          <button class="logic-modal-close" title="关闭（Esc）" @click="requestClose">✕</button>
+          <button class="logic-modal-close" title="关闭（Esc）；有未保存改动会先保存" @click="requestClose">✕</button>
         </div>
 
         <div class="logic-toolbar">
@@ -534,6 +564,7 @@ onBeforeUnmount(() => {
             删除选中
           </button>
           <div class="logic-tool-sep"></div>
+          <button class="logic-modal-btn" title="缩放平移使全部状态居中可见" @click="fitView">适配视图</button>
           <button class="logic-modal-btn" title="重置平移与缩放" @click="resetView">重置视图</button>
           <span class="logic-tool-hint">双击空白新建状态 · 左键拖空白 / 中键拖拽平移 · 滚轮缩放 · 右键菜单 · Del 删除</span>
         </div>
