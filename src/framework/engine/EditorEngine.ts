@@ -355,6 +355,7 @@ export class EditorEngine {
       boundsFor: (area) => this.navBoundsFor(area),
       heightFieldFor: (area) => this.navHeightFieldFor(area),
       obstaclesFor: (area) => this.navObstaclesFor(area),
+      targetFor: (nodeId) => this.navTargetOf(nodeId),
     };
     this.nav.onBakeUpdated = (nodeId) => {
       const n = this.graph.get(nodeId);
@@ -1944,7 +1945,22 @@ export class EditorEngine {
     };
   }
 
-  /** 场景内容变化（网格/地形/障碍/模型加载完成）→ 全部区域按签名重检（未变不重烤） */
+  /** 代理目标节点的世界 XZ（缺失/隐藏/停用 → null；供巡回/最近可达寻路） */
+  private navTargetOf(nodeId: string): { x: number; z: number } | null {
+    const n = this.graph.get(nodeId);
+    if (!n || !n.visible || !n.active) return null;
+    const obj = this.synchronizer.getObjectMap().get(nodeId);
+    if (!obj) return null;
+    obj.updateWorldMatrix(true, false);
+    const p = obj.getWorldPosition(new THREE.Vector3());
+    return { x: p.x, z: p.z };
+  }
+
+  /**
+   * 场景内容变化（网格/地形/障碍/模型加载完成/目标节点移动）→ 全部导航节点
+   * 按签名重检：区域重烘焙（未变不重烤）、代理重同步（目标列表/位置变了 →
+   * 按移动模式重评估路径；nearest 模式目标移动后由此重新选最近可达）。
+   */
   private resyncNavAreas(): void {
     // 世界矩阵刷新：确保签名与烘焙输入读到最新变换（同步器只写本地变换）
     this.renderer.scene.updateMatrixWorld(true);
@@ -1952,6 +1968,9 @@ export class EditorEngine {
       if (n instanceof NavAreaNode) {
         const obj = this.synchronizer.getObjectMap().get(n.id);
         if (obj) this.nav.syncArea(n, obj);
+      } else if (n instanceof NavAgentNode) {
+        const obj = this.synchronizer.getObjectMap().get(n.id);
+        if (obj) this.nav.syncAgent(n, obj);
       }
     }
   }

@@ -22,7 +22,7 @@ export class NavAgentNode extends Node {
   static override readonly kType: string = "navAgentNode";
   override readonly typeKey: string = NavAgentNode.kType;
 
-  settings: NavAgentSettings = { ...DEFAULT_NAV_AGENT_SETTINGS };
+  settings: NavAgentSettings = { ...DEFAULT_NAV_AGENT_SETTINGS, targetIds: [] };
 
   constructor(init: NavAgentNodeInit = {}) {
     super(init);

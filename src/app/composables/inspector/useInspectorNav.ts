@@ -28,6 +28,9 @@ const AREA_LABEL_FIELD: Record<string, keyof NavAreaSettings> = {
 /** 代理卡事件标签 → 设置字段 */
 const AGENT_LABEL_FIELD: Record<string, keyof NavAgentSettings> = {
   "Bind Nav Area": "areaId",
+  "Set Agent Targets": "targetIds",
+  "Set Agent Move Mode": "moveMode",
+  "Toggle Agent Loop": "loop",
   "Set Speed": "speed",
   "Set Agent Size": "radius",
 };

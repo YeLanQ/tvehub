@@ -3,7 +3,10 @@
  * 导航代理卡（NavAgentNode）：
  * - Area：绑定的导航区域（场景导航区域下拉；空 = 自动取第一个已烘焙区域）；
  * - Movement：移动速度 / 碰撞半径（SDF 净空）；
- * - 路径动作：目标点（世界 XZ）→「计算路径」寻路并开始移动 /「停止」清路径；
+ * - Targets：移动模式（顺序巡回 / 最近可达目标）+ 巡回循环开关 + 目标节点
+ *   多选（浮动下拉；勾选顺序 = 巡回顺序；列表随场景保存）；
+ * - 路径动作：「开始移动」按模式启动（sequence 从第一个目标起依次接力，
+ *   nearest 走向路径最短的可达目标）/「停止」清路径；
  *   路径与行进是运行态（不进场景），路径折线在视口以辅助线显示（选中时）。
  * 事件统一 emit("update", label, value)，label 即撤销历史文案。
  */
@@ -14,6 +17,7 @@ import { NAV_AGENT_LIMITS } from "../../../framework/navigation";
 import { getEditorStore } from "../../stores/editor";
 import { logStore } from "../../stores/log";
 import NumberField from "../NumberField.vue";
+import NodeMultiSelect from "./NodeMultiSelect.vue";
 
 const props = defineProps<{ node: NavAgentNode; rev?: number }>();
 
@@ -42,18 +46,26 @@ const areaListed = computed(() => {
   return areas.value.some((a) => a.id === cur);
 });
 
-/** 目标点（世界 XZ；默认代理当前位置附近） */
-const targetX = ref(0);
-const targetZ = ref(0);
+/** 目标候选排除：代理自身及其子树（不能以自己为目标） */
+const excludeIds = computed(() => {
+  void props.rev;
+  const g = editor().graph;
+  return g
+    .all()
+    .filter((n) => n.id === props.node.id || g.isDescendant(props.node.id, n.id))
+    .map((n) => n.id);
+});
+
 const lastResult = ref<"" | "ok" | "fail" | "noArea">("");
 
-function onFindPath(): void {
-  const ok = editor().nav.requestPath(props.node.id, targetX.value, targetZ.value);
+/** 开始移动：按移动模式启动（巡回 / 最近可达；目标列表见 Targets） */
+function onStart(): void {
+  const ok = editor().nav.startAgent(props.node.id);
   lastResult.value = ok ? "ok" : "fail";
   if (ok) {
-    logStore.log("success", "寻路成功：代理开始沿路径移动（可在视口查看路径线）");
+    logStore.log("success", "代理开始沿路径移动（可在视口查看路径线）");
   } else {
-    logStore.log("warn", "寻路失败：目标不可达（需要已烘焙的导航区域与可达目标点）");
+    logStore.log("warn", "启动失败：需要已烘焙的导航区域与可达的目标节点");
   }
 }
 
@@ -107,26 +119,87 @@ function clamp(v: number, lo: number, hi: number): number {
       />
     </div>
 
+    <!-- ===== Targets ===== -->
+    <div class="ts-group">Targets</div>
+    <div class="field">
+      <label title="顺序巡回 = 按勾选顺序依次走到每个目标；最近可达 = 恒走向路径最短的可达目标">Mode</label>
+      <select
+        :value="s.moveMode"
+        @change="emit('update', 'Set Agent Move Mode', ($event.target as HTMLSelectElement).value)"
+      >
+        <option value="sequence">顺序巡回</option>
+        <option value="nearest">最近可达目标</option>
+      </select>
+    </div>
+    <div v-if="s.moveMode === 'sequence'" class="field">
+      <label title="走完一轮目标后回到第一个目标继续（巡逻循环）">Loop</label>
+      <input
+        type="checkbox"
+        :checked="s.loop"
+        title="巡回循环开关"
+        @change="emit('update', 'Toggle Agent Loop', ($event.target as HTMLInputElement).checked)"
+      />
+    </div>
+    <div class="field">
+      <label title="目标节点（可多选）：位置取节点世界坐标；勾选顺序 = 巡回顺序">Points</label>
+      <NodeMultiSelect
+        :selected-ids="s.targetIds"
+        :rev="rev"
+        :exclude-ids="excludeIds"
+        placeholder="未设置目标"
+        placeholder-title="未选择目标节点"
+        @update="(ids) => emit('update', 'Set Agent Targets', ids)"
+      />
+    </div>
+
     <!-- ===== 路径动作 ===== -->
     <div class="ts-group">Path</div>
-    <div class="field">
-      <label title="目标点世界坐标 X">Target X</label>
-      <NumberField v-model="targetX" :step="1" title="目标点世界坐标 X" />
-    </div>
-    <div class="field">
-      <label title="目标点世界坐标 Z">Target Z</label>
-      <NumberField v-model="targetZ" :step="1" title="目标点世界坐标 Z" />
-    </div>
     <div class="ts-actions">
-      <button title="从代理当前位置到目标点寻路并开始移动（A* + 视线拉直平滑）" @click="onFindPath">
-        计算路径
+      <button title="按移动模式启动：巡回从第一个目标起依次接力（跳过不可达）；最近可达走向路径最短的目标" @click="onStart">
+        开始移动
       </button>
       <button title="清除当前路径，代理停下" @click="onStop">停止</button>
     </div>
     <div class="ts-actions">
-      <span v-if="lastResult === 'ok'" class="hint">寻路成功，代理移动中…</span>
-      <span v-else-if="lastResult === 'fail'" class="hint">目标不可达（检查导航区域与目标点）</span>
+      <span v-if="lastResult === 'ok'" class="hint">移动中…（目标节点移动后自动重新寻路）</span>
+      <span v-else-if="lastResult === 'fail'" class="hint">启动失败：检查导航区域与目标节点</span>
       <span v-else class="hint">路径是运行态：移动/避障由烘焙 SDF 查表驱动，不写场景数据</span>
     </div>
   </div>
 </template>
+
+<style scoped>
+.ts-group {
+  margin: 8px 0 2px;
+  padding-top: 4px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: var(--text-dim, #999);
+  border-top: 1px solid var(--border, #333);
+}
+.ts-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+.ts-actions button {
+  flex: none;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--text-dim, #666);
+  background: transparent;
+  color: var(--text, #ddd);
+  cursor: pointer;
+}
+.ts-actions button:hover {
+  border-color: var(--accent, #4a9eff);
+  color: var(--accent, #4a9eff);
+}
+.ts-actions .hint {
+  font-size: 10px;
+  color: var(--text-dim, #888);
+}
+</style>

@@ -74,9 +74,17 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 签名");
   check("maxSlope 钳进取值域", parseNavAreaSettings({ maxSlope: 0 }).maxSlope === NAV_AREA_LIMITS.maxSlope.min);
   check("display 非法值回退 walkable", parseNavAreaSettings({ display: "x" }).display === "walkable");
   check("obstaclesMode 非法值回退 auto", parseNavAreaSettings({ obstaclesMode: "?" }).obstaclesMode === "auto");
-  const ag = parseNavAgentSettings({ speed: -5 });
   check("代理设置收敛", parseNavAgentSettings({ speed: -5 }).speed === NAV_AGENT_LIMITS.speed.min
     && parseNavAgentSettings({ radius: "x" }).radius === DEFAULT_NAV_AGENT_SETTINGS.radius);
+  check("代理设置收敛（targetIds/mode/loop）", (() => {
+    const p = parseNavAgentSettings({ targetIds: ["a", "a", 3, ""], moveMode: "x", loop: 1, speed: -5 });
+    return p.targetIds.join() === "a" && p.moveMode === "sequence" && p.loop === true
+      && p.speed === NAV_AGENT_LIMITS.speed.min;
+  })());
+  check("代理旧场景缺字段回退", (() => {
+    const p = parseNavAgentSettings({ speed: 4 });
+    return p.targetIds.length === 0 && p.moveMode === "sequence" && p.loop === false;
+  })());
   check("设置签名逐字段变化", (() => {
     const a = navAreaSettingsSig(d);
     const b = navAreaSettingsSig({ ...d, cellSize: 2 });
@@ -89,8 +97,15 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 签名");
     return p.sourceIds.length === 2 && p.sourceIds[0] === "a" && p.sourceIds[1] === "b";
   })());
   check("旧场景 terrainId 迁移为 sourceIds", parseNavAreaSettings({ terrainId: "t-old" }).sourceIds.join() === "t-old");
-  check("代理签名变化", navAgentSettingsSig({ areaId: "", speed: 4, radius: 0.5 })
-    !== navAgentSettingsSig({ areaId: "", speed: 5, radius: 0.5 }));
+  check("代理签名逐字段变化", (() => {
+    const base = { areaId: "", targetIds: [] as string[], moveMode: "sequence" as const, loop: false, speed: 4, radius: 0.5 };
+    const a = navAgentSettingsSig(base);
+    const b = navAgentSettingsSig({ ...base, speed: 5 });
+    const c = navAgentSettingsSig({ ...base, targetIds: ["t1"] });
+    const e = navAgentSettingsSig({ ...base, moveMode: "nearest" });
+    const f = navAgentSettingsSig({ ...base, loop: true });
+    return a !== b && a !== c && a !== e && a !== f;
+  })());
 }
 
 // ===========================================================================
@@ -112,8 +127,17 @@ console.log("[2] 节点层：注册表 / 工厂 / 序列化往返");
   check("区域节点 JSON 往返", back instanceof NavAreaNode
     && back.settings.cellSize === 2 && back.settings.sourceIds.join() === "terrain-1,mesh-1");
   agent.settings.speed = 7.5;
+  agent.settings.targetIds = ["t1", "t2"];
+  agent.settings.moveMode = "nearest";
+  agent.settings.loop = true;
   const agentBack = registry.createFromJSON(JSON.parse(JSON.stringify(agent.toJSON())));
-  check("代理节点 JSON 往返", agentBack instanceof NavAgentNode && agentBack.settings.speed === 7.5);
+  check("代理节点 JSON 往返", agentBack instanceof NavAgentNode && agentBack.settings.speed === 7.5
+    && agentBack.settings.targetIds.join() === "t1,t2" && agentBack.settings.moveMode === "nearest"
+    && agentBack.settings.loop === true);
+  // clone 深拷贝（targetIds 数组隔离）
+  const agentClone = agent.clone();
+  agentClone.settings.targetIds.push("y");
+  check("clone 深拷贝（targetIds 隔离）", agent.settings.targetIds.join() === "t1,t2");
 
   // 旧场景兼容：无 settings 字段 → 默认；旧字段 terrainId → sourceIds 迁移
   const legacy = registry.createFromJSON({ type: "navAreaNode", id: "n1", name: "Old" });
@@ -371,6 +395,46 @@ console.log("[4] 寻路与代理：A* / 平滑 / 移动 / SDF 滑移");
   check("到达后清路径", sys.getAgentPath(agentNode.id) === null);
   check("贴地高度 = 采样高度 + 抬升", Math.abs(agentObj.position.y) < 0.5);
 
+  // —— 目标节点移动：sequence 依次接力 + loop 循环 ——
+  sys.providers = {
+    ...sys.providers!,
+    targetFor: (id) => (id === "t1" ? { x: 16, z: 16 } : id === "t2" ? { x: 10, z: 1 } : null),
+  };
+  agentNode.settings.targetIds = ["t1", "t2"];
+  agentNode.settings.moveMode = "sequence";
+  agentNode.settings.loop = true;
+  sys.syncAgent(agentNode, agentObj);
+  check("巡回启动：走向第一个目标", sys.startAgent(agentNode.id) && sys.getAgentTargetIndex(agentNode.id) === 0);
+  for (let i = 0; i < 200 && sys.getAgentTargetIndex(agentNode.id) === 0; i++) sys.update(0.25);
+  check("到达第一个目标后接力第二个", sys.getAgentTargetIndex(agentNode.id) === 1);
+  for (let i = 0; i < 400 && sys.getAgentTargetIndex(agentNode.id) === 1; i++) sys.update(0.25);
+  check("loop 走完一轮回到第一个目标", sys.getAgentTargetIndex(agentNode.id) === 0);
+
+  // —— nearest：跳过缺失目标，取路径最短的可达目标 ——
+  agentNode.settings.moveMode = "nearest";
+  agentNode.settings.loop = false;
+  agentNode.settings.targetIds = ["t2", "t1", "t9"];
+  sys.syncAgent(agentNode, agentObj);
+  check("nearest 启动成功", sys.startAgent(agentNode.id));
+  check("nearest 终点接近最近可达目标", (() => {
+    const path = sys.getAgentPath(agentNode.id);
+    const last = path?.[path.length - 1];
+    return !!last && Math.hypot(last.x - 10, last.z - 1) < 1.5;
+  })());
+  check("nearest 游标置 -1", sys.getAgentTargetIndex(agentNode.id) === -1);
+
+  // 目标节点移动（设置未变）→ syncAgent 按目标位置签名重评估：t2 移远后改选 t1
+  sys.providers = {
+    ...sys.providers!,
+    targetFor: (id) => (id === "t1" ? { x: 16, z: 16 } : id === "t2" ? { x: 18, z: 18 } : null),
+  };
+  sys.syncAgent(agentNode, agentObj);
+  check("目标移动后 nearest 重评估", (() => {
+    const path = sys.getAgentPath(agentNode.id);
+    const last = path?.[path.length - 1];
+    return !!last && Math.hypot(last.x - 16, last.z - 16) < 1.5;
+  })());
+
   // 手动烘焙 + 统计
   const stats = sys.getAreaStats(areaNode.id);
   check("统计可读", !!stats && stats.cells > 0 && stats.bakeMs >= 0);
@@ -418,6 +482,20 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
 
   const helperSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/modules/helpers/createNodeHelper.ts"), "utf8");
   check("代理助手线已注册", /NavAgentHelper/.test(helperSrc));
+
+  const navSysSrc = readFileSync(resolve(process.cwd(), "src/framework/navigation/NavSystem.ts"), "utf8");
+  check("代理：目标寻路（startAgent/巡回接力/最近可达/目标位置签名）", /startAgent/.test(navSysSrc)
+    && /advanceSequence/.test(navSysSrc) && /repathNearest/.test(navSysSrc) && /targetFor\?/.test(navSysSrc));
+  check("引擎：代理目标位置提供者", /navTargetOf/.test(engineSrc)
+    && /targetFor: \(nodeId\) => this\.navTargetOf\(nodeId\)/.test(engineSrc));
+
+  const agentSectionSrc = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NavAgentSection.vue"), "utf8");
+  check("检查器：代理目标多选 + 移动模式", /NodeMultiSelect/.test(agentSectionSrc)
+    && /moveMode/.test(agentSectionSrc) && /startAgent/.test(agentSectionSrc));
+  check("检查器：共享节点多选组件", (() => {
+    const ms = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NodeMultiSelect.vue"), "utf8");
+    return /Teleport/.test(ms) && /selectedIds/.test(ms);
+  })());
 
   const panel = readFileSync(resolve(process.cwd(), "src/app/components/InspectorPanel.vue"), "utf8");
   check("检查器：Nav Area / Nav Agent 卡", /NavAreaSection/.test(panel) && /NavAgentSection/.test(panel));

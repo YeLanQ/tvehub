@@ -50,10 +50,19 @@ export const NAV_AREA_LIMITS = {
   maxHeightStep: { min: 0.05, max: 50 },
 } as const;
 
+/** 代理移动模式：按目标列表顺序巡回 / 恒走向最近可达目标 */
+export type NavAgentMoveMode = "sequence" | "nearest";
+
 /** 导航代理设置（NavAgentNode.settings 的形状；全部字段随场景序列化） */
 export interface NavAgentSettings {
   /** 绑定的导航区域节点 id（空 = 自动使用场景中第一个导航区域） */
   areaId: string;
+  /** 目标节点 id 列表（勾选顺序 = 巡回顺序；位置取节点世界 XZ） */
+  targetIds: string[];
+  /** 移动模式：sequence = 按列表顺序依次走到每个目标；nearest = 恒走向最近可达目标 */
+  moveMode: NavAgentMoveMode;
+  /** sequence 模式：走完一轮后回到第一个目标继续（巡逻循环） */
+  loop: boolean;
   /** 移动速度（世界单位/秒） */
   speed: number;
   /** 碰撞半径（世界单位；沿路径移动时经 SDF 滑移避障） */
@@ -62,6 +71,9 @@ export interface NavAgentSettings {
 
 export const DEFAULT_NAV_AGENT_SETTINGS: NavAgentSettings = {
   areaId: "",
+  targetIds: [],
+  moveMode: "sequence",
+  loop: false,
   speed: 4,
   radius: 0.5,
 };
@@ -82,26 +94,30 @@ function clampStr(v: unknown, fb = ""): string {
   return typeof v === "string" ? v : fb;
 }
 
-/** 采样源数量上限（防误粘贴超长数组；超过截断） */
-const NAV_MAX_SOURCE_IDS = 32;
-
-function clampSourceIds(v: unknown): string[] {
+/** id 数组收敛：字符串去重、滤空、截断（采样源/目标点共用） */
+function clampIdArray(v: unknown, max: number): string[] {
   if (!Array.isArray(v)) return [];
   const out: string[] = [];
   for (const item of v) {
     if (typeof item !== "string" || !item) continue;
     if (!out.includes(item)) out.push(item);
-    if (out.length >= NAV_MAX_SOURCE_IDS) break;
+    if (out.length >= max) break;
   }
   return out;
 }
+
+/** 采样源数量上限（防误粘贴超长数组；超过截断） */
+const NAV_MAX_SOURCE_IDS = 32;
+
+/** 代理目标点数量上限 */
+const NAV_MAX_TARGET_IDS = 32;
 
 /** 任意来源 → 收敛的导航区域设置（旧场景 terrainId 迁移为单元素 sourceIds） */
 export function parseNavAreaSettings(v: unknown): NavAreaSettings {
   const d = DEFAULT_NAV_AREA_SETTINGS;
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   const L = NAV_AREA_LIMITS;
-  const sourceIds = clampSourceIds(o.sourceIds);
+  const sourceIds = clampIdArray(o.sourceIds, NAV_MAX_SOURCE_IDS);
   // 旧版场景（采样源仅支持地形）：terrainId → sourceIds
   if (sourceIds.length === 0 && typeof o.terrainId === "string" && o.terrainId) {
     sourceIds.push(o.terrainId);
@@ -124,6 +140,9 @@ export function parseNavAgentSettings(v: unknown): NavAgentSettings {
   const L = NAV_AGENT_LIMITS;
   return {
     areaId: clampStr(o.areaId),
+    targetIds: clampIdArray(o.targetIds, NAV_MAX_TARGET_IDS),
+    moveMode: o.moveMode === "nearest" ? "nearest" : "sequence",
+    loop: !!o.loop,
     speed: clampNum(o.speed, L.speed.min, L.speed.max, d.speed),
     radius: clampNum(o.radius, L.radius.min, L.radius.max, d.radius),
   };
@@ -134,7 +153,7 @@ export function cloneNavAreaSettings(v: NavAreaSettings): NavAreaSettings {
 }
 
 export function cloneNavAgentSettings(v: NavAgentSettings): NavAgentSettings {
-  return { ...v };
+  return { ...v, targetIds: [...v.targetIds] };
 }
 
 /**
@@ -145,7 +164,7 @@ export function navAreaSettingsSig(s: NavAreaSettings): string {
   return [s.cellSize, s.agentRadius, s.maxSlope, s.maxHeightStep, s.sourceIds.join(","), s.obstaclesMode].join("|");
 }
 
-/** 导航代理绑定签名（区域绑定/半径变化 → 代理状态重置） */
+/** 导航代理绑定签名（区域绑定/目标列表/移动模式/半径速度变化 → 代理状态重置） */
 export function navAgentSettingsSig(s: NavAgentSettings): string {
-  return [s.areaId, s.speed, s.radius].join("|");
+  return [s.areaId, s.targetIds.join(","), s.moveMode, s.loop, s.speed, s.radius].join("|");
 }
