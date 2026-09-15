@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { CameraNode, LightNode, MeshNode, NavAreaNode, NavAgentNode, SkyboxNode, AudioNode, ParticleSystemNode, TerrainNode, FogNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
+import { CameraNode, LightNode, MeshNode, NavAreaNode, NavAgentNode, FsmRunnerNode, BtRunnerNode, SkyboxNode, AudioNode, ParticleSystemNode, TerrainNode, FogNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
   isAudioSourceComponent,
@@ -18,6 +18,7 @@ import { useInspectorCameraSky } from "../composables/inspector/useInspectorCame
 import { useInspectorParticles } from "../composables/inspector/useInspectorParticles";
 import { useInspectorTerrain } from "../composables/inspector/useInspectorTerrain";
 import { useInspectorNav } from "../composables/inspector/useInspectorNav";
+import { useInspectorLogic } from "../composables/inspector/useInspectorLogic";
 import { useInspectorModelMaterial } from "../composables/inspector/useInspectorModelMaterial";
 import { useInspectorFog } from "../composables/inspector/useInspectorFog";
 import { useInspectorUI } from "../composables/inspector/useInspectorUI";
@@ -39,6 +40,8 @@ import ParticleSection from "./inspector/ParticleSection.vue";
 import TerrainSection from "./inspector/TerrainSection.vue";
 import NavAreaSection from "./inspector/NavAreaSection.vue";
 import NavAgentSection from "./inspector/NavAgentSection.vue";
+import FsmRunnerSection from "./inspector/FsmRunnerSection.vue";
+import BtRunnerSection from "./inspector/BtRunnerSection.vue";
 import FogSection from "./inspector/FogSection.vue";
 import UICanvasSection from "./inspector/UICanvasSection.vue";
 import UIImageSection from "./inspector/UIImageSection.vue";
@@ -116,6 +119,7 @@ const {
 const { onParticleUpdate } = useInspectorParticles(inspector);
 const { onTerrainUpdate } = useInspectorTerrain(inspector);
 const { onNavAreaUpdate, onNavAgentUpdate } = useInspectorNav(inspector);
+const { onFsmRunnerUpdate, onBtRunnerUpdate } = useInspectorLogic(inspector);
 const { onModelMaterialUpdate } = useInspectorModelMaterial(inspector);
 const { onFogUpdate } = useInspectorFog(inspector);
 const { onUICanvasUpdate, onUIImageUpdate, onUITextUpdate, onUIButtonUpdate, onUILayoutUpdate } = useInspectorUI(inspector);
@@ -283,6 +287,15 @@ onBeforeUnmount(flushMaterialPersist);
 
       <ComponentCard v-if="node instanceof NavAgentNode" title="Nav Agent" :open="true">
         <NavAgentSection :node="node" :rev="revision" @update="onNavAgentUpdate" />
+      </ComponentCard>
+
+      <!-- 逻辑（层级「逻辑」分组）：状态机/行为树运行器 -->
+      <ComponentCard v-if="node instanceof FsmRunnerNode" title="FSM Runner" :open="true">
+        <FsmRunnerSection :node="node" :rev="revision" @update="onFsmRunnerUpdate" />
+      </ComponentCard>
+
+      <ComponentCard v-if="node instanceof BtRunnerNode" title="BT Runner" :open="true">
+        <BtRunnerSection :node="node" :rev="revision" @update="onBtRunnerUpdate" />
       </ComponentCard>
 
       <ComponentCard v-if="node instanceof FogNode" title="Fog" :open="true">

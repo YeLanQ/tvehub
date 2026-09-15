@@ -121,6 +121,10 @@ class TerrainNode extends Transform {
     return (_b = (_a = state.host) == null ? void 0 : _a.terrains) == null ? void 0 : _b.settingsOf(this.id);
   }
 }
+class FsmRunnerNode extends Transform {
+}
+class BtRunnerNode extends Transform {
+}
 const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "offsetMin", "offsetMax"];
 for (const [Cls, keys] of [
   [UICanvasNode, ["sortOrder", "designWidth", "designHeight", "scaleMode"]],
@@ -154,6 +158,8 @@ const KIND_CLASSES = {
   audioNode: Transform,
   particleSystemNode: ParticleSystemNode,
   terrainNode: TerrainNode,
+  fsmRunnerNode: FsmRunnerNode,
+  btRunnerNode: BtRunnerNode,
   lightNode: LightNode,
   pointLightNode: LightNode,
   directionalLightNode: LightNode,
@@ -180,6 +186,8 @@ SkyboxNode.__nodeKinds = ["skyboxNode"];
 FogNode.__nodeKinds = ["fogNode"];
 ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
 TerrainNode.__nodeKinds = ["terrainNode"];
+FsmRunnerNode.__nodeKinds = ["fsmRunnerNode"];
+BtRunnerNode.__nodeKinds = ["btRunnerNode"];
 UICanvasNode.__nodeKinds = ["uiCanvasNode"];
 UIImageNode.__nodeKinds = ["uiImageNode"];
 UITextNode.__nodeKinds = ["uiTextNode"];
@@ -189,8 +197,10 @@ function isNodeRefType(v) {
   return typeof v === "function" && v !== Entity && Object.prototype.hasOwnProperty.call(v, "__nodeKinds");
 }
 export {
+  BtRunnerNode,
   CameraNode,
   FogNode,
+  FsmRunnerNode,
   KIND_CLASSES,
   LightNode,
   MeshNode,

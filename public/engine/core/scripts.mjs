@@ -72,7 +72,7 @@ function callLifecycle(record, method, ...args) {
     console.error(e);
   }
 }
-async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, canvas }) {
+async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, logic, canvas }) {
   const noop = { fixedUpdate() {
   }, update() {
   }, lateUpdate() {
@@ -90,6 +90,7 @@ async function createScripts({ nodes, cfg, animations, audios, physics, clipAnim
     particles: particles ?? null,
     terrains: terrains ?? null,
     ui: ui ?? null,
+    logic: logic ?? null,
     scripts: { spawn }
   });
   const bindings = [];

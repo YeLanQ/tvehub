@@ -28,6 +28,7 @@ import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { optimizeScene } from "../engine/runtime/batching.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createUI } from "../engine/runtime/ui.mjs";
+import { createLogic } from "../engine/runtime/logic.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
@@ -623,6 +624,16 @@ async function main() {
     return { update() {} };
   });
 
+  // 逻辑运行器（状态机/行为树节点；.fsm/.bt 资产按 rel 读取）：
+  // 必须先于脚本宿主完成——脚本 onStart 时 engine.logic 已可用。
+  // 宿主失败不阻断渲染回放（运行器空转）。
+  let logicApi = { update() {}, dispose() {} };
+  try {
+    logicApi = await createLogic({ nodes });
+  } catch (e) {
+    postLog("error", `逻辑运行时启动失败: ${e?.message ?? e}`);
+  }
+
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
   let scripts = { update() {}, dispose() {} };
   try {
@@ -636,13 +647,14 @@ async function main() {
       particles: particlesApi,
       terrains: terrainsApi,
       ui: uiApi,
+      logic: logicApi,
       canvas: renderer.domElement,
     });
   } catch (e) {
     postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
   }
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
-  window.addEventListener("pagehide", () => scripts.dispose(), { once: true, capture: true });
+  window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); }, { once: true, capture: true });
 
   // 静态场景门控：无用户脚本/模型动画/关键帧剪辑/物理时，场景每帧不变 ——
   // 世界矩阵停更（render 跳过全树遍历重算），阴影贴图只渲染一次
@@ -783,6 +795,8 @@ async function main() {
     // 与物理步进同频，物理相关的确定性逻辑在 onFixedUpdate）
     scripts.fixedUpdate(dt);
     scripts.update(dt);
+    // 逻辑运行器推进（状态机切换/行为树求值；脚本本帧的 fire/参数写入即刻生效）
+    logicApi.update(dt);
     animations?.update(dt);
     physicsApi?.update(dt);
     clipAnims.update(dt);

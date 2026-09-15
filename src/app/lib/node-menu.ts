@@ -93,6 +93,13 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
       { label: "Nav Agent", type: "nav:agent" },
     ],
   });
+  items.push({
+    label: "逻辑",
+    children: [
+      { label: "FSM Runner", type: "logic:fsm" },
+      { label: "BT Runner", type: "logic:bt" },
+    ],
+  });
   // 脚本节点类型：脚本类用 static nodeType 声明的可创建节点
   if (src.scripts.length > 0) {
     items.push({ separator: true });
@@ -131,6 +138,9 @@ export function addNodeArgs(
   } else if (type.startsWith("nav:")) {
     args.kind = "nav";
     args.subtype = type.slice("nav:".length);
+  } else if (type.startsWith("logic:")) {
+    args.kind = "logic";
+    args.subtype = type.slice("logic:".length);
   } else if (type.startsWith("script:")) {
     args.kind = "script";
     args.subtype = type.slice("script:".length);

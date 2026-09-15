@@ -7,12 +7,13 @@ import { inputApi } from "./tve/input.mjs";
 import { tickTime } from "./tve/input.mjs";
 import { installRuntime, registerComponent, registerScriptClass, resolveNodeEntity, resolveScriptClass, resolveScriptInstance } from "./tve/runtime.mjs";
 import { resolveComponentField } from "./tve/component-registry.mjs";
-import { CameraNode, FogNode, LightNode, MeshNode, ParticleSystemNode, SkyboxNode, TerrainNode, Transform, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, CameraNode as CameraNode2, FogNode as FogNode2, LightNode as LightNode2, MeshNode as MeshNode2, ParticleSystemNode as ParticleSystemNode2, SkyboxNode as SkyboxNode2, TerrainNode as TerrainNode2, Transform as Transform2, UIButtonNode as UIButtonNode2, UICanvasNode as UICanvasNode2, UIImageNode as UIImageNode2, UILayoutNode as UILayoutNode2, UITextNode as UITextNode2 } from "./tve/node-types.mjs";
+import { BtRunnerNode, CameraNode, FogNode, FsmRunnerNode, LightNode, MeshNode, ParticleSystemNode, SkyboxNode, TerrainNode, Transform, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, BtRunnerNode as BtRunnerNode2, CameraNode as CameraNode2, FogNode as FogNode2, FsmRunnerNode as FsmRunnerNode2, LightNode as LightNode2, MeshNode as MeshNode2, ParticleSystemNode as ParticleSystemNode2, SkyboxNode as SkyboxNode2, TerrainNode as TerrainNode2, Transform as Transform2, UIButtonNode as UIButtonNode2, UICanvasNode as UICanvasNode2, UIImageNode as UIImageNode2, UILayoutNode as UILayoutNode2, UITextNode as UITextNode2 } from "./tve/node-types.mjs";
 import { Component, nodeType, property } from "./tve/decorators.mjs";
 import { Delegate } from "./tve/delegate.mjs";
 import { Pool } from "./tve/pool.mjs";
 import { DataCenter, dataCenter } from "./tve/data-center.mjs";
 import { physicsApi, particlesApi, audioApi, animationApi, sceneApi } from "./tve/engine-api.mjs";
+import { logicApi } from "./tve/logic-api.mjs";
 import { uiApi } from "./tve/ui-api.mjs";
 import { math } from "./tve/math.mjs";
 import { AnimationClip, AudioSource, Collider, RigidBody, SkeletalAnimation } from "./tve/component-facades.mjs";
@@ -29,6 +30,7 @@ const engine = {
   particles: particlesApi,
   physics: physicsApi,
   ui: uiApi,
+  logic: logicApi,
   tween,
   log(...args) {
     postLog("info", formatArgs(args));
@@ -46,6 +48,7 @@ const engine = {
 export {
   AnimationClip,
   AudioSource,
+  BtRunnerNode,
   CameraNode,
   Collider,
   Component,
@@ -53,6 +56,7 @@ export {
   Delegate,
   Entity,
   FogNode,
+  FsmRunnerNode,
   Light,
   LightNode,
   MeshNode,
@@ -70,11 +74,13 @@ export {
   UILayoutNode,
   UITextNode,
   VERSION,
+  BtRunnerNode2 as btRunnerNode,
   CameraNode2 as cameraNode,
   dataCenter,
   easing,
   engine,
   FogNode2 as fogNode,
+  FsmRunnerNode2 as fsmRunnerNode,
   getEntity,
   installRuntime,
   LightNode2 as lightNode,

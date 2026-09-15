@@ -11,6 +11,8 @@ export { ParticleSystemNode, type ParticleSystemNodeInit } from "./ParticleSyste
 export { TerrainNode, type TerrainNodeInit } from "./TerrainNode";
 export { NavAreaNode, type NavAreaNodeInit } from "./NavAreaNode";
 export { NavAgentNode, type NavAgentNodeInit } from "./NavAgentNode";
+export { FsmRunnerNode, type FsmRunnerNodeInit } from "./FsmRunnerNode";
+export { BtRunnerNode, type BtRunnerNodeInit } from "./BtRunnerNode";
 export { FogNode, type FogNodeInit, type IFogNode } from "./FogNode";
 export {
   UICanvasNode,

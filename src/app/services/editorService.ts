@@ -110,6 +110,12 @@ function applyProjectAccess(engine: EditorEngine, root: string | null): void {
   engine.materials.setFetcher(root ? (rel) => loadMaterialDoc(root, rel) : null);
   // 项目切换后旧缓存不可跨项目复用（同 rel 指向不同文件）
   engine.materials.clear();
+  // 逻辑资产（.fsm/.bt）来源：通用 readText（JSON 文本，编辑器与运行时共用格式）
+  engine.logic.setFetcher(
+    root
+      ? (rel) => api.readText(root, rel).catch(() => null)
+      : null,
+  );
   // 着色器文档来源：后端 shader_read（渲染分支与源码解析均在 Rust）
   engine.shaders.setFetcher(root ? (rel) => loadShaderDoc(root, rel) : null);
   engine.shaders.clear();

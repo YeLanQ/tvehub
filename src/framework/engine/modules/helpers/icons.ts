@@ -112,6 +112,23 @@ export const NAV_AGENT_ICON_PATHS: string[] = [
   "M12 2.5l7 18-7-4.2-7 4.2z",
 ];
 
+/** 状态机运行器：双状态框 + 转移箭头（.fsm 状态图语义） */
+export const FSM_RUNNER_ICON_PATHS: string[] = [
+  "M4 4.5h8v6H4z",
+  "M11.5 13.75H19.5v6h-8z",
+  "M8 10.5v6.25h3",
+  "M9.25 14.75l2.5 2-2.5 2",
+];
+
+/** 行为树运行器：根干分双枝 + 两子节点框（.bt 树语义） */
+export const BT_RUNNER_ICON_PATHS: string[] = [
+  "M12 3.5v4",
+  "M12 7.5l-5.5 4",
+  "M12 7.5l5.5 4",
+  "M3.5 11.5h6v5h-6z",
+  "M14.5 11.5h6v5h-6z",
+];
+
 /** UI 画布：层叠矩形画框（Canvas-Widget 的 Canvas 语义） */
 export const UI_CANVAS_ICON_PATHS: string[] = [
   "M3 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",

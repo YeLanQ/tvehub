@@ -31,6 +31,8 @@
     "smoke:particles-runtime": "node scripts/smoke-particles-runtime.mjs",
     "smoke:terrain": "vite build --ssr scripts/smoke-terrain.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-terrain.js",
     "smoke:fsm": "vite build --ssr scripts/smoke-fsm.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-fsm.js",
+    "smoke:logic-engine": "vite build --ssr scripts/smoke-logic-engine.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-logic-engine.js",
+    "smoke:logic-runtime": "node scripts/smoke-logic-runtime.mjs",
     "smoke:nav": "vite build --ssr scripts/smoke-nav.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-nav.js",
     "smoke:terrain-paint": "vite build --ssr scripts/smoke-terrain-paint.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-terrain-paint.js",
     "smoke:fog": "vite build --ssr scripts/smoke-fog.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-fog.js",

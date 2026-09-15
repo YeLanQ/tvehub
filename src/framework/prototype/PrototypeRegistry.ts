@@ -1,9 +1,11 @@
 import {
   AmbientLightNode,
   AudioNode,
+  BtRunnerNode,
   CameraNode,
   DirectionalLightNode,
   FogNode,
+  FsmRunnerNode,
   LightNode,
   MeshNode,
   NavAgentNode,
@@ -87,6 +89,9 @@ export function createDefaultRegistry(): PrototypeRegistry {
   // 导航（层级「导航」分组）：区域 = 烘焙载体；代理 = 寻路移动体
   registry.register(NavAreaNode.kType, () => new NavAreaNode());
   registry.register(NavAgentNode.kType, () => new NavAgentNode());
+  // 逻辑运行器（层级「逻辑」分组）：状态机/行为树资产的场景载体
+  registry.register(FsmRunnerNode.kType, () => new FsmRunnerNode());
+  registry.register(BtRunnerNode.kType, () => new BtRunnerNode());
   // 场景环境雾（线性/指数；场景级节点，与天空盒同语义）
   registry.register(FogNode.kType, () => new FogNode());
   // UI（Canvas-Widget）：画布容器 + 图片/文本/按钮 Widget + 布局容器

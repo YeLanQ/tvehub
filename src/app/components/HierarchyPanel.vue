@@ -26,6 +26,8 @@ import {
   UI_LAYOUT_ICON_PATHS,
   NAV_AREA_ICON_PATHS,
   NAV_AGENT_ICON_PATHS,
+  FSM_RUNNER_ICON_PATHS,
+  BT_RUNNER_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 import {
   openContextMenu,
@@ -65,6 +67,8 @@ const NODE_ICONS: Record<string, { d: string[]; color: string }> = {
   fogNode: { d: FOG_ICON_PATHS, color: "#b7c6d6" },
   navAreaNode: { d: NAV_AREA_ICON_PATHS, color: "#9fd48a" },
   navAgentNode: { d: NAV_AGENT_ICON_PATHS, color: "#6fd6ff" },
+  fsmRunnerNode: { d: FSM_RUNNER_ICON_PATHS, color: "#569cd6" },
+  btRunnerNode: { d: BT_RUNNER_ICON_PATHS, color: "#dcdcaa" },
   uiCanvasNode: { d: UI_CANVAS_ICON_PATHS, color: "#f4a261" },
   uiImageNode: { d: UI_IMAGE_ICON_PATHS, color: "#90be6d" },
   uiTextNode: { d: UI_TEXT_ICON_PATHS, color: "#6ea8fe" },
@@ -88,6 +92,8 @@ const FALLBACK_BADGE: Record<string, string> = {
   fogNode: "F",
   navAreaNode: "NA",
   navAgentNode: "AG",
+  fsmRunnerNode: "FS",
+  btRunnerNode: "BE",
   uiCanvasNode: "UI",
   uiImageNode: "IM",
   uiTextNode: "TX",

@@ -1,8 +1,10 @@
 import type { JsonRecord, Vec3 } from "../prototype/types";
 import {
   AudioNode,
+  BtRunnerNode,
   CameraNode,
   FogNode,
+  FsmRunnerNode,
   LightNode,
   MeshNode,
   NavAgentNode,
@@ -37,6 +39,8 @@ export type EditorNodeType =
   | "terrainNode"
   | "navAreaNode"
   | "navAgentNode"
+  | "fsmRunnerNode"
+  | "btRunnerNode"
   | "fogNode"
   | "uiCanvasNode"
   | "uiImageNode"
@@ -183,6 +187,22 @@ export class NodeFactory {
     return node;
   }
 
+  /** 创建状态机运行器节点（.fsm 资产的场景载体；资产经检查器绑定） */
+  createFsmRunner(opts: CreateOptions = {}): FsmRunnerNode {
+    const node = this.registry.create("fsmRunnerNode") as FsmRunnerNode;
+    node.name = opts.name ?? "FSM Runner";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
+  /** 创建行为树运行器节点（.bt 资产的场景载体；资产经检查器绑定） */
+  createBtRunner(opts: CreateOptions = {}): BtRunnerNode {
+    const node = this.registry.create("btRunnerNode") as BtRunnerNode;
+    node.name = opts.name ?? "BT Runner";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   /** 按雾类型创建雾节点（线性 Fog / 指数 FogExp2 / 高度雾；场景环境级，参数经检查器调整） */
   createFog(kind: FogKind, opts: CreateOptions = {}): FogNode {
     const node = this.registry.create("fogNode") as FogNode;
@@ -264,7 +284,11 @@ type NodeOf<K extends EditorNodeType> = K extends "meshNode"
                 ? NavAreaNode
                 : K extends "navAgentNode"
                   ? NavAgentNode
-                  : K extends "fogNode"
+                  : K extends "fsmRunnerNode"
+                    ? FsmRunnerNode
+                    : K extends "btRunnerNode"
+                      ? BtRunnerNode
+                      : K extends "fogNode"
                     ? FogNode
                     : K extends "uiCanvasNode"
                   ? UICanvasNode
@@ -292,6 +316,8 @@ export type {
   TerrainNode,
   NavAreaNode,
   NavAgentNode,
+  FsmRunnerNode,
+  BtRunnerNode,
   FogNode,
   UICanvasNode,
   UIImageNode,

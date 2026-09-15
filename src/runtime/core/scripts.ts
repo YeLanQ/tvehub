@@ -129,10 +129,11 @@ function callLifecycle(record, method, ...args) {
  * @param {{play,pause,stop,restart,clear,infoOf,settingsOf,updateSettings}|null} opts.particles 粒子系统控制（engine.particles / ParticleSystemNode 转发）
  * @param {{sampleHeight,sampleSlope,settingsOf}|null} opts.terrains 地形系统（TerrainNode 贴地采样转发）
  * @param {{update,applyTextures,settingsOf,updateSettings,onClick,offClick}|null} opts.ui UI 运行时控制（engine.ui / UI 节点门面转发）
+ * @param {{update,fire,setFsmParam,onFsmEnter,onAction,...}|null} opts.logic 逻辑运行器控制（状态机/行为树；engine.logic 转发）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, logic, canvas }) {
   const noop = { fixedUpdate() {}, update() {}, lateUpdate() {}, dispose() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -146,6 +147,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     particles: particles ?? null,
     terrains: terrains ?? null,
     ui: ui ?? null,
+    logic: logic ?? null,
     scripts: { spawn },
   });
 

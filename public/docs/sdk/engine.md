@@ -1,6 +1,6 @@
 # engine 入口
 
-`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志）。全部子系统**按实体（Entity）寻址**：拿到实体句柄（`@property` 节点引用、`engine.scene.find` 等）后传入各 API。
+`engine` 是脚本的全局系统入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 逻辑 / 补间 / 日志）。全部子系统**按实体（Entity）寻址**：拿到实体句柄（`@property` 节点引用、`engine.scene.find` 等）后传入各 API。
 
 ## 时间：engine.time
 
@@ -156,6 +156,41 @@ engine.ui.rectOf(entity);        // 解析矩形（画布局部空间，锚点/�
 engine.ui.metricsOf(entity);     // 所在画布屏幕度量（px ↔ UI 单位换算）
 engine.ui.screenToUi(entity, x, y); // 屏幕像素坐标 → 画布局部 UI 坐标
 ```
+
+## 逻辑：engine.logic
+
+按实体寻址；**状态机/行为树运行器节点**（层级「逻辑」分组的 FSM Runner / BT Runner，编辑器里绑定 `.fsm` / `.bt` 资产）的脚本控制入口。运行态（当前状态/黑板）不落盘；状态切换与动作行为全部由脚本消费。
+
+状态机：过渡触发器（事件 / 定时 / 参数条件）在编辑器的 `.fsm` 图里定义，脚本负责喂事件、写参数、响应状态：
+
+```ts
+// 状态进入时播动画（经典 Idle/Walk/Attack 驱动）
+engine.logic.onFsmEnter(entity, "Attack", () => engine.animation.play(entity, "attack"));
+engine.logic.onFsmExit(entity, "", (s) => engine.animation.stop(entity)); // 空 match = 任意状态
+
+engine.logic.fire(entity, "hit");                 // 发射事件（事件过渡的触发器）
+engine.logic.setFsmParam(entity, "hp", 20);       // 写参数（条件过渡的黑板）
+engine.logic.getFsmParam(entity, "hp");
+engine.logic.fsmState(entity);                    // { id, name, time } | null
+engine.logic.forceFsmState(entity, "Walk");       // 强制切换（状态 id 或显示名）
+```
+
+行为树：条件叶子读黑板，动作叶子经 `onAction` 注册行为；返回三值状态（缺省成功）：
+
+```ts
+engine.logic.setBtParam(entity, "ready", 1);      // 写黑板（条件叶子的求值对象）
+engine.logic.btStatus(entity);                    // "success" | "failure" | "running" | null
+
+engine.logic.onAction(entity, "walkTo", (leaf, session) => {
+  if (session.seq !== this.lastSeq) {             // 全新开始（首次/完成后再入/被中断）→ 复位
+    this.lastSeq = session.seq;
+    this.step = 0;
+  }
+  return ++this.step >= 10 ? "success" : "running"; // running = 续行（下一帧再调）
+});
+```
+
+通用控制：`setRunning(entity, false)` 暂停 / `restart(entity)` 重启（状态回入口、黑板回默认）。订阅与 `onAction` 都返回解绑函数。
 
 ## 补间动画：engine.tween
 

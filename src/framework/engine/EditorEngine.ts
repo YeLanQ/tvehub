@@ -15,8 +15,10 @@ import { isAudioSourceComponent } from "../prototype/Node";
 import { instantiatePrefabTree, serializePrefabTree } from "../prototype/prefab";
 import {
   AudioNode,
+  BtRunnerNode,
   CameraNode,
   FogNode,
+  FsmRunnerNode,
   LightNode,
   MeshNode,
   NavAgentNode,
@@ -84,6 +86,7 @@ import {
   type NavHeightField,
   type NavObstacle,
 } from "../navigation";
+import { LogicSystem } from "../logic";
 import { UISystem, uiParentRectInOwnSpace } from "./modules/ui";
 import {
   uiAnchorFieldsForRect,
@@ -112,6 +115,8 @@ const SCRIPT_NODE_BASE: Record<
   terrainNode: (e, p) => e.addTerrain(p),
   navAreaNode: (e, p) => e.addNavArea(p),
   navAgentNode: (e, p) => e.addNavAgent(p),
+  fsmRunnerNode: (e, p) => e.addFsmRunner(p),
+  btRunnerNode: (e, p) => e.addBtRunner(p),
   fogNode: (e, p) => e.addFog("linear", p),
   uiCanvasNode: (e, p) => e.addUICanvas(p),
   uiImageNode: (e, p) => e.addUIImage(p),
@@ -140,6 +145,8 @@ export interface EditorEvents extends Record<string, unknown> {
   "physics:changed": { nodeId: string };
   /** 粒子系统运行时变化（播放/暂停/停止/重启控制后广播） */
   "particles:changed": { nodeId: string };
+  /** 逻辑运行器运行时变化（绑定/资产就绪/状态切换/黑板写入） */
+  "logic:changed": { nodeId: string };
 }
 
 /** Vec2 近似相等（换父补偿的同值判定，容差远小于任何可视偏移） */
@@ -176,6 +183,8 @@ export class EditorEngine {
   readonly particles = new ParticleSystem();
   /** 导航系统（导航区域烘焙：可行走网格 + SDF 距离场；代理寻路移动） */
   readonly nav = new NavSystem();
+  /** 逻辑系统（状态机/行为树运行器绑定 .fsm/.bt 资产并推进；渲染循环 tick） */
+  readonly logic = new LogicSystem();
   /** 导航多源合并高度场缓存（areaId → {签名键, 场}；源未变不重光栅） */
   private readonly navFieldCache = new Map<string, { key: string; field: NavHeightField & { sig: string } }>();
   /** 导航网格源 XZ 范围缓存（nodeId → {签名, AABB}；几何遍历只在签名变化时做） */
@@ -363,6 +372,8 @@ export class EditorEngine {
     };
     // 粒子运行时变化（播放控制）→ 广播给检查器刷新状态文案
     this.particles.onChange((nodeId) => this.events.emit("particles:changed", { nodeId }));
+    // 逻辑运行时变化（绑定/资产就绪/状态切换）→ 广播给检查器刷新状态视图
+    this.logic.onChange = (nodeId) => this.events.emit("logic:changed", { nodeId });
     // 粒子贴图走与材质贴图同一套 rel → asset:// 加载缓存（颜色贴图 sRGB）
     this.particles.setTextureLoader((rel) => this.loadTexture(rel, true));
     this.helperSystem = new HelperSystem(this.renderer.scene, {
@@ -573,6 +584,8 @@ export class EditorEngine {
       this.particles.update(dt);
       // 导航代理推进（沿烘焙路径移动，SDF 查表滑移避障；区域改设置即重烘焙）
       this.nav.update(dt);
+      // 逻辑运行器推进（状态机切换/行为树求值；资产绑定变化即热重建）
+      this.logic.update(dt);
       // 着色器 Hook 时间（_Time 秒；按帧间隔累加，与 clock 多次取值互不干扰）
       // GL 侧走材质 userData 的 uniform 表，GPU 侧走节点 uniform，两条路都要推
       this.shaderTime += dt;
@@ -888,6 +901,24 @@ export class EditorEngine {
   addNavAgent(parentId?: string): NavAgentNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createNavAgent({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加状态机运行器节点（.fsm 资产的场景载体；资产经检查器绑定） */
+  addFsmRunner(parentId?: string): FsmRunnerNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createFsmRunner({ parentId: parent?.id ?? null });
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加行为树运行器节点（.bt 资产的场景载体；资产经检查器绑定） */
+  addBtRunner(parentId?: string): BtRunnerNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createBtRunner({ parentId: parent?.id ?? null });
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -1592,6 +1623,16 @@ export class EditorEngine {
     } else if (c.kind === "reparent") {
       this.resyncNavAreas();
     }
+    // 逻辑运行器节点：入图/属性变更 → 按最新设置同步（绑定资产变化即热重建）；
+    // 移除 → 解绑清理运行态
+    if (c.kind === "remove") {
+      this.logic.unbind(c.nodeId);
+    } else if (c.kind === "add" || c.kind === "properties" || c.kind === "replace") {
+      const n = this.graph.get(c.nodeId);
+      const obj = this.synchronizer.getObjectMap().get(c.nodeId);
+      if (obj && n instanceof FsmRunnerNode) this.logic.syncFsm(n, obj);
+      else if (obj && n instanceof BtRunnerNode) this.logic.syncBt(n, obj);
+    }
     this.events.emit("graph:changed", c);
     this.syncPreviewView();
     // 场景结构/属性变化（增删/重挂/属性/整体替换）→ 天空背景可能变化；纯变换/改名不重算
@@ -1644,6 +1685,8 @@ export class EditorEngine {
     this.navFieldCache.clear();
     this.navMeshBoundsCache.clear();
     this.navObstacleCache = null;
+    // 逻辑运行态同样指向旧场景对象：整体重建后按新对象重绑（运行开关随设置）
+    this.logic.unbindAll();
     this.synchronizer.rebuildAll(this.graph);
     this.helperSystem.rebuildAll(this.graph, this.synchronizer.getObjectMap());
     this.gizmo.select(this.selectedId, this.synchronizer.getObjectMap());
@@ -1663,6 +1706,14 @@ export class EditorEngine {
         if (obj) {
           if (node instanceof NavAreaNode) this.nav.syncArea(node, obj);
           else this.nav.syncAgent(node, obj);
+        }
+      }
+      // 逻辑运行器：按新对象重绑（资产文本按 rel 缓存命中则不重读）
+      if (node instanceof FsmRunnerNode || node instanceof BtRunnerNode) {
+        const obj = this.synchronizer.getObjectMap().get(node.id);
+        if (obj) {
+          if (node instanceof FsmRunnerNode) this.logic.syncFsm(node, obj);
+          else this.logic.syncBt(node, obj);
         }
       }
       this.syncAudioComponents(node);

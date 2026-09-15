@@ -11,6 +11,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { getProjectStore } from "../../stores/project";
 import { logStore } from "../../stores/log";
+import { getEditorStore } from "../../stores/editor";
 import { api } from "../../../lib/api";
 import { closeBehaviorTreeEditor } from "../../composables/logic-editor";
 import { useGraphCanvas, type GraphBounds } from "../../composables/graph-canvas";
@@ -103,6 +104,8 @@ async function save(): Promise<boolean> {
       JSON.parse(JSON.stringify(tree.value)) as Record<string, unknown>,
     );
     dirty.value = false;
+    // 场景里绑定该资产的运行器热重建（不必重开场景/重启运行）
+    getEditorStore().engine.logic.invalidateAsset(props.rel);
     logStore.log("success", `已保存行为树: ${props.rel}`);
     return true;
   } catch (e) {

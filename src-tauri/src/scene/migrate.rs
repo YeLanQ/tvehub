@@ -681,6 +681,44 @@ pub fn collect_terrain_texture_refs(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// 遍历场景 JSON 收集逻辑运行器节点的资产引用（.fsm/.bt 文本资产；去重）：
+/// fsmRunnerNode/btRunnerNode 的 settings.asset 字段（空串 = 未绑定，不收集）。
+/// 播放器侧 runtime/logic.mjs 按同相对路径读取（编辑器 LogicSystem 同形状）。
+pub fn collect_logic_refs(v: &Value, out: &mut Vec<String>) {
+    fn is_logic_rel(rel: &str) -> bool {
+        let lower = rel.to_ascii_lowercase();
+        lower.ends_with(".fsm") || lower.ends_with(".bt")
+    }
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_logic_refs(item, out);
+            }
+        }
+        Value::Object(o) => {
+            let ty = o.get("type").and_then(Value::as_str);
+            if matches!(ty, Some("fsmRunnerNode") | Some("btRunnerNode")) {
+                if let Some(rel) = o
+                    .get("settings")
+                    .and_then(|s| s.get("asset"))
+                    .and_then(Value::as_str)
+                {
+                    if !rel.is_empty() && is_logic_rel(rel) && !out.iter().any(|r| r == rel) {
+                        out.push(rel.to_string());
+                    }
+                }
+            }
+            if let Some(children) = o.get("children") {
+                collect_logic_refs(children, out);
+            }
+            if let Some(root) = o.get("root") {
+                collect_logic_refs(root, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 旧 meshNode 是否携带内嵌材质参数（material 非字符串且存在任一 legacy 字段）
 fn legacy_params_of(o: &Map<String, Value>) -> Option<MaterialParams> {
     if matches!(o.get("material"), Some(Value::String(_))) {

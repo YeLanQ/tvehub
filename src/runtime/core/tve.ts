@@ -44,6 +44,8 @@ import {
   FogNode,
   ParticleSystemNode,
   TerrainNode,
+  FsmRunnerNode,
+  BtRunnerNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,
@@ -55,6 +57,7 @@ import { Delegate } from "./tve/delegate";
 import { Pool } from "./tve/pool";
 import { DataCenter, dataCenter } from "./tve/data-center";
 import { animationApi, audioApi, particlesApi, physicsApi, sceneApi } from "./tve/engine-api";
+import { logicApi } from "./tve/logic-api";
 import { uiApi } from "./tve/ui-api";
 import { math } from "./tve/math";
 
@@ -71,6 +74,7 @@ const engine = {
   particles: particlesApi,
   physics: physicsApi,
   ui: uiApi,
+  logic: logicApi,
   tween,
   log(...args) {
     postLog("info", formatArgs(args));
@@ -102,6 +106,8 @@ export {
   FogNode,
   ParticleSystemNode,
   TerrainNode,
+  FsmRunnerNode,
+  BtRunnerNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,
@@ -115,6 +121,8 @@ export {
   FogNode as fogNode,
   ParticleSystemNode as particleSystemNode,
   TerrainNode as terrainNode,
+  FsmRunnerNode as fsmRunnerNode,
+  BtRunnerNode as btRunnerNode,
   UICanvasNode as uiCanvasNode,
   UIImageNode as uiImageNode,
   UITextNode as uiTextNode,

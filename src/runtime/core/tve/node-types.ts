@@ -57,6 +57,11 @@ class TerrainNode extends Transform {
   get settings() { return state.host?.terrains?.settingsOf(this.id); }
 }
 
+/** 状态机运行器节点：逻辑控制走 engine.logic（fire/参数/状态订阅等） */
+class FsmRunnerNode extends Transform {}
+/** 行为树运行器节点：逻辑控制走 engine.logic（黑板/动作注册等） */
+class BtRunnerNode extends Transform {}
+
 const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "offsetMin", "offsetMax"];
 
 for (const [Cls, keys] of [
@@ -85,6 +90,8 @@ const KIND_CLASSES = {
   audioNode: Transform,
   particleSystemNode: ParticleSystemNode,
   terrainNode: TerrainNode,
+  fsmRunnerNode: FsmRunnerNode,
+  btRunnerNode: BtRunnerNode,
   lightNode: LightNode,
   pointLightNode: LightNode,
   directionalLightNode: LightNode,
@@ -110,6 +117,8 @@ SkyboxNode.__nodeKinds = ["skyboxNode"];
 FogNode.__nodeKinds = ["fogNode"];
 ParticleSystemNode.__nodeKinds = ["particleSystemNode"];
 TerrainNode.__nodeKinds = ["terrainNode"];
+FsmRunnerNode.__nodeKinds = ["fsmRunnerNode"];
+BtRunnerNode.__nodeKinds = ["btRunnerNode"];
 UICanvasNode.__nodeKinds = ["uiCanvasNode"];
 UIImageNode.__nodeKinds = ["uiImageNode"];
 UITextNode.__nodeKinds = ["uiTextNode"];
@@ -131,6 +140,8 @@ export {
   FogNode,
   ParticleSystemNode,
   TerrainNode,
+  FsmRunnerNode,
+  BtRunnerNode,
   UICanvasNode,
   UIImageNode,
   UITextNode,

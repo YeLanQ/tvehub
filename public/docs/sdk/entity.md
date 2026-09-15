@@ -140,9 +140,10 @@ onUpdate(delta: number) {
 | `SkyboxNode` | 天空盒节点 |
 | `FogNode` | 雾节点（场景环境雾：线性/指数；第一个启用且可见的雾节点生效） |
 | `ParticleSystemNode` | 粒子系统节点（额外提供播放控制与发射参数读写，见下） |
+| `FsmRunnerNode` / `BtRunnerNode` | 状态机/行为树运行器节点（控制走 `engine.logic`，见 [engine 入口](engine.md)） |
 | `UICanvasNode` / `UIImageNode` / `UITextNode` / `UIButtonNode` / `UILayoutNode` | UI 画布与 Widget 节点（字段见 [UI](ui.md)） |
 
-小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` / `fogNode` / `particleSystemNode` / `uiCanvasNode` / `uiImageNode` / `uiTextNode` / `uiButtonNode` / `uiLayoutNode` 同样导出。
+小写别名 `transform` / `meshNode` / `lightNode` / `cameraNode` / `skyboxNode` / `fogNode` / `particleSystemNode` / `fsmRunnerNode` / `btRunnerNode` / `uiCanvasNode` / `uiImageNode` / `uiTextNode` / `uiButtonNode` / `uiLayoutNode` 同样导出。
 
 ```ts
 // instanceof 判别（引用声明为宽类型时收窄）

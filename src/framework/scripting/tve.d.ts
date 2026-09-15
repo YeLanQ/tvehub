@@ -38,6 +38,8 @@ export type EntityKind =
   | "audioNode"
   | "particleSystemNode"
   | "terrainNode"
+  | "fsmRunnerNode"
+  | "btRunnerNode"
   | "uiCanvasNode"
   | "uiImageNode"
   | "uiTextNode"
@@ -54,6 +56,8 @@ export type NodeClass =
   | typeof FogNode
   | typeof ParticleSystemNode
   | typeof TerrainNode
+  | typeof FsmRunnerNode
+  | typeof BtRunnerNode
   | typeof UICanvasNode
   | typeof UIImageNode
   | typeof UITextNode
@@ -666,6 +670,115 @@ export interface TerrainSettingsSnapshot {
   grassColor: number;
   rockColor: number;
   snowColor: number;
+}
+
+// ---------------------------------------------------------------------------
+// 逻辑运行器（状态机/行为树）：场景节点句柄 + engine.logic 控制接口
+// .fsm/.bt 资产在编辑器经「逻辑」分组的运行器节点绑定；运行态（当前状态/
+// 黑板/运行记忆）不序列化。控制统一走 engine.logic（按实体寻址）。
+// ---------------------------------------------------------------------------
+
+/** 状态机运行器节点（编辑器 fsmRunnerNode）：控制走 {@link engine.logic} */
+export class FsmRunnerNode extends Entity {}
+
+/** 行为树运行器节点（编辑器 btRunnerNode）：控制走 {@link engine.logic} */
+export class BtRunnerNode extends Entity {}
+
+/** 行为树节点求值状态 */
+export type BTStatus = "success" | "failure" | "running";
+
+/** 状态机状态快照 */
+export interface LogicStateInfo {
+  /** 状态 id（图内唯一） */
+  id: string;
+  /** 显示名 */
+  name: string;
+  /** 当前状态停留秒数 */
+  time: number;
+}
+
+/** 动作叶子数据（engine.logic.onAction 处理器的入参） */
+export interface BTActionLeaf {
+  /** 叶节点 id（树内唯一；同动作名多处使用时用它区分实例） */
+  id: string;
+  /** 动作名 */
+  action: string;
+}
+
+/**
+ * 动作求值会话：seq 为求值代际，每次全新开始（首次 / 完成后树重启再入 /
+ * 被中断后重入）自增；running 续行时不变——有状态的动作比对 seq 复位。
+ */
+export interface BTActionSession {
+  seq: number;
+}
+
+/** 动作处理器：返回三值状态（缺省视为 success） */
+export type BTActionHandler = (
+  leaf: BTActionLeaf,
+  session: BTActionSession,
+) => BTStatus | void;
+
+/** 逻辑控制接口（engine.logic）：状态机/行为树运行器的脚本入口 */
+export interface LogicApi {
+  // —— 状态机（fsmRunnerNode 实体）——
+  /** 状态机当前状态（未绑定/未启动返回 null） */
+  fsmState(entity: Entity): LogicStateInfo | null;
+  /** 发射事件（进入当前状态以来的首次发射有效；事件过渡的触发器） */
+  fire(entity: Entity, event: string): void;
+  /** 写运行参数（条件过渡的黑板；布尔按 0/1 参与比较） */
+  setFsmParam(entity: Entity, name: string, value: number | boolean): void;
+  /** 读运行参数（未定义返回 undefined） */
+  getFsmParam(entity: Entity, name: string): number | boolean | undefined;
+  /** 强制切换状态（stateId 或状态名；不经触发器；未知忽略） */
+  forceFsmState(entity: Entity, stateId: string): void;
+  /**
+   * 订阅状态进入（含初始进入）。match = 状态 id 或显示名（空 = 任意状态）；
+   * 返回解绑函数。回调里可安全操作实体（engine.animation.play 等）。
+   */
+  onFsmEnter(
+    entity: Entity,
+    match: string,
+    cb: (state: LogicStateInfo) => void,
+  ): () => void;
+  /** 订阅状态退出（match 参数同 {@link LogicApi.onFsmEnter}） */
+  onFsmExit(
+    entity: Entity,
+    match: string,
+    cb: (state: LogicStateInfo) => void,
+  ): () => void;
+  /** 订阅任意过渡（cb(from, to)；返回解绑函数） */
+  onFsmTransition(
+    entity: Entity,
+    cb: (from: LogicStateInfo, to: LogicStateInfo) => void,
+  ): () => void;
+
+  // —— 行为树（btRunnerNode 实体）——
+  /** 整树最近一次 tick 结果（未就绪返回 null） */
+  btStatus(entity: Entity): BTStatus | null;
+  /** 写黑板（条件叶子的求值对象） */
+  setBtParam(entity: Entity, name: string, value: number | boolean): void;
+  /** 读黑板（未定义返回 undefined） */
+  getBtParam(entity: Entity, name: string): number | boolean | undefined;
+  /**
+   * 注册动作叶处理器（按动作名；后注册覆盖；返回解绑函数）。
+   * 未注册的动作按成功处理。handler 返回 "running" 时下一帧会再次调用
+   * 同一动作叶（续行，session.seq 不变）；动作重新开始时 seq 自增，据此复位：
+   *
+   * ```ts
+   * engine.logic.onAction(this.entity, "walkTo", (leaf, session) => {
+   *   if (session.seq !== this.lastSeq) { this.lastSeq = session.seq; this.step = 0; }
+   *   return ++this.step >= 10 ? "success" : "running";
+   * });
+   * ```
+   */
+  onAction(entity: Entity, name: string, handler: BTActionHandler): () => void;
+
+  // —— 通用 ——
+  /** 运行开关（暂停/恢复；恢复时未启动则从入口开始） */
+  setRunning(entity: Entity, running: boolean): void;
+  /** 重启（状态回入口/黑板回默认/清运行记忆） */
+  restart(entity: Entity): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -2045,7 +2158,7 @@ export interface UIApi {
   screenToUi(entity: Entity, x: number, y: number): UIPoint | null;
 }
 
-/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 补间 / 日志） */
+/** 引擎入口（时间 / 输入 / 场景 / 动画 / 音频 / 粒子 / 物理 / UI / 逻辑 / 补间 / 日志） */
 export interface EngineApi {
   readonly time: TimeState;
   readonly input: InputApi;
@@ -2055,6 +2168,8 @@ export interface EngineApi {
   readonly particles: ParticlesApi;
   readonly physics: PhysicsApi;
   readonly ui: UIApi;
+  /** 逻辑运行器（状态机/行为树）控制，详见 {@link LogicApi} */
+  readonly logic: LogicApi;
   /** 补间动画（与顶层导出 tween 同一对象，详见 {@link TweenApi}） */
   readonly tween: TweenApi;
   /** 输出到编辑器控制台（预览）/ 浏览器控制台（发布产物） */

@@ -114,6 +114,22 @@ registerCommand({
         else node = engine().addNavArea(parentId);
         break;
       }
+      case "logic":
+      case "fsm":
+      case "fsmrunner":
+      case "bt":
+      case "btrunner": {
+        // logic:<fsm|bt>（裸 "fsm"/"bt" 亦可）；运行器建好后经检查器绑定逻辑资产
+        const logicKind = kind.startsWith("logic")
+          ? (subtype ?? "fsm")
+          : kind.startsWith("fsm")
+            ? "fsm"
+            : "bt";
+        if (logicKind === "bt") node = engine().addBtRunner(parentId);
+        else if (logicKind === "fsm") node = engine().addFsmRunner(parentId);
+        else throw new Error(`未知逻辑运行器类型: logic:${logicKind}（应为 fsm/bt）`);
+        break;
+      }
       case "terrain":
       case "terrainnode": {
         // 可选 path：直接绑定 .terrain 资产（资产面板「添加到场景」/devtools），
@@ -191,7 +207,7 @@ registerCommand({
       }
       default:
         throw new Error(
-          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/script/model）`,
+          `未知节点类型: ${kind}（应为 group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/script/model）`,
         );
     }
     // 显式命名：仅在提供了非空 name 时重命名（未提供保持引擎默认名，与历史 UI 一致）

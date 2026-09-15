@@ -292,6 +292,20 @@ pub(crate) fn collect_scene_assets(
             Err(_) => missing.push(rel.clone()),
         }
     }
+    // 逻辑运行器引用：.fsm/.bt 文本随导出（缺失跳过，player 侧该运行器空转并告警）
+    let mut logic_refs = Vec::new();
+    crate::scene::migrate::collect_logic_refs(&scene_json, &mut logic_refs);
+    for rel in &logic_refs {
+        if files.contains_key(rel) {
+            continue;
+        }
+        match crate::scene::material::read_material_text(root_path, rel) {
+            Ok(text) => {
+                files.insert(rel.clone(), text);
+            }
+            Err(_) => missing.push(rel.clone()),
+        }
+    }
     // 粒子系统节点贴图引用：图片二进制随导出（缺失跳过，player 回退内置软圆点）
     let mut particle_tex_refs = Vec::new();
     crate::scene::migrate::collect_particle_texture_refs(&scene_json, &mut particle_tex_refs);
@@ -730,6 +744,60 @@ mod tests {
             binaries.contains_key("assets/textures/a.png"),
             "着色器的贴图参数应随产物打包（binaries: {:?}）",
             binaries.keys().collect::<Vec<_>>()
+        );
+        assert!(missing.is_empty(), "无缺失资产（实际 {missing:?}）");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 逻辑运行器节点的 .fsm/.bt 引用必须随产物打包为文本：
+    /// 缺失会让播放器侧运行器空转（只表现为"逻辑没跑"，不好排查）。
+    #[test]
+    fn collect_scene_assets_packs_logic_assets() {
+        let root = std::env::temp_dir().join(format!("tve-logic-pack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("assets/logic")).unwrap();
+        fs::write(
+            root.join("assets/logic/Enemy.fsm"),
+            serde_json::json!({
+                "$type": "fsm", "$ver": 1, "name": "Enemy",
+                "graph": { "entry": "s1", "states": [], "transitions": [], "params": {} }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("assets/logic/Patrol.bt"),
+            serde_json::json!({
+                "$type": "behaviortree", "$ver": 1, "name": "Patrol",
+                "tree": { "id": "n1", "type": "sequence", "children": [] }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let scene = serde_json::json!({
+            "type": "scene",
+            "root": { "type": "node", "id": "grp", "children": [
+                { "type": "fsmRunnerNode", "id": "r1", "settings": { "asset": "assets/logic/Enemy.fsm", "autoStart": true, "speed": 1 } },
+                { "type": "btRunnerNode", "id": "r2", "settings": { "asset": "assets/logic/Patrol.bt", "autoStart": true, "speed": 1 } },
+                { "type": "btRunnerNode", "id": "r3", "settings": { "asset": "", "autoStart": true, "speed": 1 } }
+            ] }
+        })
+        .to_string();
+        let mut files = std::collections::HashMap::new();
+        let mut binaries = std::collections::HashMap::new();
+        let missing = collect_scene_assets(&root, &scene, &mut files, &mut binaries);
+
+        assert!(
+            files.contains_key("assets/logic/Enemy.fsm"),
+            ".fsm 文本应随产物打包（files: {:?}）",
+            files.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            files.contains_key("assets/logic/Patrol.bt"),
+            ".bt 文本应随产物打包（files: {:?}）",
+            files.keys().collect::<Vec<_>>()
         );
         assert!(missing.is_empty(), "无缺失资产（实际 {missing:?}）");
 
