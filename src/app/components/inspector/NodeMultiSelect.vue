@@ -137,7 +137,13 @@ function onWindowKey(e: KeyboardEvent): void {
   if (e.key === "Escape") closeMenu();
 }
 
-// 浮层与内容滚动/窗口变化脱钩 → 直接关闭（与 ContextMenu 行为一致）
+// 面板内部滚动（选项列表 overflow）不关闭；仅外部容器滚动关闭（浮层脱钩）
+function onWindowScroll(e: Event): void {
+  const t = e.target;
+  if (t instanceof Element && t.closest(".node-multiselect-menu")) return;
+  closeMenu();
+}
+
 function onWindowDismiss(): void {
   closeMenu();
 }
@@ -148,13 +154,13 @@ watch(open, (v) => {
     w.addEventListener("mousedown", onWindowMouseDown, true);
     w.addEventListener("keydown", onWindowKey);
     w.addEventListener("blur", onWindowDismiss);
-    w.addEventListener("scroll", onWindowDismiss, true);
+    w.addEventListener("scroll", onWindowScroll, true);
     w.addEventListener("resize", onWindowDismiss);
   } else {
     w.removeEventListener("mousedown", onWindowMouseDown, true);
     w.removeEventListener("keydown", onWindowKey);
     w.removeEventListener("blur", onWindowDismiss);
-    w.removeEventListener("scroll", onWindowDismiss, true);
+    w.removeEventListener("scroll", onWindowScroll, true);
     w.removeEventListener("resize", onWindowDismiss);
   }
 });
