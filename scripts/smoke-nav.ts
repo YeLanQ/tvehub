@@ -492,9 +492,10 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
   const agentSectionSrc = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NavAgentSection.vue"), "utf8");
   check("检查器：代理目标多选 + 移动模式", /NodeMultiSelect/.test(agentSectionSrc)
     && /moveMode/.test(agentSectionSrc) && /startAgent/.test(agentSectionSrc));
-  check("检查器：共享节点多选组件", (() => {
-    const ms = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NodeMultiSelect.vue"), "utf8");
-    return /Teleport/.test(ms) && /selectedIds/.test(ms);
+  check("检查器：共享节点多选组件（ui-kit 通用 MultiSelect + 业务适配）", (() => {
+    const ms = readFileSync(resolve(process.cwd(), "src/ui-kit/components/MultiSelect.vue"), "utf8");
+    const wrap = readFileSync(resolve(process.cwd(), "src/app/components/inspector/NodeMultiSelect.vue"), "utf8");
+    return /Teleport/.test(ms) && /selectedIds/.test(ms) && /MultiSelect/.test(wrap);
   })());
 
   const panel = readFileSync(resolve(process.cwd(), "src/app/components/InspectorPanel.vue"), "utf8");
