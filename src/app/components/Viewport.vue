@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { disposeEditor, mountEditor } from "../services/editorService";
 import { dispatchCommand } from "../commands";
+import { Slider } from "../../ui-kit";
 import DebugStatsPanel from "./DebugStatsPanel.vue";
 import "../../styles/components/viewport.scss";
 
@@ -202,13 +203,15 @@ onBeforeUnmount(() => {
 
     <DebugStatsPanel v-if="showDebugStats" />
 
-    <!-- 地形绘制浮动面板（激活时底部居中）：工具 / 层与模式 / 大小 / 强度 -->
+    <!-- 地形绘制浮动面板（激活时底部居中）：工具 / 模式或权重层 / 大小 / 强度 -->
     <div v-if="state.terrainPaintActive" class="paint-panel">
       <span class="pp-title">地形</span>
+      <i class="pp-sep"></i>
       <div class="pp-tabs">
         <button class="mini" :class="{ active: tool === 'sculpt' }" title="雕刻地形高度（抬升/压低/压平/平滑）" @click="tool = 'sculpt'">雕刻</button>
-        <button class="mini" :class="{ active: tool === 'paint' }" title="绘制材质层到 Splatmap" @click="tool = 'paint'">绘制层</button>
+        <button class="mini" :class="{ active: tool === 'paint' }" title="绘制材质层权重到 Splatmap" @click="tool = 'paint'">权重</button>
       </div>
+      <i class="pp-sep"></i>
 
       <template v-if="tool === 'sculpt'">
         <div class="pp-modes">
@@ -226,7 +229,7 @@ onBeforeUnmount(() => {
             class="pp-layer"
             :class="{ active: brushLayer === i }"
             :style="{ '--layer-color': numToHex(c) }"
-            :title="`材质层 ${i + 1}`"
+            :title="`权重层 ${i + 1}`"
             @click="brushLayer = i"
           >
             {{ i + 1 }}
@@ -236,17 +239,19 @@ onBeforeUnmount(() => {
           {{ brushErase ? "擦除中" : "擦除" }}
         </button>
       </template>
+      <i class="pp-sep"></i>
 
       <label class="pp-slider">
         大小
-        <input type="range" min="0.5" max="40" step="0.5" v-model.number="brushSize" />
+        <Slider :min="0.5" :max="40" :step="0.5" v-model="brushSize" />
         <span class="mono">{{ brushSize.toFixed(1) }}m</span>
       </label>
       <label class="pp-slider">
         强度
-        <input type="range" min="0.05" max="1" step="0.05" v-model.number="brushStrength" />
+        <Slider :min="0.05" :max="1" :step="0.05" v-model="brushStrength" />
         <span class="mono">{{ Math.round(brushStrength * 100) }}%</span>
       </label>
+      <i class="pp-sep"></i>
       <button class="mini" title="退出绘制模式" @click="togglePaint">退出</button>
     </div>
 

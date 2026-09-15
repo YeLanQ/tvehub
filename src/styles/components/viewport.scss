@@ -95,6 +95,14 @@
     color: var(--text);
   }
 
+  .pp-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border, #3c3c3c);
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+
   .pp-tabs,
   .pp-modes {
     display: flex;
@@ -138,7 +146,7 @@
     font-size: 11px;
     color: var(--text-dim);
 
-    input[type="range"] {
+    .slider {
       width: 90px;
     }
 
