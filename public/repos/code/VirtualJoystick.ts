@@ -8,7 +8,9 @@ import { Component, property, engine, UIImageNode, Transform } from "tve";
 // 输出方向为归一化平面向量 dirX/dirY（上 = +Y，右 = +X），同工程其他脚本可经
 // getComponent(类名) 读取复用；控制目标移动 = 平面投影到世界 XZ（上 = -Z 前进）。
 // 坐标系：engine.ui 的矩形/坐标原点 = 画布中心、y 向上、单位 = UI 单位；
-// engine.input.pointer 为画布 CSS 像素——用 screenToUi 换算到同一空间再比较。
+// engine.input 的触点坐标为画布 CSS 像素——用 screenToUi 换算到同一空间再比较。
+// 多点触控：pointers 里是全部按下中的触点，起拖时谁按进底座谁占用摇杆，
+// 拖拽中经 getPointer(grabId) 只跟随占用那根手指（其他手指的按下/移动不影响）。
 export default class {{CLASS_NAME}} extends Component {
   /** 摇杆底座（缺省 = 摇杆头的父节点） */
   @property({ type: UIImageNode, label: "底座（缺省 = 父节点）" })
@@ -39,6 +41,8 @@ export default class {{CLASS_NAME}} extends Component {
   private restX = 0;
   private restY = 0;
   private dragging = false;
+  /** 占住摇杆的触点 id（-1 = 未占用；拖拽中只认这一指） */
+  private grabId = -1;
 
   onStart() {
     if (!(this.entity instanceof UIImageNode)) {
@@ -57,16 +61,20 @@ export default class {{CLASS_NAME}} extends Component {
   }
 
   onUpdate(delta: number) {
-    const pointer = engine.input.pointer;
     if (this.dragging) {
-      if (!pointer.down) {
-        this.release();
-      } else {
-        this.dragTo(pointer.x, pointer.y);
+      const held = engine.input.getPointer(this.grabId);
+      if (!held) this.release();          // 占用手指抬起/被系统取消
+      else this.dragTo(held.x, held.y);
+    } else {
+      // 起拖：谁按进底座范围谁占用摇杆（多点触控下逐触点判定）
+      for (const pt of engine.input.pointers.values()) {
+        if (this.tryBeginDrag(pt.x, pt.y)) {
+          this.grabId = pt.pointerId;
+          this.dragging = true;
+          this.dragTo(pt.x, pt.y);
+          break;
+        }
       }
-    } else if (pointer.down && this.tryBeginDrag(pointer.x, pointer.y)) {
-      this.dragging = true;
-      this.dragTo(pointer.x, pointer.y);
     }
 
     // 输出方向 → 控制目标移动（平面投影：UI y+（屏幕上）= 世界 -Z（前进），
@@ -106,6 +114,7 @@ export default class {{CLASS_NAME}} extends Component {
   /** 松手：摇杆头复位、方向清零 */
   private release() {
     this.dragging = false;
+    this.grabId = -1;
     this.dirX = 0;
     this.dirY = 0;
     if (this.knob) this.knob.anchoredPosition = { x: this.restX, y: this.restY };

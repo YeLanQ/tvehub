@@ -36,6 +36,7 @@
     "smoke:fog": "vite build --ssr scripts/smoke-fog.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-fog.js",
     "smoke:tween-runtime": "node scripts/smoke-tween-runtime.mjs",
     "smoke:script-hooks": "node scripts/smoke-script-hooks.mjs",
+    "smoke:input-runtime": "node scripts/smoke-input-runtime.mjs",
     "smoke:runtime-modules": "node scripts/smoke-runtime-modules.mjs",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs"
   },

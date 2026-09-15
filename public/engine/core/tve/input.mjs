@@ -19,34 +19,73 @@ function installInputListeners() {
   window.addEventListener("keyup", (e) => {
     if (state.heldKeys.delete(e.code)) state.keyUpHandlers.forEach((fn) => fn(e.code));
   });
-  window.addEventListener("blur", () => state.heldKeys.clear());
+  window.addEventListener("blur", () => {
+    state.heldKeys.clear();
+    state.pointersById.clear();
+    state.pointerState.down = false;
+  });
   const canvas = state.host && state.host.canvas;
   if (!canvas) return;
-  const sync = (e) => {
-    if (e && typeof e.offsetX === "number") {
-      state.pointerState.x = e.offsetX;
-      state.pointerState.y = e.offsetY;
-    }
+  const pointFromEvent = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: typeof e.clientX === "number" ? e.clientX - rect.left : state.pointerState.x,
+      y: typeof e.clientY === "number" ? e.clientY - rect.top : state.pointerState.y
+    };
   };
-  canvas.addEventListener("pointerdown", (e) => {
-    sync(e);
+  const syncPrimary = (pointerId, x, y) => {
+    const st = state.pointerState;
+    st.pointerId = pointerId;
+    st.x = x;
+    st.y = y;
+  };
+  const onPointerDown = (e) => {
+    const pointerId = e.pointerId ?? 0;
+    const { x, y } = pointFromEvent(e);
+    const pointer = { pointerId, x, y, down: true };
+    state.pointersById.set(pointerId, pointer);
+    syncPrimary(pointerId, x, y);
     state.pointerState.down = true;
-    state.pointerDownHandlers.forEach((fn) => fn({ ...state.pointerState }));
-  });
-  canvas.addEventListener("pointerup", (e) => {
-    sync(e);
-    state.pointerState.down = false;
-    state.pointerUpHandlers.forEach((fn) => fn({ ...state.pointerState }));
-  });
-  canvas.addEventListener("pointermove", (e) => {
-    sync(e);
+    state.pointerDownHandlers.forEach((fn) => fn({ ...pointer }));
+  };
+  const onPointerGone = (e, canceled) => {
+    const pointerId = e.pointerId ?? 0;
+    const pointer = state.pointersById.get(pointerId);
+    if (!pointer) return;
+    const { x, y } = pointFromEvent(e);
+    pointer.x = x;
+    pointer.y = y;
+    state.pointersById.delete(pointerId);
+    syncPrimary(pointerId, x, y);
+    state.pointerState.down = state.pointersById.size > 0;
+    const payload = { ...pointer, down: false };
+    if (canceled) state.pointerCancelHandlers.forEach((fn) => fn(payload));
+    else state.pointerUpHandlers.forEach((fn) => fn(payload));
+  };
+  const onPointerMove = (e) => {
+    const pointerId = e.pointerId ?? 0;
+    const { x, y } = pointFromEvent(e);
+    const pointer = state.pointersById.get(pointerId);
+    if (pointer) {
+      pointer.x = x;
+      pointer.y = y;
+    }
+    syncPrimary(pointerId, x, y);
     state.pointerMoveHandlers.forEach((fn) => fn({ ...state.pointerState }));
-  });
+  };
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointerup", onPointerGone);
+  canvas.addEventListener("pointercancel", (e) => onPointerGone(e, true));
+  window.addEventListener("pointerup", onPointerGone);
+  window.addEventListener("pointercancel", (e) => onPointerGone(e, true));
+  canvas.addEventListener("pointermove", onPointerMove);
 }
 const inputApi = {
   isKeyDown(key) {
     return state.heldKeys.has(key);
   },
+  /** 当前按下的全部按键（实时集合，勿直接修改） */
+  keys: state.heldKeys,
   onKeyDown(handler) {
     state.keyDownHandlers.add(handler);
     return () => state.keyDownHandlers.delete(handler);
@@ -56,6 +95,12 @@ const inputApi = {
     return () => state.keyUpHandlers.delete(handler);
   },
   pointer: state.pointerState,
+  /** 按下中的全部触点（pointerId → 状态，实时映射，勿直接修改） */
+  pointers: state.pointersById,
+  /** 按 pointerId 查触点（未按下返回 null） */
+  getPointer(pointerId) {
+    return state.pointersById.get(pointerId) ?? null;
+  },
   onPointerDown(handler) {
     state.pointerDownHandlers.add(handler);
     return () => state.pointerDownHandlers.delete(handler);
@@ -63,6 +108,10 @@ const inputApi = {
   onPointerUp(handler) {
     state.pointerUpHandlers.add(handler);
     return () => state.pointerUpHandlers.delete(handler);
+  },
+  onPointerCancel(handler) {
+    state.pointerCancelHandlers.add(handler);
+    return () => state.pointerCancelHandlers.delete(handler);
   },
   onPointerMove(handler) {
     state.pointerMoveHandlers.add(handler);

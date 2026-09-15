@@ -202,6 +202,8 @@ export default class MainMenu extends Component {
 
 ## 示例：虚拟摇杆（rectOf + screenToUi + deadZone）
 
+多点触控下按 `pointerId` 认住占用摇杆的那根手指：其他手指的按下/抬起/移动互不干扰。
+
 ```ts
 import { Component, property, math, engine, UIImageNode } from "tve";
 
@@ -212,31 +214,40 @@ export default class Joystick extends Component {
 
   value = { x: 0, y: 0 };           // 归一化输出（-1..1），其他组件读取
   private grabbing = false;
+  private grabId = -1;              // 占住摇杆的触点 id（只认这一指）
 
   onStart() {
     engine.input.onPointerDown((p) => {
+      if (this.grabbing) return;     // 已被某根手指占住
       const rect = this.base && engine.ui.rectOf(this.base);
       const pt = this.base && engine.ui.screenToUi(this.base, p.x, p.y);
       if (rect && pt && Math.hypot(pt.x - rect.cx, pt.y - rect.cy) <= rect.w / 2) {
         this.grabbing = true;        // 按在底座范围内才开始拖动
+        this.grabId = p.pointerId;
       }
     });
-    engine.input.onPointerUp(() => {
+    const release = () => {
       this.grabbing = false;
+      this.grabId = -1;
       this.value = { x: 0, y: 0 };
       if (this.knob && this.base) {
         const rect = engine.ui.rectOf(this.base);
         if (rect) this.knob.anchoredPosition = { x: 0, y: 0 };  // 回中
       }
-    });
+    };
+    // up 与 cancel 都要订阅（系统抢占后不会再来 up）；按 id 匹配，其他手指抬起不误释放
+    engine.input.onPointerUp((p) => { if (p.pointerId === this.grabId) release(); });
+    engine.input.onPointerCancel((p) => { if (p.pointerId === this.grabId) release(); });
   }
 
   onUpdate() {
     if (!this.grabbing || !this.knob || !this.base) return;
+    const p = engine.input.getPointer(this.grabId);   // 只跟随占用摇杆的那根手指
+    if (!p) return;
     const rect = engine.ui.rectOf(this.base);
-    const p = engine.ui.screenToUi(this.base, engine.input.pointer.x, engine.input.pointer.y);
-    if (!rect || !p) return;
-    let dx = p.x - rect.cx, dy = p.y - rect.cy;
+    const pt = engine.ui.screenToUi(this.base, p.x, p.y);
+    if (!rect || !pt) return;
+    let dx = pt.x - rect.cx, dy = pt.y - rect.cy;
     const len = Math.hypot(dx, dy) || 1;
     if (len > this.maxRadius) { dx = (dx / len) * this.maxRadius; dy = (dy / len) * this.maxRadius; }
     this.knob.anchoredPosition = { x: dx, y: dy };                     // 摇杆头跟随（钳在行程内）

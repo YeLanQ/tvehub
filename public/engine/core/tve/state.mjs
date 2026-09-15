@@ -15,9 +15,13 @@ const state = {
   heldKeys: /* @__PURE__ */ new Set(),
   keyDownHandlers: /* @__PURE__ */ new Set(),
   keyUpHandlers: /* @__PURE__ */ new Set(),
-  pointerState: { x: 0, y: 0, down: false },
+  /** 主指针（最后活跃触点；pointerId = -1 表示尚未有任何指针事件） */
+  pointerState: { x: 0, y: 0, down: false, pointerId: -1 },
+  /** 按下中的触点（pointerId → { pointerId, x, y, down:true }；鼠标也是一个触点） */
+  pointersById: /* @__PURE__ */ new Map(),
   pointerDownHandlers: /* @__PURE__ */ new Set(),
   pointerUpHandlers: /* @__PURE__ */ new Set(),
+  pointerCancelHandlers: /* @__PURE__ */ new Set(),
   pointerMoveHandlers: /* @__PURE__ */ new Set(),
   inputInstalled: false,
   // 注入的组件函数（由 component-registry.mjs / runtime.mjs 设置；entity.mjs 经 state 调用）

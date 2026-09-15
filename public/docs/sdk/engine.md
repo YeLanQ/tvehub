@@ -24,22 +24,26 @@ onUpdate() {
 
 ## 输入：engine.input
 
-按键用 `KeyboardEvent.code`（如 `"KeyW"`、`"Space"`、`"ArrowLeft"`、`"Digit1"`、`"ShiftLeft"`）。指针坐标为**画布内 CSS 像素**（左上角原点），与 `engine.ui.screenToUi` 的入参同一空间。
+按键用 `KeyboardEvent.code`（如 `"KeyW"`、`"Space"`、`"ArrowLeft"`、`"Digit1"`、`"ShiftLeft"`），支持任意多键同时按住。指针支持**多点触控**：每个触点按 `pointerId` 区分（从按下到抬起恒定；鼠标也是触点之一），坐标为**画布内 CSS 像素**（左上角原点），与 `engine.ui.screenToUi` 的入参同一空间。
 
 ```ts
-engine.input.isKeyDown("KeyW");            // 按键当前是否按下（轮询式）
-const off = engine.input.onKeyDown((key) => { /* 按下 */ });  // 返回取消订阅函数
+engine.input.isKeyDown("KeyW");            // 按键当前是否按下（轮询式，多键组合直接连查）
+engine.input.keys;                          // 当前按下的全部按键（Set 实时视图）
+const off = engine.input.onKeyDown((key) => { /* 按下（每键各触发一次） */ });
 const off2 = engine.input.onKeyUp(handler);
-engine.input.pointer;                       // { x, y, down }
-engine.input.onPointerDown(handler);        // handler: (pointer) => void
+engine.input.pointer;                       // 主指针 { x, y, down, pointerId }（跟随最后活跃触点）
+engine.input.pointers;                      // 按下中的全部触点（Map<pointerId, { x, y, down, pointerId }>）
+engine.input.getPointer(pointerId);         // 按 id 查触点（未按下返回 null）
+engine.input.onPointerDown(handler);        // handler: (pointer) => void，每触点各触发
 engine.input.onPointerUp(handler);
+engine.input.onPointerCancel(handler);      // 系统抢占（浏览器手势等）：触点被强制移除，不会再来 up
 engine.input.onPointerMove(handler);
 ```
 
 订阅函数均返回取消订阅函数；请在 `onDisable`/`onDestroy` 中调用以免悬挂。
 
 ```ts
-// WASD 轮询移动（每帧查询）
+// WASD 轮询移动（每帧查询；多个 isKeyDown 组合即多键输入）
 onUpdate(delta: number) {
   const x = (engine.input.isKeyDown("KeyD") ? 1 : 0) - (engine.input.isKeyDown("KeyA") ? 1 : 0);
   const z = (engine.input.isKeyDown("KeyS") ? 1 : 0) - (engine.input.isKeyDown("KeyW") ? 1 : 0);
@@ -50,7 +54,22 @@ onUpdate(delta: number) {
 private off?: () => void;
 onEnable() { this.off = engine.input.onPointerDown((p) => this.tryPick(p.x, p.y)); }
 onDisable() { this.off?.(); }
+
+// 双指捏合缩放（多点触控；pointers 里始终是按下中的触点）
+onUpdate() {
+  const ps = engine.input.pointers;
+  if (ps.size !== 2) {
+    this.prevDist = 0;             // 手指离开后重置，下次捏合从当前距离起算
+    return;
+  }
+  const [a, b] = [...ps.values()];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  if (this.prevDist > 0) this.zoom *= dist / this.prevDist;
+  this.prevDist = dist;
+}
 ```
+
+按 `pointerId` 做逐指追踪时，`onPointerUp` 与 `onPointerCancel` 都要订阅（cancel 后不会再有 up），用 `pointer` 参数里的 `pointerId` 匹配自己按住的那根手指。
 
 ## 场景：engine.scene
 

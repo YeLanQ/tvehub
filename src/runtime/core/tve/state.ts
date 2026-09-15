@@ -22,9 +22,13 @@ export const state = {
   heldKeys: new Set(),
   keyDownHandlers: new Set(),
   keyUpHandlers: new Set(),
-  pointerState: { x: 0, y: 0, down: false },
+  /** 主指针（最后活跃触点；pointerId = -1 表示尚未有任何指针事件） */
+  pointerState: { x: 0, y: 0, down: false, pointerId: -1 },
+  /** 按下中的触点（pointerId → { pointerId, x, y, down:true }；鼠标也是一个触点） */
+  pointersById: new Map(),
   pointerDownHandlers: new Set(),
   pointerUpHandlers: new Set(),
+  pointerCancelHandlers: new Set(),
   pointerMoveHandlers: new Set(),
   inputInstalled: false,
   // 注入的组件函数（由 component-registry.mjs / runtime.mjs 设置；entity.mjs 经 state 调用）

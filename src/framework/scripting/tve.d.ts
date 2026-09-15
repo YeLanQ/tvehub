@@ -1848,27 +1848,41 @@ export interface TimeState {
   readonly frame: number;
 }
 
-/** 指针状态（坐标 = 画布内 CSS 像素） */
+/** 指针状态（坐标 = 画布内 CSS 像素；pointerId 从按下到抬起恒定，多点触控区分各触点） */
 export interface PointerState {
   readonly x: number;
   readonly y: number;
   readonly down: boolean;
+  readonly pointerId: number;
 }
 
-/** 键盘与指针输入。按键用 KeyboardEvent.code（如 "KeyW"、"Space"、"ArrowLeft"） */
+/**
+ * 键盘与指针输入。按键用 KeyboardEvent.code（如 "KeyW"、"Space"、"ArrowLeft"）。
+ * 键盘支持任意多键同时按住（keys / isKeyDown 轮询 + onKeyDown/KeyUp 事件）；
+ * 指针支持多点触控（pointers / getPointer 按 pointerId 区分各触点，
+ * 鼠标也是其中一个触点，pointerId 通常恒定）。
+ */
 export interface InputApi {
   /** 按键当前是否按下 */
   isKeyDown(key: string): boolean;
+  /** 当前按下的全部按键（KeyboardEvent.code 实时集合；勿直接修改） */
+  readonly keys: ReadonlySet<string>;
   /** 订阅按键按下；返回取消订阅函数 */
   onKeyDown(handler: (key: string) => void): () => void;
   /** 订阅按键抬起；返回取消订阅函数 */
   onKeyUp(handler: (key: string) => void): () => void;
-  /** 指针当前状态 */
+  /** 主指针状态（x/y 跟随最后活跃触点；down = 存在按下中的触点） */
   readonly pointer: PointerState;
+  /** 按下中的全部触点（pointerId → 状态 实时映射；勿直接修改） */
+  readonly pointers: ReadonlyMap<number, PointerState>;
+  /** 按 pointerId 查触点（未按下返回 null） */
+  getPointer(pointerId: number): PointerState | null;
   /** 订阅指针按下；返回取消订阅函数 */
   onPointerDown(handler: (pointer: PointerState) => void): () => void;
   /** 订阅指针抬起；返回取消订阅函数 */
   onPointerUp(handler: (pointer: PointerState) => void): () => void;
+  /** 订阅指针取消（系统抢占：浏览器手势等；触点被强制移除，不会再来 onPointerUp）；返回取消订阅函数 */
+  onPointerCancel(handler: (pointer: PointerState) => void): () => void;
   /** 订阅指针移动；返回取消订阅函数 */
   onPointerMove(handler: (pointer: PointerState) => void): () => void;
 }
