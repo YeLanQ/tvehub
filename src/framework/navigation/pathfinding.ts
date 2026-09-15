@@ -222,10 +222,17 @@ export function findNavPath(
   const start = nearestWalkable(nav, ci, cj);
   const end = nearestWalkable(nav, ei, ej);
   if (!start || !end) return empty;
+  // 终点净空足够（开阔地）→ 用原始请求坐标精确到目标处；落在低净空区
+  //（目标自带碰撞体 → 被自己的障碍投影堵住等）→ 停在最近可行走格中心，
+  // 避免代理挤进障碍/下一程从障碍内起算
+  const endFree = sampleNavSdf(nav, endX, endZ) >= agentRadius;
   if (start.i === end.i && start.j === end.j) {
     return {
       found: true,
-      points: [navPointAt(nav, start.i, start.j), navPointAt(nav, end.i, end.j)],
+      points: [
+        navPointAt(nav, start.i, start.j),
+        endFree ? { x: endX, y: pathY(nav, endX, endZ), z: endZ } : navPointAt(nav, end.i, end.j),
+      ],
       startCell: start,
       endCell: end,
     };
@@ -256,8 +263,8 @@ export function findNavPath(
     const j = (idx - i) / nav.w;
     pts.push(navPointAt(nav, i, j));
   }
-  // 终点用原始请求坐标（贴到最近可行走格的路径末端 → 精确到点击处）
-  pts[pts.length - 1] = { x: endX, y: pathY(nav, endX, endZ), z: endZ };
+  // 终点：净空足够 → 原始请求坐标（精确到点击/目标处）；低净空 → 保持格中心
+  if (endFree) pts[pts.length - 1] = { x: endX, y: pathY(nav, endX, endZ), z: endZ };
   return { found: true, points: pts, startCell: start, endCell: end };
 }
 

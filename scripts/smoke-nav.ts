@@ -83,7 +83,7 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 签名");
   })());
   check("代理旧场景缺字段回退", (() => {
     const p = parseNavAgentSettings({ speed: 4 });
-    return p.targetIds.length === 0 && p.moveMode === "sequence" && p.loop === false;
+    return p.targetIds.length === 0 && p.moveMode === "sequence" && p.loop === true;
   })());
   check("设置签名逐字段变化", (() => {
     const a = navAreaSettingsSig(d);
@@ -347,6 +347,14 @@ console.log("[4] 寻路与代理：A* / 平滑 / 移动 / SDF 滑移");
   });
   const unreachable = findNavPath(blocked, 1, 1, 10, 10, 0.5);
   check("整墙阻断不可达", !unreachable.found && unreachable.points.length === 0);
+
+  // 低净空终点钳制：目标落在障碍投影内 → 终点停在最近可行走格中心而非原始坐标
+  const clamped = findNavPath(nav, 1, 1, 5.5, 7, 0.5);
+  check("低净空终点钳到可行走格中心", clamped.found && (() => {
+    const last = clamped.points[clamped.points.length - 1];
+    return sampleNavSdf(nav, last.x, last.z) >= 0.5 - 1e-6
+      && Math.hypot(last.x - 5.5, last.z - 7) > 0.5;
+  })());
 
   // —— NavSystem：绑定 / 烘焙 / 寻路推进 ——
   const registry = createDefaultRegistry();

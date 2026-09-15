@@ -73,7 +73,8 @@ export const DEFAULT_NAV_AGENT_SETTINGS: NavAgentSettings = {
   areaId: "",
   targetIds: [],
   moveMode: "sequence",
-  loop: false,
+  // 巡回默认持续巡逻（走完一轮回到第一个目标）；走完即停是显式关闭 Loop 的特例
+  loop: true,
   speed: 4,
   radius: 0.5,
 };
@@ -142,7 +143,8 @@ export function parseNavAgentSettings(v: unknown): NavAgentSettings {
     areaId: clampStr(o.areaId),
     targetIds: clampIdArray(o.targetIds, NAV_MAX_TARGET_IDS),
     moveMode: o.moveMode === "nearest" ? "nearest" : "sequence",
-    loop: !!o.loop,
+    // 旧场景缺 loop 字段 → 回退新默认（持续巡逻），与 DEFAULT 一致
+    loop: o.loop === undefined ? d.loop : !!o.loop,
     speed: clampNum(o.speed, L.speed.min, L.speed.max, d.speed),
     radius: clampNum(o.radius, L.radius.min, L.radius.max, d.radius),
   };

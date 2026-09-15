@@ -132,11 +132,11 @@ function clamp(v: number, lo: number, hi: number): number {
       </select>
     </div>
     <div v-if="s.moveMode === 'sequence'" class="field">
-      <label title="走完一轮目标后回到第一个目标继续（巡逻循环）">Loop</label>
+      <label title="走完一轮目标后回到第一个目标继续巡逻（默认开启；关闭 = 走完最后一个目标后停下）">Loop</label>
       <input
         type="checkbox"
         :checked="s.loop"
-        title="巡回循环开关"
+        title="巡回循环开关（默认开启 = 持续巡逻）"
         @change="emit('update', 'Toggle Agent Loop', ($event.target as HTMLInputElement).checked)"
       />
     </div>
