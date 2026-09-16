@@ -114,3 +114,7 @@ pnpm check:layers          # 分层守卫检查
 
 - **编辑器**：[总览](public/docs/editor/overview.md) · [项目管理](public/docs/editor/projects.md) · [场景编辑](public/docs/editor/scene.md) · [UI 系统](public/docs/editor/ui.md) · [检查器与组件](public/docs/editor/inspector.md) · [资产系统](public/docs/editor/assets.md) · [着色器](public/docs/editor/shaders.md) · [动画编辑器](public/docs/editor/animation.md) · [脚本工作台](public/docs/editor/scripting.md) · [预览与构建](public/docs/editor/preview-build.md)
 - **SDK（脚本 API）**：[总览](public/docs/sdk/overview.md) · [装饰器](public/docs/sdk/decorators.md) · [实体与查询](public/docs/sdk/entity.md) · [engine 入口](public/docs/sdk/engine.md) · [UI](public/docs/sdk/ui.md) · [内置组件门面](public/docs/sdk/components.md) · [math](public/docs/sdk/math.md) · [tween](public/docs/sdk/tween.md) · [utils](public/docs/sdk/utils.md)
+
+## 许可
+
+本项目基于 [Apache License 2.0](LICENSE) 开源发布。
