@@ -119,7 +119,8 @@ async function onChangeDefaultDir() {
       <div class="settings-card">
         <h3>关于</h3>
         <div class="about-row">
-          <span>v0.1.0</span>
+          <!-- 显示版本 = semver 版本 + 第 4 段构建号（semver 以 package.json 为准） -->
+          <span>v0.1.0.1</span>
           <span class="dim">开发测试版</span>
         </div>
       </div>
