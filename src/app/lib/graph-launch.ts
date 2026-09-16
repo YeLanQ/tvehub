@@ -10,7 +10,12 @@ import { isTauri } from "../../lib/tauri-env";
 let lastRequested: { root: string; name: string } | null = null;
 let handshakeInstalled = false;
 
-function installHandshake(): void {
+/**
+ * 安装 graph:ready 握手监听（幂等）。
+ * 应在首页窗口启动时尽早调用，确保图窗口冷启动 emit("graph:ready") 时
+ * 监听已就绪，避免双保险竞态导致项目交接丢失。
+ */
+export function installGraphHandshake(): void {
   if (handshakeInstalled || !isTauri()) return;
   handshakeInstalled = true;
   void listen("graph:ready", () => {
@@ -21,7 +26,7 @@ function installHandshake(): void {
 /** 打开脚本图窗口并移交项目（Hub 项目卡片右键菜单调用） */
 export async function openScriptGraphWindow(root: string, name: string): Promise<void> {
   if (!isTauri()) return;
-  installHandshake();
+  installGraphHandshake();
   lastRequested = { root, name };
   try {
     await api.showGraphWindow();

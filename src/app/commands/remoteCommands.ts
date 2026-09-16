@@ -120,12 +120,16 @@ registerCommand({
     const ok = await project.openProject(path);
     if (!ok) throw new Error(`打开项目失败: ${path}`);
     const { emit } = await import("@tauri-apps/api/event");
+    await api.showEditorWindow(
+      project.currentPath ?? "",
+      project.projectName ?? "",
+      project.sceneRel || DEFAULT_SCENE_REL,
+    );
     await emit("home:project-opened", {
       root: project.currentPath,
       name: project.projectName ?? "",
       rel: project.sceneRel || DEFAULT_SCENE_REL,
     });
-    await api.showEditorWindow();
     return { ok: true, project: project.currentPath };
   },
 });

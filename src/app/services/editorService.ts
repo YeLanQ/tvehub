@@ -25,6 +25,14 @@ let pendingProject: { root: string; rel: string } | null = null;
 /** 等待编辑器挂载完成（含挂起项目补装载）的回调：交接早于 App.vue 挂载时排队 */
 let mountWaiters: Array<() => void> = [];
 
+/**
+ * 项目交接去重：冷启动时「后端待交付拉取」与「home:project-opened 事件广播」
+ * 可能双渠道交付同一项目（竞态窗口内），短时间窗口内同 key 只处理一次。
+ * 窗口 500ms 远小于「关闭→重开同一项目」的人工间隔，不影响正常重开。
+ */
+let lastOpenedKey: string | null = null;
+let lastOpenedAt = 0;
+
 /** mountEditor 任务收尾（含提前返回）时放行全部等待者 */
 function notifyMountSettled(): void {
   const waiters = mountWaiters;
@@ -51,6 +59,12 @@ export async function handleProjectOpenedFromHome(
   name: string,
   rel: string,
 ): Promise<void> {
+  const key = `${root}\u0000${rel}`;
+  const now = Date.now();
+  if (lastOpenedKey === key && now - lastOpenedAt < 500) return;
+  lastOpenedKey = key;
+  lastOpenedAt = now;
+
   const boot = getBootLoadingStore();
   boot.begin(name);
   try {
@@ -210,8 +224,10 @@ export function mountEditor(container: HTMLElement): Promise<void> {
           }
         }
         if (!loaded && !engine.isDisposed()) {
-          // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话；
-          // 携带保存目标，新项目首次保存时创建场景文件）
+          // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话）。
+          // 未开项目（root 为空）时必须不携带 rel：否则兜底会话会以默认 rel
+          // （assets/Main.scene）落键，后续打开同名真实场景时 scene_open 复用兜底
+          // 而不读盘。root 非空时才携带 rel 作为保存目标（新项目首次保存建场景文件）。
           try {
             await engine.materials.preload([DEFAULT_MATERIAL_REL]);
             if (engine.isDisposed()) return;
@@ -219,7 +235,7 @@ export function mountEditor(container: HTMLElement): Promise<void> {
             const result = await sceneApi.loadDoc(
               buildStarterSceneDoc(engine.factory),
               root ?? undefined,
-              sceneRel || undefined,
+              root ? (sceneRel || undefined) : undefined,
             );
             if (engine.isDisposed()) return;
             await applySceneLoadResult(engine, result);
@@ -238,6 +254,9 @@ export function mountEditor(container: HTMLElement): Promise<void> {
           const p = pendingProject;
           pendingProject = null;
           if (!(loaded && root === p.root && sceneRel === p.rel)) {
+            // 兜底路径可能已用 sceneRel 创建会话（hub.sessions[sceneRel] = 兜底场景），
+            // scene_open 会复用而非读盘 → 先关闭清除，确保 reloadEditorScene 读盘装载
+            if (!loaded) await sceneApi.close().catch(() => {});
             applyProjectSetup(engine, p.root);
             await reloadEditorScene(p.root, p.rel);
           }

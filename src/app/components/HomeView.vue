@@ -110,12 +110,18 @@ async function handoffToEditor(): Promise<void> {
   const root = projectStore.currentPath;
   if (!root) return;
   try {
+    // 先写入后端待交付状态并显示编辑器窗口（冷启动时事件广播会丢失，由
+    // 编辑器窗口启动后主动拉取），再广播事件作为热启动（窗口已就绪）的直接渠道
+    await api.showEditorWindow(
+      root,
+      projectStore.projectName ?? "",
+      projectStore.sceneRel,
+    );
     await emit("home:project-opened", {
       root,
       name: projectStore.projectName ?? "",
       rel: projectStore.sceneRel,
     });
-    await api.showEditorWindow();
   } catch (e) {
     console.error("切换到编辑器窗口失败:", e);
     alert("切换到编辑器窗口失败：" + e);

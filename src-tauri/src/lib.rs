@@ -384,15 +384,45 @@ async fn dev_app_dirs(app: tauri::AppHandle) -> Result<Vec<(String, String)>, St
 // 打开项目时由首页切换到编辑器，编辑器"关闭项目"切回首页。
 // ---------------------------------------------------------------------------
 
+/// 待交付给编辑器窗口的项目（首页打开/新建项目后写入，编辑器窗口冷启动时拉取）。
+/// 编辑器窗口冷启动时 `home:project-opened` 事件可能在 listen 安装前广播而丢失，
+/// 经此状态中转可保证首次打开也拿到项目，杜绝兜底场景抢占会话。
+#[derive(Default)]
+struct PendingEditorProject(std::sync::Mutex<Option<PendingProjectPayload>>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingProjectPayload {
+    root: String,
+    name: String,
+    rel: String,
+}
+
 /// 显示编辑器窗口（首页窗口保持打开，仅把焦点切到编辑器；
-/// 打开/新建项目成功后由首页调用）
+/// 打开/新建项目成功后由首页调用）。项目根/名/场景 rel 一并写入待交付状态，
+/// 供编辑器窗口冷启动时主动拉取（事件广播在窗口未就绪时不可靠）。
 #[tauri::command]
-async fn show_editor_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn show_editor_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PendingEditorProject>,
+    root: String,
+    name: String,
+    rel: String,
+) -> Result<(), String> {
+    *state.0.lock().unwrap() = Some(PendingProjectPayload { root, name, rel });
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.show();
         let _ = main.set_focus();
     }
     Ok(())
+}
+
+/// 编辑器窗口启动时拉取待交付项目（取走后清空，保证只交付一次）
+#[tauri::command]
+async fn take_pending_project(
+    state: tauri::State<'_, PendingEditorProject>,
+) -> Result<Option<PendingProjectPayload>, String> {
+    Ok(state.0.lock().unwrap().take())
 }
 
 /// 显示脚本图窗口（编辑器窗口工具栏「脚本图」调用；窗口常驻仅切换可见性，
@@ -573,6 +603,7 @@ pub fn run() {
         .manage(asset_protocol::AssetProtocolState::default())
         .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
+        .manage(PendingEditorProject::default())
         .manage(devtools::DevToolsState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
         // 首页「开发者服务」页签可停用/改端口。
@@ -648,6 +679,7 @@ pub fn run() {
             open_devtools,
             dev_app_dirs,
             show_editor_window,
+            take_pending_project,
             show_home_window,
             show_graph_window,
             write_asset_binary,

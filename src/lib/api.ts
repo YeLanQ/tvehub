@@ -284,8 +284,13 @@ export const api = {
   writeCodeProto: (file: string, code: string) => invoke<void>("write_code_proto", { file, code }),
   /** 删除原型文件 */
   deleteCodeProto: (file: string) => invoke<void>("delete_code_proto", { file }),
-  /** 显示编辑器窗口并聚焦（首页打开/新建项目成功后调用） */
-  showEditorWindow: () => invoke<void>("show_editor_window"),
+  /** 显示编辑器窗口并聚焦（首页打开/新建项目成功后调用；项目根/名/场景 rel
+   *  一并写入后端待交付状态，供编辑器窗口冷启动时拉取） */
+  showEditorWindow: (root: string, name: string, rel: string) =>
+    invoke<void>("show_editor_window", { root, name, rel }),
+  /** 编辑器窗口启动时拉取待交付项目（取走后清空） */
+  takePendingProject: () =>
+    invoke<{ root: string; name: string; rel: string } | null>("take_pending_project"),
   /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
   showHomeWindow: () => invoke<void>("show_home_window"),
   /** 显示脚本图窗口并聚焦（编辑器工具栏「脚本图」调用） */

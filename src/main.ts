@@ -12,6 +12,7 @@ import { debugLog, debugError } from "./lib/debug-log";
 import { handleProjectOpenedFromHome } from "./app/services/editorService";
 import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus } from "./app/lib/devtools";
+import { api } from "./lib/api";
 
 debugLog("boot", "app script started");
 
@@ -30,7 +31,20 @@ debugLog("boot", `isTauri: ${isTauri()}`);
 if (!isTauri()) {
   debugLog("boot", "not running inside Tauri; editor boots without desktop backend");
 } else {
-  // 首页窗口打开/新建项目 → 同步状态并装载场景（挂载未完成时由挂起机制兜底）
+  // 冷启动补偿：首页 show_editor_window 写入待交付项目并 show 窗口，随后的
+  // home:project-opened 事件广播可能在下面 listen 安装前发出而丢失。这里主动
+  // 拉取后端待交付项目（取走后清空），保证首次打开也拿到真实项目而非兜底场景。
+  void api
+    .takePendingProject()
+    .then((pending) => {
+      if (pending) {
+        void handleProjectOpenedFromHome(pending.root, pending.name, pending.rel);
+      }
+    })
+    .catch((e) => debugLog("boot", `takePendingProject failed: ${e}`));
+  // 首页窗口打开/新建项目 → 同步状态并装载场景（挂载未完成时由挂起机制兜底）。
+  // 热启动（窗口已就绪）时事件正常到达，作为直接渠道；与上面拉取的竞态由
+  // handleProjectOpenedFromHome 短窗口去重兜底。
   void listen<{ root: string; name: string; rel: string }>(
     "home:project-opened",
     (e) => {
