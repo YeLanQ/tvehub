@@ -131,6 +131,12 @@ engine.physics.bodyInfo(entity);                // { mode, gravityScale, collide
 engine.physics.setGravityScale(entity, 0);      // 重力缩放（0 = 不受重力）
 engine.physics.wakeUp(entity);                  // 唤醒（修改参数后让睡眠中的体立即响应）
 engine.physics.setGravity(0, -9.81, 0);         // 世界重力（影响全部动力学体）
+engine.physics.castRay({                        // 射线投射（世界空间；返回按距离升序的命中列表）
+  origin: { x: 0, y: 10, z: 0 },                //   起点（世界空间）
+  direction: { x: 0, y: -1, z: 0 },             //   方向（无需归一化）
+  maxDistance: 20,                               //   最大距离（缺省 Infinity）
+  excludeNodeIds: [this.entity.id],             //   排除的节点 id（不参与命中）
+});  // → [{ nodeId, point, normal, distance }]（空数组 = 未命中）
 ```
 
 | 方法 | 典型场景 |
@@ -140,8 +146,49 @@ engine.physics.setGravity(0, -9.81, 0);         // 世界重力（影响全部�
 | `setLinearVelocity` | 直接控制速度（平台跳跃的空中控制、传送带） |
 | `setGravityScale` | 局部失重/下落加速（0 = 悬浮） |
 | `wakeUp` | 物理引擎会休眠静止的体；脚本改完参数/落点后调一次确保响应 |
+| `castRay` | 射线拾取/视线检测/武器命中（返回命中节点 id + 世界坐标 + 法线 + 距离） |
 
 `RigidBody` 门面上有绑定本实体的同名接口（`setLinearVelocity` / `applyImpulse` / `setGravityScale` / `wakeUp` 等），见[内置组件门面](components.md)。
+
+### 射线投射
+
+`castRay` 是世界级查询（不按实体寻址），对物理世界中所有碰撞体做射线检测，返回按距离升序排列的命中列表。三后端（Rapier / Jolt / Ammo.js）同一 API、同一返回结构。
+
+```ts
+const hits = engine.physics.castRay({
+  origin: { x: 0, y: 10, z: 0 },
+  direction: { x: 0, y: -1, z: 0 },
+  maxDistance: 20,
+  excludeNodeIds: [this.entity.id],  // 排除自身（如从角色眼睛发射时排除角色体）
+});
+if (hits.length > 0) {
+  const hit = hits[0];               // 最近命中
+  engine.log("命中节点", hit.nodeId, "距离", hit.distance);
+  // hit.point  — 命中点世界坐标 { x, y, z }
+  // hit.normal — 命中面法线（世界空间，归一化）
+}
+```
+
+典型用法——鼠标点击拾取物理体：
+
+```ts
+onUpdate() {
+  engine.input.onPointerDown((p) => {
+    // 从相机发射射线（需自行把屏幕坐标转为世界射线）
+    const hits = engine.physics.castRay({
+      origin: this.rayOrigin,
+      direction: this.rayDir,
+      maxDistance: 100,
+    });
+    if (hits.length > 0) {
+      const target = engine.scene.find(hits[0].nodeId);
+      if (target) this.select(target);
+    }
+  });
+}
+```
+
+> **Worker 模式**：物理模拟在独立线程运行时，`castRay` 返回 `Promise`（射线查询异步转发到 Worker 执行）；主线程模式同步返回数组。两种模式参数与返回结构一致。
 
 ## UI：engine.ui
 

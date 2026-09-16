@@ -14,6 +14,8 @@ import type {
   IPhysicsWorld,
   PhysicsBodyDesc,
   PhysicsQuat,
+  PhysicsRayCastOptions,
+  PhysicsRayHit,
   PhysicsTransform,
   PhysicsWorldSettings,
 } from "./types";
@@ -192,6 +194,10 @@ function colliderDesc(R: RapierAPI, col: ColliderShapeDesc): InstanceType<Rapier
 class RapierWorldAdapter implements IPhysicsWorld {
   readonly backend = "rapier" as const;
   private bodies = new Set<RapierBody>();
+  /** collider 句柄 → 节点 id（射线命中反查） */
+  private colliderNodes = new Map<number, string>();
+  /** broadphase 是否已随 step 建树（建体后从未 step 时射线查询树为空） */
+  private steppedOnce = false;
 
   constructor(
     private R: RapierAPI,
@@ -228,7 +234,8 @@ class RapierWorldAdapter implements IPhysicsWorld {
         .setFriction(col.friction)
         .setRestitution(col.restitution)
         .setSensor(col.isSensor);
-      this.world.createCollider(cd, body);
+      const collider = this.world.createCollider(cd, body);
+      this.colliderNodes.set(collider.handle, desc.nodeId);
     }
     this.bodies.add(body);
     return new RapierBodyAdapter(this.R, this.world, body, desc.nodeId);
@@ -244,6 +251,55 @@ class RapierWorldAdapter implements IPhysicsWorld {
   step(dt: number): void {
     this.world.timestep = Math.max(0.0001, dt);
     this.world.step();
+    this.steppedOnce = true;
+  }
+
+  castRay(options: PhysicsRayCastOptions): PhysicsRayHit[] {
+    const R = this.R;
+    const dir = options.direction;
+    const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+    if (dirLen < 1e-9) return [];
+    if (!this.steppedOnce) {
+      // broadphase 未随 step 建树时射线永远打空：以零步长预热一帧（不推进模拟）
+      const prev = this.world.timestep;
+      this.world.timestep = 0;
+      this.world.step();
+      this.world.timestep = prev;
+      this.steppedOnce = true;
+    }
+    const maxToi = (options.maxDistance ?? Infinity) / dirLen;
+    if (maxToi <= 0) return [];
+    const exclude = new Set(options.excludeNodeIds ?? []);
+    const ray = new R.Ray(
+      { x: options.origin.x, y: options.origin.y, z: options.origin.z },
+      { x: dir.x, y: dir.y, z: dir.z },
+    );
+    const filterPredicate = (collider: { handle: number }): boolean => {
+      const nodeId = this.colliderNodes.get(collider.handle);
+      return nodeId !== undefined && !exclude.has(nodeId);
+    };
+    const hit = this.world.castRayAndGetNormal(
+      ray,
+      maxToi,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      filterPredicate,
+    );
+    if (!hit) return [];
+    const nodeId = this.colliderNodes.get(hit.collider.handle);
+    if (!nodeId) return [];
+    const point = ray.pointAt(hit.timeOfImpact);
+    return [
+      {
+        nodeId,
+        point: { x: point.x, y: point.y, z: point.z },
+        normal: { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z },
+        distance: hit.timeOfImpact * dirLen,
+      },
+    ];
   }
 
   dispose(): void {

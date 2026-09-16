@@ -97,6 +97,32 @@ export interface IPhysicsBody {
   wakeUp(): void;
 }
 
+/** 射线投射单个命中结果（世界空间） */
+export interface PhysicsRayHit {
+  /** 命中刚体所属节点 id */
+  nodeId: string;
+  /** 命中点世界坐标 */
+  point: Vec3;
+  /** 命中面法线（世界空间；归一化） */
+  normal: Vec3;
+  /** 沿射线从起点到命中点的世界距离 */
+  distance: number;
+}
+
+/** 射线查询参数 */
+export interface PhysicsRayCastOptions {
+  /** 射线起点（世界空间） */
+  origin: Vec3;
+  /** 射线方向（世界空间；无需归一化，内部按 |direction| 截断 maxDistance） */
+  direction: Vec3;
+  /** 最大距离（默认 Infinity） */
+  maxDistance?: number;
+  /** 返回所有命中（默认 false = 仅最近命中）；当前三后端均仅返回最近命中 */
+  allHits?: boolean;
+  /** 排除的节点 id 列表（不参与命中） */
+  excludeNodeIds?: string[];
+}
+
 /** 物理世界设置 */
 export interface PhysicsWorldSettings {
   gravity: Vec3;
@@ -116,5 +142,7 @@ export interface IPhysicsWorld {
   destroyBody(body: IPhysicsBody): void;
   /** 推进一步（dt 由系统按固定步长切片后传入） */
   step(dt: number): void;
+  /** 射线投射（世界空间；返回按距离升序排列的命中列表） */
+  castRay(options: PhysicsRayCastOptions): PhysicsRayHit[];
   dispose(): void;
 }

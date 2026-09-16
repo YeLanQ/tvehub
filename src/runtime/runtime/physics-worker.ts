@@ -9,6 +9,8 @@
 // ← { type: "stepped", transforms: Float32Array, velocities: Float32Array, collisions: any[] }
 // → { type: "command", method: string, args: any[] }
 // ← { type: "result", method: string, value: any }
+// → { type: "castRay", id: number, options: any }
+// ← { type: "raycastResult", id: number, hits: any[] }
 
 import * as THREE from "../core/three.module.min.js";
 import { createPhysics } from "./physics";
@@ -78,6 +80,18 @@ self.onmessage = async (e: MessageEvent) => {
       if (api && typeof api[method] === "function") {
         const value = api[method](...args);
         if (value !== undefined) (self as any).postMessage({ type: "result", method, value });
+      }
+      break;
+    }
+    case "castRay": {
+      const { id, options } = msg;
+      try {
+        const hits = api?.castRay ? api.castRay(options) : [];
+        Promise.resolve(hits).then((h) => {
+          (self as any).postMessage({ type: "raycastResult", id, hits: h ?? [] });
+        });
+      } catch {
+        (self as any).postMessage({ type: "raycastResult", id, hits: [] });
       }
       break;
     }

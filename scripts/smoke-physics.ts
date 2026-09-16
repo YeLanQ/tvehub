@@ -159,6 +159,21 @@ async function exercise(backend: string, create: WorldFactory): Promise<void> {
   const v = ball.getLinearVelocity();
   console.log(`[${backend}] 冲量后速度 = ${v ? v.y.toFixed(2) : "null"}`);
   if (!v || v.y <= 0) throw new Error(`${backend}: 冲量未生效`);
+  // 射线投射：自 y=5 向下先命中球（球落回地板后球顶 ≈1，距离 ≈4），
+  // 排除球后命中地板（顶 y=0，距离 5），射程 3m 内无命中。
+  // 冲量把球弹起：先清速度放回地板位再测，位置确定
+  ball.setLinearVelocity({ x: 0, y: 0, z: 0 });
+  ball.setTransform({ x: 0, y: 0.5, z: 0 }, IDENTITY);
+  for (let i = 0; i < 5; i++) world.step(1 / 60);
+  const down = { origin: { x: 0, y: 5, z: 0 }, direction: { x: 0, y: -1, z: 0 } };
+  const hits = world.castRay({ ...down, maxDistance: 100 });
+  if (hits.length === 0 || hits[0].nodeId !== "ball") throw new Error(`${backend}: 射线未命中球（${hits[0]?.nodeId ?? "无"}）`);
+  if (!(hits[0].distance > 3.5 && hits[0].distance < 4.5)) throw new Error(`${backend}: 射线命中球距离异常（${hits[0].distance}）`);
+  const floorHits = world.castRay({ ...down, maxDistance: 100, excludeNodeIds: ["ball"] });
+  if (floorHits.length === 0 || floorHits[0].nodeId !== "floor") throw new Error(`${backend}: 排除球后未命中地板（${floorHits[0]?.nodeId ?? "无"}）`);
+  const shortHits = world.castRay({ ...down, maxDistance: 3 });
+  if (shortHits.length !== 0) throw new Error(`${backend}: 射程 3m 内不应命中`);
+  console.log(`[${backend}] 射线命中球 d=${hits[0].distance.toFixed(2)} / 排除后地板 d=${floorHits[0].distance.toFixed(2)}`);
   world.destroyBody(ball);
   world.dispose();
   console.log(`[${backend}] OK`);

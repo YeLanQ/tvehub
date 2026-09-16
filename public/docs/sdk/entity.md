@@ -218,6 +218,7 @@ export default class Explode extends Component {
 ```ts
 engine.scene.root;                 // 根实体（空场景 null）
 engine.scene.find("Boss/Hand");    // 从根开始按名称/路径查找（语义同 Entity.find）
+engine.scene.find("node_ab12cd");  // 名称未命中时按节点 id 回退（castRay 命中只带 id）
 engine.scene.findAll();            // 全部实体（快照数组，文档序）
 engine.scene.findByTag("enemy");   // 按标签查第一个命中；无命中 null
 engine.scene.findAllByTag("enemy");// 按标签全量（文档序）
@@ -226,7 +227,8 @@ engine.scene.findAllByTag("enemy");// 按标签全量（文档序）
 - 「文档序」= 场景树的深度优先顺序（与层级面板从上到下一致）；
 - 标签在检查器 Node 卡设置（项目设置 › 标签与层 维护列表；节点上存储但不在列表中的标签原样保留），空串 = 无标签；
 - 查询是**每帧可重复调用**的轻量操作，但结果应缓存使用（如 `onStart` 里查一次存字段），避免每帧全树遍历；
-- `find` 返回 `Entity | null`，需要具体节点类型时用 `instanceof` 收窄（不支持泛型调用）。
+- `find` 返回 `Entity | null`，需要具体节点类型时用 `instanceof` 收窄（不支持泛型调用）；
+- `engine.scene.find` 名称/路径未命中时按**节点 id** 回退（`Entity.find` 子树查找不做 id 回退）——典型场景：`engine.physics.castRay` 的命中结果只携带 `nodeId`，用它直接换算实体。
 
 ---
 

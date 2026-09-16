@@ -142,6 +142,18 @@ for (const backend of ["rapier", "jolt", "ammo"]) {
   ok(yLow > 1.1 && yLow < 1.9, `高度场低台（x=-2.5）球停 y=${yLow.toFixed(3)}（期望 ≈1.5）`);
   ok(yHigh > 3.1 && yHigh < 3.9, `高度场高台（x=+2.5）球停 y=${yHigh.toFixed(3)}（期望 ≈3.5）`);
   ok(yHigh > yLow + 1, "高度场 x 方向正确（高台在 +x 侧）");
+
+  // ⑥ 射线投射（三后端同一 API/返回结构）：对准球实时位置自上而下先命中球，
+  //    排除后命中地形，射程截断后无命中。球心 y≈1.5（顶 ≈2.0），自 y=8 向下 ≈6.0
+  const bx = lowBall.obj.position.x.toFixed(3), by = lowBall.obj.position.y, bz = lowBall.obj.position.z.toFixed(3);
+  const down = { origin: { x: Number(bx), y: 8, z: Number(bz) }, direction: { x: 0, y: -1, z: 0 } };
+  const rayHits = apiHf.castRay({ ...down, maxDistance: 100 });
+  ok(rayHits.length > 0 && rayHits[0].nodeId === "low", `射线先命中 low 球（${rayHits[0]?.nodeId ?? "未命中"}，距离 ${rayHits[0]?.distance?.toFixed(2)}）`);
+  ok(rayHits[0].distance > 5.5 && rayHits[0].distance < 6.5, `命中距离 ≈ 6.0（实际 ${rayHits[0].distance.toFixed(3)}）`);
+  const terrainHits = apiHf.castRay({ ...down, maxDistance: 100, excludeNodeIds: ["low"] });
+  ok(terrainHits.length > 0 && terrainHits[0].nodeId === "terrain", `排除球后命中地形（${terrainHits[0]?.nodeId ?? "未命中"}，距离 ${terrainHits[0]?.distance?.toFixed(2)}）`);
+  const shortHits = apiHf.castRay({ ...down, maxDistance: 5 });
+  ok(shortHits.length === 0, "射程 5m 内无命中（球顶 ≈6m）");
 }
 
 console.log(`\n${failed === 0 ? "全部通过" : "存在失败"}：${passed} 项通过，${failed} 项失败`);

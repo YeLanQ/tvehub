@@ -14,6 +14,7 @@
     "smoke:mesh": "vite build --ssr scripts/smoke-mesh.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-mesh.js",
     "smoke:physics": "vite build --ssr scripts/smoke-physics.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-physics.js",
     "smoke:physics-runtime": "node scripts/smoke-physics-runtime.mjs",
+    "smoke:physics-pick": "node scripts/smoke-physics-pick.mjs",
     "smoke:collider": "vite build --ssr scripts/smoke-collider-helper.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-collider-helper.js",
     "smoke:components": "vite build --ssr scripts/smoke-components.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-components.js",
     "smoke:shader": "vite build --ssr scripts/smoke-shader.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/smoke-shader.js",

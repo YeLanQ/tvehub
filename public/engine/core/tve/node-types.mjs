@@ -8,6 +8,16 @@ class MeshNode extends Transform {
 class LightNode extends Transform {
 }
 class CameraNode extends Transform {
+  /**
+   * 屏幕坐标 → 世界空间射线（用于物理拾取/视线检测等）。
+   * screenX/screenY 为画布内 CSS 像素（左上角原点；与 engine.input 指针坐标同一空间）。
+   * 返回 { origin, direction }（origin = 相机世界位置，direction = 归一化世界方向）；
+   * 相机未就绪/坐标越界返回 null。
+   */
+  screenToRay(screenX, screenY) {
+    var _a, _b, _c;
+    return ((_c = (_b = (_a = state.host) == null ? void 0 : _a.camera) == null ? void 0 : _b.screenToRay) == null ? void 0 : _c.call(_b, screenX, screenY)) ?? null;
+  }
 }
 class SkyboxNode extends Transform {
 }

@@ -282,6 +282,8 @@ async function loadRapier() {
       const eventQueue = new R.EventQueue(true);
       const colliderNodes = new Map();
       const pendingCollisions = [];
+      // broadphase 是否已随 step 建树（建体后从未 step 时射线查询树为空）
+      let steppedOnce = false;
       const shapeOf = (col) => {
         switch (col.shape) {
           case "sphere":
@@ -429,6 +431,7 @@ async function loadRapier() {
         step(dt) {
           world.timestep = Math.max(0.0001, dt);
           world.step(eventQueue);
+          steppedOnce = true;
           // 碰撞开始/结束事件 → 节点 id 对（同一批次内按 a|b|started 去重，
           // 复合形状多对碰撞体同帧只报一次）
           const seen = new Set();
@@ -444,6 +447,42 @@ async function loadRapier() {
         },
         takeCollisionEvents() {
           return pendingCollisions.splice(0);
+        },
+        castRay(options) {
+          const dir = options.direction;
+          const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+          if (dirLen < 1e-9) return [];
+          if (!steppedOnce) {
+            // broadphase 未随 step 建树时射线永远打空：以零步长预热一帧
+            // （不推进模拟、不产生位移；事件照常入队，首个真实 step 前的接触语义不变）
+            const prev = world.timestep;
+            world.timestep = 0;
+            world.step(eventQueue);
+            world.timestep = prev;
+            steppedOnce = true;
+          }
+          const maxToi = (options.maxDistance ?? Infinity) / dirLen;
+          if (maxToi <= 0) return [];
+          const exclude = new Set(options.excludeNodeIds ?? []);
+          const ray = new R.Ray(
+            { x: options.origin.x, y: options.origin.y, z: options.origin.z },
+            { x: dir.x, y: dir.y, z: dir.z },
+          );
+          const filterPredicate = (collider) => {
+            const nodeId = colliderNodes.get(collider.handle);
+            return nodeId !== undefined && !exclude.has(nodeId);
+          };
+          const hit = world.castRayAndGetNormal(ray, maxToi, true, undefined, undefined, undefined, undefined, filterPredicate);
+          if (!hit) return [];
+          const nodeId = colliderNodes.get(hit.collider.handle);
+          if (!nodeId) return [];
+          const point = ray.pointAt(hit.timeOfImpact);
+          return [{
+            nodeId,
+            point: { x: point.x, y: point.y, z: point.z },
+            normal: { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z },
+            distance: hit.timeOfImpact * dirLen,
+          }];
         },
         dispose() {
           world.free();
@@ -763,6 +802,55 @@ async function loadJolt() {
         },
         takeCollisionEvents() {
           return pendingCollisions.splice(0);
+        },
+        castRay(options) {
+          const dir = options.direction;
+          const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+          if (dirLen < 1e-9) return [];
+          const maxDistance = options.maxDistance ?? Infinity;
+          const exclude = new Set(options.excludeNodeIds ?? []);
+          const rayLen = Number.isFinite(maxDistance) ? maxDistance : 1e9;
+          // Jolt 射线是有向线段：方向须带长度，命中分数 mFraction ∈ [0,1) 相对线段长
+          const ray = new Jolt.RRayCast();
+          ray.mOrigin = new Jolt.RVec3(options.origin.x, options.origin.y, options.origin.z);
+          ray.mDirection = new Jolt.Vec3(dir.x / dirLen * rayLen, dir.y / dirLen * rayLen, dir.z / dirLen * rayLen);
+          const result = new Jolt.RayCastResult();
+          // result 为 in/out（初值 fraction = 1）：CastRay 只在更近时覆写，
+          // 逐体投完后 result 即最近命中，bestNodeId/bestBody 记录归属
+          let bestNodeId = null;
+          let bestBody = null;
+          for (const [body, entry] of bodies) {
+            if (exclude.has(entry.handle.nodeId)) continue;
+            const ts = body.GetTransformedShape();
+            const prevFraction = result.mFraction;
+            try { ts.CastRay(ray, result); } catch { continue; }
+            if (result.mFraction < prevFraction) {
+              bestNodeId = entry.handle.nodeId;
+              bestBody = body;
+            }
+          }
+          if (!bestNodeId || result.mFraction >= 1) {
+            Jolt.destroy(ray);
+            Jolt.destroy(result);
+            return [];
+          }
+          const point = ray.GetPointOnRay(result.mFraction);
+          let normal = { x: 0, y: 0, z: 0 };
+          try {
+            const n = bestBody.GetTransformedShape().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+            normal = { x: n.GetX(), y: n.GetY(), z: n.GetZ() };
+            Jolt.destroy(n);
+          } catch {}
+          const hit = [{
+            nodeId: bestNodeId,
+            point: { x: point.GetX(), y: point.GetY(), z: point.GetZ() },
+            normal,
+            distance: result.mFraction * rayLen,
+          }];
+          Jolt.destroy(point);
+          Jolt.destroy(ray);
+          Jolt.destroy(result);
+          return hit;
         },
         dispose() {
           try {
@@ -1120,6 +1208,49 @@ async function loadAmmo() {
         takeCollisionEvents() {
           return pendingCollisions.splice(0);
         },
+        castRay(options) {
+          const dir = options.direction;
+          const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+          if (dirLen < 1e-9) return [];
+          const maxDistance = options.maxDistance ?? Infinity;
+          const exclude = new Set(options.excludeNodeIds ?? []);
+          const o = options.origin;
+          const rayLen = Number.isFinite(maxDistance) ? maxDistance : 1e9;
+          const from = new Ammo.btVector3(o.x, o.y, o.z);
+          const to = new Ammo.btVector3(
+            o.x + dir.x / dirLen * rayLen,
+            o.y + dir.y / dirLen * rayLen,
+            o.z + dir.z / dirLen * rayLen,
+          );
+          // AllHits 回调收集全部命中：ClosestRayResultCallback 遇到最近命中被排除
+          // （excludeNodeIds）时无法穿透继续找，这里线性取最近的未排除命中
+          const cb = new Ammo.AllHitsRayResultCallback(from, to);
+          world.rayTest(from, to, cb);
+          let best = null;
+          if (cb.hasHit()) {
+            const objs = cb.get_m_collisionObjects();
+            const points = cb.get_m_hitPointWorld();
+            const normals = cb.get_m_hitNormalWorld();
+            const count = objs.size();
+            for (let i = 0; i < count; i++) {
+              const nodeId = pointerToNode.get(Ammo.getPointer(objs.at(i)));
+              if (nodeId === undefined || exclude.has(nodeId)) continue;
+              const p = points.at(i);
+              const distance = Math.hypot(p.x() - o.x, p.y() - o.y, p.z() - o.z);
+              if (!best || distance < best.distance) {
+                const n = normals.at(i);
+                best = {
+                  nodeId,
+                  point: { x: p.x(), y: p.y(), z: p.z() },
+                  normal: { x: n.x(), y: n.y(), z: n.z() },
+                  distance,
+                };
+              }
+            }
+          }
+          try { Ammo.destroy(from); Ammo.destroy(to); Ammo.destroy(cb); } catch {}
+          return best ? [best] : [];
+        },
         dispose() {
           for (const b of [...bodies]) world.removeRigidBody(b.raw);
           bodies.length = 0;
@@ -1188,6 +1319,10 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
     },
     setGravityScale() {},
     wakeUp() {},
+    /** 射线投射（返回命中列表；未启用/未就绪时返回空数组） */
+    castRay() {
+      return [];
+    },
     /** 碰撞事件排空（脚本宿主每帧调用；元素 {a, b, started} 为节点 id 对） */
     drainCollisions() {
       return [];
@@ -1347,6 +1482,7 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
 
   api.setGravity = (x, y, z) => world.setGravity({ x, y, z });
   api.drainCollisions = () => world.takeCollisionEvents();
+  api.castRay = (options) => world.castRay(options);
 
   const bodyOf = (nodeId) => bindings.find((b) => b.nodeId === nodeId)?.body ?? null;
   api.applyImpulse = (nodeId, x, y, z) => bodyOf(nodeId)?.applyImpulse({ x, y, z });
@@ -1465,6 +1601,8 @@ export async function createPhysicsWorker(opts) {
   let workerBusy = false;
   let cachedCollisions = [];
   let cachedVelocities = new Float32Array(dynamicIds.length * 3);
+  let raycastId = 0;
+  const raycastPending = new Map();
 
   worker.onmessage = (e) => {
     const msg = e.data;
@@ -1474,6 +1612,12 @@ export async function createPhysicsWorker(opts) {
       workerBusy = false;
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
       cachedCollisions = msg.value;
+    } else if (msg.type === "raycastResult") {
+      const resolve = raycastPending.get(msg.id);
+      if (resolve) {
+        raycastPending.delete(msg.id);
+        resolve(msg.hits ?? []);
+      }
     }
   };
 
@@ -1528,12 +1672,29 @@ export async function createPhysicsWorker(opts) {
     bodyInfo(nodeId) { return cachedBodyInfos[nodeId] || null; },
     setGravityScale(nodeId, scale) { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
     wakeUp(nodeId) { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
+    castRay(options) {
+      return new Promise((resolve) => {
+        const id = ++raycastId;
+        raycastPending.set(id, resolve);
+        try {
+          worker.postMessage({ type: "castRay", id, options });
+        } catch {
+          raycastPending.delete(id);
+          resolve([]);
+        }
+      });
+    },
     drainCollisions() {
       const c = cachedCollisions;
       cachedCollisions = [];
       return c;
     },
-    dispose() { worker.postMessage({ type: "dispose" }); worker.terminate(); },
+    dispose() {
+      for (const resolve of raycastPending.values()) resolve([]);
+      raycastPending.clear();
+      worker.postMessage({ type: "dispose" });
+      worker.terminate();
+    },
   };
 
   postLog("info", "[物理] Worker 模式已启动（物理模拟在独立线程）");

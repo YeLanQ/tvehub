@@ -15,6 +15,8 @@ import type {
   IPhysicsWorld,
   PhysicsBodyDesc,
   PhysicsQuat,
+  PhysicsRayCastOptions,
+  PhysicsRayHit,
   PhysicsTransform,
   PhysicsWorldSettings,
 } from "./types";
@@ -355,6 +357,65 @@ class JoltWorldAdapter implements IPhysicsWorld {
       );
     }
     this.interface3d.Step(dt, 1);
+  }
+
+  castRay(options: PhysicsRayCastOptions): PhysicsRayHit[] {
+    const j = this.jolt;
+    const dir = options.direction;
+    const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+    if (dirLen < 1e-9) return [];
+    const maxDistance = options.maxDistance ?? Infinity;
+    const exclude = new Set(options.excludeNodeIds ?? []);
+    const rayLen = Number.isFinite(maxDistance) ? maxDistance : 1e9;
+    // Jolt 射线是有向线段：方向须带长度，命中分数 mFraction ∈ [0,1) 相对线段长
+    const ray = new j.RRayCast();
+    (ray as unknown as { mOrigin: unknown }).mOrigin = new j.RVec3(options.origin.x, options.origin.y, options.origin.z);
+    ray.mDirection = new j.Vec3(dir.x / dirLen * rayLen, dir.y / dirLen * rayLen, dir.z / dirLen * rayLen);
+    const result = new j.RayCastResult();
+    // result 为 in/out（初值 fraction = 1）：CastRay 只在更近时覆写，
+    // 逐体投完后 result 即最近命中，bestNodeId/bestBody 记录归属
+    let bestNodeId: string | null = null;
+    let bestBody: JoltBody | null = null;
+    for (const [body, entry] of this.bodies) {
+      const nodeId = entry.adapter.nodeId;
+      if (exclude.has(nodeId)) continue;
+      const ts = body.GetTransformedShape();
+      const prevFraction = result.mFraction;
+      try {
+        (ts as unknown as { CastRay: (r: unknown, res: unknown) => void }).CastRay(ray, result);
+      } catch {
+        continue;
+      }
+      if (result.mFraction < prevFraction) {
+        bestNodeId = nodeId;
+        bestBody = body;
+      }
+    }
+    if (!bestNodeId || !bestBody || result.mFraction >= 1) {
+      j.destroy(ray);
+      j.destroy(result);
+      return [];
+    }
+    const point = ray.GetPointOnRay(result.mFraction);
+    let normal = { x: 0, y: 0, z: 0 };
+    try {
+      const ts = bestBody.GetTransformedShape();
+      const n = (ts as unknown as { GetWorldSpaceSurfaceNormal: (id: unknown, p: unknown) => { GetX(): number; GetY(): number; GetZ(): number } }).GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+      normal = { x: n.GetX(), y: n.GetY(), z: n.GetZ() };
+      j.destroy(n);
+    } catch {
+      /* GetWorldSpaceSurfaceNormal 不可用时法线归零 */
+    }
+    const hit: PhysicsRayHit = {
+      nodeId: bestNodeId,
+      point: { x: point.GetX(), y: point.GetY(), z: point.GetZ() },
+      normal,
+      distance: result.mFraction * rayLen,
+    };
+    j.destroy(point);
+    j.destroy(ray);
+    j.destroy(result);
+    return [hit];
   }
 
   dispose(): void {

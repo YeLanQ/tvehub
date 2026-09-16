@@ -131,9 +131,10 @@ function callLifecycle(record, method, ...args) {
  * @param {{update,applyTextures,settingsOf,updateSettings,onClick,offClick}|null} opts.ui UI 运行时控制（engine.ui / UI 节点门面转发）
  * @param {{update,fire,setFsmParam,onFsmEnter,onAction,...}|null} opts.logic 逻辑运行器控制（状态机/行为树；engine.logic 转发）
  * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
+ * @param {{screenToRay(screenX:number, screenY:number): {origin:Vec3, direction:Vec3} | null}|null} opts.camera 渲染相机控制（CameraNode.screenToRay 转发）
  * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, logic, canvas }) {
+export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, logic, canvas, camera }) {
   const noop = { fixedUpdate() {}, update() {}, lateUpdate() {}, dispose() {} };
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
@@ -148,6 +149,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     terrains: terrains ?? null,
     ui: ui ?? null,
     logic: logic ?? null,
+    camera: camera ?? null,
     scripts: { spawn },
   });
 

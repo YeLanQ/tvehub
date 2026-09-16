@@ -34,6 +34,8 @@ export type {
   IPhysicsWorld,
   PhysicsBodyDesc,
   PhysicsQuat,
+  PhysicsRayCastOptions,
+  PhysicsRayHit,
   PhysicsTransform,
   PhysicsWorldSettings,
 } from "./backend/types";

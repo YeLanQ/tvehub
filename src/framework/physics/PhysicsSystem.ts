@@ -33,6 +33,8 @@ import type {
   IPhysicsBody,
   IPhysicsWorld,
   PhysicsQuat,
+  PhysicsRayCastOptions,
+  PhysicsRayHit,
 } from "./backend/types";
 
 /** syncNode 需要的节点形状（避免依赖具体节点类；任意 Node 结构满足） */
@@ -454,6 +456,12 @@ export class PhysicsSystem {
   /** 按节点 id 取刚体句柄（脚本 SDK；未绑定/非模拟期返回 null） */
   bodyFor(nodeId: string): IPhysicsBody | null {
     return this.bindings.get(nodeId)?.body ?? null;
+  }
+
+  /** 射线投射（世界空间；模拟就绪后生效，未就绪返回空数组） */
+  castRay(options: PhysicsRayCastOptions): PhysicsRayHit[] {
+    if (!this.world || this.worldState !== "ready") return [];
+    return this.world.castRay(options);
   }
 
   /** 世界重力（脚本 SDK 读取） */

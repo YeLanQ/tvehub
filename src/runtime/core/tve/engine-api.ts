@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 import { state, numOr, registry } from "./state";
 import { getEntity, deepFind } from "./entity";
-import { resolveScriptInstance } from "./runtime";
+import { resolveScriptInstance, resolveNodeEntity } from "./runtime";
 import { builtinTypeKeyOf, builtinFacadeOf } from "./component-registry";
 
 const animationApi = {
@@ -61,6 +61,10 @@ const physicsApi = {
   setGravity(x, y, z) {
     state.host?.physics?.setGravity(numOr(x, 0), numOr(y, -9.81), numOr(z, 0));
   },
+  /** 射线投射（世界级查询，不按实体寻址；Worker 模式返回 Promise） */
+  castRay(options) {
+    return state.host?.physics?.castRay(options) ?? [];
+  },
 };
 
 /** 单实体按 token 找组件：脚本类 / 脚本路径 / 类名 / 内置组件门面类 / 类型键 */
@@ -85,7 +89,9 @@ const sceneApi = {
     if (!rootObj) return null;
     if (rootObj.name === nameOrPath) return getEntity(rootObj);
     const hit = deepFind(rootObj, nameOrPath);
-    return hit ? getEntity(hit) : null;
+    if (hit) return getEntity(hit);
+    // 名字/路径未命中按节点 id 回退（castRay 命中结果只携带 nodeId）
+    return resolveNodeEntity(nameOrPath);
   },
   findAll() {
     return registry().map((e) => getEntity(e.obj)).filter(Boolean);

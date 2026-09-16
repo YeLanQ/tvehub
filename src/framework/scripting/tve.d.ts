@@ -496,7 +496,15 @@ export class MeshNode extends Entity {}
 export class LightNode extends Entity {}
 
 /** 相机节点（编辑器 cameraNode） */
-export class CameraNode extends Entity {}
+export class CameraNode extends Entity {
+  /**
+   * 屏幕坐标 → 世界空间射线（用于物理拾取/视线检测等）。
+   * screenX/screenY 为画布内 CSS 像素（左上角原点；与 engine.input 指针坐标同一空间）。
+   * 返回 `{ origin, direction }`（origin = 相机世界位置，direction = 归一化世界方向）；
+   * 相机未就绪/坐标越界返回 null。
+   */
+  screenToRay(screenX: number, screenY: number): { origin: Vec3; direction: Vec3 } | null;
+}
 
 /** 天空盒节点（编辑器 skyboxNode） */
 export class SkyboxNode extends Entity {}
@@ -1045,6 +1053,22 @@ export interface MathApi {
   degToRad(degrees: number): number;
   /** 弧度 → 度 */
   radToDeg(radians: number): number;
+
+  // ---- Mat4：4×4 矩阵（列主序，长度 16 数组；与 Three.js/WebGPU 同布局）----
+
+  /** 创建 4×4 单位矩阵（列主序长度 16） */
+  mat4(): number[];
+  /** 矩阵乘法 a × b（列主序；结果 = 先 b 变换再 a 变换） */
+  mat4Multiply(a: number[], b: number[]): number[];
+  /** 矩阵求逆（列主序；不可逆返回单位矩阵，不产生 NaN） */
+  mat4Invert(m: number[]): number[];
+  /**
+   * 屏幕坐标 → 世界坐标（逆投影）。
+   * ndcX/ndcY ∈ [-1,1]（屏幕像素经 NDC 归一化后），ndcZ ∈ [-1,1]（-1 近 1 远）；
+   * invVP = (projection × view)^-1（列主序 16 数组，可用 mat4Invert 求逆）。
+   * 返回世界空间 Vec3。
+   */
+  unproject(ndcX: number, ndcY: number, ndcZ: number, invVP: number[]): Vec3;
 }
 
 // ---------------------------------------------------------------------------
@@ -2093,6 +2117,31 @@ export interface PhysicsApi {
   wakeUp(entity: Entity): void;
   /** 世界重力（影响全部动力学体） */
   setGravity(x: number, y: number, z: number): void;
+  /** 射线投射（世界空间；返回按距离升序排列的命中列表；空数组 = 未命中） */
+  castRay(options: {
+    /** 射线起点（世界空间） */
+    origin: Vec3;
+    /** 射线方向（世界空间；无需归一化） */
+    direction: Vec3;
+    /** 最大距离（缺省 Infinity） */
+    maxDistance?: number;
+    /** 返回所有命中（缺省 false = 仅最近命中；当前仅返回最近命中） */
+    allHits?: boolean;
+    /** 排除的节点 id 列表（不参与命中） */
+    excludeNodeIds?: string[];
+  }): PhysicsRayHit[] | Promise<PhysicsRayHit[]>;
+}
+
+/** 物理射线命中结果（世界空间） */
+export interface PhysicsRayHit {
+  /** 命中刚体所属节点 id */
+  nodeId: string;
+  /** 命中点世界坐标 */
+  point: Vec3;
+  /** 命中面法线（世界空间，归一化） */
+  normal: Vec3;
+  /** 沿射线从起点到命中点的世界距离 */
+  distance: number;
 }
 
 /** UI 画布屏幕度量（屏幕像素 ↔ UI 单位换算用；随窗口尺寸/缩放模式变化，建议每帧读取） */

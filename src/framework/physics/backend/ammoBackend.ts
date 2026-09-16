@@ -16,6 +16,8 @@ import type {
   IPhysicsWorld,
   PhysicsBodyDesc,
   PhysicsQuat,
+  PhysicsRayCastOptions,
+  PhysicsRayHit,
   PhysicsTransform,
   PhysicsWorldSettings,
 } from "./types";
@@ -84,6 +86,28 @@ interface AmmoDynamicsWorld {
   addRigidBody(b: AmmoRigidBody): void;
   removeRigidBody(b: AmmoRigidBody): void;
   stepSimulation(dt: number, subSteps: number, fixedStep: number): void;
+  rayTest(from: AmmoVector3, to: AmmoVector3, callback: AmmoRayResultCallback): void;
+}
+/** Ammo 射线回调结果（ClosestRayResultCallback / AllHitsRayResultCallback 共同面） */
+interface AmmoRayResultCallback {
+  hasHit(): boolean;
+  m_hitPointWorld: AmmoVector3;
+  m_hitNormalWorld: AmmoVector3;
+  m_collisionObject: unknown;
+}
+/** AllHitsRayResultCallback 的批量命中数组（按次序对应，size/at 取用） */
+interface AmmoCollisionObjectArray {
+  size(): number;
+  at(i: number): unknown;
+}
+interface AmmoVector3Array {
+  size(): number;
+  at(i: number): AmmoVector3;
+}
+interface AmmoAllHitsRayResultCallback extends AmmoRayResultCallback {
+  get_m_collisionObjects(): AmmoCollisionObjectArray;
+  get_m_hitPointWorld(): AmmoVector3Array;
+  get_m_hitNormalWorld(): AmmoVector3Array;
 }
 interface AmmoAPI {
   btVector3: new (x?: number, y?: number, z?: number) => AmmoVector3;
@@ -132,6 +156,9 @@ interface AmmoAPI {
     solver: object,
     cfg: object,
   ) => AmmoDynamicsWorld;
+  ClosestRayResultCallback: new (from: AmmoVector3, to: AmmoVector3) => AmmoRayResultCallback;
+  AllHitsRayResultCallback: new (from: AmmoVector3, to: AmmoVector3) => AmmoAllHitsRayResultCallback;
+  getPointer: (obj: unknown) => number;
 }
 
 /** Bullet 碰撞对象标志位 */
@@ -422,6 +449,8 @@ class AmmoWorldAdapter implements IPhysicsWorld {
   /** 全部托管 emscripten 对象（dispose 逐个释放） */
   private tracked: unknown[] = [];
   private gravity: Vec3;
+  /** 刚体指针 → 节点 id（射线命中反查） */
+  private bodyNodes = new Map<number, string>();
 
   constructor(
     private api: AmmoAPI,
@@ -512,6 +541,7 @@ class AmmoWorldAdapter implements IPhysicsWorld {
       adapter.setGravityScale(desc.gravityScale);
     }
     this.bodies.push(adapter);
+    this.bodyNodes.set(api.getPointer(body), desc.nodeId);
     return adapter;
   }
 
@@ -520,11 +550,59 @@ class AmmoWorldAdapter implements IPhysicsWorld {
     const idx = this.bodies.indexOf(adapter);
     if (idx < 0) return;
     this.bodies.splice(idx, 1);
+    this.bodyNodes.delete(this.api.getPointer(adapter.raw()));
     this.world.removeRigidBody(adapter.raw());
   }
 
   step(dt: number): void {
     this.world.stepSimulation(Math.max(0.0001, dt), 1, Math.max(0.0001, dt));
+  }
+
+  castRay(options: PhysicsRayCastOptions): PhysicsRayHit[] {
+    const api = this.api;
+    const dir = options.direction;
+    const dirLen = Math.hypot(dir.x, dir.y, dir.z);
+    if (dirLen < 1e-9) return [];
+    const maxDistance = options.maxDistance ?? Infinity;
+    const exclude = new Set(options.excludeNodeIds ?? []);
+    const o = options.origin;
+    const rayLen = Number.isFinite(maxDistance) ? maxDistance : 1e9;
+    const from = new api.btVector3(o.x, o.y, o.z);
+    const to = new api.btVector3(
+      o.x + dir.x / dirLen * rayLen,
+      o.y + dir.y / dirLen * rayLen,
+      o.z + dir.z / dirLen * rayLen,
+    );
+    // AllHits 回调收集全部命中：ClosestRayResultCallback 遇到最近命中被排除
+    // （excludeNodeIds）时无法穿透继续找，这里线性取最近的未排除命中
+    const cb = new api.AllHitsRayResultCallback(from, to);
+    this.world.rayTest(from, to, cb);
+    let hit: PhysicsRayHit | null = null;
+    if (cb.hasHit()) {
+      const objs = cb.get_m_collisionObjects();
+      const points = cb.get_m_hitPointWorld();
+      const normals = cb.get_m_hitNormalWorld();
+      const count = objs.size();
+      for (let i = 0; i < count; i++) {
+        const nodeId = this.bodyNodes.get(api.getPointer(objs.at(i)));
+        if (nodeId === undefined || exclude.has(nodeId)) continue;
+        const p = points.at(i);
+        const distance = Math.hypot(p.x() - o.x, p.y() - o.y, p.z() - o.z);
+        if (!hit || distance < hit.distance) {
+          const n = normals.at(i);
+          hit = {
+            nodeId,
+            point: { x: p.x(), y: p.y(), z: p.z() },
+            normal: { x: n.x(), y: n.y(), z: n.z() },
+            distance,
+          };
+        }
+      }
+    }
+    safeDestroy(api, from);
+    safeDestroy(api, to);
+    safeDestroy(api, cb);
+    return hit ? [hit] : [];
   }
 
   dispose(): void {

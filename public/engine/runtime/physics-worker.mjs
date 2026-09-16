@@ -72,6 +72,18 @@ self.onmessage = async (e) => {
       }
       break;
     }
+    case "castRay": {
+      const { id, options } = msg;
+      try {
+        const hits = (api == null ? void 0 : api.castRay) ? api.castRay(options) : [];
+        Promise.resolve(hits).then((h) => {
+          self.postMessage({ type: "raycastResult", id, hits: h ?? [] });
+        });
+      } catch {
+        self.postMessage({ type: "raycastResult", id, hits: [] });
+      }
+      break;
+    }
     case "dispose": {
       if (api == null ? void 0 : api.dispose) api.dispose();
       self.close();

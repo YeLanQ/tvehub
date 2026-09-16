@@ -653,6 +653,25 @@ async function main() {
   // 用户脚本（节点脚本组件 + 入口脚本）：宿主失败不阻断渲染回放
   let scripts = { update() {}, dispose() {} };
   try {
+    // 渲染相机 → screenToRay：屏幕像素 → 世界空间射线（CameraNode.screenToRay 转发）
+    // 用 Three.js Raycaster 原生反投影（透视/正交均支持），每帧按最新相机位姿实时计算
+    const _raycaster = new THREE.Raycaster();
+    const _ndc = new THREE.Vector2();
+    const cameraApi = {
+      screenToRay(screenX, screenY) {
+        const el = renderer.domElement;
+        const w = el.clientWidth, h = el.clientHeight;
+        if (!w || !h) return null;
+        _ndc.x = (screenX / w) * 2 - 1;
+        _ndc.y = -(screenY / h) * 2 + 1;
+        _raycaster.setFromCamera(_ndc, cam);
+        const o = _raycaster.ray.origin, d = _raycaster.ray.direction;
+        return {
+          origin: { x: o.x, y: o.y, z: o.z },
+          direction: { x: d.x, y: d.y, z: d.z },
+        };
+      },
+    };
     scripts = await createScripts({
       nodes,
       cfg,
@@ -665,6 +684,7 @@ async function main() {
       ui: uiApi,
       logic: logicApi,
       canvas: renderer.domElement,
+      camera: cameraApi,
     });
   } catch (e) {
     postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
