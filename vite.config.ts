@@ -179,12 +179,14 @@ export default defineConfig(async () => ({
     __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
 
-  // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"）
+  // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"），
+  // graph.html = 脚本图窗口（label "graph"）
   build: {
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
         home: path.resolve(__dirname, "home.html"),
+        graph: path.resolve(__dirname, "graph.html"),
       },
     },
   },

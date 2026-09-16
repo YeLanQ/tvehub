@@ -1,0 +1,543 @@
+<script setup lang="ts">
+/**
+ * 脚本图画布（Vue Flow 集成；会话工作板，编辑态以 Vue Flow 数组为权威）：
+ * - 三类卡片：原型（层级拖入生成，实体集源）/ 匹配（标签|类型筛选，实体集源）/
+ *   操作（原子行为，预览运行时由 graph-behaviors 解释执行）+ 注释框；
+ * - 双通道连线：实体集（原型/匹配 out → 操作 in，决定作用对象，操作 out 可透传
+ *   串联共用目标集）与执行链（op next → op exec，单入）；连线按通道配色；
+ * - 层级面板行可直接拖入画布生成原型（dragstart/drop，同实体去重）；
+ * - 会话级 undo/redo 快照栈 + 剪贴板（id 重映射）+ 右键菜单；
+ * - 图会话经 store 自动持久化到场景侧车（.tve 旁路，用户不感知文件）。
+ */
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  MarkerType,
+  VueFlow,
+  useVueFlow,
+  type Connection,
+  type Edge,
+  type GraphNode,
+  type Node,
+} from "@vue-flow/core";
+import { Background } from "@vue-flow/background";
+import { Controls } from "@vue-flow/controls";
+import { MiniMap } from "@vue-flow/minimap";
+import GraphProtoCard from "./GraphProtoCard.vue";
+import GraphMatchCard from "./GraphMatchCard.vue";
+import GraphOpCard from "./GraphOpCard.vue";
+import GraphCommentBox from "./GraphCommentBox.vue";
+import { getGraphWindowStore } from "../graphStore";
+import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
+import {
+  canConnectPorts,
+  graphNodeLabel,
+  graphOpDefaults,
+  graphOpDef,
+  graphPort,
+  GRAPH_DEFAULT_COMMENT_COLOR,
+  GRAPH_OP_DEFS,
+  G_OP_TRIGGER_LABEL,
+  normalizeGraphDoc,
+  type GComment,
+  type GNode,
+  type ScriptGraphDoc,
+} from "../../framework/graph";
+
+const store = getGraphWindowStore();
+
+const {
+  nodes,
+  edges,
+  setNodes,
+  setEdges,
+  addNodes,
+  addEdges,
+  removeNodes,
+  removeEdges,
+  findNode,
+  getSelectedNodes,
+  getSelectedEdges,
+  screenToFlowCoordinate,
+  fitView,
+  onConnect,
+  onNodeDragStart,
+  onPaneContextMenu,
+  onNodeContextMenu,
+  onEdgeContextMenu,
+} = useVueFlow();
+
+const wrapRef = ref<HTMLElement | null>(null);
+let lastMouse: { x: number; y: number } | null = null;
+
+// ---------------------------------------------------------------------------
+// 模型 ↔ 画布互转
+// ---------------------------------------------------------------------------
+
+function toFlowNode(n: GNode): Node {
+  const type = n.kind === "proto" ? "gproto" : n.kind === "match" ? "gmatch" : n.kind === "op" ? "gop" : "gcomment";
+  return { id: n.id, type, position: { x: n.x, y: n.y }, data: { g: n } };
+}
+
+function toFlowComment(c: GComment): Node {
+  return { id: c.id, type: "gcomment", position: { x: c.x, y: c.y }, data: { c } };
+}
+
+/** 通道 → 连线样式：实体集绿色细线；执行链白线 + 箭头 */
+function makeEdge(srcNode: string, srcPort: string, dstNode: string, dstPort: string, id: string): Edge {
+  const base: Edge = { id, source: srcNode, sourceHandle: srcPort, target: dstNode, targetHandle: dstPort };
+  if (srcPort === "next") {
+    return {
+      ...base,
+      style: { stroke: "#f2f2f2", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#f2f2f2", width: 18, height: 18 },
+    };
+  }
+  return { ...base, style: { stroke: "#6a9955", strokeWidth: 1.5 } };
+}
+
+function serializeDoc(): ScriptGraphDoc | null {
+  const list = nodes.value;
+  if (!list) return null;
+  const doc: ScriptGraphDoc = { nodes: [], edges: [], comments: [] };
+  for (const n of list) {
+    if (n.type === "gcomment") {
+      const c = n.data?.c as GComment | undefined;
+      if (!c) continue;
+      const st = typeof n.style === "object" ? n.style : undefined;
+      doc.comments.push({
+        id: n.id,
+        x: Math.round(n.position.x),
+        y: Math.round(n.position.y),
+        w: Math.round(numberOr(parseFloat(String(st?.width ?? "")), n.dimensions?.width ?? c.w)),
+        h: Math.round(numberOr(parseFloat(String(st?.height ?? "")), n.dimensions?.height ?? c.h)),
+        text: c.text,
+        color: c.color,
+      });
+      continue;
+    }
+    const g = n.data?.g as GNode | undefined;
+    if (!g) continue;
+    doc.nodes.push(JSON.parse(JSON.stringify({ ...g, x: Math.round(n.position.x), y: Math.round(n.position.y) })));
+  }
+  for (const e of edges.value) {
+    doc.edges.push({
+      id: e.id,
+      srcNode: e.source,
+      srcPort: e.sourceHandle ?? "",
+      dstNode: e.target,
+      dstPort: e.targetHandle ?? "",
+    });
+  }
+  return doc;
+}
+
+function numberOr(v: number, fb: number): number {
+  return Number.isFinite(v) && v > 0 ? v : fb;
+}
+
+async function loadDoc(doc: ScriptGraphDoc, opts: { fit?: boolean } = {}): Promise<void> {
+  const cards = doc.nodes.map(toFlowNode);
+  const comments = doc.comments.map(toFlowComment);
+  setNodes([...comments, ...cards]); // 注释框在前：渲染顺序垫底
+  setEdges(doc.edges.map((e) => makeEdge(e.srcNode, e.srcPort, e.dstNode, e.dstPort, e.id)));
+  store.setSelection(null, false);
+  if (opts.fit !== false) {
+    await nextTick();
+    void fitView({ padding: 0.25, maxZoom: 1.5, duration: 150 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// undo / redo（会话快照栈；场景数据不被图修改，无需进后端历史栈）
+// ---------------------------------------------------------------------------
+
+const undoStack: string[] = [];
+const redoStack: string[] = [];
+const UNDO_LIMIT = 100;
+
+function requestSnapshot(): void {
+  const doc = serializeDoc();
+  if (!doc) return;
+  undoStack.push(JSON.stringify(doc));
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack.length = 0;
+}
+
+function undo(): void {
+  const cur = serializeDoc();
+  const prev = undoStack.pop();
+  if (!cur || !prev) return;
+  redoStack.push(JSON.stringify(cur));
+  void loadDoc(normalizeGraphDoc(JSON.parse(prev)), { fit: false });
+}
+
+function redo(): void {
+  const cur = serializeDoc();
+  const next = redoStack.pop();
+  if (!cur || !next) return;
+  undoStack.push(JSON.stringify(cur));
+  void loadDoc(normalizeGraphDoc(JSON.parse(next)), { fit: false });
+}
+
+// ---------------------------------------------------------------------------
+// id 生成 / 坐标锚点
+// ---------------------------------------------------------------------------
+
+function uniqueNodeId(): string {
+  const used = new Set(nodes.value.filter((n) => n.type !== "gcomment").map((n) => n.id));
+  let i = used.size + 1;
+  let id = `n${i}`;
+  while (used.has(id)) id = `n${++i}`;
+  return id;
+}
+
+function uniqueEdgeId(): string {
+  const used = new Set(edges.value.map((e) => e.id));
+  let i = used.size + 1;
+  let id = `e${i}`;
+  while (used.has(id)) id = `e${++i}`;
+  return id;
+}
+
+function uniqueCommentId(): string {
+  const used = new Set(nodes.value.filter((n) => n.type === "gcomment").map((n) => n.id));
+  let i = used.size + 1;
+  let id = `c${i}`;
+  while (used.has(id)) id = `c${++i}`;
+  return id;
+}
+
+/** 鼠标当前位置（画布逻辑坐标；无鼠标记录取视口中心） */
+function mouseFlow(): { x: number; y: number } {
+  if (lastMouse) return screenToFlowCoordinate({ x: lastMouse.x, y: lastMouse.y });
+  const el = wrapRef.value;
+  if (el) {
+    const r = el.getBoundingClientRect();
+    return screenToFlowCoordinate({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  }
+  return { x: 0, y: 0 };
+}
+
+function putNode(n: GNode): void {
+  addNodes([toFlowNode(n)]);
+  store.markGraphDirty();
+}
+
+// ---------------------------------------------------------------------------
+// 建卡（原型/匹配/操作/注释框）/ 删除 / 剪贴板
+// ---------------------------------------------------------------------------
+
+/** 层级拖入/双击加入：按实体生成原型（同实体已有原型则不重复） */
+function addProto(entityId: string, at?: { x: number; y: number }): void {
+  if (!entityId) return;
+  if (nodes.value.some((n) => n.type === "gproto" && (n.data?.g as GNode)?.entityId === entityId)) {
+    store.showToast("该实体已在图中");
+    return;
+  }
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), kind: "proto", x: Math.round(pos.x), y: Math.round(pos.y), entityId };
+  putNode(n);
+}
+
+function addMatch(mode: "tag" | "type", at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = {
+    id: uniqueNodeId(),
+    kind: "match",
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    matchMode: mode,
+    matchPattern: "",
+  };
+  putNode(n);
+}
+
+function addOp(opType: string, at?: { x: number; y: number }): void {
+  if (!graphOpDef(opType)) return;
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = {
+    id: uniqueNodeId(),
+    kind: "op",
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    opType,
+    params: graphOpDefaults(opType),
+  };
+  putNode(n);
+}
+
+function addComment(at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const c: GComment = {
+    id: uniqueCommentId(),
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    w: 240,
+    h: 140,
+    text: "",
+    color: GRAPH_DEFAULT_COMMENT_COLOR,
+  };
+  addNodes([toFlowComment(c)]);
+  store.markGraphDirty();
+}
+
+function deleteSelection(): void {
+  const sel = getSelectedNodes.value;
+  const selEdges = getSelectedEdges.value;
+  if (!sel.length && !selEdges.length) return;
+  requestSnapshot();
+  if (sel.length) removeNodes(sel);
+  if (selEdges.length) removeEdges(selEdges);
+  store.setSelection(null, false);
+  store.markGraphDirty();
+}
+
+interface ClipData {
+  nodes: Pick<Node, "type" | "data">[];
+  edges: { srcNode: string; srcPort: string; dstNode: string; dstPort: string }[];
+}
+let clip: ClipData | null = null;
+
+function copySelection(): void {
+  const sel = getSelectedNodes.value;
+  if (!sel.length) return;
+  const ids = new Set(sel.map((n) => n.id));
+  clip = {
+    nodes: sel.map((n) => ({ type: n.type, data: JSON.parse(JSON.stringify(n.data)) })),
+    edges: edges.value
+      .filter((e) => ids.has(e.source) && ids.has(e.target))
+      .map((e) => ({
+        srcNode: e.source,
+        srcPort: e.sourceHandle ?? "",
+        dstNode: e.target,
+        dstPort: e.targetHandle ?? "",
+      })),
+  };
+}
+
+function paste(at?: { x: number; y: number }): void {
+  if (!clip || !clip.nodes.length) return;
+  requestSnapshot();
+  const refs = clip.nodes.map((n) => (n.data?.g ?? n.data?.c) as { x: number; y: number });
+  const minX = Math.min(...refs.map((p) => p.x));
+  const minY = Math.min(...refs.map((p) => p.y));
+  const maxX = Math.max(...refs.map((p) => p.x));
+  const maxY = Math.max(...refs.map((p) => p.y));
+  const anchor = at ?? mouseFlow();
+  const dx = Math.round(anchor.x - (minX + (maxX - minX) / 2));
+  const dy = Math.round(anchor.y - (minY + (maxY - minY) / 2));
+
+  const idMap = new Map<string, string>();
+  const newNodes: Node[] = clip.nodes.map((n) => {
+    const isCard = n.type !== "gcomment";
+    const newId = isCard ? uniqueNodeId() : uniqueCommentId();
+    if (n.type === "gcomment") {
+      const c = n.data?.c as GComment;
+      idMap.set(c.id, newId);
+      return toFlowComment({ ...c, id: newId, x: c.x + dx, y: c.y + dy });
+    }
+    const g = n.data?.g as GNode;
+    idMap.set(g.id, newId);
+    return toFlowNode({ ...JSON.parse(JSON.stringify(g)), id: newId, x: g.x + dx, y: g.y + dy });
+  });
+  const newEdges: Edge[] = clip.edges
+    .filter((e) => idMap.has(e.srcNode) && idMap.has(e.dstNode))
+    .map((e) => makeEdge(idMap.get(e.srcNode)!, e.srcPort, idMap.get(e.dstNode)!, e.dstPort, uniqueEdgeId()));
+  addNodes(newNodes);
+  if (newEdges.length) addEdges(newEdges);
+  store.markGraphDirty();
+}
+
+// ---------------------------------------------------------------------------
+// 连线（通道校验 + 入端口替换）
+// ---------------------------------------------------------------------------
+
+function checkConnection(conn: Connection): boolean {
+  if (!conn.source || !conn.target || conn.source === conn.target) return false;
+  const sg = findNode(conn.source)?.data?.g as GNode | undefined;
+  const dg = findNode(conn.target)?.data?.g as GNode | undefined;
+  if (!sg || !dg) return false;
+  const sp = graphPort(sg, conn.sourceHandle ?? "", "out");
+  const dp = graphPort(dg, conn.targetHandle ?? "", "in");
+  if (!sp || !dp) return false;
+  return canConnectPorts(sp, dp);
+}
+
+onConnect((params) => {
+  if (!params.source || !params.target) return;
+  requestSnapshot();
+  // 入端口唯一：替换已有入线（拖到已占用的入引脚 = 重新连接）
+  const occupied = edges.value.filter(
+    (e) => e.target === params.target && e.targetHandle === params.targetHandle,
+  );
+  if (occupied.length) removeEdges(occupied);
+  addEdges([makeEdge(params.source, params.sourceHandle ?? "", params.target, params.targetHandle ?? "", uniqueEdgeId())]);
+  store.markGraphDirty();
+});
+
+// ---------------------------------------------------------------------------
+// 选区 / 拖拽 / 层级拖入 / 右键菜单
+// ---------------------------------------------------------------------------
+
+watch(getSelectedNodes, (sel: GraphNode[]) => {
+  if (sel.length === 1 && sel[0].type !== "gcomment") {
+    store.setSelection(sel[0].id, false);
+  } else if (sel.length === 1 && sel[0].type === "gcomment") {
+    store.setSelection(sel[0].id, true);
+  } else {
+    store.setSelection(null, false);
+  }
+});
+
+onNodeDragStart(() => requestSnapshot());
+
+/** 层级面板拖入：dragover 需 preventDefault 才允许 drop */
+function onDragOver(e: DragEvent): void {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+}
+
+function onDrop(e: DragEvent): void {
+  const entityId = e.dataTransfer?.getData("application/x-tve-entity") ?? "";
+  if (!entityId) return;
+  e.preventDefault();
+  addProto(entityId, screenToFlowCoordinate({ x: e.clientX, y: e.clientY }));
+}
+
+/** 右键落点的画布坐标（菜单触发时记录，添加节点用它定位） */
+let ctxFlowPos = { x: 0, y: 0 };
+
+onPaneContextMenu((event) => {
+  ctxFlowPos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+  const opItems: CtxMenuItem[] = GRAPH_OP_DEFS.map((d) => ({
+    label: `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）`,
+    onClick: () => addOp(d.type, ctxFlowPos),
+  }));
+  const items: CtxMenuItem[] = [
+    { label: "添加原型", disabled: true },
+    { label: "从左侧层级拖入实体生成原型", disabled: true },
+    { separator: true },
+    { label: "添加匹配（按标签）", onClick: () => addMatch("tag", ctxFlowPos) },
+    { label: "添加匹配（按类型）", onClick: () => addMatch("type", ctxFlowPos) },
+    { label: "添加操作", children: opItems },
+    { separator: true },
+    { label: "添加注释框", onClick: () => addComment(ctxFlowPos) },
+    { label: "粘贴", disabled: !clip, onClick: () => paste(ctxFlowPos) },
+    { separator: true },
+    { label: "适配视图", onClick: () => void fitView({ padding: 0.25, maxZoom: 1.5, duration: 150 }) },
+  ];
+  openContextMenu(event, items);
+});
+
+onNodeContextMenu(({ event, node }) => {
+  const items: CtxMenuItem[] = [];
+  if (node.type !== "gcomment") {
+    const g = node.data?.g as GNode;
+    items.push({
+      label: "重命名",
+      onClick: async () => {
+        const name = await store.askText("重命名", "显示名（留空恢复默认）", graphNodeLabel(g));
+        if (name === null) return;
+        requestSnapshot();
+        g.title = name.trim() || undefined;
+        store.markGraphDirty();
+      },
+    });
+  }
+  items.push(
+    { label: "复制", onClick: () => copySelection() },
+    { label: "删除", onClick: () => deleteSelection() },
+  );
+  openContextMenu(event as MouseEvent, items);
+});
+
+onEdgeContextMenu(({ event, edge }) => {
+  openContextMenu(event as MouseEvent, [
+    {
+      label: "删除连线",
+      onClick: () => {
+        requestSnapshot();
+        removeEdges([edge.id]);
+        store.markGraphDirty();
+      },
+    },
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// 画布桥注册（工具栏/检查器/面板经 store.canvas 驱动）
+// ---------------------------------------------------------------------------
+
+onMounted(() => {
+  const el = wrapRef.value;
+  const onMouseMove = (e: MouseEvent): void => {
+    lastMouse = { x: e.clientX, y: e.clientY };
+  };
+  el?.addEventListener("mousemove", onMouseMove);
+  onBeforeUnmount(() => el?.removeEventListener("mousemove", onMouseMove));
+
+  store.setCanvas({
+    loadDoc: (doc) => void loadDoc(doc),
+    serializeDoc: () => serializeDoc(),
+    fitView: () => void fitView({ padding: 0.25, maxZoom: 1.5, duration: 150 }),
+    undo,
+    redo,
+    requestSnapshot,
+    addProto,
+    addMatch,
+    addOp,
+    addComment,
+    copySelection,
+    paste: (at) => paste(at),
+    deleteSelection,
+    getSelectedNode: () => {
+      const sel = getSelectedNodes.value;
+      if (sel.length !== 1 || sel[0].type === "gcomment") return null;
+      return (sel[0].data?.g as GNode) ?? null;
+    },
+    getSelectedComment: () => {
+      const sel = getSelectedNodes.value;
+      if (sel.length !== 1 || sel[0].type !== "gcomment") return null;
+      return (sel[0].data?.c as GComment) ?? null;
+    },
+  });
+});
+
+onBeforeUnmount(() => {
+  store.setCanvas(null);
+});
+</script>
+
+<template>
+  <div ref="wrapRef" class="graph-canvas-wrap" @dragover="onDragOver" @drop="onDrop">
+    <VueFlow
+      :delete-key-code="null"
+      :is-valid-connection="checkConnection"
+      :snap-to-grid="store.snapToGrid"
+      :snap-grid="[16, 16]"
+      :min-zoom="0.2"
+      :max-zoom="2.5"
+      fit-view-on-init
+    >
+      <template #node-gproto="p">
+        <GraphProtoCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gmatch="p">
+        <GraphMatchCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gop="p">
+        <GraphOpCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gcomment="p">
+        <GraphCommentBox :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <Background :gap="22" pattern-color="#2c2c2c" />
+      <Controls position="bottom-left" :show-interactive="false" />
+      <MiniMap position="bottom-right" pannable zoomable />
+    </VueFlow>
+  </div>
+</template>

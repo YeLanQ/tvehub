@@ -1,0 +1,649 @@
+// ---------------------------------------------------------------------------
+// 脚本图窗口样式（graph.html 入口专用）。复用编辑器样式基座：global.scss 引入
+// 的 ui-kit 变量/按钮基类，加上 toolbar.scss（工具栏结构）与 dock-zone.scss
+// （停靠面板页签）同类名，使打开后的工具栏、停靠面板与编辑器视觉一致。
+// 此处只补图窗口特有部分：工作区布局、画布工具条、节点卡片（gcard）、
+// 注释框（gcomment）、检查器、预览、模态与 Vue Flow 暗色适配。
+// ---------------------------------------------------------------------------
+
+.graph-app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  user-select: none;
+
+  .gflex { flex: 1; }
+  .gsep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+
+  // ----- 降级空态（浏览器直开 graph.html） -----
+  .gboot {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    .gboot-title { font-size: 18px; font-weight: 600; color: var(--text-dim); letter-spacing: 2px; }
+    .gboot-hint { color: var(--text-dim); }
+  }
+
+  // ----- 工作区 -----
+  .gworkspace {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  // 工具栏右侧的自动保存状态
+  .gsave-state { color: var(--text-dim); font-size: 12px; }
+
+  .gbody {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  .gdock-left { width: 250px; }
+  .gdock-right { width: 285px; }
+  .gdock-bottom { height: 225px; }
+
+  // 编辑器 dock-tab 用 div；此处是 button，去默认外观（dock-zone.scss 提供配色）
+  .dock-tab {
+    appearance: none;
+    background: transparent;
+    border: none;
+    font-family: inherit;
+    border-radius: 0;
+    padding: 5px 12px;
+    transition: none;
+
+    &:hover:not(:disabled) { background: var(--bg-hover); }
+  }
+
+  // ----- 中央：画布工具条 + 舞台 -----
+  .gcenter {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+
+    .gcanvas-bar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 10px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+
+      button {
+        padding: 3px 10px;
+        font-size: 12px;
+
+        &.active {
+          color: var(--text);
+          border-color: var(--accent);
+          background: var(--bg-active);
+        }
+      }
+
+      .gcanvas-hint { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+    }
+
+    .gcenter-stage {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+  }
+
+  // ----- 状态条 -----
+  .gstatus {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 24px;
+    padding: 0 10px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+    flex: none;
+
+    .gstatus-rel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gnotice { color: var(--warn); }
+    .gsave-state { flex: none; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 面板内容（dock-body 内）
+// ---------------------------------------------------------------------------
+
+.gpanel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  .gpanel-new {
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    flex: none;
+
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      &:focus { outline: none; border-color: var(--accent); }
+    }
+    button { flex: none; &:disabled { opacity: 0.45; cursor: default; } }
+  }
+
+  .gpanel-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+
+  .gpanel-tip {
+    padding: 6px 10px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    flex: none;
+  }
+
+  .gempty { padding: 14px 10px; color: var(--text-dim); font-size: 12px; }
+
+  .gitem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+
+    &:hover { background: var(--bg-hover); }
+    &.active { background: var(--bg-active); }
+
+    .gitem-icon {
+      flex: none;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-dim);
+      width: 20px;
+      text-align: center;
+    }
+    .gitem-svg { flex: none; width: 16px; height: 16px; color: var(--text-dim); }
+    .gitem-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .gitem-ext { flex: none; color: var(--text-dim); font-size: 11px; }
+  }
+
+  // 层级行
+  .hrow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    cursor: default;
+
+    &:hover { background: var(--bg-hover); }
+    .hrow-indent { flex: none; }
+    .hrow-name {
+      flex: none;
+      max-width: 130px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hrow-type { color: var(--text-dim); font-size: 11px; }
+  }
+
+  // 变量行
+  .vrow {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+
+    input, select {
+      min-width: 0;
+      padding: 3px 6px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-size: 12px;
+      &:focus { outline: none; border-color: var(--accent); }
+    }
+    .vname { flex: 1.2; }
+    .vtype { flex: 0.9; }
+    .vvalue { flex: 1; }
+    .vdel {
+      flex: none;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      &:hover { color: var(--err); }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 资产面板复刻件（GraphAssets 文件夹树行；条目/工具栏复用编辑器真件）
+// ---------------------------------------------------------------------------
+
+.gtree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-left: 2px solid transparent;
+  font-size: 12px;
+
+  &:hover { background: var(--bg-hover); }
+  &.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+  }
+  .arrow {
+    width: 12px;
+    color: var(--text-dim);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+// 资产面板底部提示（不依赖 .gpanel 根）
+.asset-manager .gpanel-tip {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  flex: none;
+}
+
+// ---------------------------------------------------------------------------
+// Vue Flow 画布暗色（与编辑器主题一致）
+// ---------------------------------------------------------------------------
+
+.graph-canvas-wrap {
+  position: absolute;
+  inset: 0;
+
+  .vue-flow__pane { background: var(--bg); }
+  .vue-flow__edge.selected .vue-flow__edge-path { stroke: var(--text) !important; }
+  .vue-flow__connection-path { stroke: var(--text-dim); stroke-width: 1.5; }
+
+  .vue-flow__controls {
+    box-shadow: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+
+    button {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      fill: var(--text);
+      &:hover { background: var(--bg-hover); }
+    }
+  }
+
+  .vue-flow__minimap {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    svg { background: var(--bg-panel); }
+    .vue-flow__minimap-mask { fill: rgba(20, 20, 20, 0.7); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 节点卡片（gcard）：原型/匹配/操作三类 + 卡片内部行
+// ---------------------------------------------------------------------------
+
+.gcard {
+  width: 200px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gcard-color, #666);
+  border-radius: 6px;
+  font-size: 12px;
+
+  &.selected {
+    border-color: var(--text);
+    box-shadow: 0 0 0 1px var(--text);
+  }
+
+  .gcard-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+
+    .gcard-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--gcard-color); flex: none; }
+    .gcard-title {
+      flex: 1;
+      min-width: 0;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .gcard-badge {
+      flex: none;
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+  }
+
+  .gcard-summary {
+    padding: 0 8px 5px 17px;
+    color: var(--text-dim);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gcard-missing {
+    padding: 2px 8px 6px 17px;
+    color: var(--warn);
+    font-size: 11px;
+  }
+
+  // 原型卡片的属性参照行
+  .gcard-rows {
+    padding: 0 8px 5px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+
+    .grow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      .gk { flex: none; width: 30px; color: var(--text-dim); font-size: 11px; }
+      .gv {
+        flex: 1;
+        min-width: 0;
+        color: var(--text);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+  }
+
+  .gcard-body {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0 6px;
+
+    .gcard-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .gprow {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 8px;
+      height: 18px;
+
+      &.right { justify-content: flex-end; }
+      .gpin-label {
+        color: var(--text-dim);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+  }
+
+  // 引脚静态布局：覆盖 vue-flow 默认绝对定位（边锚点由 DOM 实测，不受影响）
+  .vue-flow__handle.gpin {
+    position: static;
+    transform: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.55);
+    flex: none;
+
+    &.exec { width: 12px; height: 12px; border-radius: 3px; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 注释框（gcomment）
+// ---------------------------------------------------------------------------
+
+.gcomment {
+  width: 240px;
+  height: 140px;
+  border: 1px dashed;
+  border-radius: 6px;
+  display: flex;
+
+  &.selected { border-style: solid; }
+  .gcomment-bar { width: 4px; border-radius: 6px 0 0 6px; flex: none; }
+  .gcomment-text {
+    padding: 8px;
+    color: var(--text);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow: hidden;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 检查器
+// ---------------------------------------------------------------------------
+
+.ginspector {
+  padding: 10px;
+
+  .ginsp-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .ginsp-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+    .ginsp-title {
+      flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      &:focus { outline: none; border-color: var(--accent); }
+    }
+    .ginsp-static { font-weight: 600; }
+  }
+
+  .ginsp-type { margin: 6px 0 2px; color: var(--text-dim); font-size: 11px; }
+  .ginsp-section { margin: 10px 0 4px; color: var(--text-dim); font-weight: 600; font-size: 12px; }
+  .ginsp-hint { margin-top: 8px; color: var(--text-dim); font-size: 12px; }
+  .ginsp-trigger {
+    flex: none;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  // 属性参照行（原型卡片检查器）
+  .gprop {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    .gk { flex: none; width: 40px; color: var(--text-dim); font-size: 12px; }
+    .gv { flex: 1; min-width: 0; color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }
+  .ginsp-desc {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .ginsp-empty {
+    color: var(--text-dim);
+    .ginsp-stat { color: var(--text); margin-bottom: 8px; word-break: break-all; }
+  }
+
+  .ginsp-fields { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .gfield {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    &.col { flex-direction: column; align-items: stretch; }
+    .gfield-label { flex: none; width: 76px; color: var(--text-dim); font-size: 12px; }
+    input, select, textarea {
+      flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-size: 12px;
+      &:focus { outline: none; border-color: var(--accent); }
+    }
+    input[type="checkbox"] { flex: none; }
+    textarea { resize: vertical; }
+    .gvec { display: flex; gap: 4px; flex: 1; input { min-width: 0; } }
+  }
+
+  .gcolor-row { display: flex; gap: 6px; flex: 1; }
+  .gcolor-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    &.active { outline: 2px solid var(--accent); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 预览视图
+// ---------------------------------------------------------------------------
+
+.gpreview {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+
+  .gpreview-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    flex: none;
+
+    button { padding: 3px 10px; font-size: 12px; &:disabled { opacity: 0.45; cursor: default; } }
+    .gpreview-scene { margin-left: auto; color: var(--text-dim); font-size: 12px; }
+  }
+
+  .gpreview-body {
+    flex: 1;
+    position: relative;
+
+    iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; background: #000; }
+    .gpreview-loading, .gpreview-error {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+    }
+    .gpreview-error { color: var(--err); padding: 0 20px; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 模态
+// ---------------------------------------------------------------------------
+
+.gmodal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+
+  .gmodal {
+    width: 340px;
+    padding: 14px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+
+    .gmodal-title { font-weight: 600; }
+    .gmodal-label { display: block; margin: 10px 0 6px; color: var(--text-dim); font-size: 12px; }
+    .gmodal-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      &:focus { outline: none; border-color: var(--accent); }
+    }
+    .gmodal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+
+      button.danger { border-color: var(--err); color: var(--err); }
+    }
+  }
+}

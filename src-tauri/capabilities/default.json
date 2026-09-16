@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main (editor) and home windows",
-  "windows": ["main", "home"],
+  "description": "Capability for the main (editor), home and graph (script graph) windows",
+  "windows": ["main", "home", "graph"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
+    "core:window:allow-hide",
     "core:window:allow-set-size",
     "core:window:allow-set-min-size",
     "core:window:allow-is-maximized",

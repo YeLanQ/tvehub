@@ -288,6 +288,8 @@ export const api = {
   showEditorWindow: () => invoke<void>("show_editor_window"),
   /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
   showHomeWindow: () => invoke<void>("show_home_window"),
+  /** 显示脚本图窗口并聚焦（编辑器工具栏「脚本图」调用） */
+  showGraphWindow: () => invoke<void>("show_graph_window"),
   /** 追加一行调试日志到应用配置目录 debug.log */
   appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
   /** 打开 WebView 开发者工具（发行构建会返回错误提示） */

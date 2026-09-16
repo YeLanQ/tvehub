@@ -35,6 +35,18 @@
         "url": "index.html",
         "backgroundColor": "#000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
+      },
+      {
+        "label": "graph",
+        "title": "TvE Graph",
+        "width": 1300,
+        "height": 860,
+        "minWidth": 960,
+        "minHeight": 600,
+        "visible": false,
+        "url": "graph.html",
+        "backgroundColor": "#000",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
       }
     ],
     "security": {
