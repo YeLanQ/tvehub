@@ -192,6 +192,31 @@ engine.logic.onAction(entity, "walkTo", (leaf, session) => {
 
 通用控制：`setRunning(entity, false)` 暂停 / `restart(entity)` 重启（状态回入口、黑板回默认）。订阅与 `onAction` 都返回解绑函数。
 
+**多个运行器：如何拿到实体**。场景里可以有任意多个状态机/行为树，`engine.logic` 全部按实体寻址，实体来源有四种：
+
+```ts
+// ① @property 节点引用（推荐）：检查器下拉按类型过滤，只列 fsmRunnerNode/btRunnerNode；
+//    同一脚本可声明多个字段分别绑定不同运行器，多个脚本也可引用同一个运行器
+@property({ type: FsmRunnerNode, label: "移动状态机" })
+move: FsmRunnerNode | null = null;
+
+// ② 按名字 / 标签查找
+const fsm = engine.scene.find("EnemyFSM");
+const agent = engine.scene.findByTag("enemy");
+
+// ③ 脚本就挂在运行器节点自身：this.entity 即该运行器
+engine.logic.fire(this.entity, "hit");
+
+// ④ 枚举全部运行器（如全局监听所有敌人的状态）
+for (const e of engine.scene.findAll()) {
+  if (e instanceof FsmRunnerNode) {
+    engine.logic.onFsmEnter(e, "Die", () => this.refreshCount());
+  }
+}
+```
+
+引用字段保存的是节点 id，运行期解析为对应实体（`instanceof FsmRunnerNode` / `BtRunnerNode` 可判别），预览与构建产物行为一致。
+
 ## 补间动画：engine.tween
 
 与顶层导出 `tween` 是同一对象：创建即自动播放的补间动画（实体变换、UI 字段、数值/颜色插值、序列/并行组）。详见[补间动画](tween.md)。

@@ -111,7 +111,8 @@ export type ScriptNodeKind =
  * {x,y,z} 向量对象需显式传 type 或声明对应类型。
  *
  * **场景节点引用**：type 传节点类型类（Transform / MeshNode / LightNode /
- * CameraNode / SkyboxNode / ParticleSystemNode，或用小写别名 meshNode 等）即声明"引用一个场景节点"。
+ * CameraNode / SkyboxNode / ParticleSystemNode / FsmRunnerNode / BtRunnerNode，
+ * 或用小写别名 meshNode 等）即声明"引用一个场景节点"。
  * 检查器按类型过滤列出可选的场景节点，选择结果在运行期解析为该节点的 Entity
  * （未选择为 null）：
  *

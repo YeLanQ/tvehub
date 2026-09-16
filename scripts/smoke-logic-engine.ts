@@ -347,6 +347,13 @@ async function main(): Promise<void> {
     check("SDK：engine.logic 转发层（fire/参数/回调/动作）", /fire/.test(logicApiSrc) && /setFsmParam/.test(logicApiSrc)
       && /onFsmEnter/.test(logicApiSrc) && /onAction/.test(logicApiSrc));
 
+    // 多运行器引用：脚本 @property({ type: FsmRunnerNode }) 的编辑器过滤链路
+    const refConstants = readFileSync(resolve(process.cwd(), "src/app/lib/script-compile/constants.ts"), "utf8");
+    check("SDK：节点引用过滤登记（检查器按运行器类型列候选）", /FsmRunnerNode: \["fsmRunnerNode"\]/.test(refConstants)
+      && /BtRunnerNode: \["btRunnerNode"\]/.test(refConstants));
+    const refCompile = readFileSync(resolve(process.cwd(), "src/app/lib/script-compile/compile.ts"), "utf8");
+    check("SDK：裸字段类型不误判为脚本组件引用", /"FsmRunnerNode",/.test(refCompile) && /"BtRunnerNode",/.test(refCompile));
+
     const tveDts = readFileSync(resolve(process.cwd(), "src/framework/scripting/tve.d.ts"), "utf8");
     check("SDK：tve.d.ts 契约同步（EngineApi.logic + 节点类型）", /readonly logic: LogicApi/.test(tveDts)
       && /"fsmRunnerNode"/.test(tveDts) && /"btRunnerNode"/.test(tveDts) && /class FsmRunnerNode/.test(tveDts));
