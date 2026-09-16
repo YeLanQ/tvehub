@@ -260,12 +260,12 @@ pub async fn devtools_set_tool(
 // Rust 本地执行器：纯后端方法（查询/会话落盘）不经前端直接应答；其余仍转发前端。
 // ---------------------------------------------------------------------------
 
-/// 会话当前打开的项目根（未打开项目返回 None；供 scene.list / asset.list 扫描用）
+/// 会话当前打开的项目根（未打开项目返回 None；供 scene.list / asset.list 扫描用）。
+/// devtools/MCP 控制的是编辑器窗口的会话，固定驱动 label "main" 的当前场景。
 async fn scene_root_of(app: &AppHandle) -> Option<String> {
-    crate::scene::scene_root_path(app.state::<crate::scene::SceneSession>())
-        .await
-        .ok()
-        .flatten()
+    let state = app.state::<crate::scene::SceneSession>();
+    let hub = state.hub().ok()?;
+    crate::scene::scene_root_path_for(&hub, "main").ok().flatten()
 }
 
 fn project_recent_list(app: &AppHandle) -> Result<serde_json::Value, String> {
@@ -335,12 +335,14 @@ fn scene_root_blocking(app: &AppHandle) -> Option<String> {
 
 fn scene_doc_blocking(app: &AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<crate::scene::SceneSession>();
-    tauri::async_runtime::block_on(crate::scene::scene_doc(state))
+    let mut hub = state.hub()?;
+    crate::scene::scene_doc_for(&mut hub, "main")
 }
 
 fn scene_save_blocking(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<crate::scene::SceneSession>();
-    tauri::async_runtime::block_on(crate::scene::scene_save(state))
+    let mut hub = state.hub()?;
+    crate::scene::scene_save_for(&mut hub, "main")
 }
 
 /// MCP stdio 桥程序路径：与主程序同目录的 mcp.exe（不存在时回退为裸文件名，供用户自行修正）。

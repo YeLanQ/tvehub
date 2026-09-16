@@ -18,7 +18,7 @@ pub mod terrain_material;
 pub mod texcube;
 
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,6 +33,7 @@ use model::{JsonMap, NodeData, TransformData};
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneChangedEvent {
+    pub rel: String,
     pub kind: String,
     pub node_id: String,
     pub revision: u64,
@@ -80,7 +81,7 @@ fn append_index() -> i64 {
     -1
 }
 
-struct SessionCore {
+pub struct SessionCore {
     graph: Graph,
     history: History,
     /// 场景文档除 root 外的顶层字段（type/metadata/settings…）
@@ -105,12 +106,95 @@ impl Default for SessionCore {
     }
 }
 
-/// 托管状态（Tauri manage）
-pub struct SceneSession(RwLock<SessionCore>);
+/// 托管状态（Tauri manage）：场景会话按场景资产 rel 分键——同一场景全窗口
+/// 共享同一份会话数据（含未保存修改，跨窗口实时一致）；不同场景各自一份会话，
+/// 编辑器窗口与脚本图窗口可分别打开不同场景互不产生命令冲突。
+/// current：各窗口当前指向的场景 rel（命令按调用窗口路由到其当前会话）。
+pub struct SceneSession(RwLock<SceneHub>);
 
 impl Default for SceneSession {
     fn default() -> Self {
-        Self(RwLock::new(SessionCore::default()))
+        Self(RwLock::new(SceneHub::default()))
+    }
+}
+
+#[derive(Default)]
+pub struct SceneHub {
+    /// 场景会话表：键 = 场景资产 rel
+    sessions: std::collections::HashMap<String, SessionCore>,
+    /// 各窗口（webview 标签）当前指向的场景 rel
+    current: std::collections::HashMap<String, String>,
+}
+
+/// 写守卫：调用窗口当前会话的可变引用
+struct SessionGuard<'a> {
+    hub: RwLockWriteGuard<'a, SceneHub>,
+    rel: String,
+}
+
+impl std::ops::Deref for SessionGuard<'_> {
+    type Target = SessionCore;
+    fn deref(&self) -> &Self::Target {
+        self.hub.sessions.get(&self.rel).expect("current session exists")
+    }
+}
+
+impl std::ops::DerefMut for SessionGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.hub.sessions.get_mut(&self.rel).expect("current session exists")
+    }
+}
+
+impl SessionGuard<'_> {
+    pub fn rel(&self) -> &str {
+        &self.rel
+    }
+}
+
+/// 读守卫：调用窗口当前会话的只读引用（无会话按缺省空会话处理）
+pub struct SessionRef<'a> {
+    hub: RwLockReadGuard<'a, SceneHub>,
+    label: String,
+}
+
+impl std::ops::Deref for SessionRef<'_> {
+    type Target = SessionCore;
+    fn deref(&self) -> &Self::Target {
+        static EMPTY: std::sync::OnceLock<SessionCore> = std::sync::OnceLock::new();
+        self.hub
+            .current
+            .get(&self.label)
+            .and_then(|rel| self.hub.sessions.get(rel))
+            .unwrap_or_else(|| EMPTY.get_or_init(SessionCore::default))
+    }
+}
+
+impl SceneSession {
+    pub(crate) fn hub(&self) -> Result<RwLockWriteGuard<'_, SceneHub>, String> {
+        self.0.write().map_err(|e| e.to_string())
+    }
+
+    /// 调用窗口当前会话（可变；未打开场景报错）
+    fn write_current(&self, label: &str) -> Result<SessionGuard<'_>, String> {
+        let hub = self.0.write().map_err(|e| e.to_string())?;
+        let rel = hub
+            .current
+            .get(label)
+            .cloned()
+            .ok_or_else(|| format!("窗口未打开场景: {}", label))?;
+        if !hub.sessions.contains_key(&rel) {
+            return Err(format!("当前场景会话缺失: {}", rel));
+        }
+        Ok(SessionGuard { hub, rel })
+    }
+
+    /// 调用窗口当前会话（只读；无会话按缺省空会话处理，不创建条目）
+    fn read_current(&self, label: &str) -> Result<SessionRef<'_>, String> {
+        let hub = self.0.read().map_err(|e| e.to_string())?;
+        Ok(SessionRef {
+            hub,
+            label: label.to_string(),
+        })
     }
 }
 
@@ -137,16 +221,13 @@ fn build_doc(core: &SessionCore) -> Value {
 }
 
 /// 广播一批图变更（同命令共享一次 revision 递增）
-fn emit_changes<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    core: &mut SessionCore,
-    changes: Vec<GraphChange>,
-) {
+fn emit_changes(app: &tauri::AppHandle, rel: &str, core: &mut SessionCore, changes: Vec<GraphChange>) {
     core.revision += 1;
     let hist = history_state(core);
     let dirty = core.dirty;
     for change in changes {
         let event = SceneChangedEvent {
+            rel: rel.to_string(),
             kind: change.kind.to_string(),
             node_id: change.node_id,
             revision: core.revision,
@@ -154,6 +235,7 @@ fn emit_changes<R: tauri::Runtime>(
             history: hist.clone(),
             dirty,
         };
+        // 只发来源窗口：其余窗口会话独立，镜像互不干扰
         let _ = app.emit("scene:changed", &event);
     }
 }
@@ -210,6 +292,7 @@ fn load_result(core: &SessionCore, doc: &Value) -> SceneLoadResult {
 /// 装载空图并按原文档返回（前端判断 doc.root 决定回退）。
 #[tauri::command]
 pub async fn scene_open(
+    webview: tauri::Webview,
     state: tauri::State<'_, SceneSession>,
     root: String,
     rel: String,
@@ -228,39 +311,68 @@ pub async fn scene_open(
         doc = original;
     }
 
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
-    load_core_from_doc(&mut core, &doc, Some(root_path), &rel);
-    Ok(load_result(&core, &doc))
+    let mut hub = state.hub()?;
+    // 同 rel 会话已存在 → 直接复用（数据共享：保留未保存修改与撤销历史，不重置），
+    // 因此任一窗口打开另一窗口正在编辑的场景时看到的是实时数据
+    if hub.sessions.contains_key(&rel) {
+        hub.current
+            .insert(webview.label().to_string(), rel.clone());
+        let core = hub.sessions.get(&rel).expect("session exists");
+        let doc = build_doc(core);
+        return Ok(load_result(core, &doc));
+    }
+    // 首次打开：读盘装载新会话
+    {
+        let core = hub.sessions.entry(rel.clone()).or_default();
+        load_core_from_doc(core, &doc, Some(root_path), &rel);
+    }
+    hub.current
+        .insert(webview.label().to_string(), rel.clone());
+    let core = hub.sessions.get(&rel).expect("session exists");
+    let doc = build_doc(core);
+    Ok(load_result(core, &doc))
 }
 
 /// 以前端构建的文档整树替换会话（初始场景/回退用；无历史、不落盘）。
 /// root/rel 可选：提供时作为保存目标记录（新项目首次保存创建场景文件用）。
 #[tauri::command]
 pub async fn scene_load_doc(
+    webview: tauri::Webview,
     state: tauri::State<'_, SceneSession>,
     doc: Value,
     root: Option<String>,
     rel: Option<String>,
 ) -> Result<SceneLoadResult, String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
-    let root_path = match root {
-        Some(r) => Some(PathBuf::from(r)),
-        None => core.root_path.clone(),
+    let mut hub = state.hub()?;
+    let label = webview.label().to_string();
+    // 目标 rel：显式给定优先；未给定沿用当前（无当前用哨兵键 root）
+    let rel = match rel {
+        Some(r) => r,
+        None => hub.current.get(&label).cloned().unwrap_or_else(|| "root".into()),
     };
-    let scene_rel = rel.unwrap_or_else(|| core.scene_rel.clone());
-    load_core_from_doc(&mut core, &doc, root_path, &scene_rel);
-    Ok(load_result(&core, &doc))
+    let root_path = root.map(PathBuf::from);
+    {
+        let core = hub.sessions.entry(rel.clone()).or_default();
+        let rp = root_path.clone().or_else(|| core.root_path.clone());
+        let srel = if core.scene_rel.is_empty() { rel.clone() } else { core.scene_rel.clone() };
+        load_core_from_doc(core, &doc, rp, &srel);
+    }
+    hub.current.insert(label, rel.clone());
+    let core = hub.sessions.get(&rel).expect("session exists");
+    let doc = build_doc(core);
+    Ok(load_result(core, &doc))
 }
 
 /// 新增节点（node.parentId 已指向目标父节点）
 #[tauri::command]
 pub async fn scene_add_node(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     node: NodeData,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let mut cmd = SceneCmd {
         label: label.unwrap_or_else(|| format!("Add {}", node.name)),
         kind: CmdKind::Add { node },
@@ -271,7 +383,8 @@ pub async fn scene_add_node(
     }
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
@@ -279,13 +392,14 @@ pub async fn scene_add_node(
 /// 空场景可为 None 成为根；一次撤销）
 #[tauri::command]
 pub async fn scene_add_tree(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     root: NodeData,
     parent_id: Option<String>,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     // 无父挂载仅允许空场景；有场景根时必须给出目标父节点
     if parent_id.is_none() && core.graph.root_id.is_some() {
         return Err("新增子树缺少目标父节点".into());
@@ -305,19 +419,21 @@ pub async fn scene_add_tree(
     }
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 批量删除节点（一次撤销；根节点自动跳过）
 #[tauri::command]
 pub async fn scene_remove_nodes(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     ids: Vec<String>,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let mut cmd = SceneCmd {
         label: label.unwrap_or_else(|| "Remove nodes".into()),
         kind: CmdKind::RemoveNodes {
@@ -332,19 +448,21 @@ pub async fn scene_remove_nodes(
     }
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 批量重挂/移动（多选拖拽一次撤销）
 #[tauri::command]
 pub async fn scene_reparent_nodes(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     moves: Vec<MoveTargetDto>,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let moves: Vec<MoveTarget> = moves
         .into_iter()
         .map(|m| MoveTarget {
@@ -367,20 +485,22 @@ pub async fn scene_reparent_nodes(
     }
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 重命名节点
 #[tauri::command]
 pub async fn scene_rename(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     id: String,
     name: String,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let old_name = core
         .graph
         .get(&id)
@@ -397,20 +517,22 @@ pub async fn scene_rename(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 提交变换（Gizmo 拖动/检查器输入：一次操作 = 一个命令，before/after 快照）
 #[tauri::command]
 pub async fn scene_set_transform(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     id: String,
     before: TransformData,
     after: TransformData,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     if !core.graph.contains(&id) {
         return Err(format!("节点不存在: {id}"));
     }
@@ -421,13 +543,15 @@ pub async fn scene_set_transform(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 整节点属性补丁（before/after 为完整节点快照；redo/undo 整体回填）
 #[tauri::command]
 pub async fn scene_patch_node(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     id: String,
@@ -435,7 +559,7 @@ pub async fn scene_patch_node(
     after: NodeData,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     if !core.graph.contains(&id) {
         return Err(format!("节点不存在: {id}"));
     }
@@ -446,19 +570,21 @@ pub async fn scene_patch_node(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
 /// 批量整节点属性补丁（多选批量编辑；一次撤销）
 #[tauri::command]
 pub async fn scene_patch_nodes(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     items: Vec<PatchItemDto>,
     label: Option<String>,
 ) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let mut pairs: Vec<(String, NodeData, NodeData)> = Vec::new();
     for item in items {
         if !core.graph.contains(&item.id) {
@@ -476,7 +602,8 @@ pub async fn scene_patch_nodes(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(())
 }
 
@@ -491,10 +618,11 @@ pub struct PatchItemDto {
 /// 撤销（广播变更事件）
 #[tauri::command]
 pub async fn scene_undo(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
 ) -> Result<HistoryState, String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let outcome = {
         let SessionCore { history, graph, .. } = &mut *core;
         history.undo(graph)
@@ -503,17 +631,19 @@ pub async fn scene_undo(
         return Ok(history_state(&core));
     };
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(history_state(&core))
 }
 
 /// 重做（广播变更事件）
 #[tauri::command]
 pub async fn scene_redo(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
 ) -> Result<HistoryState, String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+    let mut core = state.write_current(&webview.label())?;
     let outcome = {
         let SessionCore { history, graph, .. } = &mut *core;
         history.redo(graph)
@@ -522,23 +652,28 @@ pub async fn scene_redo(
         return Ok(history_state(&core));
     };
     core.dirty = true;
-    emit_changes(&app, &mut core, changes);
+    let rel = core.rel().to_string();
+    emit_changes(&app, &rel, &mut core, changes);
     Ok(history_state(&core))
 }
 
 /// 当前历史状态（UI 同步用）
 #[tauri::command]
 pub async fn scene_history_state(
+    webview: tauri::Webview,
     state: tauri::State<'_, SceneSession>,
 ) -> Result<HistoryState, String> {
-    let core = state.0.read().map_err(|e| e.to_string())?;
+    let core = state.read_current(&webview.label())?;
     Ok(history_state(&core))
 }
 
 /// 会话是否有未保存修改
 #[tauri::command]
-pub async fn scene_dirty(state: tauri::State<'_, SceneSession>) -> Result<bool, String> {
-    let core = state.0.read().map_err(|e| e.to_string())?;
+pub async fn scene_dirty(
+    webview: tauri::Webview,
+    state: tauri::State<'_, SceneSession>,
+) -> Result<bool, String> {
+    let core = state.read_current(&webview.label())?;
     Ok(core.dirty)
 }
 
@@ -571,11 +706,12 @@ pub struct HierarchyRows {
 /// 按名称子串过滤（大小写不敏感；行仍按 DFS 序带全深度，折叠由前端裁剪）。
 #[tauri::command]
 pub async fn scene_hierarchy_rows(
+    webview: tauri::Webview,
     state: tauri::State<'_, SceneSession>,
     view: String,
     search: Option<String>,
 ) -> Result<HierarchyRows, String> {
-    let core = state.0.read().map_err(|e| e.to_string())?;
+    let core = state.read_current(&webview.label())?;
     let ui_domain = view == "layout";
     let q = search.unwrap_or_default().trim().to_lowercase();
     let graph = &core.graph;
@@ -613,30 +749,47 @@ pub async fn scene_hierarchy_rows(
 }
 
 /// 会话当前打开的项目根目录（devtools 纯后端查询扫描用；未打开返回 None）
-#[tauri::command]
-pub async fn scene_root_path(
-    state: tauri::State<'_, SceneSession>,
-) -> Result<Option<String>, String> {
-    let core = state.0.read().map_err(|e| e.to_string())?;
+pub(crate) fn scene_root_path_for(hub: &SceneHub, label: &str) -> Result<Option<String>, String> {
+    let Some(rel) = hub.current.get(label) else {
+        return Ok(None);
+    };
+    let Some(core) = hub.sessions.get(rel) else {
+        return Ok(None);
+    };
     Ok(core.root_path.as_ref().map(|p| p.display().to_string()))
 }
 
 /// 当前场景文档（信封 + 图重建 root；调试/兜底用）
-#[tauri::command]
-pub async fn scene_doc(state: tauri::State<'_, SceneSession>) -> Result<Value, String> {
-    let core = state.0.read().map_err(|e| e.to_string())?;
-    Ok(build_doc(&core))
+pub(crate) fn scene_doc_for(hub: &mut SceneHub, label: &str) -> Result<Value, String> {
+    let core = hub.current.get(label).and_then(|rel| hub.sessions.get(rel));
+    let Some(core) = core else {
+        return Ok(serde_json::json!({ "type": "empty" }));
+    };
+    Ok(build_doc(core))
 }
 
-/// 保存场景：后端序列化（保留信封字段）→ pretty JSON 写盘 → 清脏标记
 #[tauri::command]
-pub async fn scene_save(state: tauri::State<'_, SceneSession>) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
+pub async fn scene_doc(
+    webview: tauri::Webview,
+    state: tauri::State<'_, SceneSession>,
+) -> Result<Value, String> {
+    let mut hub = state.hub()?;
+    scene_doc_for(&mut hub, webview.label())
+}
+
+/// 保存调用窗口的当前场景（后端序列化（保留信封字段）→ pretty JSON 写盘 → 清脏标记）
+pub(crate) fn scene_save_for(hub: &mut SceneHub, label: &str) -> Result<(), String> {
+    let Some(rel) = hub.current.get(label).cloned() else {
+        return Err("未打开场景（无保存目标）".into());
+    };
+    let Some(core) = hub.sessions.get_mut(&rel) else {
+        return Err(format!("当前场景会话缺失: {rel}"));
+    };
     let (root_path, scene_rel) = match (&core.root_path, core.scene_rel.as_str()) {
         (Some(p), rel) if !rel.is_empty() => (p.clone(), rel.to_string()),
         _ => return Err("未打开场景（无保存目标）".into()),
     };
-    let doc = build_doc(&core);
+    let doc = build_doc(core);
     let content = serde_json::to_string_pretty(&doc)
         .map_err(|e| format!("场景序列化失败: {e}"))?;
     let path = crate::project::resolve_in_root(&root_path, &scene_rel)?;
@@ -651,11 +804,28 @@ pub async fn scene_save(state: tauri::State<'_, SceneSession>) -> Result<(), Str
     Ok(())
 }
 
-/// 关闭会话（清空图与历史；不落盘）
+/// 保存调用窗口的当前场景
 #[tauri::command]
-pub async fn scene_close(state: tauri::State<'_, SceneSession>) -> Result<(), String> {
-    let mut core = state.0.write().map_err(|e| e.to_string())?;
-    *core = SessionCore::default();
+pub async fn scene_save(
+    webview: tauri::Webview,
+    state: tauri::State<'_, SceneSession>,
+) -> Result<(), String> {
+    let mut hub = state.hub()?;
+    let label = webview.label().to_string();
+    scene_save_for(&mut hub, &label)
+}
+
+/// 关闭调用窗口的当前会话（清空图与历史；不落盘；其余窗口会话不受影响）
+#[tauri::command]
+pub async fn scene_close(
+    webview: tauri::Webview,
+    state: tauri::State<'_, SceneSession>,
+) -> Result<(), String> {
+    let label = webview.label().to_string();
+    let mut hub = state.hub()?;
+    if let Some(rel) = hub.current.remove(&label) {
+        hub.sessions.remove(&rel);
+    }
     Ok(())
 }
 

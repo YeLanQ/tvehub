@@ -167,9 +167,14 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         const projectStore = getProjectStore();
         const root = projectStore.currentPath;
         applyProjectSetup(engine, root);
-        // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）
+        // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）。
+        // 会话按场景 rel 分键：只应用当前场景的事件（他窗口打开的其他场景互不干扰）
         engine.setSceneTransport(sceneApi.transport());
-        await engine.bindSceneEvents(sceneApi.subscribe);
+        await engine.bindSceneEvents(async (fn) =>
+          sceneApi.subscribe((e) => {
+            if (e.rel === projectStore.sceneRel) fn(e);
+          }),
+        );
         await engine.mount(container, {
           renderer: projectStore.rendererBackend,
           antialias: projectStore.antiAliasing,
