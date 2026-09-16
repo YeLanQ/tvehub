@@ -256,6 +256,22 @@ async function main() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(bgColor);
 
+  // 场景环境光（settings.rendering.ambientIntensity/ambientColor）：与背景色同属
+  // 场景渲染设置（场景文档必带，缺省 0.3 白）。无灯光/天空的场景靠它保底照明，
+  // 否则材质全黑叠黑背景，预览/导出画面一片漆黑（编辑器视口有网格/线框参照）。
+  // intensity 缺失或 ≤0 时不注入（旧行为）。
+  const ambientIntensity = Number(renderSettings?.ambientIntensity);
+  if (Number.isFinite(ambientIntensity) && ambientIntensity > 0) {
+    const ambientColor =
+      typeof renderSettings?.ambientColor === "number"
+        ? renderSettings.ambientColor & 0xffffff
+        : 0xffffff;
+    const ambient = new THREE.AmbientLight(ambientColor, ambientIntensity);
+    // 引擎注入的照明覆盖全部渲染层（three 新建灯光默认只算层 0）
+    ambient.layers.enableAll();
+    scene.add(ambient);
+  }
+
   // 资产预取：材质参数表（.mat）+ 模型（glb/gltf/fbx/obj，已随导出拷贝到同相对路径）
   const [materialParams, models] = await Promise.all([
     loadMaterialParams(rootJson),
