@@ -621,7 +621,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             // 双窗口生命周期：
             // - 编辑器窗口关闭 = "关闭项目" → 隐藏编辑器（保留前端状态），显示首页；
-            // - 首页窗口关闭 = 退出应用（一并结束隐藏中的编辑器窗口）。
+            // - 图窗口关闭 = 隐藏图窗口（常驻，保留前端状态，下次「打开脚本图」复用）；
+            // - 首页窗口关闭 = 退出应用（一并结束隐藏中的编辑器/图窗口）。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 match window.label() {
                     "main" => {
@@ -634,6 +635,10 @@ pub fn run() {
                             let _ = home.show();
                             let _ = home.set_focus();
                         }
+                    }
+                    "graph" => {
+                        api.prevent_close();
+                        let _ = window.hide();
                     }
                     "home" => {
                         window.app_handle().exit(0);
