@@ -3,7 +3,7 @@
   "productName": "TvE Hub",
   "mainBinaryName": "TvE Hub",
   "version": "0.1.0",
-  "identifier": "TvE Hub",
+  "identifier": "TvE.Hub",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
