@@ -17,6 +17,9 @@ import {
 
 const projectStore = getProjectStore();
 
+/** 应用显示版本（构建期注入；改版本只需改 src-tauri/tauri.conf.json 的 version） */
+const APP_VERSION = __APP_VERSION__;
+
 const prefsCat = ref("theme");
 
 /** 默认项目位置（新建项目默认父目录） */
@@ -119,8 +122,8 @@ async function onChangeDefaultDir() {
       <div class="settings-card">
         <h3>关于</h3>
         <div class="about-row">
-          <!-- 显示版本 = semver 版本 + 第 4 段构建号（semver 以 package.json 为准） -->
-          <span>v0.1.0.1</span>
+          <!-- 显示版本自动注入（vite define __APP_VERSION__，来源 src-tauri/tauri.conf.json） -->
+          <span>v{{ APP_VERSION }}</span>
           <span class="dim">开发测试版</span>
         </div>
       </div>

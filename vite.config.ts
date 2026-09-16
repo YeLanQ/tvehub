@@ -11,6 +11,18 @@ import { buildRuntime } from "./scripts/build-runtime.mjs";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// 应用显示版本：单一来源 = src-tauri/tauri.conf.json 的 version（semver + 构建号，
+// 也是 exe 文件版本资源的来源），构建期注入 __APP_VERSION__（+N 规范为第 4 段 .N）
+function appDisplayVersion(): string {
+  try {
+    const conf = JSON.parse(fs.readFileSync(path.resolve(__dirname, "src-tauri/tauri.conf.json"), "utf-8"));
+    return String(conf.version ?? "").replace(/\+([0-9A-Za-z.-]+)$/, ".$1");
+  } catch {
+    return "";
+  }
+}
+const APP_VERSION = appDisplayVersion();
+
 /**
  * 模板注册表插件：扫描 public/templates/（项目模板）与 public/exports/web/
  * （web 导出模板）下含 template.json 的目录，把模板元信息生成到
@@ -161,6 +173,11 @@ function runtimeBuildPlugin(): Plugin {
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [vue(), templateIndexPlugin(), runtimeBuildPlugin()],
+
+  // 应用显示版本（编译期常量，见 appDisplayVersion）
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
 
   // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"）
   build: {
