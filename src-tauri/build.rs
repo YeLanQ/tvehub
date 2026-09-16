@@ -1,8 +1,11 @@
-// 构建期：把编辑器内置资源（public/internal/…）打包进二进制，
-// 运行时由 exe 启动时提取到其同级 public/internal（免安装便携），
-// 开发（debug）则直接读取仓库 public/internal。
+// 构建期：把编辑器内置资源（public/<kind>/…）打包进二进制，
+// 运行时由 exe 启动时提取到其同级 public/<kind>（免安装便携），
+// 开发（debug）则直接读取仓库 public/<kind>。
+// kind = internal（内置只读资产）/ repos（创意工坊）/ templates（工程模板）/
+// exports（Web 导出模板）——这四类由 Rust 命令从 exe 旁磁盘读取，
+// 生产环境无随包资源目录，必须内嵌自带（docs/engine/web-preview 走前端产物，不在此列）。
 // 归档格式：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]，
-// 其中 path 以 "internal/" 为前缀（如 "internal/materials/Default.mat"）。
+// 其中 path 以 kind 为前缀（如 "internal/materials/Default.mat"）。
 
 use std::fs::File;
 use std::io::Write;
@@ -31,7 +34,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    for kind in ["internal"] {
+    for kind in ["internal", "repos", "templates", "exports"] {
         let dir = PathBuf::from(&manifest_dir).join("../public").join(kind);
         println!("cargo:rerun-if-changed={}", dir.display());
         collect_files(&dir, &dir, kind, &mut entries);
@@ -47,7 +50,7 @@ fn main() {
         raw.extend_from_slice(data);
     }
 
-    let out_path = Path::new(&out_dir).join("internal.bin");
-    let mut f = File::create(&out_path).expect("create internal.bin");
-    f.write_all(&raw).expect("write internal.bin");
+    let out_path = Path::new(&out_dir).join("builtin.bin");
+    let mut f = File::create(&out_path).expect("create builtin.bin");
+    f.write_all(&raw).expect("write builtin.bin");
 }

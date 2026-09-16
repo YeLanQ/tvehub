@@ -467,8 +467,8 @@ pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 内置资源目录（public/internal）：开发读仓库目录；生产读 build.rs 打包、
-// 启动时释放到 exe 同级 public/internal。
+// 内置资源目录（public/internal / repos / templates / exports）：开发读仓库目录；
+// 生产读 build.rs 打包、启动时释放到 exe 同级 public/<kind>（见 build.rs 的 kind 列表）。
 // ---------------------------------------------------------------------------
 
 fn exe_dir() -> PathBuf {
@@ -497,9 +497,9 @@ pub(crate) fn repos_root() -> PathBuf {
 }
 
 /// build.rs 生成的归档：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]
-static INTERNAL_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/internal.bin"));
+static BUILTIN_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/builtin.bin"));
 
-fn parse_internal_archive(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+fn parse_builtin_archive(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     if data.len() < 4 {
         return Err("内置资源归档为空".into());
     }
@@ -531,9 +531,9 @@ fn parse_internal_archive(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String>
 }
 
 /// 把内嵌资源释放到 exe 同级 public/（幂等：已存在文件不覆盖，保留用户修改）
-fn extract_internal_archive(exe_dir: &Path) -> Result<(), String> {
+fn extract_builtin_archive(exe_dir: &Path) -> Result<(), String> {
     let public = exe_dir.join("public");
-    for (rel, bytes) in parse_internal_archive(INTERNAL_ARCHIVE)? {
+    for (rel, bytes) in parse_builtin_archive(BUILTIN_ARCHIVE)? {
         let dest = public.join(&rel);
         if dest.exists() {
             continue;
@@ -551,7 +551,7 @@ fn extract_internal_archive(exe_dir: &Path) -> Result<(), String> {
 pub fn run() {
     // 生产（release）启动时把内置资源释放到 exe 同级 public/（开发直接读仓库目录）
     if !cfg!(debug_assertions) {
-        if let Err(e) = extract_internal_archive(&exe_dir()) {
+        if let Err(e) = extract_builtin_archive(&exe_dir()) {
             eprintln!("[internal] 内置资源释放失败: {e}");
         }
     }
@@ -688,4 +688,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod builtin_archive_tests {
+    use super::{parse_builtin_archive, BUILTIN_ARCHIVE};
+
+    /// 归档必须包含全部四类内置资源（internal/repos/templates/exports）：
+    /// 这四类由 Rust 命令从 exe 旁磁盘读取，build.rs 的 kind 列表漏配会导致
+    /// release 版 exe 旁缺对应目录（如工坊/模板/导出模板为空）。
+    #[test]
+    fn archive_contains_all_builtin_kinds() {
+        let entries = parse_builtin_archive(BUILTIN_ARCHIVE).expect("解析内置资源归档");
+        assert!(!entries.is_empty(), "归档不应为空");
+        for kind in ["internal/", "repos/", "templates/", "exports/"] {
+            assert!(
+                entries.iter().any(|(p, _)| p.starts_with(kind)),
+                "归档缺少 {kind} 条目"
+            );
+        }
+    }
 }
