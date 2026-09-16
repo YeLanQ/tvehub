@@ -13,6 +13,7 @@ import { getProjectStore } from "../stores/project";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { setAssetSelection } from "../lib/active-panel";
 import {
+  ASSET_TYPE_FILTERS,
   listDirectoryChildren,
   type ChildEntry,
 } from "../lib/asset-browser";
@@ -138,6 +139,7 @@ const treeCollapsed: AssetTreeCollapsed = {
   },
 };
 
+
 function navigate(dir: string) {
   if (dir === currentDir.value) return;
   backStack.value.push(currentDir.value);
@@ -192,6 +194,54 @@ const query = ref("");
 const typeFilter = ref("all");
 const sortBy = ref("name");
 const viewMode = ref<"grid" | "list">("grid");
+
+// ---------------------------------------------------------------------------
+// 过滤状态共享（搜索/类型/排序/视图）：写入共享键，脚本图窗口的资产面板跟随
+// 同一份过滤（localStorage + storage 事件跨窗口；键按项目隔离）。
+// ---------------------------------------------------------------------------
+const filterKey = computed(
+  () => `three-visual-editor:graph-asset-filter:v1:${projectStore.currentPath ?? ""}`,
+);
+let filterTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistFilter(): void {
+  if (filterTimer != null) clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    filterTimer = null;
+    try {
+      localStorage.setItem(
+        filterKey.value,
+        JSON.stringify({
+          query: query.value,
+          typeFilter: typeFilter.value,
+          sortBy: sortBy.value,
+          viewMode: viewMode.value,
+        }),
+      );
+    } catch {
+      /* 存储不可用：过滤仅本次会话有效 */
+    }
+  }, 250);
+}
+
+function loadFilter(): void {
+  try {
+    const raw = localStorage.getItem(filterKey.value);
+    if (!raw) return;
+    const f = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof f.query === "string") query.value = f.query;
+    if (typeof f.typeFilter === "string" && ASSET_TYPE_FILTERS.some((t) => t.id === f.typeFilter)) {
+      typeFilter.value = f.typeFilter;
+    }
+    if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
+    if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
+  } catch {
+    /* ignore */
+  }
+}
+
+watch([query, typeFilter, sortBy, viewMode], persistFilter);
+onMounted(loadFilter);
 
 /** 当前目录内容：目录在前、文件在后；搜索时递归展示 */
 const children = computed<ChildEntry[]>(() =>
