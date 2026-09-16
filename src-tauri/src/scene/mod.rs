@@ -312,16 +312,24 @@ pub async fn scene_open(
     }
 
     let mut hub = state.hub()?;
-    // 同 rel 会话已存在 → 直接复用（数据共享：保留未保存修改与撤销历史，不重置），
-    // 因此任一窗口打开另一窗口正在编辑的场景时看到的是实时数据
-    if hub.sessions.contains_key(&rel) {
+    // 同 rel 会话已存在且属于同一项目根 → 直接复用（数据共享：保留未保存修改与
+    // 撤销历史，不重置），因此任一窗口打开另一窗口正在编辑的同一场景时看到实时数据。
+    // 跨项目（rel 同名但 root 不同，如新建项目复用 assets/Main.scene）→ 不得复用
+    // 旧会话，否则会误开其他项目的场景；移除旧会话后走读盘装载。
+    let same_root = hub
+        .sessions
+        .get(&rel)
+        .map(|core| core.root_path.as_deref() == Some(root_path.as_path()))
+        .unwrap_or(false);
+    if same_root {
         hub.current
             .insert(webview.label().to_string(), rel.clone());
         let core = hub.sessions.get(&rel).expect("session exists");
         let doc = build_doc(core);
         return Ok(load_result(core, &doc));
     }
-    // 首次打开：读盘装载新会话
+    // 首次打开或跨项目：移除旧会话后读盘装载新会话
+    hub.sessions.remove(&rel);
     {
         let core = hub.sessions.entry(rel.clone()).or_default();
         load_core_from_doc(core, &doc, Some(root_path), &rel);
