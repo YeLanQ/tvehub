@@ -394,6 +394,17 @@ async fn show_editor_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 显示脚本图窗口（编辑器窗口工具栏「脚本图」调用；窗口常驻仅切换可见性，
+/// 项目根经 editor:graph-open 事件交接）
+#[tauri::command]
+async fn show_graph_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(graph) = app.get_webview_window("graph") {
+        let _ = graph.show();
+        let _ = graph.set_focus();
+    }
+    Ok(())
+}
+
 /// 显示首页窗口并隐藏编辑器（编辑器"关闭项目"后调用）
 #[tauri::command]
 async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
@@ -637,6 +648,7 @@ pub fn run() {
             dev_app_dirs,
             show_editor_window,
             show_home_window,
+            show_graph_window,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,
