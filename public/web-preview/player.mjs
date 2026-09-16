@@ -30,6 +30,7 @@ import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createUI } from "../engine/runtime/ui.mjs";
 import { createLogic } from "../engine/runtime/logic.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
+import { createGraphBehaviors } from "../engine/runtime/graph-behaviors.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
@@ -689,8 +690,22 @@ async function main() {
   } catch (e) {
     postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
   }
+  // 脚本图行为（图窗口编辑模式：导出注入 script-graph.json 时启用；
+  // 解释原型/匹配/原子操作，与脚本同一运行语义，不修改场景数据）
+  let graphBehaviors = { update() {}, dispose() {} };
+  if (cfg.scriptGraph) {
+    try {
+      const [{ createGraphBehaviors: create }, graphDoc] = await Promise.all([
+        import("../engine/runtime/graph-behaviors.mjs"),
+        resourceLoader.loadJSON(String(cfg.scriptGraph)),
+      ]);
+      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc });
+    } catch (e) {
+      postLog("error", `脚本图行为启动失败: ${e?.message ?? e}`);
+    }
+  }
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
-  window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); }, { once: true, capture: true });
+  window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); graphBehaviors.dispose(); }, { once: true, capture: true });
 
   // 静态场景门控：无用户脚本/模型动画/关键帧剪辑/物理时，场景每帧不变 ——
   // 世界矩阵停更（render 跳过全树遍历重算），阴影贴图只渲染一次
@@ -833,6 +848,7 @@ async function main() {
     scripts.update(dt);
     // 逻辑运行器推进（状态机切换/行为树求值；脚本本帧的 fire/参数写入即刻生效）
     logicApi.update(dt);
+    graphBehaviors.update(dt);
     animations?.update(dt);
     physicsApi?.update(dt);
     clipAnims.update(dt);

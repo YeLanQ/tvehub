@@ -35,6 +35,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/batching.mjs",
   "engine/runtime/camera.mjs",
   "engine/runtime/fog.mjs",
+  "engine/runtime/graph-behaviors.mjs",
   "engine/runtime/heightFog.mjs",
   "engine/runtime/layerpass.mjs",
   "engine/runtime/loaders/BufferGeometryUtils.js",
