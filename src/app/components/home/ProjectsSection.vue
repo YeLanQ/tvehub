@@ -14,6 +14,7 @@ import { getProjectStore, type RecentProject } from "../../stores/project";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm } from "../../lib/confirm";
 import { api } from "../../../lib/api";
+import { openScriptGraphWindow } from "../../lib/graph-launch";
 
 const emit = defineEmits<{
   /** 请求新建项目（对话框由 HomeView 持有） */
@@ -53,6 +54,12 @@ async function openProject(project: RecentProject | string) {
 function onOpenProject(path: string) {
   menuPath.value = null;
   void openProject(path);
+}
+
+/** 项目卡片菜单「打开脚本图」：不经编辑器窗口，直接打开统一节点图编辑器 */
+function onOpenScriptGraph(path: string, name: string) {
+  menuPath.value = null;
+  void openScriptGraphWindow(path, name);
 }
 
 /** 打开新建项目对话框（对话框在 HomeView；此处只发请求事件） */
@@ -179,6 +186,7 @@ function toggleMenu(path: string) {
         <!-- 卡片操作菜单 -->
         <div v-if="menuPath === p.path" class="card-menu-pop" @click.stop>
           <button @click="onOpenProject(p.path)">打开项目</button>
+          <button @click="onOpenScriptGraph(p.path, p.name)">打开脚本图</button>
           <button @click="revealFolder(p.path)">在文件夹中显示</button>
           <button @click="renameProject(p.path, p.name)">重命名项目</button>
           <button class="danger" @click="trashProject(p.path, p.name)">移动到垃圾篓</button>
