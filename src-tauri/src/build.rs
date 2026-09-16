@@ -36,15 +36,16 @@ const SUPPORTED_CHANNELS: [&str; 1] = ["web"];
 /// CDN 模式不内嵌的 three.js 运行时文件（位于 engine/core/；其余引擎模块仍
 /// 内嵌，经 import map 把代码里解析到同源 three 的说明符映射到资源地址下的
 /// 同名文件）
-const THREE_RUNTIME_FILES: [&str; 2] = [
+const THREE_RUNTIME_FILES: [&str; 3] = [
     "engine/core/three.core.min.js",
     "engine/core/three.module.min.js",
+    "engine/core/three.webgpu.min.js",
 ];
 
 /// three.js 远程文件 URL：剥离产物内 engine/core/ 目录前缀后拼到基地址下——基地址就是
-/// 直接包含 three.module.min.js / three.core.min.js 的目录，官方 CDN 的版本目录
-/// （如 cdnjs / unpkg / jsdelivr 的 three.js/<版本>）与运行时内嵌文件同名同版本，
-/// 可直接使用；自建 CDN 把产物 engine/core/ 里两个文件传到某目录后填该目录即可
+/// 直接包含 three.module.min.js / three.core.min.js / three.webgpu.min.js 的目录，官方
+/// CDN 的版本目录（如 cdnjs / unpkg / jsdelivr 的 three.js/<版本>）与运行时内嵌文件
+/// 同名同版本，可直接使用；自建 CDN 把产物 engine/core/ 里三个文件传到某目录后填该目录即可
 fn three_cdn_url(base: &str, rel: &str) -> String {
     let file = rel.strip_prefix("engine/core/").unwrap_or(rel);
     join_cdn_url(base, file)
