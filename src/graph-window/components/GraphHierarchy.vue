@@ -30,6 +30,7 @@ import {
   BT_RUNNER_ICON_PATHS,
 } from "../../framework/engine/modules/helpers/icons";
 import { openContextMenu } from "../../lib/editor/context-menu";
+import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import { getGraphWindowStore } from "../graphStore";
 import {
   buildEntityTree,
@@ -43,42 +44,25 @@ const loaded = ref(false);
 const collapsed = ref(new Set<string>());
 const selectedId = ref("");
 
-// 折叠态按窗口持久化（键含 graph 前缀与编辑器隔离；键 = 项目根 + 当前场景，
-// 与编辑器层级折叠的持久化规则同构）
+// 折叠态按窗口持久化（后端 UI 状态 KV，键含 graph 前缀与编辑器隔离；
+// 键 = 项目根 + 当前场景，与编辑器层级折叠的持久化规则同构）
 const collapseKey = computed(
-  () => `three-visual-editor:graph-hierarchy:v1:${store.root ?? ""}::${store.sceneRel}`,
+  () => `tve:graph:hierarchy-collapse:${store.root ?? ""}::${store.sceneRel}`,
 );
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let collapseRun = 0;
 
-function loadCollapsed(): void {
-  if (persistTimer != null) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
-  try {
-    const raw = localStorage.getItem(collapseKey.value);
-    const ids = raw ? (JSON.parse(raw) as unknown) : [];
-    collapsed.value = new Set(
-      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
-    );
-  } catch {
-    collapsed.value = new Set();
-  }
+async function loadCollapsed(): Promise<void> {
+  const myRun = ++collapseRun;
+  const ids = await uiStateGet<string[]>(collapseKey.value);
+  if (myRun !== collapseRun) return; // 已切换到其他键：丢弃过期结果
+  collapsed.value = new Set(Array.isArray(ids) ? ids : []);
 }
 
 function persistCollapsed(): void {
-  if (persistTimer != null) clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    try {
-      localStorage.setItem(collapseKey.value, JSON.stringify([...collapsed.value]));
-    } catch {
-      /* 存储不可用：折叠态仅本次会话有效 */
-    }
-  }, 300);
+  void uiStateSet(collapseKey.value, [...collapsed.value]);
 }
 
-watch(collapseKey, loadCollapsed, { immediate: true });
+watch(collapseKey, () => void loadCollapsed(), { immediate: true });
 
 /** 节点类型 → SVG 图标路径 + 颜色（与编辑器层级/引擎视口同一份图标数据） */
 const NODE_ICONS: Record<string, { d: string[]; color: string }> = {

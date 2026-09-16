@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // 脚本图窗口停靠布局（编辑器 docks-layout 的图窗口版）：
-// 面板注册表为图窗口三面板（层级/检查器/资产），localStorage 键与编辑器隔离，
+// 面板注册表为图窗口三面板（层级/检查器/资产），布局经后端 UI 状态 KV 持久化（键与编辑器隔离），
 // 互不串布局；拖拽停靠/浮动/尺寸约束逻辑与编辑器完全一致。
 // ---------------------------------------------------------------------------
 
 import { reactive, watch } from "vue";
+import { uiStateGet, uiStateSet } from "../lib/ui-state";
 
 export type GraphDockPanelId = "hierarchy" | "inspector" | "assets";
 export type GraphDockZoneId = "left" | "right" | "bottom";
@@ -35,8 +36,6 @@ export const GRAPH_DOCK_PANEL_LABEL: Record<GraphDockPanelId, string> = {
   inspector: "检查器",
   assets: "资产",
 };
-
-const LAYOUT_KEY = "three-visual-editor:graph-dock-layout:v1";
 
 function defaults(): GraphDockLayout {
   return {
@@ -111,26 +110,37 @@ function normalize(l: Partial<GraphDockLayout> | null): GraphDockLayout {
   };
 }
 
-function load(): GraphDockLayout {
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    if (raw) return normalize(JSON.parse(raw));
-  } catch {
-    /* ignore */
+const DOCK_KEY = "tve:graph:dock-layout:v1";
+
+export const graphDocks = reactive<GraphDockLayout>(defaults());
+
+/** 把已保存布局应用到响应式状态（原位变更，保持页签/浮动的引用稳定） */
+function applyLayout(l: Partial<GraphDockLayout> | null): void {
+  const n = normalize(l);
+  for (const z of GRAPH_ALL_ZONES) {
+    const list = graphDocks.zones[z];
+    list.splice(0, list.length, ...n.zones[z]);
+    graphDocks.active[z] = n.active[z];
   }
-  return defaults();
+  graphDocks.floating = n.floating;
+  graphDocks.sizes = { ...n.sizes };
 }
 
-export const graphDocks = reactive<GraphDockLayout>(load());
+/** 启动时从后端 UI 状态装载（异步；就绪前使用缺省布局，蒙版期间应用无感） */
+export async function initGraphDocks(): Promise<void> {
+  const saved = await uiStateGet<Partial<GraphDockLayout> | null>(DOCK_KEY);
+  if (saved) applyLayout(saved);
+}
 
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 watch(
   () => JSON.stringify(graphDocks),
   () => {
-    try {
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify(graphDocks));
-    } catch {
-      /* ignore */
-    }
+    if (saveTimer != null) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void uiStateSet(DOCK_KEY, graphDocks);
+    }, 300);
   },
 );
 

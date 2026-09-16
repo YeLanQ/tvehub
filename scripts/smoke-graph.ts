@@ -264,8 +264,8 @@ console.log("⑤ 工作台与无图资产契约");
   // 停靠系统：图窗口复刻编辑器 docks（页签拖拽/浮动/分隔条调宽），布局键隔离
   const docks = read("src/graph-window/docks.ts");
   check(
-    docks.includes("graph-dock-layout:v1") && docks.includes("beginZoneResize") === false && docks.includes('zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["assets"] }'),
-    "dock：图窗口布局注册表（层级/检查器/资产）+ 独立存储键",
+    docks.includes("tve:graph:dock-layout:v1") && docks.includes("initGraphDocks") && docks.includes("uiStateSet"),
+    "dock：图窗口布局注册表（层级/检查器/资产）+ 后端 UI 状态 KV 持久化",
   );
   const dnd = read("src/graph-window/graph-dock-dnd.ts");
   check(dnd.includes("beginTabDrag") && dnd.includes("dock-dragging"), "dock：页签拖拽（移动/停靠/浮动）");

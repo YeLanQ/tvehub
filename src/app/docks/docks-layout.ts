@@ -1,4 +1,5 @@
 import { reactive, watch } from "vue";
+import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import { animEditMode } from "../lib/anim-edit-mode";
 
 export type DockPanelId = "hierarchy" | "inspector" | "console" | "assets" | "animation";
@@ -108,28 +109,37 @@ function normalize(l: Partial<DockLayout> | null): DockLayout {
   };
 }
 
-function load(): DockLayout {
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    if (raw) return normalize(JSON.parse(raw));
-  } catch {
-    /* ignore */
+export const docks = reactive<DockLayout>(defaults());
+
+/** 把已保存布局应用到响应式状态（原位变更，保持引用稳定） */
+function applyLayout(l: Partial<DockLayout> | null): void {
+  const n = normalize(l);
+  for (const z of ALL_ZONES) {
+    const list = docks.zones[z];
+    list.splice(0, list.length, ...n.zones[z]);
+    docks.active[z] = n.active[z];
   }
-  return defaults();
+  docks.floating = n.floating;
+  docks.sizes = { ...n.sizes };
 }
 
-export const docks = reactive<DockLayout>(load());
-
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 watch(
   () => JSON.stringify(docks),
   () => {
-    try {
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify(docks));
-    } catch {
-      /* ignore */
-    }
+    if (saveTimer != null) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void uiStateSet(LAYOUT_KEY, docks);
+    }, 300);
   },
 );
+
+// 启动时从后端 UI 状态装载（异步；蒙版期间应用无感）
+void (async () => {
+  const saved = await uiStateGet<Partial<DockLayout> | null>(LAYOUT_KEY);
+  if (saved) applyLayout(saved);
+})();
 
 // 布局操作
 export function panelZone(panel: DockPanelId): DockZoneId | null {

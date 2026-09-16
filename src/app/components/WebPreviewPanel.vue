@@ -16,6 +16,7 @@ import { getScriptsStore } from "../stores/scripts";
 import Slider from "../../ui-kit/components/Slider.vue";
 import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
+import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import {
   fetchWebPreviewRuntimeTexts,
@@ -71,72 +72,61 @@ interface DeviceSettings {
   zoomPct: number;
 }
 
-function loadDeviceSettings(): DeviceSettings {
-  const def: DeviceSettings = {
-    id: "auto",
-    orientation: "portrait",
-    customW: 390,
-    customH: 844,
-    customDpr: 1,
-    zoomPct: 100,
-  };
+const DEVICE_DEFAULTS: DeviceSettings = {
+  id: "auto",
+  orientation: "portrait",
+  customW: 390,
+  customH: 844,
+  customDpr: 1,
+  zoomPct: 100,
+};
+
+/** 从后端 UI 状态 KV 读取设备设置（按项目根隔离），归一化后返回 */
+async function loadDeviceSettings(): Promise<DeviceSettings> {
+  const def: DeviceSettings = { ...DEVICE_DEFAULTS };
   const root = projectStore.currentPath;
   if (!root) return def;
-  try {
-    const raw = localStorage.getItem(DEVICE_KEY + root);
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<DeviceSettings>;
-      return {
-        id:
-          p.id === "custom" || DEVICE_PRESETS.some((d) => d.id === p.id)
-            ? (p.id as DeviceId)
-            : def.id,
-        orientation: p.orientation === "landscape" ? "landscape" : "portrait",
-        customW:
-          typeof p.customW === "number" && p.customW > 0
-            ? Math.round(p.customW)
-            : def.customW,
-        customH:
-          typeof p.customH === "number" && p.customH > 0
-            ? Math.round(p.customH)
-            : def.customH,
-        customDpr:
-          typeof p.customDpr === "number" && p.customDpr >= 1 && p.customDpr <= 4
-            ? p.customDpr
-            : def.customDpr,
-        zoomPct:
-          typeof p.zoomPct === "number" && p.zoomPct >= 25 && p.zoomPct <= 200
-            ? Math.round(p.zoomPct)
-            : def.zoomPct,
-      };
-    }
-  } catch {
-    /* ignore */
-  }
-  return def;
+  const p = await uiStateGet<Partial<DeviceSettings>>(DEVICE_KEY + root);
+  if (!p) return def;
+  return {
+    id:
+      p.id === "custom" || DEVICE_PRESETS.some((d) => d.id === p.id)
+        ? (p.id as DeviceId)
+        : def.id,
+    orientation: p.orientation === "landscape" ? "landscape" : "portrait",
+    customW:
+      typeof p.customW === "number" && p.customW > 0
+        ? Math.round(p.customW)
+        : def.customW,
+    customH:
+      typeof p.customH === "number" && p.customH > 0
+        ? Math.round(p.customH)
+        : def.customH,
+    customDpr:
+      typeof p.customDpr === "number" && p.customDpr >= 1 && p.customDpr <= 4
+        ? p.customDpr
+        : def.customDpr,
+    zoomPct:
+      typeof p.zoomPct === "number" && p.zoomPct >= 25 && p.zoomPct <= 200
+        ? Math.round(p.zoomPct)
+        : def.zoomPct,
+  };
 }
 
-function saveDeviceSettings(): void {
+async function saveDeviceSettings(): Promise<void> {
   const root = projectStore.currentPath;
   if (!root) return;
-  try {
-    localStorage.setItem(
-      DEVICE_KEY + root,
-      JSON.stringify({
-        id: deviceId.value,
-        orientation: orientation.value,
-        customW: customW.value,
-        customH: customH.value,
-        customDpr: customDpr.value,
-        zoomPct: deviceZoomPct.value,
-      }),
-    );
-  } catch {
-    /* ignore */
-  }
+  await uiStateSet(DEVICE_KEY + root, {
+    id: deviceId.value,
+    orientation: orientation.value,
+    customW: customW.value,
+    customH: customH.value,
+    customDpr: customDpr.value,
+    zoomPct: deviceZoomPct.value,
+  });
 }
 
-const deviceSettings = loadDeviceSettings();
+const deviceSettings = DEVICE_DEFAULTS;
 const deviceId = ref<DeviceId>(deviceSettings.id);
 const orientation = ref<"portrait" | "landscape">(deviceSettings.orientation);
 const customW = ref(deviceSettings.customW);
@@ -145,6 +135,16 @@ const customH = ref(deviceSettings.customH);
 const customDpr = ref(deviceSettings.customDpr);
 /** 手动缩放比例（%）：25~200，100 = 自动适配 */
 const deviceZoomPct = ref(deviceSettings.zoomPct);
+
+// 已保存的设备设置从后端 UI 状态 KV 异步应用
+void loadDeviceSettings().then((s) => {
+  deviceId.value = s.id;
+  orientation.value = s.orientation;
+  customW.value = s.customW;
+  customH.value = s.customH;
+  customDpr.value = s.customDpr;
+  deviceZoomPct.value = s.zoomPct;
+});
 
 watch(
   [deviceId, orientation, customW, customH, customDpr, deviceZoomPct],

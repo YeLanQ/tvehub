@@ -12,6 +12,7 @@ mod preview;
 mod project;
 mod repos;
 mod scene;
+pub mod ui_state;
 mod store;
 mod trash;
 mod user_templates;
@@ -697,6 +698,9 @@ pub fn run() {
             internal::read_internal_asset,
             internal::read_internal_binary,
             internal::scan_internal_assets,
+            ui_state::ui_state_get,
+            ui_state::ui_state_set,
+            ui_state::ui_state_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

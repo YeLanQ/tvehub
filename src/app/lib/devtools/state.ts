@@ -1,12 +1,13 @@
-// devtools 拆解 —— state：开发者服务的类型、工具/权限清单、localStorage 持久化与
+// devtools 拆解 —— state：开发者服务的类型、工具/权限清单、后端 UI 状态 KV 持久化与
 // 全局响应式状态（首页「开发者服务」面板绑定）。无编辑动作逻辑。
 //
 // 注意双窗口架构：权限在首页窗口（home）里勾选，而方法执行器跑在编辑器窗口（main），
-// 两个 WebView 的 reactive 副本互不相通。因此 isToolAllowed 每次**直接读 localStorage**
+// 两个 WebView 的 reactive 副本互不相通。因此 isToolAllowed 读取内存镜像（boot 时从后端 KV 水合）
 // （同源共享），保证勾选即时对执行端生效。
 
 import { reactive } from "vue";
 import { api } from "../../../lib/api";
+import { uiStateGet, uiStateSet, onUiStateChange } from "../../../lib/ui-state";
 
 export interface DevToolsInfo {
   port: number;
@@ -152,43 +153,26 @@ export const DEVTOOLS_DEFAULT_PORT = 39100;
 const PERMS_KEY = "tve.devtools.perms";
 const PORT_KEY = "tve.devtools.port";
 
-/** 从 localStorage 读已保存的工具启用状态（缺省开启） */
+/** 权限内存镜像：isToolAllowed 保持同步读取；boot 时从后端 KV 水合 */
+const permsMirror: Record<string, boolean> = {};
+let portMirror = 0;
+
 function loadPerms(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(PERMS_KEY);
-    if (raw) return JSON.parse(raw) as Record<string, boolean>;
-  } catch {
-    /* ignore */
-  }
-  return {};
+  return permsMirror;
 }
 
 function persistPerms(): void {
-  try {
-    const m: Record<string, boolean> = {};
-    for (const t of devtools.tools) m[t.id] = t.enabled;
-    localStorage.setItem(PERMS_KEY, JSON.stringify(m));
-  } catch {
-    /* ignore */
-  }
+  const m: Record<string, boolean> = {};
+  for (const t of devtools.tools) m[t.id] = t.enabled;
+  void uiStateSet(PERMS_KEY, m);
 }
 
-/** 已保存的固定端口（0 = 自动随机） */
 function loadPort(): number {
-  try {
-    const n = Number(localStorage.getItem(PORT_KEY) || "0");
-    return Number.isFinite(n) ? Math.max(0, Math.min(65535, Math.round(n))) : 0;
-  } catch {
-    return 0;
-  }
+  return portMirror;
 }
 
 function persistPort(): void {
-  try {
-    localStorage.setItem(PORT_KEY, String(devtools.port));
-  } catch {
-    /* ignore */
-  }
+  void uiStateSet(PORT_KEY, devtools.port);
 }
 
 /** UI 可绑定的开发者服务状态（首页「开发者服务」面板） */
@@ -201,13 +185,37 @@ export const devtools = reactive({
   tools: DEFAULT_TOOLS.map((t) => ({ ...t, enabled: loadPerms()[t.id] !== false })),
 });
 
+// 启动水合：从后端 KV 读权限/端口镜像，并订阅跨窗口变更
+void (async () => {
+  const perms = await uiStateGet<Record<string, boolean>>(PERMS_KEY);
+  if (perms) Object.assign(permsMirror, perms);
+  portMirror = (await uiStateGet<number>(PORT_KEY)) ?? 0;
+  devtools.port = portMirror;
+  for (const t of devtools.tools) {
+    if (permsMirror[t.id] !== undefined) t.enabled = permsMirror[t.id] !== false;
+  }
+  void onUiStateChange<number>(PORT_KEY, (p) => {
+    portMirror = Number(p) || 0;
+    devtools.port = portMirror;
+  });
+  void onUiStateChange<Record<string, boolean>>(PERMS_KEY, (m) => {
+    if (!m) return;
+    Object.assign(permsMirror, m);
+    for (const t of devtools.tools) {
+      if (permsMirror[t.id] !== undefined) t.enabled = permsMirror[t.id] !== false;
+    }
+  });
+})();
+
+
+
 /** 设置固定端口并持久化（启动服务时按此端口绑定） */
 export function setDevToolsPort(port: number): void {
   devtools.port = Number.isFinite(port) ? Math.max(0, Math.min(65535, Math.round(port))) : 0;
   persistPort();
 }
 
-/** 设置某工具是否启用：先即时更新本地（reactive + localStorage），再持久化到 Rust 权威存储 */
+/** 设置某工具是否启用：先即时更新本地（reactive + 后端 KV），再持久化到 Rust 权威存储 */
 export async function setToolEnabled(id: string, enabled: boolean): Promise<void> {
   const t = devtools.tools.find((x) => x.id === id);
   if (t) {
@@ -221,7 +229,7 @@ export async function setToolEnabled(id: string, enabled: boolean): Promise<void
   }
 }
 
-/** 从 Rust 权威存储同步工具权限（首页启动时调用；同时回写 localStorage 镜像供编辑器即时读取） */
+/** 从 Rust 权威存储同步工具权限（首页启动时调用；同时写入后端 KV 供编辑器窗口跟随） */
 export async function syncPermsFromBackend(): Promise<void> {
   try {
     const list = await api.devtoolsTools();
@@ -242,7 +250,7 @@ export async function syncPermsFromBackend(): Promise<void> {
 }
 
 /** method 是否被权限允许（未在 METHOD_TOOL 中的方法一律允许）。
- *  直接读 localStorage：权限在首页窗口勾选，执行器在编辑器窗口，reactive 状态不互通。 */
+ *  读内存镜像：权限在首页窗口勾选，经后端 KV 广播到各窗口。 */
 export function isToolAllowed(method: string): boolean {
   const id = METHOD_TOOL[method];
   if (!id) return true;

@@ -12,6 +12,7 @@ import { getAssetsStore } from "../stores/assets";
 import { getProjectStore } from "../stores/project";
 import { openContextMenu } from "../../lib/editor/context-menu";
 import { setAssetSelection } from "../lib/active-panel";
+import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import {
   ASSET_TYPE_FILTERS,
   listDirectoryChildren,
@@ -82,51 +83,36 @@ const backStack = ref<string[]>([]);
 const fwdStack = ref<string[]>([]);
 
 // ---------------------------------------------------------------------------
-// 目录树折叠状态（左栏）：按项目持久化（localStorage），缺省展开，
+// 目录树折叠状态（左栏）：按项目持久化（后端 UI 状态 KV），缺省展开，
 // 只记录用户折叠过的目录；目录路径随项目结构稳定，跨会话还原。
 // ---------------------------------------------------------------------------
 const collapsedDirs = ref(new Set<string>());
 let collapsedTimer: ReturnType<typeof setTimeout> | null = null;
 
 function collapsedKey(): string {
-  return `three-visual-editor:asset-tree:v1:${projectStore.currentPath ?? ""}`;
+  return `tve:editor:asset-tree-collapse:${projectStore.currentPath ?? ""}`;
 }
-function loadCollapsedDirs(): void {
+async function loadCollapsedDirs(): Promise<void> {
   // 取消未落盘的旧写入（防串项目）
   if (collapsedTimer != null) {
     clearTimeout(collapsedTimer);
     collapsedTimer = null;
   }
-  try {
-    const raw = localStorage.getItem(collapsedKey());
-    const ids = raw ? (JSON.parse(raw) as unknown) : [];
-    collapsedDirs.value = new Set(
-      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
-    );
-  } catch {
-    collapsedDirs.value = new Set();
-  }
+  const ids = await uiStateGet<string[]>(collapsedKey());
+  collapsedDirs.value = new Set(Array.isArray(ids) ? ids : []);
 }
 function persistCollapsedDirs(): void {
   if (collapsedTimer != null) clearTimeout(collapsedTimer);
   collapsedTimer = setTimeout(() => {
     collapsedTimer = null;
-    try {
-      localStorage.setItem(collapsedKey(), JSON.stringify([...collapsedDirs.value]));
-    } catch {
-      /* 存储不可用（隐私模式等）：仅本次会话有效 */
-    }
+    void uiStateSet(collapsedKey(), [...collapsedDirs.value]);
   }, 300);
 }
 function flushCollapsedDirs(): void {
   if (collapsedTimer == null) return;
   clearTimeout(collapsedTimer);
   collapsedTimer = null;
-  try {
-    localStorage.setItem(collapsedKey(), JSON.stringify([...collapsedDirs.value]));
-  } catch {
-    /* ignore */
-  }
+  void uiStateSet(collapsedKey(), [...collapsedDirs.value]);
 }
 const treeCollapsed: AssetTreeCollapsed = {
   isCollapsed: (path) => collapsedDirs.value.has(path),
@@ -197,10 +183,10 @@ const viewMode = ref<"grid" | "list">("grid");
 
 // ---------------------------------------------------------------------------
 // 过滤状态共享（搜索/类型/排序/视图）：写入共享键，脚本图窗口的资产面板跟随
-// 同一份过滤（localStorage + storage 事件跨窗口；键按项目隔离）。
+// 同一份过滤（后端 UI 状态 KV + ui-state:changed 事件跨窗口；键按项目隔离）。
 // ---------------------------------------------------------------------------
 const filterKey = computed(
-  () => `three-visual-editor:graph-asset-filter:v1:${projectStore.currentPath ?? ""}`,
+  () => `tve:graph:asset-filter:${projectStore.currentPath ?? ""}`,
 );
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -208,36 +194,24 @@ function persistFilter(): void {
   if (filterTimer != null) clearTimeout(filterTimer);
   filterTimer = setTimeout(() => {
     filterTimer = null;
-    try {
-      localStorage.setItem(
-        filterKey.value,
-        JSON.stringify({
-          query: query.value,
-          typeFilter: typeFilter.value,
-          sortBy: sortBy.value,
-          viewMode: viewMode.value,
-        }),
-      );
-    } catch {
-      /* 存储不可用：过滤仅本次会话有效 */
-    }
+    void uiStateSet(filterKey.value, {
+      query: query.value,
+      typeFilter: typeFilter.value,
+      sortBy: sortBy.value,
+      viewMode: viewMode.value,
+    });
   }, 250);
 }
 
-function loadFilter(): void {
-  try {
-    const raw = localStorage.getItem(filterKey.value);
-    if (!raw) return;
-    const f = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof f.query === "string") query.value = f.query;
-    if (typeof f.typeFilter === "string" && ASSET_TYPE_FILTERS.some((t) => t.id === f.typeFilter)) {
-      typeFilter.value = f.typeFilter;
-    }
-    if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
-    if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
-  } catch {
-    /* ignore */
+async function loadFilter(): Promise<void> {
+  const f = await uiStateGet<Record<string, unknown>>(filterKey.value);
+  if (!f) return;
+  if (typeof f.query === "string") query.value = f.query;
+  if (typeof f.typeFilter === "string" && ASSET_TYPE_FILTERS.some((t) => t.id === f.typeFilter)) {
+    typeFilter.value = f.typeFilter;
   }
+  if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
+  if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
 }
 
 watch([query, typeFilter, sortBy, viewMode], persistFilter);

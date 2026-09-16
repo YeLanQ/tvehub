@@ -15,6 +15,7 @@ import {
   listDirectoryChildren,
   type ChildEntry,
 } from "../../app/lib/asset-browser";
+import { uiStateGet, uiStateSet, onUiStateChange } from "../../lib/ui-state";
 import { getGraphWindowStore } from "../graphStore";
 import "../../styles/components/assets-panel.scss";
 
@@ -59,59 +60,43 @@ const dirTree = computed<DirNode[]>(() => {
 });
 
 const collapsed = ref(new Set<string>());
-let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-// 折叠态按窗口持久化（键含 graph 前缀与编辑器隔离；键 = 项目根）
-const collapseKey = computed(() => `three-visual-editor:graph-asset-tree:v1:${store.root ?? ""}`);
-function loadCollapsedDirs(): void {
-  if (collapseTimer != null) {
-    clearTimeout(collapseTimer);
-    collapseTimer = null;
-  }
-  try {
-    const raw = localStorage.getItem(collapseKey.value);
-    const ids = raw ? (JSON.parse(raw) as unknown) : [];
-    collapsed.value = new Set(
-      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
-    );
-  } catch {
-    collapsed.value = new Set();
-  }
+// 折叠态按窗口持久化（后端 UI 状态 KV，键含 graph 前缀与编辑器隔离；键 = 项目根）
+const collapseKey = computed(() => `tve:graph:asset-tree-collapse:${store.root ?? ""}`);
+let collapseRun = 0;
+
+async function loadCollapsedDirs(): Promise<void> {
+  const myRun = ++collapseRun;
+  const ids = await uiStateGet<string[]>(collapseKey.value);
+  if (myRun !== collapseRun) return; // 已切换项目：丢弃过期结果
+  collapsed.value = new Set(Array.isArray(ids) ? ids : []);
 }
+
 function persistCollapsedDirs(): void {
-  if (collapseTimer != null) clearTimeout(collapseTimer);
-  collapseTimer = setTimeout(() => {
-    collapseTimer = null;
-    try {
-      localStorage.setItem(collapseKey.value, JSON.stringify([...collapsed.value]));
-    } catch {
-      /* 存储不可用：折叠态仅本次会话有效 */
-    }
-  }, 300);
+  void uiStateSet(collapseKey.value, [...collapsed.value]);
 }
-watch(collapseKey, loadCollapsedDirs, { immediate: true });
 
-// 过滤状态（搜索/类型/排序/视图）从编辑器资产面板同步（共享键只读，编辑器为写入方）
-const filterKey = computed(() => `three-visual-editor:graph-asset-filter:v1:${store.root ?? ""}`);
-function loadFilter(): void {
-  try {
-    const raw = localStorage.getItem(filterKey.value);
-    if (!raw) return;
-    const f = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof f.query === "string") query.value = f.query;
-    if (typeof f.typeFilter === "string") typeFilter.value = f.typeFilter;
-    if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
-    if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
-  } catch {
-    /* ignore */
-  }
+watch(collapseKey, () => void loadCollapsedDirs(), { immediate: true });
+
+// 过滤状态（搜索/类型/排序/视图）从编辑器资产面板同步：
+// 编辑器写入后端 UI 状态 KV（键 = tve:graph:asset-filter）并广播变更事件，
+// 本面板经 onUiStateChange 实时跟随（只读，不回写）
+const FILTER_KEY = "tve:graph:asset-filter";
+interface AssetFilterState {
+  query?: string;
+  typeFilter?: string;
+  sortBy?: string;
+  viewMode?: "grid" | "list";
 }
-function onStorage(e: StorageEvent): void {
-  if (e.key === filterKey.value) loadFilter();
+function applyFilter(f: AssetFilterState | null): void {
+  if (!f) return;
+  if (typeof f.query === "string") query.value = f.query;
+  if (typeof f.typeFilter === "string") typeFilter.value = f.typeFilter;
+  if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
+  if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
 }
-function onWindowFocus(): void {
-  loadFilter();
-}
+
+let unlistenFilter: (() => void) | null = null;
 
 function toggleDir(path: string): void {
   const next = new Set(collapsed.value);
@@ -197,14 +182,15 @@ function onEntryDblclick(item: ChildEntry): void {
 onMounted(() => {
   // 数据与编辑器同源：装载失败留给装载蒙版阶段提示（assets 阶段已 load）
   if (store.root && !assetsStore.assets.length) void assetsStore.load(store.root);
-  // 过滤状态跟随编辑器资产面板（storage 事件 + 聚焦时兜底刷新）
-  loadFilter();
-  window.addEventListener("storage", onStorage);
-  window.addEventListener("focus", onWindowFocus);
+  // 过滤状态跟随编辑器资产面板（后端 UI 状态 KV 变更事件，跨窗口可靠）
+  void onUiStateChange<AssetFilterState | null>(FILTER_KEY, (v) => applyFilter(v)).then((off) => {
+    unlistenFilter = off;
+  });
+  void uiStateGet<AssetFilterState | null>(FILTER_KEY).then((f) => applyFilter(f));
 });
 onUnmounted(() => {
-  window.removeEventListener("storage", onStorage);
-  window.removeEventListener("focus", onWindowFocus);
+  unlistenFilter?.();
+  unlistenFilter = null;
 });
 </script>
 

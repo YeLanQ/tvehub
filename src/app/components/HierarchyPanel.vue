@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { sceneApi } from "../../lib/scene-api";
+import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import type { Node } from "../../framework/prototype/Node";
 import { geometryRegistry } from "../../framework/mesh";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
@@ -146,45 +147,34 @@ interface FlatNode {
 // ---------- 折叠/展开（按 项目+场景 持久化；重开编辑器/工程后还原） ----------
 const projectStore = getProjectStore();
 
-/** 已折叠节点 id 集（缺省全部展开；localStorage 键 = 项目根 + 场景相对路径，
+/** 已折叠节点 id 集（缺省全部展开；后端 UI 状态 KV，键 = 项目根 + 场景相对路径，
  *  节点 id 随场景文件持久化，跨会话稳定） */
 const collapsedIds = ref(new Set<string>());
 const collapsedKey = computed(
-  () => `three-visual-editor:hierarchy:v1:${projectStore.currentPath ?? ""}::${projectStore.sceneRel}`,
+  () => `tve:editor:hierarchy-collapse:${projectStore.currentPath ?? ""}::${projectStore.sceneRel}`,
 );
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-function loadCollapsed(): void {
+async function loadCollapsed(): Promise<void> {
   // 取消未落盘的旧写入（防止上个场景的折叠态写进新键）
   if (persistTimer != null) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  try {
-    const raw = localStorage.getItem(collapsedKey.value);
-    const ids = raw ? (JSON.parse(raw) as unknown) : [];
-    collapsedIds.value = new Set(
-      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [],
-    );
-  } catch {
-    collapsedIds.value = new Set();
-  }
+  const ids = await uiStateGet<string[]>(collapsedKey.value);
+  collapsedIds.value = new Set(Array.isArray(ids) ? ids : []);
 }
 
 function persistCollapsed(): void {
   if (persistTimer != null) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    try {
-      localStorage.setItem(collapsedKey.value, JSON.stringify([...collapsedIds.value]));
-    } catch {
-      /* 存储不可用（隐私模式等）：折叠态仅本次会话有效 */
-    }
+    void uiStateSet(collapsedKey.value, [...collapsedIds.value]);
   }, 300);
 }
 
 // 项目/场景切换 → 载入对应折叠态（面板挂载时也立即执行）
-watch(collapsedKey, loadCollapsed, { immediate: true });
+watch(collapsedKey, () => void loadCollapsed(), { immediate: true });
 
 function hasChildren(node: Node): boolean {
   return node.childIds.length > 0;
@@ -601,11 +591,7 @@ onUnmounted(() => {
   if (persistTimer != null) {
     clearTimeout(persistTimer);
     persistTimer = null;
-    try {
-      localStorage.setItem(collapsedKey.value, JSON.stringify([...collapsedIds.value]));
-    } catch {
-      /* 存储不可用：忽略 */
-    }
+    void uiStateSet(collapsedKey.value, [...collapsedIds.value]);
   }
 });
 
