@@ -159,16 +159,17 @@ console.log("④ 窗口契约");
   check(cap.permissions.includes("core:window:allow-hide"), "capabilities：graph 关闭按钮需要 allow-hide");
 
   const lib = read("src-tauri/src/lib.rs");
-  check(lib.includes("async fn show_graph_window") && lib.includes("show_graph_window,"), "lib.rs show_graph_window 命令与注册");
+  check(lib.includes("async fn show_window_with_project") && lib.includes("show_window_with_project,"), "lib.rs show_window_with_project 统一命令与注册");
+  check(lib.includes("WINDOW_LIFECYCLE") && lib.includes("CloseAction::Hide"), "lib.rs 声明式窗口生命周期表");
 
   // 场景会话按场景 rel 分键：同一场景全窗口共享一份数据（含未保存修改），
-  // 不同场景各自会话互不冲突；事件载荷带 rel，前端按各自当前场景过滤
+  // 不同场景各自会话互不冲突；会话按 (root,rel) 复合键分，事件载荷带 root+rel
   const sceneMod = read("src-tauri/src/scene/mod.rs");
   check(
-    sceneMod.includes("sessions: std::collections::HashMap<String, SessionCore>") && sceneMod.includes("current: std::collections::HashMap<String, String>"),
-    "后端：会话按场景 rel 分键 + 各窗口当前指针",
+    sceneMod.includes("sessions: std::collections::HashMap<SessionKey, SessionCore>") && sceneMod.includes("current: std::collections::HashMap<String, SessionKey>"),
+    "后端：会话按 (root,rel) 复合键分键 + 各窗口当前指针",
   );
-  check(sceneMod.includes("pub rel: String,") && sceneMod.includes('app.emit("scene:changed"'), "后端：scene:changed 载荷带 rel 全局广播");
+  check(sceneMod.includes("pub root: Option<String>,") && sceneMod.includes("pub rel: String,") && sceneMod.includes('app.emit("scene:changed"'), "后端：scene:changed 载荷带 root+rel 全局广播");
   check(
     sceneMod.includes("webview: tauri::Webview,") && !sceneMod.includes("tauri::WebviewWindow"),
     "后端：命令参数用可注入的 tauri::Webview（WebviewWindow 无法注入会导致运行时全失败）",
@@ -176,8 +177,8 @@ console.log("④ 窗口契约");
 
   const launch = read("src/app/lib/graph-launch.ts");
   check(
-    launch.includes("graph:project-open") && launch.includes("graph:ready") && launch.includes("showGraphWindow"),
-    "Hub 侧打开助手（事件握手 + showGraphWindow）",
+    launch.includes("handoffToWindow") && launch.includes('"graph"'),
+    "Hub 侧打开助手（统一窗口交接 handoffToWindow）",
   );
   const projects = read("src/app/components/home/ProjectsSection.vue");
   check(projects.includes("openScriptGraphWindow") && projects.includes("打开脚本图"), "项目卡片菜单「打开脚本图」");
@@ -185,10 +186,10 @@ console.log("④ 窗口契约");
   check(read("graph.html").includes("src/graph-main.ts"), "graph.html 入口");
   const gmain = read("src/graph-main.ts");
   check(
-    gmain.includes("graph:project-open") && gmain.includes("graph:ready") && gmain.includes("getGraphBootStore().standby()"),
-    "graph-main 事件握手 + 蒙版布防",
+    gmain.includes("window:project-open") && gmain.includes("takePendingProject") && gmain.includes("getGraphBootStore().standby()"),
+    "graph-main 统一交接事件 + 冷启动拉取 + 蒙版布防",
   );
-  check(!gmain.includes("getCurrentWindow().show"), "graph-main 不自行显示窗口（由 show_graph_window 控制）");
+  check(!gmain.includes("getCurrentWindow().show"), "graph-main 不自行显示窗口（由 show_window_with_project 控制）");
   const mask = read("src/graph-window/components/GraphBootMask.vue");
   check(mask.includes("boot-mask") && mask.includes("TVE <span>GRAPH</span>"), "装载蒙版复用编辑器 boot-mask 视觉");
 

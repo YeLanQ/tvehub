@@ -26,7 +26,7 @@ let pendingProject: { root: string; rel: string } | null = null;
 let mountWaiters: Array<() => void> = [];
 
 /**
- * 项目交接去重：冷启动时「后端待交付拉取」与「home:project-opened 事件广播」
+ * 项目交接去重：冷启动时「后端待交付拉取」与「window:project-open 事件广播」
  * 可能双渠道交付同一项目（竞态窗口内），短时间窗口内同 key 只处理一次。
  * 窗口 500ms 远小于「关闭→重开同一项目」的人工间隔，不影响正常重开。
  */
@@ -48,7 +48,7 @@ function whenEditorSettled(): Promise<void> {
 }
 
 /**
- * 收到首页窗口的项目交接（home:project-opened 事件，编辑器窗口入口转发）：
+ * 收到首页窗口的项目交接（统一 window:project-open 事件，编辑器窗口入口转发）：
  * 蒙版进入装载态后按「项目配置 → 场景读取 → 材质/模型预取 → 场景构建」
  * 逐段汇报进度，全部就绪后 finish() 揭幕（BootMask）。
  * 编辑器已挂载 → 立即重装载场景；尚在挂载中（编辑器窗口刚启动）→ 挂起，
@@ -182,11 +182,11 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         const root = projectStore.currentPath;
         applyProjectSetup(engine, root);
         // 后端场景会话接线：写通道（乐观提交）+ 变更事件（快照回灌镜像）。
-        // 会话按场景 rel 分键：只应用当前场景的事件（他窗口打开的其他场景互不干扰）
+        // 会话按 (root,rel) 复合键分：只应用当前项目当前场景的事件（他窗口互不干扰）
         engine.setSceneTransport(sceneApi.transport());
         await engine.bindSceneEvents(async (fn) =>
           sceneApi.subscribe((e) => {
-            if (e.rel === projectStore.sceneRel) fn(e);
+            if (e.root === projectStore.currentPath && e.rel === projectStore.sceneRel) fn(e);
           }),
         );
         await engine.mount(container, {

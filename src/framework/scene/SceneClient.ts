@@ -58,7 +58,9 @@ export interface SceneHistoryState {
 
 /** 后端 scene:changed 事件载荷 */
 export interface SceneChangedEvent {
-  /** 变更来源的场景 rel（会话按场景分键；订阅方据此过滤自己的会话） */
+  /** 变更来源的项目根路径（会话按 (root,rel) 复合键分；订阅方据此过滤自己的会话） */
+  root: string | null;
+  /** 变更来源的场景 rel */
   rel: string;
   kind: SceneChangeKind;
   nodeId: string;

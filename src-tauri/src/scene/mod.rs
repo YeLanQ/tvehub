@@ -33,6 +33,8 @@ use model::{JsonMap, NodeData, TransformData};
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneChangedEvent {
+    /// 来源项目根（None = 无项目兜底场景）；前端按 (root, rel) 过滤本窗口应应用的事件
+    pub root: Option<String>,
     pub rel: String,
     pub kind: String,
     pub node_id: String,
@@ -106,10 +108,18 @@ impl Default for SessionCore {
     }
 }
 
-/// 托管状态（Tauri manage）：场景会话按场景资产 rel 分键——同一场景全窗口
-/// 共享同一份会话数据（含未保存修改，跨窗口实时一致）；不同场景各自一份会话，
-/// 编辑器窗口与脚本图窗口可分别打开不同场景互不产生命令冲突。
-/// current：各窗口当前指向的场景 rel（命令按调用窗口路由到其当前会话）。
+/// 会话复合键：项目根 + 场景 rel。从根本上隔离不同项目的同名场景，
+/// 消除跨项目会话复用冲突。root = None 表示无项目兜底场景（不与任何真实项目冲突）。
+#[derive(Clone, PartialEq, Eq, std::hash::Hash, Debug)]
+struct SessionKey {
+    root: Option<String>,
+    rel: String,
+}
+
+/// 托管状态（Tauri manage）：场景会话按 (root, rel) 复合键分键——同一项目的同一场景
+/// 全窗口共享同一份会话数据（含未保存修改，跨窗口实时一致）；不同项目或不同场景
+/// 各自一份会话，编辑器窗口与脚本图窗口可分别打开不同项目/场景互不产生命令冲突。
+/// current：各窗口当前指向的会话键（命令按调用窗口路由到其当前会话）。
 pub struct SceneSession(RwLock<SceneHub>);
 
 impl Default for SceneSession {
@@ -120,34 +130,34 @@ impl Default for SceneSession {
 
 #[derive(Default)]
 pub struct SceneHub {
-    /// 场景会话表：键 = 场景资产 rel
-    sessions: std::collections::HashMap<String, SessionCore>,
-    /// 各窗口（webview 标签）当前指向的场景 rel
-    current: std::collections::HashMap<String, String>,
+    /// 场景会话表：键 = (项目根, 场景 rel)
+    sessions: std::collections::HashMap<SessionKey, SessionCore>,
+    /// 各窗口（webview 标签）当前指向的会话键
+    current: std::collections::HashMap<String, SessionKey>,
 }
 
 /// 写守卫：调用窗口当前会话的可变引用
 struct SessionGuard<'a> {
     hub: RwLockWriteGuard<'a, SceneHub>,
-    rel: String,
+    key: SessionKey,
 }
 
 impl std::ops::Deref for SessionGuard<'_> {
     type Target = SessionCore;
     fn deref(&self) -> &Self::Target {
-        self.hub.sessions.get(&self.rel).expect("current session exists")
+        self.hub.sessions.get(&self.key).expect("current session exists")
     }
 }
 
 impl std::ops::DerefMut for SessionGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.hub.sessions.get_mut(&self.rel).expect("current session exists")
+        self.hub.sessions.get_mut(&self.key).expect("current session exists")
     }
 }
 
 impl SessionGuard<'_> {
-    pub fn rel(&self) -> &str {
-        &self.rel
+    pub fn key(&self) -> &SessionKey {
+        &self.key
     }
 }
 
@@ -164,7 +174,7 @@ impl std::ops::Deref for SessionRef<'_> {
         self.hub
             .current
             .get(&self.label)
-            .and_then(|rel| self.hub.sessions.get(rel))
+            .and_then(|key| self.hub.sessions.get(key))
             .unwrap_or_else(|| EMPTY.get_or_init(SessionCore::default))
     }
 }
@@ -177,15 +187,15 @@ impl SceneSession {
     /// 调用窗口当前会话（可变；未打开场景报错）
     fn write_current(&self, label: &str) -> Result<SessionGuard<'_>, String> {
         let hub = self.0.write().map_err(|e| e.to_string())?;
-        let rel = hub
+        let key = hub
             .current
             .get(label)
             .cloned()
             .ok_or_else(|| format!("窗口未打开场景: {}", label))?;
-        if !hub.sessions.contains_key(&rel) {
-            return Err(format!("当前场景会话缺失: {}", rel));
+        if !hub.sessions.contains_key(&key) {
+            return Err(format!("当前场景会话缺失: {:?}", key));
         }
-        Ok(SessionGuard { hub, rel })
+        Ok(SessionGuard { hub, key })
     }
 
     /// 调用窗口当前会话（只读；无会话按缺省空会话处理，不创建条目）
@@ -221,13 +231,14 @@ fn build_doc(core: &SessionCore) -> Value {
 }
 
 /// 广播一批图变更（同命令共享一次 revision 递增）
-fn emit_changes(app: &tauri::AppHandle, rel: &str, core: &mut SessionCore, changes: Vec<GraphChange>) {
+fn emit_changes(app: &tauri::AppHandle, key: &SessionKey, core: &mut SessionCore, changes: Vec<GraphChange>) {
     core.revision += 1;
     let hist = history_state(core);
     let dirty = core.dirty;
     for change in changes {
         let event = SceneChangedEvent {
-            rel: rel.to_string(),
+            root: key.root.clone(),
+            rel: key.rel.clone(),
             kind: change.kind.to_string(),
             node_id: change.node_id,
             revision: core.revision,
@@ -235,7 +246,7 @@ fn emit_changes(app: &tauri::AppHandle, rel: &str, core: &mut SessionCore, chang
             history: hist.clone(),
             dirty,
         };
-        // 只发来源窗口：其余窗口会话独立，镜像互不干扰
+        // 广播到所有窗口：各窗口按 (root, rel) 过滤本窗口应应用的事件
         let _ = app.emit("scene:changed", &event);
     }
 }
@@ -312,31 +323,24 @@ pub async fn scene_open(
     }
 
     let mut hub = state.hub()?;
-    // 同 rel 会话已存在且属于同一项目根 → 直接复用（数据共享：保留未保存修改与
-    // 撤销历史，不重置），因此任一窗口打开另一窗口正在编辑的同一场景时看到实时数据。
-    // 跨项目（rel 同名但 root 不同，如新建项目复用 assets/Main.scene）→ 不得复用
-    // 旧会话，否则会误开其他项目的场景；移除旧会话后走读盘装载。
-    let same_root = hub
-        .sessions
-        .get(&rel)
-        .map(|core| core.root_path.as_deref() == Some(root_path.as_path()))
-        .unwrap_or(false);
-    if same_root {
+    // 复合键 (root, rel)：同一项目的同一场景全窗口共享会话（保留未保存修改与撤销历史）；
+    // 不同项目天然隔离（key 不同），无需额外 same_root 校验。
+    let key = SessionKey { root: Some(root.clone()), rel: rel.clone() };
+    if hub.sessions.contains_key(&key) {
         hub.current
-            .insert(webview.label().to_string(), rel.clone());
-        let core = hub.sessions.get(&rel).expect("session exists");
+            .insert(webview.label().to_string(), key.clone());
+        let core = hub.sessions.get(&key).expect("session exists");
         let doc = build_doc(core);
         return Ok(load_result(core, &doc));
     }
-    // 首次打开或跨项目：移除旧会话后读盘装载新会话
-    hub.sessions.remove(&rel);
+    // 首次打开：读盘装载新会话
     {
-        let core = hub.sessions.entry(rel.clone()).or_default();
+        let core = hub.sessions.entry(key.clone()).or_default();
         load_core_from_doc(core, &doc, Some(root_path), &rel);
     }
     hub.current
-        .insert(webview.label().to_string(), rel.clone());
-    let core = hub.sessions.get(&rel).expect("session exists");
+        .insert(webview.label().to_string(), key.clone());
+    let core = hub.sessions.get(&key).expect("session exists");
     let doc = build_doc(core);
     Ok(load_result(core, &doc))
 }
@@ -353,20 +357,29 @@ pub async fn scene_load_doc(
 ) -> Result<SceneLoadResult, String> {
     let mut hub = state.hub()?;
     let label = webview.label().to_string();
-    // 目标 rel：显式给定优先；未给定沿用当前（无当前用哨兵键 root）
+    // 目标 rel：显式给定优先；未给定沿用当前会话的 rel；无当前用哨兵 "starter"
     let rel = match rel {
         Some(r) => r,
-        None => hub.current.get(&label).cloned().unwrap_or_else(|| "root".into()),
+        None => hub
+            .current
+            .get(&label)
+            .map(|k| k.rel.clone())
+            .unwrap_or_else(|| "starter".into()),
     };
+    let key = SessionKey { root: root.clone(), rel };
     let root_path = root.map(PathBuf::from);
     {
-        let core = hub.sessions.entry(rel.clone()).or_default();
+        let core = hub.sessions.entry(key.clone()).or_default();
         let rp = root_path.clone().or_else(|| core.root_path.clone());
-        let srel = if core.scene_rel.is_empty() { rel.clone() } else { core.scene_rel.clone() };
+        let srel = if core.scene_rel.is_empty() {
+            key.rel.clone()
+        } else {
+            core.scene_rel.clone()
+        };
         load_core_from_doc(core, &doc, rp, &srel);
     }
-    hub.current.insert(label, rel.clone());
-    let core = hub.sessions.get(&rel).expect("session exists");
+    hub.current.insert(label, key.clone());
+    let core = hub.sessions.get(&key).expect("session exists");
     let doc = build_doc(core);
     Ok(load_result(core, &doc))
 }
@@ -391,8 +404,8 @@ pub async fn scene_add_node(
     }
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -427,8 +440,8 @@ pub async fn scene_add_tree(
     }
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -456,8 +469,8 @@ pub async fn scene_remove_nodes(
     }
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -493,8 +506,8 @@ pub async fn scene_reparent_nodes(
     }
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -525,8 +538,8 @@ pub async fn scene_rename(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -551,8 +564,8 @@ pub async fn scene_set_transform(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -578,8 +591,8 @@ pub async fn scene_patch_node(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -610,8 +623,8 @@ pub async fn scene_patch_nodes(
     let changes = cmd.execute(&mut core.graph);
     core.history.push(cmd);
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(())
 }
 
@@ -639,8 +652,8 @@ pub async fn scene_undo(
         return Ok(history_state(&core));
     };
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(history_state(&core))
 }
 
@@ -660,8 +673,8 @@ pub async fn scene_redo(
         return Ok(history_state(&core));
     };
     core.dirty = true;
-    let rel = core.rel().to_string();
-    emit_changes(&app, &rel, &mut core, changes);
+    let key = core.key().clone();
+    emit_changes(&app, &key, &mut core, changes);
     Ok(history_state(&core))
 }
 
@@ -758,10 +771,10 @@ pub async fn scene_hierarchy_rows(
 
 /// 会话当前打开的项目根目录（devtools 纯后端查询扫描用；未打开返回 None）
 pub(crate) fn scene_root_path_for(hub: &SceneHub, label: &str) -> Result<Option<String>, String> {
-    let Some(rel) = hub.current.get(label) else {
+    let Some(key) = hub.current.get(label) else {
         return Ok(None);
     };
-    let Some(core) = hub.sessions.get(rel) else {
+    let Some(core) = hub.sessions.get(key) else {
         return Ok(None);
     };
     Ok(core.root_path.as_ref().map(|p| p.display().to_string()))
@@ -769,7 +782,7 @@ pub(crate) fn scene_root_path_for(hub: &SceneHub, label: &str) -> Result<Option<
 
 /// 当前场景文档（信封 + 图重建 root；调试/兜底用）
 pub(crate) fn scene_doc_for(hub: &mut SceneHub, label: &str) -> Result<Value, String> {
-    let core = hub.current.get(label).and_then(|rel| hub.sessions.get(rel));
+    let core = hub.current.get(label).and_then(|key| hub.sessions.get(key));
     let Some(core) = core else {
         return Ok(serde_json::json!({ "type": "empty" }));
     };
@@ -787,11 +800,11 @@ pub async fn scene_doc(
 
 /// 保存调用窗口的当前场景（后端序列化（保留信封字段）→ pretty JSON 写盘 → 清脏标记）
 pub(crate) fn scene_save_for(hub: &mut SceneHub, label: &str) -> Result<(), String> {
-    let Some(rel) = hub.current.get(label).cloned() else {
+    let Some(key) = hub.current.get(label).cloned() else {
         return Err("未打开场景（无保存目标）".into());
     };
-    let Some(core) = hub.sessions.get_mut(&rel) else {
-        return Err(format!("当前场景会话缺失: {rel}"));
+    let Some(core) = hub.sessions.get_mut(&key) else {
+        return Err(format!("当前场景会话缺失: {:?}", key));
     };
     let (root_path, scene_rel) = match (&core.root_path, core.scene_rel.as_str()) {
         (Some(p), rel) if !rel.is_empty() => (p.clone(), rel.to_string()),
@@ -823,7 +836,8 @@ pub async fn scene_save(
     scene_save_for(&mut hub, &label)
 }
 
-/// 关闭调用窗口的当前会话（清空图与历史；不落盘；其余窗口会话不受影响）
+/// 关闭调用窗口的当前会话指针（不落盘）。若其他窗口仍引用同一会话键则保留会话数据
+/// （跨窗口共享），无人引用才删除会话（避免悬空指针与误删共享会话）。
 #[tauri::command]
 pub async fn scene_close(
     webview: tauri::Webview,
@@ -831,8 +845,12 @@ pub async fn scene_close(
 ) -> Result<(), String> {
     let label = webview.label().to_string();
     let mut hub = state.hub()?;
-    if let Some(rel) = hub.current.remove(&label) {
-        hub.sessions.remove(&rel);
+    if let Some(key) = hub.current.remove(&label) {
+        // 引用计数：其他窗口仍指向此会话 → 保留；无人引用 → 删除
+        let still_used = hub.current.values().any(|k| k == &key);
+        if !still_used {
+            hub.sessions.remove(&key);
+        }
     }
     Ok(())
 }

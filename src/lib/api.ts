@@ -284,17 +284,15 @@ export const api = {
   writeCodeProto: (file: string, code: string) => invoke<void>("write_code_proto", { file, code }),
   /** 删除原型文件 */
   deleteCodeProto: (file: string) => invoke<void>("delete_code_proto", { file }),
-  /** 显示编辑器窗口并聚焦（首页打开/新建项目成功后调用；项目根/名/场景 rel
-   *  一并写入后端待交付状态，供编辑器窗口冷启动时拉取） */
-  showEditorWindow: (root: string, name: string, rel: string) =>
-    invoke<void>("show_editor_window", { root, name, rel }),
-  /** 编辑器窗口启动时拉取待交付项目（取走后清空） */
+  /** 显示目标窗口并写入待交付项目（统一入口：首页打开编辑器/图窗口均经此）。
+   *  冷启动时窗口 listen 未就绪，事件广播会丢失，由窗口启动后主动 takePendingProject 拉取 */
+  showWindowWithProject: (label: string, root: string, name: string, rel: string | null) =>
+    invoke<void>("show_window_with_project", { label, root, name, rel }),
+  /** 窗口启动时拉取待交付项目（取走后清空，保证只交付一次） */
   takePendingProject: () =>
-    invoke<{ root: string; name: string; rel: string } | null>("take_pending_project"),
+    invoke<{ root: string; name: string; rel: string | null } | null>("take_pending_project"),
   /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
   showHomeWindow: () => invoke<void>("show_home_window"),
-  /** 显示脚本图窗口并聚焦（编辑器工具栏「脚本图」调用） */
-  showGraphWindow: () => invoke<void>("show_graph_window"),
   /** 追加一行调试日志到应用配置目录 debug.log */
   appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
   /** 打开 WebView 开发者工具（发行构建会返回错误提示） */

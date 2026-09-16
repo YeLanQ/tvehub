@@ -10,6 +10,7 @@ import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
 import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
+import { handoffToWindow } from "../lib/window-handoff";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import {
@@ -119,17 +120,12 @@ registerCommand({
     const project = getProjectStore();
     const ok = await project.openProject(path);
     if (!ok) throw new Error(`打开项目失败: ${path}`);
-    const { emit } = await import("@tauri-apps/api/event");
-    await api.showEditorWindow(
+    await handoffToWindow(
+      "main",
       project.currentPath ?? "",
       project.projectName ?? "",
       project.sceneRel || DEFAULT_SCENE_REL,
     );
-    await emit("home:project-opened", {
-      root: project.currentPath,
-      name: project.projectName ?? "",
-      rel: project.sceneRel || DEFAULT_SCENE_REL,
-    });
     return { ok: true, project: project.currentPath };
   },
 });

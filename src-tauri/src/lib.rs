@@ -385,55 +385,50 @@ async fn dev_app_dirs(app: tauri::AppHandle) -> Result<Vec<(String, String)>, St
 // ---------------------------------------------------------------------------
 
 /// 待交付给编辑器窗口的项目（首页打开/新建项目后写入，编辑器窗口冷启动时拉取）。
-/// 编辑器窗口冷启动时 `home:project-opened` 事件可能在 listen 安装前广播而丢失，
-/// 经此状态中转可保证首次打开也拿到项目，杜绝兜底场景抢占会话。
+/// 各窗口待交付项目（按 webview label 分键）。冷启动时事件广播可能在 listen 安装前
+/// 丢失，经此状态中转可保证首次打开也拿到项目。统一服务编辑器/图窗口，杜绝兜底场景抢占。
 #[derive(Default)]
-struct PendingEditorProject(std::sync::Mutex<Option<PendingProjectPayload>>);
+struct PendingProjects(std::sync::Mutex<std::collections::HashMap<String, PendingProjectPayload>>);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PendingProjectPayload {
     root: String,
     name: String,
-    rel: String,
+    /// 场景?rel（编辑器窗口需要；图窗口 None = 自己解析主场景）
+    rel: Option<String>,
 }
 
-/// 显示编辑器窗口（首页窗口保持打开，仅把焦点切到编辑器；
-/// 打开/新建项目成功后由首页调用）。项目根/名/场景 rel 一并写入待交付状态，
-/// 供编辑器窗口冷启动时主动拉取（事件广播在窗口未就绪时不可靠）。
+/// 显示目标窗口并写入待交付项目（统一入口：首页打开编辑器/图窗口均经此）。
+/// 冷启动时窗口 listen 未就绪，事件广播会丢失，由窗口启动后主动 take_pending_project 拉取。
 #[tauri::command]
-async fn show_editor_window(
+async fn show_window_with_project(
     app: tauri::AppHandle,
-    state: tauri::State<'_, PendingEditorProject>,
+    state: tauri::State<'_, PendingProjects>,
+    label: String,
     root: String,
     name: String,
-    rel: String,
+    rel: Option<String>,
 ) -> Result<(), String> {
-    *state.0.lock().unwrap() = Some(PendingProjectPayload { root, name, rel });
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
+    state
+        .0
+        .lock()
+        .unwrap()
+        .insert(label.clone(), PendingProjectPayload { root, name, rel });
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.show();
+        let _ = w.set_focus();
     }
     Ok(())
 }
 
-/// 编辑器窗口启动时拉取待交付项目（取走后清空，保证只交付一次）
+/// 窗口启动时拉取待交付项目（取走后清空，保证只交付一次）
 #[tauri::command]
 async fn take_pending_project(
-    state: tauri::State<'_, PendingEditorProject>,
+    webview: tauri::Webview,
+    state: tauri::State<'_, PendingProjects>,
 ) -> Result<Option<PendingProjectPayload>, String> {
-    Ok(state.0.lock().unwrap().take())
-}
-
-/// 显示脚本图窗口（编辑器窗口工具栏「脚本图」调用；窗口常驻仅切换可见性，
-/// 项目根经 editor:graph-open 事件交接）
-#[tauri::command]
-async fn show_graph_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(graph) = app.get_webview_window("graph") {
-        let _ = graph.show();
-        let _ = graph.set_focus();
-    }
-    Ok(())
+    Ok(state.0.lock().unwrap().remove(&webview.label().to_string()))
 }
 
 /// 显示首页窗口并隐藏编辑器（编辑器"关闭项目"后调用）
@@ -448,6 +443,21 @@ async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 窗口关闭行为（声明式生命周期配置）
+enum CloseAction {
+    /// 隐藏窗口（常驻，保留前端状态），可选显示另一窗口
+    Hide { show: Option<&'static str> },
+    /// 退出应用
+    Exit,
+}
+
+/// 窗口生命周期配置表：新增可重开窗口只需在此加一行，不再改 on_window_event match
+const WINDOW_LIFECYCLE: &[(&str, CloseAction)] = &[
+    ("main", CloseAction::Hide { show: Some("home") }),
+    ("graph", CloseAction::Hide { show: None }),
+    ("home", CloseAction::Exit),
+];
 
 // ---------------------------------------------------------------------------
 // base64（免第三方依赖：预览二进制贴图导出 + 前端纹理读取共用）
@@ -603,7 +613,7 @@ pub fn run() {
         .manage(asset_protocol::AssetProtocolState::default())
         .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
-        .manage(PendingEditorProject::default())
+        .manage(PendingProjects::default())
         .manage(devtools::DevToolsState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
         // 首页「开发者服务」页签可停用/改端口。
@@ -619,31 +629,29 @@ pub fn run() {
         })
         // 双窗口均不显示原生菜单栏；编辑器快捷键由前端 keydown 统一处理
         .on_window_event(|window, event| {
-            // 双窗口生命周期：
-            // - 编辑器窗口关闭 = "关闭项目" → 隐藏编辑器（保留前端状态），显示首页；
-            // - 图窗口关闭 = 隐藏图窗口（常驻，保留前端状态，下次「打开脚本图」复用）；
-            // - 首页窗口关闭 = 退出应用（一并结束隐藏中的编辑器/图窗口）。
+            // 窗口关闭行为查 WINDOW_LIFECYCLE 表：新增可重开窗口只需在表里加一行，
+            // 不再改本闭包。home 关闭 = 退出应用；main/graph 关闭 = 隐藏保留前端状态。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                match window.label() {
-                    "main" => {
+                let label = window.label();
+                let action = WINDOW_LIFECYCLE
+                    .iter()
+                    .find(|(l, _)| *l == label)
+                    .map(|(_, a)| a);
+                match action {
+                    Some(CloseAction::Hide { show }) => {
                         api.prevent_close();
                         let _ = window.hide();
-                        if let Some(home) = window
-                            .app_handle()
-                            .get_webview_window("home")
-                        {
-                            let _ = home.show();
-                            let _ = home.set_focus();
+                        if let Some(target) = show {
+                            if let Some(w) = window.app_handle().get_webview_window(target) {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
                         }
                     }
-                    "graph" => {
-                        api.prevent_close();
-                        let _ = window.hide();
-                    }
-                    "home" => {
+                    Some(CloseAction::Exit) => {
                         window.app_handle().exit(0);
                     }
-                    _ => {}
+                    None => {}
                 }
             }
         })
@@ -683,10 +691,9 @@ pub fn run() {
             append_debug_log,
             open_devtools,
             dev_app_dirs,
-            show_editor_window,
+            show_window_with_project,
             take_pending_project,
             show_home_window,
-            show_graph_window,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,

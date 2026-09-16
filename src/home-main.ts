@@ -1,20 +1,14 @@
 // 首页窗口入口（Tauri 窗口 label "home"，url home.html）：
 // 只挂载 HomeView（项目/模板/偏好设置/开发者服务），与编辑器窗口（main）
-// 相互独立。打开/新建项目后由 HomeView emit 事件并请求 Rust 显示编辑器窗口。
+// 相互独立。打开/新建项目后由 HomeView 经统一窗口交接（window-handoff）交付。
 import { createApp } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import HomeView from "./app/components/HomeView.vue";
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
-import { installGraphHandshake } from "./app/lib/graph-launch";
 import "./styles/global.scss";
 
 debugLog("boot", "home window script started");
-
-// 尽早安装 graph:ready 握手：图窗口冷启动时会 emit("graph:ready")，
-// 若监听未就绪则握手丢失，图窗口收不到项目交接。首页启动时安装可确保
-// 监听在用户点击「打开脚本图」之前就已就绪（消除 listen 异步安装竞态）
-if (isTauri()) installGraphHandshake();
 
 // 捕获全局错误（与编辑器窗口一致的排查通道）
 window.addEventListener("error", (e) => {

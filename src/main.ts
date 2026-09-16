@@ -1,7 +1,6 @@
 // 编辑器窗口入口（Tauri 窗口 label "main"，url index.html）。
-// 首页是独立窗口（label "home"，home.html）；本项目通过
-// "home:project-opened" 事件交接，编辑器窗口在收到事件后才由 Rust
-// 命令 show_editor_window 显示（启动时保持隐藏，避免空编辑器闪现）。
+// 首页是独立窗口（label "home"，home.html）；本项目通过统一窗口交接
+// （window-handoff）交付项目：后端待交付状态 + window:project-open 事件双渠道。
 import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import App from "./App.vue";
@@ -13,6 +12,7 @@ import { handleProjectOpenedFromHome } from "./app/services/editorService";
 import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus } from "./app/lib/devtools";
 import { api } from "./lib/api";
+import type { WindowProjectPayload } from "./app/lib/window-handoff";
 
 debugLog("boot", "app script started");
 
@@ -31,23 +31,23 @@ debugLog("boot", `isTauri: ${isTauri()}`);
 if (!isTauri()) {
   debugLog("boot", "not running inside Tauri; editor boots without desktop backend");
 } else {
-  // 冷启动补偿：首页 show_editor_window 写入待交付项目并 show 窗口，随后的
-  // home:project-opened 事件广播可能在下面 listen 安装前发出而丢失。这里主动
-  // 拉取后端待交付项目（取走后清空），保证首次打开也拿到真实项目而非兜底场景。
+  // 冷启动补偿：统一交接写入后端待交付状态，随后的 window:project-open 事件
+  // 广播可能在下面 listen 安装前发出而丢失。这里主动拉取（取走后清空），
+  // 保证首次打开也拿到真实项目而非兜底场景。
   void api
     .takePendingProject()
     .then((pending) => {
-      if (pending) {
+      if (pending && pending.rel) {
         void handleProjectOpenedFromHome(pending.root, pending.name, pending.rel);
       }
     })
     .catch((e) => debugLog("boot", `takePendingProject failed: ${e}`));
-  // 首页窗口打开/新建项目 → 同步状态并装载场景（挂载未完成时由挂起机制兜底）。
-  // 热启动（窗口已就绪）时事件正常到达，作为直接渠道；与上面拉取的竞态由
-  // handleProjectOpenedFromHome 短窗口去重兜底。
-  void listen<{ root: string; name: string; rel: string }>(
-    "home:project-opened",
+  // 统一窗口交接事件（热启动时窗口已就绪，事件直接到达）。只处理本窗口。
+  // 与上面拉取的竞态由 handleProjectOpenedFromHome 短窗去重兜底。
+  void listen<WindowProjectPayload & { label: string }>(
+    "window:project-open",
     (e) => {
+      if (e.payload.label !== "main" || !e.payload.rel) return;
       void handleProjectOpenedFromHome(e.payload.root, e.payload.name, e.payload.rel);
     },
   );

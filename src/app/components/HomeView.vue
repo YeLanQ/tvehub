@@ -21,9 +21,8 @@ import PreferencesSection from "./home/PreferencesSection.vue";
 import WorkshopSection from "./home/WorkshopSection.vue";
 import DevServiceSection from "./home/DevServiceSection.vue";
 import "../../styles/components/home-view.scss";
-import { emit } from "@tauri-apps/api/event";
 import { isTauri } from "../../lib/tauri-env";
-import { api } from "../../lib/api";
+import { handoffToWindow } from "../lib/window-handoff";
 import { syncDevToolsStatus } from "../lib/devtools";
 import { syncPermsFromBackend } from "../lib/devtools/state";
 
@@ -97,9 +96,8 @@ async function handleProjectCreated(project: RecentProject) {
 }
 
 /**
- * 打开/新建项目成功后交接给编辑器窗口（双窗口架构）：
- * 广播 home:project-opened（编辑器窗口同步状态并装载场景），
- * 再请求 Rust 显示编辑器窗口并隐藏首页。
+ * 打开/新建项目成功后交接给编辑器窗口（统一窗口交接）：
+ * 写入后端待交付状态 + 显示编辑器窗口 + 广播事件（冷启动由拉取兜底）。
  */
 async function handoffToEditor(): Promise<void> {
   if (!inTauri) {
@@ -110,18 +108,12 @@ async function handoffToEditor(): Promise<void> {
   const root = projectStore.currentPath;
   if (!root) return;
   try {
-    // 先写入后端待交付状态并显示编辑器窗口（冷启动时事件广播会丢失，由
-    // 编辑器窗口启动后主动拉取），再广播事件作为热启动（窗口已就绪）的直接渠道
-    await api.showEditorWindow(
+    await handoffToWindow(
+      "main",
       root,
       projectStore.projectName ?? "",
       projectStore.sceneRel,
     );
-    await emit("home:project-opened", {
-      root,
-      name: projectStore.projectName ?? "",
-      rel: projectStore.sceneRel,
-    });
   } catch (e) {
     console.error("切换到编辑器窗口失败:", e);
     alert("切换到编辑器窗口失败：" + e);

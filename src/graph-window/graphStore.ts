@@ -4,7 +4,7 @@
 // 暴露属性），用匹配节点按标签/类型批量圈定目标，用原子操作节点定义预览运行时
 // 执行的行为（不回写编辑器场景）。
 //
-// - 项目交接（Hub「打开脚本图」→ graph:project-open 事件）与资产清单；
+// - 项目交接（Hub「打开脚本图」→ 统一窗口交接 window:project-open 事件）与资产清单；
 // - 场景会话按窗口隔离（后端会话表按 webview 标签分键）：本窗口默认打开
 //   项目配置的主场景（空则兜底），可在资产面板双击场景切换；层级/实体索引
 //   只反映本窗口会话，与编辑器窗口互不干扰；
@@ -465,13 +465,13 @@ export function getGraphWindowStore(): GraphWindowStore {
     },
   };
 
-  /** 场景变更订阅（会话按场景 rel 分键：只应用本窗口当前场景的事件——
+  /** 场景变更订阅（会话按 (root,rel) 复合键分：只应用本窗口当前项目当前场景的事件——
    *  编辑器窗口对同一场景的修改实时同步到这里） */
   function installSceneWatch(): void {
     if (sceneWatchInstalled) return;
     sceneWatchInstalled = true;
     void sceneApi.subscribe((e) => {
-      if (!state.root || e.rel !== state.sceneRel) return;
+      if (!state.root || e.root !== state.root || e.rel !== state.sceneRel) return;
       if (sceneDebounce) clearTimeout(sceneDebounce);
       sceneDebounce = setTimeout(() => {
         void store.refreshHierarchy().catch(() => {});
