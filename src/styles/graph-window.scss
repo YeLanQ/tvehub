@@ -300,7 +300,8 @@
   position: absolute;
   inset: 0;
 
-  .vue-flow__pane { background: var(--bg); }
+  // pane 保持透明：vue-flow 的 Background 点阵 SVG 在其下层，不透明底色会盖住点阵
+  // （画布底色由 .gcenter 提供）
   .vue-flow__edge.selected .vue-flow__edge-path { stroke: var(--text) !important; }
   .vue-flow__connection-path { stroke: var(--text-dim); stroke-width: 1.5; }
 

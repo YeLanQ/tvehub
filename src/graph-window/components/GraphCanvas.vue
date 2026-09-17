@@ -650,7 +650,7 @@ onBeforeUnmount(() => {
       <template #node-gcomment="p">
         <GraphCommentBox :id="p.id" :data="p.data" :selected="p.selected" />
       </template>
-      <Background :gap="22" pattern-color="#2c2c2c" />
+      <Background :gap="44" :size="2" pattern-color="#343434" />
       <Controls position="bottom-left" :show-interactive="false" />
       <MiniMap position="bottom-right" pannable zoomable />
     </VueFlow>
