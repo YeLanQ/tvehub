@@ -13,6 +13,14 @@ const store = getGraphWindowStore();
 const editingName = ref<string | null>(null);
 const editingValue = ref<string>("");
 
+/** 重命名输入框挂载即聚焦全选（不获焦则键入丢失，且 Delete 等按键会漏到画布快捷键） */
+const vFocus = {
+  mounted: (el: HTMLInputElement) => {
+    el.focus();
+    el.select();
+  },
+};
+
 function startRename(id: string, name: string): void {
   editingName.value = id;
   editingValue.value = name;
@@ -41,11 +49,13 @@ const typeOptions: GVarDataType[] = ["number", "boolean", "string"];
     <div v-for="v in store.graphVariables" :key="v.id" class="gvar-row">
       <template v-if="editingName === v.id">
         <input
+          v-focus
+          v-model="editingValue"
           class="gvar-name-input"
-          :value="editingValue"
           @change="commitRename(v.id)"
           @blur="commitRename(v.id)"
           @keydown.enter="($event.target as HTMLInputElement).blur()"
+          @keydown.esc="editingName = null"
         />
       </template>
       <template v-else>
