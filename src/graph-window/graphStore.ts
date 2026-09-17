@@ -74,9 +74,11 @@ export interface GraphModalState {
   resolve: ((v: string | null) => void) | null;
 }
 
-  /** 场景 → 脚本图文件相对路径（graph/ 目录，与 assets/src 同级） */
+  /** 场景 → 脚本图文件相对路径（graph/ 目录，与 assets/src 同级；.graph 后缀） */
   function sidecarRel(sceneRel: string): string {
-    return `graph/${sceneRel.replace(/\//g, "__")}.json`;
+    const name = sceneRel.split("/").pop() ?? sceneRel;
+    const base = name.replace(/\.scene$/i, "");
+    return `graph/${base}.graph`;
   }
 
 interface GraphWindowStore {

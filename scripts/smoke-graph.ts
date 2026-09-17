@@ -444,8 +444,8 @@ console.log("⑤ 工作台与无图资产契约");
 
   const store = read("src/graph-window/graphStore.ts");
   check(
-    store.includes("sidecarRel") && store.includes("graph/") && store.includes("writeText"),
-    "store：图会话 graph/ 目录自动保存",
+    store.includes("sidecarRel") && store.includes("graph/") && store.includes(".graph") && store.includes("writeText"),
+    "store：图会话 graph/ 目录自动保存（.graph 后缀）",
   );
   check(
     store.includes("fetchSceneEntities") && store.includes("markGraphDirty") && store.includes("flushGraph"),
