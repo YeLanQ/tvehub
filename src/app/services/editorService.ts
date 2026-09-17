@@ -8,6 +8,7 @@ import { DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
 import { setupCompressedGltfSupport, collectModelMaterialOverrideRels } from "../../framework/mesh";
+import { initModelDecodeWorker } from "../../framework/mesh/model-decode-worker-bridge";
 import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import { loadMaterialDoc } from "../lib/materials";
@@ -209,6 +210,11 @@ export function mountEditor(container: HTMLElement): Promise<void> {
           basisBase: "engine/runtime/loaders/basis/",
           renderer: engine.renderer.raw,
         });
+        // 模型解码 Worker：glTF 解析移入独立线程，避免大模型加载卡主线程
+        initModelDecodeWorker(
+          "engine/runtime/loaders/draco/",
+          "engine/runtime/loaders/basis/",
+        );
         // 场景装载：后端读盘 + 旧格式迁移 + 建图（历史清零），返回规范 doc 与引用清单
         const sceneRel = projectStore.sceneRel;
         let loaded = false;

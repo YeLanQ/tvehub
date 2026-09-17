@@ -325,6 +325,14 @@ export const api = {
   /** 前端推送事件（console / 日志 / 状态变化）广播给所有控制端 */
   devtoolsPush: (event: string, data: unknown) =>
     invoke<void>("devtools_push", { event, data }),
+  /** 取消指定任务 */
+  cancelTask: (id: string) => invoke<boolean>("cancel_task", { id }),
+  /** 批量取消某项目的全部任务 */
+  cancelTasksByRoot: (root: string) =>
+    invoke<number>("cancel_tasks_by_root", { root }),
+  /** 列出活跃任务（可选按项目根过滤） */
+  listTasks: (root?: string) =>
+    invoke<TaskStatus[]>("list_tasks", { root: root ?? null }),
 };
 
 /** 用户自定义模板信息（exe 旁 public 目录扫描结果；与内置注册表字段对齐） */
@@ -355,5 +363,33 @@ export interface BuildResult {
   bin_converted: string[];
   assets_packed: number;
   missing: string[];
+  message: string;
+}
+/** 任务优先级（与 Rust task::Priority 对应） */
+export type TaskPriority = "low" | "normal" | "high";
+
+/** 任务状态快照（与 Rust task::TaskStatus 对应） */
+export interface TaskStatus {
+  id: string;
+  kind: string;
+  root: string | null;
+  priority: TaskPriority;
+  progress: number;
+  message: string;
+  running: boolean;
+  cancelled: boolean;
+}
+
+/** 任务进度事件（task:progress） */
+export interface TaskProgressEvent {
+  id: string;
+  progress: number;
+  message: string;
+}
+
+/** 任务完成事件（task:completed） */
+export interface TaskCompletedEvent {
+  id: string;
+  success: boolean;
   message: string;
 }

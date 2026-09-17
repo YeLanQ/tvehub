@@ -9,9 +9,10 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -29,8 +30,10 @@ struct PreviewServer {
     /// 表现为 net::ERR_CONNECTION_ABORTED。
     root: Arc<Mutex<PathBuf>>,
     base_url: String,
-    shutdown: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
+    /// 子进程句柄（崩溃隔离：预览服务器 panic 不影响主应用）
+    child: Child,
+    /// 子进程 stdin（热切换目录用）
+    child_stdin: ChildStdin,
 }
 
 /// 预览服务器固定端口：避免每次重启端口漂移导致外部引用（书签/控制端抓取）失效。
@@ -432,9 +435,12 @@ pub async fn start_web_preview_server(
     let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
     // 已在运行：只热切换服务目录（不重建监听、端口不漂移、在途请求不中断）。
     // 外部浏览器常驻固定端口（书签/手动打开）时，重建监听会让整页资源加载中断。
-    if let Some(old) = guard.as_ref() {
+    if let Some(old) = guard.as_mut() {
         let mut cur = old.root.lock().map_err(|e| e.to_string())?;
         if *cur != out {
+            // 通过 stdin 通知子进程热切换目录
+            let cmd = format!("{}\n", out.display());
+            let _ = old.child_stdin.write_all(cmd.as_bytes());
             *cur = out;
         }
         return Ok(old.base_url.clone());
@@ -456,7 +462,44 @@ pub async fn stop_web_preview(state: tauri::State<'_, PreviewServerState>) -> Re
 }
 
 fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
-    // 先绑固定端口（URL 稳定）；被占用时回退随机端口保证可用
+    // 子进程隔离：用当前 exe 启动 --preview-server 模式，崩溃不影响主应用
+    let exe = std::env::current_exe().map_err(|e| format!("获取 exe 路径失败: {e}"))?;
+    let port = PREVIEW_FIXED_PORT.to_string();
+    let root_str = root.display().to_string();
+    let mut child = Command::new(&exe)
+        .arg("--preview-server")
+        .arg(&port)
+        .arg(&root_str)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动预览服务器子进程失败: {e}"))?;
+
+    // 从子进程 stdout 读取 base URL（第一行）
+    let stdout = child.stdout.take().ok_or("无法读取子进程 stdout")?;
+    let mut reader = BufReader::new(stdout);
+    let mut base_url = String::new();
+    reader
+        .read_line(&mut base_url)
+        .map_err(|e| format!("读取子进程 URL 失败: {e}"))?;
+    base_url = base_url.trim().to_string();
+    if base_url.is_empty() {
+        return Err("预览服务器子进程未输出 URL".into());
+    }
+
+    let child_stdin = child.stdin.take().ok_or("无法获取子进程 stdin")?;
+
+    Ok(PreviewServer {
+        root: Arc::new(Mutex::new(root)),
+        base_url,
+        child,
+        child_stdin,
+    })
+}
+
+/// 进程内启动预览服务器（测试用：不启动子进程，直接在线程中运行）
+#[cfg(test)]
+fn start_server_inproc(root: PathBuf) -> Result<PreviewServerInproc, String> {
     let listener = match TcpListener::bind(("127.0.0.1", PREVIEW_FIXED_PORT)) {
         Ok(l) => l,
         Err(_) => TcpListener::bind("127.0.0.1:0")
@@ -467,23 +510,35 @@ fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
         .map_err(|e| format!("读取预览服务器地址失败: {}", e))?;
     let shutdown = Arc::new(AtomicBool::new(false));
     let flag = shutdown.clone();
-    let shared_root = Arc::new(Mutex::new(root.clone()));
+    let shared_root = Arc::new(Mutex::new(root));
     let loop_root = shared_root.clone();
     let handle = thread::spawn(move || accept_loop(listener, loop_root, flag));
-    Ok(PreviewServer {
-        root: shared_root,
+    Ok(PreviewServerInproc {
         base_url: format!("http://{addr}"),
         shutdown,
         handle: Some(handle),
     })
 }
 
-fn stop_server(server: PreviewServer) {
+#[cfg(test)]
+struct PreviewServerInproc {
+    base_url: String,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+fn stop_server_inproc(server: PreviewServerInproc) {
     server.shutdown.store(true, Ordering::Relaxed);
     if let Some(h) = server.handle {
-        // accept 循环以 ~8ms 间隔轮询关闭标记，join 很快返回
         let _ = h.join();
     }
+}
+
+fn stop_server(mut server: PreviewServer) {
+    // 杀死子进程（崩溃隔离：即使子进程 hang，kill 也能终止）
+    let _ = server.child.kill();
+    let _ = server.child.wait();
 }
 
 fn accept_loop(
@@ -506,6 +561,61 @@ fn accept_loop(
             }
         }
     }
+}
+
+/// 子进程入口：--preview-server 模式。从命令行参数读取端口和根目录，
+/// 绑定 TCP 监听，stdout 输出 base URL，stdin 读取热切换目录命令。
+/// 崩溃隔离：panic 不影响主应用（主进程检测子进程退出并报错）。
+pub fn run_preview_server_mode(port: u16, root: PathBuf) {
+    // 绑定固定端口；被占用回退随机端口
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(_) => match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[preview-server] 绑定端口失败: {e}");
+                std::process::exit(1);
+            }
+        },
+    };
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[preview-server] 读取地址失败: {e}");
+            std::process::exit(1);
+        }
+    };
+    let base_url = format!("http://{addr}");
+
+    // stdout 输出 base URL（主进程读取第一行）
+    println!("{base_url}");
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shared_root = Arc::new(Mutex::new(root));
+
+    // accept 循环线程
+    let loop_root = shared_root.clone();
+    let flag = shutdown.clone();
+    thread::spawn(move || accept_loop(listener, loop_root, flag));
+
+    // 从 stdin 读取热切换目录命令（每行一个路径）
+    let stdin = io::stdin();
+    let reader = BufReader::new(stdin.lock());
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l.trim().to_string(),
+            Err(_) => break,
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(mut root) = shared_root.lock() {
+            *root = PathBuf::from(&line);
+        }
+    }
+
+    // stdin 关闭（主进程退出）→ 停止
+    shutdown.store(true, Ordering::Relaxed);
 }
 
 fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -696,7 +806,8 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
 mod tests {
     use std::fs;
     use super::{
-        collect_scene_assets, gltf_sibling_rel, start_server, stop_server, PREVIEW_FIXED_PORT,
+        collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc,
+        PREVIEW_FIXED_PORT,
     };
 
     /// 材质引用的着色器（.mat 的 shader）与其贴图参数（props）必须随产物打包：
@@ -812,16 +923,17 @@ mod tests {
             return;
         }
         // 固定端口：连续启动/停止，端口不漂移（外部引用的 URL 保持有效）
+        // 用进程内版本测试（子进程版本在测试二进制中不可用）
         let root = std::env::temp_dir().join("tve-preview-port-test");
         fs::create_dir_all(&root).unwrap();
-        let a = start_server(root.clone()).unwrap();
+        let a = start_server_inproc(root.clone()).unwrap();
         let url_a = a.base_url.clone();
         assert!(url_a.ends_with(&PREVIEW_FIXED_PORT.to_string()));
         // 真实生命周期：停旧 → 起新，端口不漂移
-        stop_server(a);
-        let b = start_server(root).unwrap();
+        stop_server_inproc(a);
+        let b = start_server_inproc(root).unwrap();
         assert_eq!(url_a, b.base_url);
-        stop_server(b);
+        stop_server_inproc(b);
     }
 
     /// 并发拉取回归（浏览器并行加载模块的真实形态）：多个线程同时请求，每个

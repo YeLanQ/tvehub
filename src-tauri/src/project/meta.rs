@@ -113,7 +113,25 @@ pub fn refresh_meta_uuid(path: &Path) -> Result<(), String> {
 
 /// 递归确保目录下所有资产（文件/子目录）都带 .meta。
 /// 跳过隐藏项（`.` 开头，含 `.meta` / `.git` / `.tmp` 等编辑器不管理）。
+/// 各文件 ensure_meta 互独立（只读写各自 .meta），用 rayon 并行。
 pub fn ensure_meta_recursive(dir: &Path) -> Result<(), String> {
+    use rayon::prelude::*;
+    let entries = collect_meta_candidates(dir)?;
+    entries
+        .par_iter()
+        .map(|p| ensure_meta(p))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|_| ())
+}
+
+/// 收集需要生成 .meta 的全部路径（文件 + 目录，跳过隐藏项与 .meta 本身）
+fn collect_meta_candidates(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    collect_meta_candidates_inner(dir, &mut out)?;
+    Ok(out)
+}
+
+fn collect_meta_candidates_inner(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let rd = fs::read_dir(dir).map_err(|e| format!("读取目录失败 '{}': {}", dir.display(), e))?;
     for entry in rd.flatten() {
         let p = entry.path();
@@ -124,11 +142,9 @@ pub fn ensure_meta_recursive(dir: &Path) -> Result<(), String> {
         if name.starts_with('.') {
             continue;
         }
+        out.push(p.clone());
         if p.is_dir() {
-            ensure_meta(&p)?;
-            ensure_meta_recursive(&p)?;
-        } else {
-            ensure_meta(&p)?;
+            collect_meta_candidates_inner(&p, out)?;
         }
     }
     Ok(())

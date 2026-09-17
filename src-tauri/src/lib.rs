@@ -8,12 +8,13 @@ mod devtools;
 mod internal;
 mod js_minify;
 mod model_bin;
-mod preview;
+pub mod preview;
 mod project;
 mod repos;
 mod scene;
 pub mod ui_state;
 mod store;
+mod task;
 mod trash;
 mod user_templates;
 mod watcher;
@@ -93,26 +94,18 @@ async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject
     // 每个项目要递归走一遍 assets/ 树统计 .scene 数量 —— 项目数可达 20 且大
     // 项目/网络盘下单次走树就不小，串行会明显拖慢首页首屏。各项目统计彼此
     // 独立，用作用域线程并行（同步 fs 跑在工作线程，不占 tokio/主线程）。
-    let results: Vec<Option<RecentProject>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = paths
-            .iter()
-            .map(|p| {
-                let root = PathBuf::from(p);
-                scope.spawn(move || {
-                    project::project_info(&root).ok().map(|info| RecentProject {
-                        path: info.path,
-                        name: info.name,
-                        scene_count: info.scene_count,
-                    })
-                })
+    use rayon::prelude::*;
+    let results: Vec<RecentProject> = paths
+        .par_iter()
+        .filter_map(|p| {
+            project::project_info(&PathBuf::from(p)).ok().map(|info| RecentProject {
+                path: info.path,
+                name: info.name,
+                scene_count: info.scene_count,
             })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().ok().flatten())
-            .collect()
-    });
-    Ok(results.into_iter().flatten().collect())
+        })
+        .collect();
+    Ok(results)
 }
 
 /// 移除最近项目（按规范化路径匹配，同一路径的多种写法一并移除）
@@ -614,6 +607,7 @@ pub fn run() {
         .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
         .manage(PendingProjects::default())
+        .manage(task::TaskManager::default())
         .manage(devtools::DevToolsState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
         // 首页「开发者服务」页签可停用/改端口。
@@ -745,6 +739,9 @@ pub fn run() {
             ui_state::ui_state_get,
             ui_state::ui_state_set,
             ui_state::ui_state_remove,
+            task::cancel_task,
+            task::cancel_tasks_by_root,
+            task::list_tasks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

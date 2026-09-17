@@ -14,6 +14,7 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 import { logger } from "../../platform_abstraction/logger";
 import { modelDirOf, modelExtOf, type ModelMaterialInfo, type ModelMeta } from "./types";
 import { modelLoaderRegistry, type ModelLoadContext } from "./loaders";
+import { parseGltfInWorker } from "./model-decode-worker-bridge";
 
 /** 应用层注入的文件访问（asset:// 协议直读；与纹理读取器同构） */
 export interface ModelFileAccess {
@@ -162,7 +163,13 @@ export class ModelManager {
     });
 
     const ctx: ModelLoadContext = { manager, resourcePath: dir ? `${dir}/` : "" };
-    const data = await def.load(buffer, ctx);
+
+    // glTF/GLB：优先 Worker 解析（避免大模型卡主线程）；其他格式主线程
+    const isGltf = ext === "gltf" || ext === "glb";
+    const resourceBaseUrl = dir && access.urlFor(dir) ? `${access.urlFor(dir)}` : "";
+    const data = isGltf
+      ? await parseGltfInWorker(buffer, ctx, resourceBaseUrl)
+      : await def.load(buffer, ctx);
 
     // 阴影参与渲染（模型网格默认投影/受影，与编辑器光照体系一致）
     data.object.traverse((o) => {

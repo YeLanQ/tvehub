@@ -29,6 +29,7 @@ use base64::Engine as _;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde::Serialize;
+use tauri::Emitter;
 
 /// 当前支持的构建渠道（wechat 为 UI 占位，未实现）
 const SUPPORTED_CHANNELS: [&str; 1] = ["web"];
@@ -546,6 +547,8 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
 /// 属 WebView 打包资源，编辑器离线可用）；场景与资产由 Rust 直读磁盘。
 #[tauri::command]
 pub async fn build_export(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::task::TaskManager>,
     root: String,
     channel: String,
     scenes: Vec<String>,
@@ -560,23 +563,52 @@ pub async fn build_export(
     cdn_base: String,
     files: HashMap<String, String>,
 ) -> Result<BuildResult, String> {
-    // 命令参数名须与前端 invoke 键（Tauri camelCase→snake_case 转换）一致：
-    // cdn_base = Three CDN 地址（前端 cdnBase）；impl 内命名 three_base 以示与 gzip_base 区分
-    build_export_impl(
-        root,
-        channel,
-        scenes,
-        main_scene,
-        title,
-        debug,
-        single_page,
-        gzip,
-        release,
-        cdn,
-        gzip_base,
-        cdn_base,
-        files,
-    )
+    // 注册到任务管理器：支持取消 + 进度广播 + 多项目隔离
+    let handle = state.register(&app, "export", Some(&root), crate::task::Priority::Normal);
+    let cancel_id = handle.id.clone();
+    let cancel_token = handle.cancel.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let cancel_check = || cancel_token.is_cancelled();
+        build_export_impl(
+            root,
+            channel,
+            scenes,
+            main_scene,
+            title,
+            debug,
+            single_page,
+            gzip,
+            release,
+            cdn,
+            gzip_base,
+            cdn_base,
+            files,
+            Some(&cancel_check),
+            Some(&|p, m| handle.report_progress(p, m)),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    state.deregister(&cancel_id);
+    match &result {
+        Ok(r) => {
+            let _ = app.emit("task:completed", crate::task::TaskCompletedEvent {
+                id: cancel_id,
+                success: true,
+                message: format!("导出完成: {}", r.output_dir),
+            });
+        }
+        Err(e) => {
+            let _ = app.emit("task:completed", crate::task::TaskCompletedEvent {
+                id: cancel_id,
+                success: false,
+                message: e.clone(),
+            });
+        }
+    }
+    result
 }
 
 /// 发布模式 JS 压缩：保守压缩（去注释 + 空白折叠，语义不变；见 js_minify 模块）
@@ -845,6 +877,8 @@ fn build_export_impl(
     gzip_base: String,
     three_base: String,
     files: HashMap<String, String>,
+    is_cancelled: Option<&dyn Fn() -> bool>,
+    report_progress: Option<&dyn Fn(f64, &str)>,
 ) -> Result<BuildResult, String> {
     let _ = title; // 产物清单已移除；保留参数与前端配置对齐
     if !SUPPORTED_CHANNELS.contains(&channel.as_str()) {
@@ -856,6 +890,14 @@ fn build_export_impl(
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
         return Err(format!("项目目录不存在: '{}'", root_path.display()));
+    }
+    if let Some(check) = is_cancelled {
+        if check() {
+            return Err("任务已取消".into());
+        }
+    }
+    if let Some(rp) = report_progress {
+        rp(0.05, &format!("准备导出 {} 个场景", scenes.len()));
     }
     // 两个地址相互独立、各自归一化（去空白与结尾 '/'，无协议补 https://）：
     // - gzip_base：gzip 归档远程基址（非空时写入 config 供运行时远程拉取）；
@@ -887,31 +929,57 @@ fn build_export_impl(
     }
     let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
 
-    // 逐场景：读盘 → 收集引用资产（跨场景去重）；场景文本暂存，按产物形态落盘/进归档
+    // 逐场景：并行读盘 + 收集引用资产 → 合并去重（跨场景共用同一资产只读一次）
     let mut packed: Vec<PackedScene> = Vec::new();
     let mut used_names: Vec<String> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
     let mut scene_texts: Vec<(String, String)> = Vec::new();
-    for rel in &scenes {
-        let text = crate::project::resolve_in_root(&root_path, rel)
-            .and_then(|p| fs::read_to_string(&p).map_err(|e| e.to_string()))
-            .map_err(|e| format!("读取场景失败 '{rel}': {e}"))?;
-        missing.extend(crate::preview::collect_scene_assets(
-            &root_path,
-            &text,
-            &mut files,
-            &mut binaries,
-        ));
-        let name = scene_entry_name(rel, &mut used_names);
+
+    use rayon::prelude::*;
+    let scene_results: Vec<(String, String, HashMap<String, String>, HashMap<String, Vec<u8>>, Vec<String>)> = scenes
+        .par_iter()
+        .map(|rel| {
+            let text = crate::project::resolve_in_root(&root_path, rel)
+                .and_then(|p| fs::read_to_string(&p).map_err(|e| e.to_string()))
+                .map_err(|e| format!("读取场景失败 '{rel}': {e}"))?;
+            let mut sf: HashMap<String, String> = HashMap::new();
+            let mut sb: HashMap<String, Vec<u8>> = HashMap::new();
+            let sm = crate::preview::collect_scene_assets(&root_path, &text, &mut sf, &mut sb);
+            Ok::<_, String>((rel.clone(), text, sf, sb, sm))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    // 合并各场景独立收集结果到全局 map（去重：已存在不覆盖，保留首次读入）
+    for (_, _, sf, sb, sm) in &scene_results {
+        for (k, v) in sf {
+            files.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        for (k, v) in sb {
+            binaries.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        missing.extend(sm.iter().cloned());
+    }
+    // 场景名去重需串行累积 used_names
+    for (rel, text, _, _, _) in scene_results {
+        let name = scene_entry_name(&rel, &mut used_names);
         scene_texts.push((format!("scenes/{name}.json"), text));
         packed.push(PackedScene {
             name,
-            rel: rel.clone(),
+            rel,
             file: String::new(),
         });
     }
     for (i, (file, _)) in scene_texts.iter().enumerate() {
         packed[i].file = file.clone();
+    }
+
+    if let Some(check) = is_cancelled {
+        if check() {
+            return Err("任务已取消".into());
+        }
+    }
+    if let Some(rp) = report_progress {
+        rp(0.3, "场景资产收集完成");
     }
 
     // 发布模式：模型二进制化（LQENBIN1）+ 资源 uid 重命名 + 场景/材质引用重写 + JSON 压缩
@@ -984,14 +1052,19 @@ fn build_export_impl(
     }
 
     // 发布模式：压缩运行时脚本（player / engine 模块 / 加载器；已压缩的 *.min.* 跳过）
+    // CPU 密集，用 rayon 并行压缩各文件
     if release {
-        for (rel, text) in files.iter_mut() {
+        use rayon::prelude::*;
+        files.par_iter_mut().for_each(|(rel, text)| {
             if is_minifiable_script(rel) {
                 *text = minify_js_source(text);
             }
-        }
+        });
     }
 
+    if let Some(rp) = report_progress {
+        rp(0.6, "产物组装中");
+    }
     // 产物组装
     let mut code_n = 0usize;
     if single_page {
@@ -1060,6 +1133,9 @@ fn build_export_impl(
         }
     }
 
+    if let Some(rp) = report_progress {
+        rp(0.9, "写入产物");
+    }
     // 清空重建输出目录并写入全部产物
     crate::preview::write_export_dir(&out, files, &binaries)
         .map_err(|e| format!("写入构建产物失败: {e}"))?;
@@ -1204,6 +1280,8 @@ mod tests {
                 String::new(),
                 String::new(),
                 runtime_files(entry),
+                None,
+                None,
             )
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
 
@@ -1407,6 +1485,8 @@ mod tests {
                         "/*already minified*/export const T = 1;".to_string(),
                     ),
                 ]),
+                None,
+                None,
             )
             .unwrap()
         };
@@ -1530,6 +1610,8 @@ export const b = T ? 2 : 0;
                 gzip_base.into(),
                 three_base.into(),
                 runtime_files(single),
+                None,
+                None,
             )
             .unwrap()
         };
