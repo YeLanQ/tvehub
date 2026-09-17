@@ -209,6 +209,6 @@ onMounted(async () => {
       </div>
       <div v-if="loaded && !flat.length" class="gempty">暂无实体（项目还没有场景或场景为空）</div>
     </div>
-    <div class="gpanel-tip">拖动实体到画布生成原型卡片；双击加入画布</div>
+    <div class="gpanel-tip">右键实体到画布生成原型卡片；双击加入画布</div>
   </div>
 </template>
