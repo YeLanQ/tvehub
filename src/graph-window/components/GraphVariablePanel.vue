@@ -49,7 +49,7 @@ const typeOptions: GVarDataType[] = ["number", "boolean", "string"];
         />
       </template>
       <template v-else>
-        <span class="gvar-name" @dblclick="startRename(v.id, v.name)">{{ v.name }}</span>
+        <span class="gvar-name" :title="v.name" @dblclick="startRename(v.id, v.name)">{{ v.name }}</span>
       </template>
       <select
         class="gvar-type"

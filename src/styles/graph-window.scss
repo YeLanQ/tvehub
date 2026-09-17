@@ -476,8 +476,14 @@
 // 检查器
 // ---------------------------------------------------------------------------
 
-.ginspector {
+// 检查器 / 变量 / 自定义节点面板共享：面板自管滚动（dock-body overflow hidden）
+// 并复用块内的字段控件样式（.gfield/.gcolor-*/.ginsp-hint 两类面板都用到）
+.ginspector,
+.gvar-panel {
+  min-height: 0;
+  flex: 1;
   padding: 10px;
+  overflow-y: auto;
 
   .ginsp-head {
     display: flex;
@@ -562,6 +568,161 @@
     border: 1px solid var(--border);
     cursor: pointer;
     &.active { outline: 2px solid var(--accent); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 图变量 / 自定义节点面板（右停靠）：头部行 + 空态 + 行/卡片结构
+// ---------------------------------------------------------------------------
+
+.gvar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  input,
+  select {
+    padding: 3px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 12px;
+    &:focus { outline: none; border-color: var(--accent); }
+  }
+
+  .gvar-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .gvar-title { flex: 1; color: var(--text-dim); font-weight: 600; font-size: 12px; }
+    .gvar-add {
+      flex: none;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      line-height: 1;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      cursor: pointer;
+      &:hover { background: var(--bg-hover); border-color: var(--accent); }
+    }
+  }
+
+  .gvar-empty {
+    flex: none;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+
+  .gvar-del {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    line-height: 1;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    &:hover { color: var(--text); border-color: var(--border); background: var(--bg-hover); }
+  }
+
+  // —— 变量行：名称（双击重命名）+ 类型 + 初始值 + 删除 ——
+  .gvar-row {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+
+    &:hover { border-color: var(--accent); }
+
+    .gvar-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: text;
+    }
+    .gvar-name-input { flex: 1; min-width: 0; }
+    .gvar-type { flex: none; width: 70px; }
+    .gvar-value { flex: none; width: 74px; }
+  }
+
+  // —— 自定义节点定义卡片（头部行可点开编辑区） ——
+  .gcustom-def {
+    flex: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+
+    .gcustom-def-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      &:hover { background: var(--bg-hover); }
+
+      .gcustom-def-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .gcustom-def-type { flex: none; color: var(--text-dim); font-size: 11px; }
+    }
+
+    .gcustom-edit {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      border-top: 1px solid var(--border);
+    }
+  }
+
+  .gcustom-section { flex: none; margin: 4px 0 0; color: var(--text-dim); font-weight: 600; font-size: 11px; }
+
+  .gcustom-port-row {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+
+    .gcustom-port-id { flex: none; width: 54px; }
+    .gcustom-port-label { flex: 1; min-width: 0; }
+    select { flex: none; width: 76px; }
+  }
+
+  .gcustom-add-btn {
+    flex: none;
+    padding: 3px 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    &:hover { color: var(--text); border-color: var(--accent); }
   }
 }
 
