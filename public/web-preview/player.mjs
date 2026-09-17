@@ -31,6 +31,7 @@ import { createUI } from "../engine/runtime/ui.mjs";
 import { createLogic } from "../engine/runtime/logic.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
 import { createGraphBehaviors } from "../engine/runtime/graph-behaviors.mjs";
+import { createNavRuntime } from "../engine/runtime/nav.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
@@ -704,8 +705,20 @@ async function main() {
       postLog("error", `脚本图行为启动失败: ${e?.message ?? e}`);
     }
   }
+  // 导航运行时（场景含 navAreaNode / navAgentNode 时启用）：烘焙可行走区域 +
+  // 代理沿路径巡回移动（与编辑器视口同一套 framework/navigation 实现）
+  let nav = { update() {}, dispose() {} };
+  const hasNavNodes = nodes.some(({ json }) => json.type === "navAreaNode" || json.type === "navAgentNode");
+  if (hasNavNodes) {
+    try {
+      const { createNavRuntime } = await import("../engine/runtime/nav.mjs");
+      nav = createNavRuntime({ scene, nodes });
+    } catch (e) {
+      postLog("error", `导航运行时启动失败: ${e?.message ?? e}`);
+    }
+  }
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
-  window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); graphBehaviors.dispose(); }, { once: true, capture: true });
+  window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); graphBehaviors.dispose(); nav.dispose(); }, { once: true, capture: true });
 
   // 静态场景门控：无用户脚本/模型动画/关键帧剪辑/物理时，场景每帧不变 ——
   // 世界矩阵停更（render 跳过全树遍历重算），阴影贴图只渲染一次
@@ -732,7 +745,8 @@ async function main() {
     clips.length === 0 &&
     !hasModelClip &&
     !physicsActive &&
-    !hasUICanvas
+    !hasUICanvas &&
+    !hasNavNodes
   ) {
     scene.matrixWorldAutoUpdate = false;
     scene.traverse((o) => {
@@ -846,6 +860,8 @@ async function main() {
     // 与物理步进同频，物理相关的确定性逻辑在 onFixedUpdate）
     scripts.fixedUpdate(dt);
     scripts.update(dt);
+    // 导航运行时推进（烘焙区域内代理沿路径移动/避障）
+    nav.update(dt);
     // 逻辑运行器推进（状态机切换/行为树求值；脚本本帧的 fire/参数写入即刻生效）
     logicApi.update(dt);
     graphBehaviors.update(dt);

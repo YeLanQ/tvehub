@@ -44,6 +44,8 @@ function buildSceneTree(rootJson, scene, ctx) {
         return wrapParticles(json);
       case "terrainNode":
         return wrapTerrain(json);
+      case "navAgentNode":
+        return wrapNavAgent();
       case "uiCanvasNode":
         return buildUICanvas();
       case "uiImageNode":
@@ -63,6 +65,17 @@ function buildSceneTree(rootJson, scene, ctx) {
     const emitter = createParticleEmitter(json.particles, ctx.particleMaterial);
     group.add(emitter.object);
     particles.push({ json, obj: group, emitter });
+    return group;
+  }
+  function wrapNavAgent(json) {
+    const group = new THREE.Group();
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.45, 1.4, 4),
+      new THREE.MeshBasicMaterial({ color: 5809919 })
+    );
+    cone.rotation.x = Math.PI / 2;
+    cone.position.y = 0.55;
+    group.add(cone);
     return group;
   }
   function wrapTerrain(json) {

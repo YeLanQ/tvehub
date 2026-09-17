@@ -13,6 +13,7 @@ import {
   G_OP_TRIGGER_LABEL,
   GRAPH_COMMENT_COLORS,
   graphOpDef,
+  isContainerType,
   nodeTypeDef,
   type GComment,
   type GNode,
@@ -32,7 +33,11 @@ watch(
   },
 );
 
-const def = computed(() => (g.value?.type.startsWith("op.") ? graphOpDef(g.value.opType ?? g.value.type) : null));
+const def = computed(() =>
+  g.value?.type.startsWith("op.")
+    ? graphOpDef(g.value.opType ?? g.value.type) ?? nodeTypeDef(g.value.type)
+    : null,
+);
 const eventDef = computed(() => (g.value?.type.startsWith("event.") ? nodeTypeDef(g.value.type) : null));
 const varDef = computed(() => (g.value?.type.startsWith("var.") ? nodeTypeDef(g.value.type) : null));
 const flowDef = computed(() => (g.value?.type.startsWith("flow.") ? nodeTypeDef(g.value.type) : null));
@@ -73,7 +78,7 @@ function commitParam(key: string, raw: string | boolean): void {
   if (!g.value?.type.startsWith("op.")) return;
   const defV = def.value;
   if (!defV) return;
-  const f = defV.fields.find((x) => x.key === key);
+  const f = defV.fields?.find((x) => x.key === key);
   if (!f) return;
   store.canvas?.requestSnapshot();
   if (!g.value.params || typeof g.value.params !== "object") g.value.params = {};
@@ -156,10 +161,95 @@ function commitCommentColor(color: string): void {
   c.value.color = color;
   store.markGraphDirty();
 }
+
+// ----- 逻辑容器（fsm.container / bt.container）参数与尺寸提交 -----
+
+const logicDef = computed(() => (g.value && isContainerType(g.value.type) ? nodeTypeDef(g.value.type) : null));
+
+function commitLogicField(key: string, raw: string): void {
+  if (!g.value || !isContainerType(g.value.type)) return;
+  store.canvas?.requestSnapshot();
+  if (!g.value.params || typeof g.value.params !== "object") g.value.params = {};
+  g.value.params[key] = String(raw).slice(0, 256);
+  store.markGraphDirty();
+}
+
+function commitContainerSize(key: "w" | "h", raw: string): void {
+  if (!g.value || !isContainerType(g.value.type)) return;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return;
+  store.canvas?.requestSnapshot();
+  g.value[key] = Math.max(key === "w" ? 320 : 200, Math.min(key === "w" ? 2400 : 2000, Math.round(n)));
+  store.markGraphDirty();
+}
+
+// ----- 容器内子节点的状态归属（所属容器为 FSM 时显示） -----
+
+const childStateInfo = computed<{ states: string[] } | null>(() => {
+  if (!g.value?.containerId || isContainerType(g.value.type)) return null;
+  const parent = store.canvas?.serializeDoc()?.nodes.find((n) => n.id === g.value?.containerId);
+  if (!parent || parent.type !== "fsm.container") return null;
+  const states = (parent.params?.states ?? "")
+    .toString()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return { states };
+});
+
+function commitStateName(raw: string): void {
+  if (!g.value) return;
+  store.canvas?.requestSnapshot();
+  const s = raw.trim();
+  if (s) g.value.stateName = s.slice(0, 48);
+  else delete g.value.stateName;
+  store.markGraphDirty();
+}
 </script>
 
 <template>
   <div class="ginspector">
+    <!-- 容器内子节点：状态归属（所属容器为状态机时） -->
+    <template v-if="g && childStateInfo">
+      <div class="ginsp-section">状态归属</div>
+      <label class="gfield">
+        <span class="gfield-label">所属状态</span>
+        <select :value="g.stateName ?? ''" @change="commitStateName(($event.target as HTMLSelectElement).value)">
+          <option value="">任意状态</option>
+          <option v-for="s in childStateInfo.states" :key="s" :value="s">{{ s }}</option>
+        </select>
+      </label>
+      <div class="ginsp-hint">所属状态机容器激活该状态时，本节点的行为才会执行。</div>
+    </template>
+
+    <!-- 逻辑容器（状态机容器 / 行为树容器） -->
+    <template v-else-if="g && logicDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: logicDef.color }"></span>
+        <span class="ginsp-static">{{ logicDef.label }}</span>
+      </div>
+      <div class="ginsp-fields">
+        <label v-for="f in logicDef.fields ?? []" :key="f.key" class="gfield">
+          <span class="gfield-label">{{ f.label }}</span>
+          <input
+            :value="String(g.params?.[f.key] ?? f.fallback)"
+            :placeholder="f.placeholder ?? ''"
+            @change="commitLogicField(f.key, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <label class="gfield">
+          <span class="gfield-label">宽度</span>
+          <input type="number" :value="g.w ?? 560" step="20" @change="commitContainerSize('w', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="gfield">
+          <span class="gfield-label">高度</span>
+          <input type="number" :value="g.h ?? 340" step="20" @change="commitContainerSize('h', ($event.target as HTMLInputElement).value)" />
+        </label>
+      </div>
+      <div class="ginsp-desc">{{ logicDef.desc }}。</div>
+      <div class="ginsp-hint">拖入节点到容器框内即归属（可嵌套）；容器内节点的「状态归属」在检查器顶部设置。行为在预览中执行。</div>
+    </template>
+
     <!-- 原型：实体实时属性参照 -->
     <template v-if="g?.type === 'entity.proto'">
       <div class="ginsp-head">
@@ -224,7 +314,7 @@ function commitCommentColor(color: string): void {
       <div class="ginsp-head">
         <span class="ginsp-dot" :style="{ background: def.color }"></span>
         <span class="ginsp-static">{{ def.label }}</span>
-        <span class="ginsp-trigger">{{ G_OP_TRIGGER_LABEL[def.trigger] }}</span>
+        <span class="ginsp-trigger">{{ def.trigger ? G_OP_TRIGGER_LABEL[def.trigger] : "" }}</span>
       </div>
       <div class="ginsp-fields">
         <label v-for="f in def.fields" :key="f.key" class="gfield">

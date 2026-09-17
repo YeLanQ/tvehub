@@ -79,6 +79,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
         return wrapParticles(json);
       case "terrainNode":
         return wrapTerrain(json);
+      case "navAgentNode":
+        return wrapNavAgent(json);
       case "uiCanvasNode":
         return buildUICanvas();
       case "uiImageNode":
@@ -101,6 +103,19 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const emitter = createParticleEmitter(json.particles, ctx.particleMaterial);
     group.add(emitter.object);
     particles.push({ json, obj: group, emitter });
+    return group;
+  }
+
+  /** 导航代理节点：可见锥体占位（指向 +Z，与导航移动朝向约定一致）；移动由导航运行时驱动 */
+  function wrapNavAgent(json) {
+    const group = new THREE.Group();
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.45, 1.4, 4),
+      new THREE.MeshBasicMaterial({ color: 0x58a6ff }),
+    );
+    cone.rotation.x = Math.PI / 2;
+    cone.position.y = 0.55;
+    group.add(cone);
     return group;
   }
 

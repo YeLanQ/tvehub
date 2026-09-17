@@ -332,6 +332,12 @@
 // 节点卡片（gcard）：原型/匹配/操作三类 + 卡片内部行
 // ---------------------------------------------------------------------------
 
+// 逻辑容器恒驻底层：vue-flow 选中节点时会把 z-index 抬到 1000，容器一点击
+// 就会盖住归属子卡片。用 !important 钉住层级（选中/拖动不受影响）。
+.vue-flow__node-glogic {
+  z-index: -10 !important;
+}
+
 .gcard {
   width: 200px;
   background: var(--bg-panel);
@@ -409,7 +415,46 @@
         white-space: nowrap;
       }
     }
+
+    .grow.muted { color: var(--text-dim); }
   }
+
+  // 原型卡的组件分区（灯光卡 / 脚本卡 / 逻辑卡）
+  .gcard-section {
+    border-top: 1px dashed var(--border);
+    margin-top: 4px;
+    padding-top: 5px;
+
+    .gsec-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px 3px 8px;
+
+      .gsec-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .gsec-title {
+        flex: 1;
+        min-width: 0;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+  }
+
+  .gcolor-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: -1px;
+  }
+
+  &.gproto { width: 232px; }
 
   .gcard-body {
     display: flex;

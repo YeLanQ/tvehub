@@ -64,7 +64,7 @@ export type GFieldDef = GOpFieldDef;
 // ---------------------------------------------------------------------------
 
 /** 节点类别（右键菜单分组 + 颜色基调） */
-export type GNodeCategory = "entity" | "event" | "op" | "flow" | "math" | "variable" | "custom";
+export type GNodeCategory = "entity" | "event" | "op" | "flow" | "math" | "variable" | "custom" | "logic" | "driver";
 
 /** 节点类型定义（注册表条目） */
 export interface GNodeTypeDef {
@@ -163,6 +163,52 @@ const OP_TYPES: GNodeTypeDef[] = GRAPH_OP_DEFS.map((op: GOpDef): GNodeTypeDef =>
   trigger: op.trigger,
 }));
 
+// op.patrol：追加「路径点」引脚（路径口接入路径点实体 → 依次巡回），并归入驱动器分组
+const patrolDef = OP_TYPES.find((d) => d.type === "op.patrol");
+if (patrolDef) {
+  patrolDef.inputs.splice(1, 0, {
+    id: "path", label: "路径点", direction: "in", dataType: "entities", multi: true,
+  });
+  patrolDef.category = "driver";
+}
+
+/**
+ * 驱动器（帧驱动的移动类操作）：对象贴合导航代理位姿 / 追击目标 / 路径巡逻。
+ * 独立成组——它们是"驱动对象运动"的持续行为，与一次性原子操作（设置/显隐）语义不同。
+ */
+const DRIVER_TYPES: GNodeTypeDef[] = [
+  {
+    type: "op.navMove",
+    category: "driver",
+    label: "导航移动",
+    desc: "被移动对象跟随导航代理位姿（代理由导航运行时沿路径点巡回驱动）；「导航代理」口接入 Nav Agent 原型卡，「目标」接要移动的对象",
+    color: "#dcdcaa",
+    trigger: "frame",
+    inputs: [
+      P_ENTITIES_IN,
+      P_EXEC_IN,
+      { id: "agent", label: "导航代理", direction: "in", dataType: "entity" },
+    ],
+    outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
+    fields: [{ key: "yOffset", label: "高度偏移", kind: "number", fallback: 0, step: 0.1 }],
+  },
+  {
+    type: "op.chase",
+    category: "driver",
+    label: "追击目标",
+    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；常与 sense.distance + 分支组合成追击/放弃",
+    color: "#dcdcaa",
+    trigger: "frame",
+    inputs: [
+      P_ENTITIES_IN,
+      P_EXEC_IN,
+      { id: "prey", label: "追击目标", direction: "in", dataType: "entity" },
+    ],
+    outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
+    fields: [{ key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 }],
+  },
+];
+
 /** 变量类节点（var.get 纯数据读 / var.set exec 链写） */
 const VARIABLE_TYPES: GNodeTypeDef[] = [
   {
@@ -209,14 +255,18 @@ const FLOW_TYPES: GNodeTypeDef[] = [
     type: "flow.compare",
     category: "flow",
     label: "比较",
-    desc: "比较两个数值（> < == >= <= !=），输出布尔",
+    desc: "比较两个数值（> < == >= <= !=），输出布尔；B 未连线时用参数值；event 填事件名可接入逻辑容器事件口",
     color: "#c586c0",
     inputs: [
       { id: "a", label: "A", direction: "in", dataType: "number" },
       { id: "b", label: "B", direction: "in", dataType: "number" },
     ],
     outputs: [{ id: "result", label: "结果", direction: "out", dataType: "boolean" }],
-    fields: [{ key: "operator", label: "运算", kind: "string", fallback: ">" }],
+    fields: [
+      { key: "operator", label: "运算", kind: "string", fallback: ">" },
+      { key: "b", label: "B 值（未连线时）", kind: "number", fallback: 0, step: 0.1 },
+      { key: "event", label: "触发事件名", kind: "string", fallback: "" },
+    ],
   },
   {
     type: "flow.for",
@@ -320,10 +370,72 @@ const MATH_TYPES: GNodeTypeDef[] = [
     outputs: [P_N_OUT("result", "结果")] },
   { type: "math.abs", category: "math", label: "绝对值", desc: "|a|", color: "#88c0d0",
     inputs: [P_N_IN("a", "A")], outputs: [P_N_OUT("result", "结果")] },
+  // 感知（实体世界状态 → 数值）
+  { type: "sense.distance", category: "math", label: "实体距离", desc: "from 实体到 to 实体的世界距离（每帧拉取求值）", color: "#88c0d0",
+    inputs: [
+      { id: "from", label: "从", direction: "in", dataType: "entity" },
+      { id: "to", label: "到", direction: "in", dataType: "entity" },
+    ],
+    outputs: [P_N_OUT("result", "距离")] },
+];
+
+/** 逻辑容器类节点（状态机容器 / 行为树容器；大框渲染，子节点以 containerId 归属，可嵌套） */
+const LOGIC_TYPES: GNodeTypeDef[] = [
+  {
+    type: "fsm.container",
+    category: "logic",
+    label: "状态机容器",
+    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；事件入端口触发状态切换，进入状态时执行归属该状态的子节点链；支持嵌套",
+    color: "#569cd6",
+    inputs: [
+      P_EXEC_IN, // 进入容器（激活 initial 状态）
+      { id: "event", label: "事件", direction: "in", dataType: "exec", multi: true }, // 状态切换
+      { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true },
+    ],
+    outputs: [
+      P_EXEC_OUT, // 状态切换完成
+      { id: "out", label: "输出", direction: "out", dataType: "entities" },
+    ],
+    fields: [
+      { key: "states", label: "状态列表", kind: "string", fallback: "idle,run", placeholder: "逗号分隔，如 idle,run,attack" },
+      { key: "initial", label: "初始状态", kind: "string", fallback: "idle" },
+    ],
+  },
+  {
+    type: "bt.container",
+    category: "logic",
+    label: "行为树容器",
+    desc: "行为树容器：把携带 .bt 的原型卡连到「作用域」即读取树构成（模式取树根类型）；进入时按子节点纵向顺序依次执行归属节点链，完成后触发退出；支持嵌套",
+    color: "#4ec9b0",
+    inputs: [
+      P_EXEC_IN,
+      { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true },
+    ],
+    outputs: [
+      P_EXEC_OUT,
+      { id: "out", label: "输出", direction: "out", dataType: "entities" },
+    ],
+    fields: [
+      { key: "mode", label: "模式", kind: "string", fallback: "sequence" },
+    ],
+  },
 ];
 
 /** 全部内置节点类型 */
-const BUILTIN_TYPES: GNodeTypeDef[] = [...ENTITY_TYPES, ...EVENT_TYPES, ...OP_TYPES, ...VARIABLE_TYPES, ...FLOW_TYPES, ...MATH_TYPES];
+const BUILTIN_TYPES: GNodeTypeDef[] = [...ENTITY_TYPES, ...EVENT_TYPES, ...OP_TYPES, ...DRIVER_TYPES, ...VARIABLE_TYPES, ...FLOW_TYPES, ...MATH_TYPES, ...LOGIC_TYPES];
+
+/** 容器类型键集合（大框渲染 + 子节点归属 + 运行时状态化执行） */
+export const CONTAINER_TYPES: ReadonlySet<string> = new Set(["fsm.container", "bt.container"]);
+
+/** 是否容器节点 */
+export function isContainerType(type: string): boolean {
+  return CONTAINER_TYPES.has(type);
+}
+
+/** 容器默认尺寸 */
+export const CONTAINER_DEFAULT_SIZE = { w: 560, h: 340 };
+/** 容器尺寸钳制范围 */
+export const CONTAINER_SIZE_LIMITS = { w: { min: 320, max: 2400 }, h: { min: 200, max: 2000 } };
 
 const TYPE_MAP = new Map(BUILTIN_TYPES.map((d) => [d.type, d]));
 
@@ -475,10 +587,12 @@ export function nodeMenuGroups(): GNodeMenuGroup[] {
     list.push(def);
     byCat.set(def.category, list);
   }
-  const order: GNodeCategory[] = ["event", "entity", "op", "flow", "math", "variable", "custom"];
+  const order: GNodeCategory[] = ["event", "entity", "logic", "driver", "op", "flow", "math", "variable", "custom"];
   const labels: Record<GNodeCategory, string> = {
     event: "事件",
     entity: "实体",
+    logic: "逻辑容器",
+    driver: "驱动器",
     op: "操作",
     flow: "控制流",
     math: "数学",
@@ -652,6 +766,22 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
       node.matchPattern = str(r.matchPattern).slice(0, 64);
     }
     if (type === "var.get" || type === "var.set") node.varId = str(r.varId);
+    // 逻辑容器：尺寸钳制（缺省 560×340）
+    if (isContainerType(type)) {
+      node.w = Math.max(
+        CONTAINER_SIZE_LIMITS.w.min,
+        Math.min(CONTAINER_SIZE_LIMITS.w.max, num(r.w, CONTAINER_DEFAULT_SIZE.w)),
+      );
+      node.h = Math.max(
+        CONTAINER_SIZE_LIMITS.h.min,
+        Math.min(CONTAINER_SIZE_LIMITS.h.max, num(r.h, CONTAINER_DEFAULT_SIZE.h)),
+      );
+    }
+    // 容器归属与状态归属标签（存在性/防环校验在节点收集后统一做）
+    const rawContainerId = str(r.containerId);
+    if (rawContainerId) node.containerId = rawContainerId;
+    const stateName = str(r.stateName).trim().slice(0, 48);
+    if (stateName) node.stateName = stateName;
     const def = nodeTypeDef(type);
     if (def?.fields?.length) {
       const params: Record<string, number | boolean | string> = {};
@@ -671,6 +801,24 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
     nodes.push(node);
   }
   const byId = new Map(nodes.map((n) => [n.id, n]));
+
+  // ----- 容器归属收敛：目标须为存在的容器节点；沿归属链防环（自环/循环剔除） -----
+  const containerOk = new Set(nodes.filter((n) => isContainerType(n.type)).map((n) => n.id));
+  for (const n of nodes) {
+    const cid = n.containerId;
+    if (!cid) continue;
+    if (cid === n.id || !containerOk.has(cid)) {
+      delete n.containerId;
+      continue;
+    }
+    let cur: string | undefined = cid;
+    const seen = new Set<string>([n.id]);
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      cur = byId.get(cur)?.containerId;
+    }
+    if (cur === n.id) delete n.containerId;
+  }
 
   const edges: GEdge[] = [];
   const usedEdgeIds = new Set<string>();

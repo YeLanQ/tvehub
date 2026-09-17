@@ -87,6 +87,19 @@ export interface GNode {
   title?: string;
   /** var.get/var.set：引用的图变量 id */
   varId?: string;
+  /**
+   * 容器归属（多会话场景图：fsm.container/bt.container 容器卡）：
+   * 指向所属容器节点的 id；容器可嵌套（指向另一个容器）。空 = 画布顶层。
+   */
+  containerId?: string;
+  /** 容器卡尺寸（仅容器类型；缺省 560×340） */
+  w?: number;
+  h?: number;
+  /**
+   * FSM 容器内子节点的状态归属标签（仅直接子节点用）：
+   * 运行时容器激活某状态时，执行 stateName 匹配的子节点链；空 = 任意状态都执行。
+   */
+  stateName?: string;
   /** 旧格式 kind（迁移用，normalizeGraphDoc 后统一为 type） */
   kind?: string;
 }

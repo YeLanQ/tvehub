@@ -42,6 +42,27 @@ function setPath(obj, path, value) {
       return false;
   }
 }
+function setLightPath(obj, path, value) {
+  if (!path.startsWith("light.")) return false;
+  let light = null;
+  obj.traverse((o) => {
+    if (!light && o.isLight === true) light = o;
+  });
+  if (!light) return false;
+  switch (path) {
+    case "light.intensity":
+      light.intensity = value;
+      return true;
+    case "light.distance":
+      light.distance = value;
+      return true;
+    case "light.angle":
+      light.angle = value * DEG;
+      return true;
+    default:
+      return false;
+  }
+}
 const DEG = Math.PI / 180;
 function createGraphBehaviors(ctx) {
   var _a;
@@ -67,6 +88,9 @@ function createGraphBehaviors(ctx) {
     seen.add(refId);
     const node = nodeOf(refId);
     if (!node) return [];
+    if (node.type === "fsm.container" || node.type === "bt.container") {
+      return resolveTargets(refId);
+    }
     if (node.type === "entity.proto") {
       const hit = byId.get(node.entityId ?? "");
       return hit ? [hit] : [];
@@ -116,7 +140,7 @@ function createGraphBehaviors(ctx) {
   const customDefMap = /* @__PURE__ */ new Map();
   for (const d of graph.customNodes ?? []) customDefMap.set(d.type, d);
   function evalDataOutput(nodeId, portId, seen = /* @__PURE__ */ new Set()) {
-    var _a2, _b;
+    var _a2, _b, _c;
     if (seen.has(`${nodeId}\0${portId}`)) return null;
     seen.add(`${nodeId}\0${portId}`);
     const node = nodeOf(nodeId);
@@ -129,7 +153,8 @@ function createGraphBehaviors(ctx) {
     }
     if (node.type === "flow.compare" && portId === "result") {
       const a = evalDataInput(nodeId, "a");
-      const b = evalDataInput(nodeId, "b");
+      const bRaw = evalDataInput(nodeId, "b");
+      const b = bRaw === null ? typeof ((_a2 = node.params) == null ? void 0 : _a2.b) === "number" ? node.params.b : 0 : bRaw;
       const op = strP(node, "operator", ">");
       const an = typeof a === "number" ? a : 0;
       const bn = typeof b === "number" ? b : 0;
@@ -157,7 +182,7 @@ function createGraphBehaviors(ctx) {
       const item = loopItem.get(nodeId);
       return item ? [item] : null;
     }
-    if (node.type.startsWith("math.")) {
+    if (node.type.startsWith("math.") || node.type === "sense.distance") {
       return evalMath(node, nodeId, portId);
     }
     if (node.type.startsWith("custom.")) {
@@ -167,8 +192,8 @@ function createGraphBehaviors(ctx) {
       for (const id of compiled.inputIds) args.push(evalDataInput(nodeId, id));
       for (const key of compiled.fieldKeys) {
         const def = customDefMap.get(node.type);
-        const f = (_a2 = def == null ? void 0 : def.fields) == null ? void 0 : _a2.find((x) => x.key === key);
-        const v = (_b = node.params) == null ? void 0 : _b[key];
+        const f = (_b = def == null ? void 0 : def.fields) == null ? void 0 : _b.find((x) => x.key === key);
+        const v = (_c = node.params) == null ? void 0 : _c[key];
         if ((f == null ? void 0 : f.kind) === "number") args.push(typeof v === "number" ? v : f.fallback);
         else if ((f == null ? void 0 : f.kind) === "boolean") args.push(v === true);
         else args.push(typeof v === "string" ? v : (f == null ? void 0 : f.fallback) ?? "");
@@ -191,6 +216,16 @@ function createGraphBehaviors(ctx) {
       return evalDataOutput(e.srcNode, e.srcPort);
     }
     return null;
+  }
+  function evalDataInputs(nodeId, portId) {
+    const out = [];
+    for (const e of graph.edges) {
+      if (e.dstNode !== nodeId || e.dstPort !== portId) continue;
+      const v = evalDataOutput(e.srcNode, e.srcPort);
+      if (Array.isArray(v)) out.push(...v);
+      else if (v !== null && v !== void 0) out.push(v);
+    }
+    return out;
   }
   function evalMath(node, nodeId, portId) {
     const a = () => toNum(evalDataInput(nodeId, "a"));
@@ -241,6 +276,21 @@ function createGraphBehaviors(ctx) {
       }
       case "math.abs":
         return Math.abs(a());
+      // 感知：两实体世界距离（原型卡接线后每帧拉取求值）
+      case "sense.distance": {
+        const unwrap = (v) => {
+          if (Array.isArray(v)) return v[0] ?? null;
+          return v && typeof v === "object" && "obj" in v ? v : null;
+        };
+        const from = unwrap(evalDataInput(nodeId, "from"));
+        const to = unwrap(evalDataInput(nodeId, "to"));
+        if (!from || !to) return 0;
+        return Math.hypot(
+          from.obj.position.x - to.obj.position.x,
+          from.obj.position.y - to.obj.position.y,
+          from.obj.position.z - to.obj.position.z
+        );
+      }
       default:
         return null;
     }
@@ -257,14 +307,18 @@ function createGraphBehaviors(ctx) {
   };
   const execOut = /* @__PURE__ */ new Map();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec") continue;
+    if (e.dstPort !== "exec" && e.dstPort !== "event") continue;
     const portMap = execOut.get(e.srcNode) ?? /* @__PURE__ */ new Map();
     const list = portMap.get(e.srcPort) ?? [];
-    list.push(e.dstNode);
+    list.push({ id: e.dstNode, dstPort: e.dstPort });
     portMap.set(e.srcPort, list);
     execOut.set(e.srcNode, portMap);
   }
   function execNextOf(nodeId, port = "next") {
+    var _a2;
+    return (((_a2 = execOut.get(nodeId)) == null ? void 0 : _a2.get(port)) ?? []).map((t) => t.id);
+  }
+  function execTargetsOf(nodeId, port = "next") {
     var _a2;
     return ((_a2 = execOut.get(nodeId)) == null ? void 0 : _a2.get(port)) ?? [];
   }
@@ -275,9 +329,14 @@ function createGraphBehaviors(ctx) {
   function executeOp(op, targets) {
     if (!targets.length) return;
     switch (op.opType ?? op.type) {
-      case "op.set":
-        for (const t of targets) setPath(t.obj, strP(op, "property"), numP(op, "value"));
+      case "op.set": {
+        const path = strP(op, "property");
+        const value = numP(op, "value");
+        for (const t of targets) {
+          if (!setPath(t.obj, path, value)) setLightPath(t.obj, path, value);
+        }
         break;
+      }
       case "op.setFsmParam":
         for (const t of targets) {
           try {
@@ -299,77 +358,133 @@ function createGraphBehaviors(ctx) {
         break;
     }
   }
-  function cascadeExec(opId, seen = /* @__PURE__ */ new Set()) {
+  const fsmCurrent = /* @__PURE__ */ new Map();
+  function containerChildren(containerId) {
+    return graph.nodes.filter((n) => n.containerId === containerId).sort((a, b) => a.y - b.y || a.x - b.x);
+  }
+  function nodeActive(node) {
+    if (!node.containerId) return true;
+    return activeIn(node.containerId, node, /* @__PURE__ */ new Set());
+  }
+  function activeIn(containerId, child, guard) {
+    if (guard.has(containerId)) return true;
+    guard.add(containerId);
+    const c = nodeOf(containerId);
+    if (!c) return true;
+    if (c.type === "fsm.container") {
+      const cur = fsmCurrent.get(c.id);
+      if (cur !== void 0 && child.stateName && child.stateName !== cur) return false;
+    }
+    if (!c.containerId) return true;
+    return activeIn(c.containerId, c, guard);
+  }
+  function enterFsmContainer(node, seen, eventName, dstPort) {
+    const states = strP(node, "states").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!states.length) return;
+    const initial = strP(node, "initial", states[0]) || states[0];
+    let target;
+    if (dstPort === "event") {
+      if (!eventName || !states.includes(eventName)) return;
+      target = eventName;
+    } else {
+      target = states.includes(initial) ? initial : states[0];
+    }
+    fsmCurrent.set(node.id, target);
+    for (const child of containerChildren(node.id)) {
+      if (child.stateName && child.stateName !== target) continue;
+      cascadeExec(child.id, /* @__PURE__ */ new Set(), "next", "exec");
+    }
+    for (const t of execTargetsOf(node.id, "next")) cascadeExec(t.id, seen, "next", t.dstPort, eventName || target);
+  }
+  function enterBtContainer(node, seen) {
+    for (const child of containerChildren(node.id)) {
+      if (!nodeActive(child)) continue;
+      cascadeExec(child.id, /* @__PURE__ */ new Set(), "next", "exec");
+    }
+    for (const t of execTargetsOf(node.id, "next")) cascadeExec(t.id, seen, "next", t.dstPort);
+  }
+  function cascadeExec(opId, seen = /* @__PURE__ */ new Set(), viaSrcPort = "next", viaDstPort = "exec", eventName = "") {
     if (seen.has(opId)) return;
     seen.add(opId);
     const node = nodeOf(opId);
     if (!node) return;
+    const fireEv = strP(node, "event", "") || eventName || viaSrcPort;
+    if (node.type === "fsm.container") {
+      enterFsmContainer(node, seen, eventName || viaSrcPort, viaDstPort);
+      return;
+    }
+    if (node.type === "bt.container") {
+      enterBtContainer(node, seen);
+      return;
+    }
     if (node.type === "var.set") {
       const val = evalDataInput(opId, "value");
       if (val !== null) varStore.set(node.varId ?? "", val);
-      for (const id of execNextOf(opId)) cascadeExec(id, seen);
+      for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
       return;
     }
     if (node.type === "flow.branch") {
       const cond = evalDataInput(opId, "condition") === true;
-      for (const id of execNextOf(opId, cond ? "true" : "false")) cascadeExec(id, seen);
+      const port = cond ? "true" : "false";
+      for (const t of execTargetsOf(opId, port)) cascadeExec(t.id, seen, port, t.dstPort, fireEv || port);
       return;
     }
     if (node.type === "flow.compare") {
-      for (const id of execNextOf(opId)) cascadeExec(id, seen);
+      for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
       return;
     }
     if (node.type === "flow.for") {
       const start = numP(node, "start", 0);
       const end = numP(node, "end", 10);
       const step = numP(node, "step", 1);
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       const maxIter = 1e5;
       let iter = 0;
       for (let i = start; (step > 0 ? i < end : i > end) && iter < maxIter; i += step, iter++) {
         loopIndex.set(opId, i);
-        for (const id of loop) cascadeExec(id, /* @__PURE__ */ new Set());
+        for (const t of loop) cascadeExec(t.id, /* @__PURE__ */ new Set(), "loop", t.dstPort, fireEv);
       }
       loopIndex.delete(opId);
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
     if (node.type === "flow.forEach") {
       const arr = evalDataInput(opId, "array");
       const items = Array.isArray(arr) ? arr : [];
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       for (const item of items) {
         loopItem.set(opId, item);
-        for (const id of loop) cascadeExec(id, /* @__PURE__ */ new Set());
+        for (const t of loop) cascadeExec(t.id, /* @__PURE__ */ new Set(), "loop", t.dstPort, fireEv);
       }
       loopItem.delete(opId);
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
     if (node.type === "flow.while") {
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       const maxIter = 1e4;
       for (let i = 0; i < maxIter; i++) {
         if (evalDataInput(opId, "condition") !== true) break;
-        for (const id of loop) cascadeExec(id, /* @__PURE__ */ new Set());
+        for (const t of loop) cascadeExec(t.id, /* @__PURE__ */ new Set(), "loop", t.dstPort, fireEv);
       }
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
     if (!node.type.startsWith("op.")) return;
+    if (!nodeActive(node)) return;
     const targets = resolveTargets(opId);
     executeOp(node, targets);
-    for (const id of execNextOf(opId)) cascadeExec(id, seen);
+    for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
   }
   const eventNodes = graph.nodes.filter((n) => n.type.startsWith("event."));
-  const onBeginNodes = eventNodes.filter((n) => n.type === "event.onBegin");
-  const onTickNodes = eventNodes.filter((n) => n.type === "event.onTick");
-  const onClickNodes = eventNodes.filter((n) => n.type === "event.onClick");
+  const onBeginNodes = eventNodes.filter((n) => n.type === "event.onBegin" && !n.containerId);
+  const onTickNodes = eventNodes.filter((n) => n.type === "event.onTick" && !n.containerId);
+  const onClickNodes = eventNodes.filter((n) => n.type === "event.onClick" && !n.containerId);
   const legacyOps = graph.nodes.filter(
-    (n) => n.type.startsWith("op.") && !hasExecInput.has(n.id)
+    (n) => n.type.startsWith("op.") && !hasExecInput.has(n.id) && !n.containerId
   );
   const legacyStartOps = legacyOps.filter((n) => (n.opType ?? n.type) === "op.set" || (n.opType ?? n.type) === "op.setFsmParam");
   const legacySpinOps = legacyOps.filter((n) => (n.opType ?? n.type) === "op.spin");
@@ -397,11 +512,14 @@ function createGraphBehaviors(ctx) {
     seen.add(opId);
     const op = nodeOf(opId);
     if (!op) return;
-    if (op.type === "op.spin" || op.type === "op.bob") tickChainOps.push(op);
+    if (op.type === "op.spin" || op.type === "op.bob" || op.type === "op.patrol" || op.type === "op.chase" || op.type === "op.navMove") tickChainOps.push(op);
     const portMap = execOut.get(opId);
-    if (portMap) for (const [, ids] of portMap) for (const id of ids) collectFrameOps(id, seen);
+    if (portMap) for (const [, targets] of portMap) for (const t of targets) collectFrameOps(t.id, seen);
   }
-  const allFrameOps = [...legacySpinOps, ...legacyBobOps, ...tickChainOps];
+  const legacyFrameOps = legacyOps.filter(
+    (n) => (n.opType ?? n.type) === "op.patrol" || (n.opType ?? n.type) === "op.chase" || (n.opType ?? n.type) === "op.navMove"
+  );
+  const allFrameOps = [...legacySpinOps, ...legacyBobOps, ...legacyFrameOps, ...tickChainOps];
   for (const op of allFrameOps) {
     const targets = resolveTargets(op.id);
     if (!targets.length) continue;
@@ -472,15 +590,126 @@ function createGraphBehaviors(ctx) {
   }
   if (allClickOps.length) dom.addEventListener("pointerdown", onPointerDown);
   let elapsed = 0;
+  const patrolPhase = /* @__PURE__ */ new Map();
+  const patrolBase = /* @__PURE__ */ new Map();
+  const patrolWaypointIdx = /* @__PURE__ */ new Map();
+  function stepPatrol(op, targets, dt) {
+    const waypoints = evalDataInputs(op.id, "path").filter(
+      (v) => v !== null && typeof v === "object" && "obj" in v
+    );
+    if (waypoints.length) {
+      const speed2 = numP(op, "speed", 2);
+      for (const t of targets) {
+        const key = `${op.id}\0${t.id}`;
+        const idx = patrolWaypointIdx.get(key) ?? 0;
+        const wp = waypoints[idx % waypoints.length];
+        if (!wp) continue;
+        const dx = wp.obj.position.x - t.obj.position.x;
+        const dy = wp.obj.position.y - t.obj.position.y;
+        const dz = wp.obj.position.z - t.obj.position.z;
+        const len = Math.hypot(dx, dy, dz);
+        if (len < 0.3) {
+          patrolWaypointIdx.set(key, (idx + 1) % waypoints.length);
+          continue;
+        }
+        const step = speed2 * dt / len;
+        t.obj.position.x += dx * step;
+        t.obj.position.y += dy * step;
+        t.obj.position.z += dz * step;
+      }
+      return;
+    }
+    const dist = numP(op, "distance", 6);
+    const speed = numP(op, "speed", 2);
+    const axis = strP(op, "axis", "x");
+    const period = speed > 0 && dist > 0 ? 2 * dist / speed : 0;
+    if (period <= 0) return;
+    for (const t of targets) {
+      const key = `${op.id}\0${t.id}`;
+      let base = patrolBase.get(key);
+      if (!base) {
+        base = { x: t.obj.position.x, y: t.obj.position.y, z: t.obj.position.z };
+        patrolBase.set(key, base);
+      }
+      let phase = (patrolPhase.get(key) ?? 0) + dt;
+      if (phase >= period) phase -= period;
+      patrolPhase.set(key, phase);
+      const half = period / 2;
+      const off = (phase < half ? phase : period - phase) * speed;
+      if (axis === "z") t.obj.position.z = base.z + off;
+      else if (axis === "y") t.obj.position.y = base.y + off;
+      else t.obj.position.x = base.x + off;
+    }
+  }
+  function stepChase(op, targets, dt) {
+    const prey = evalDataInput(op.id, "prey");
+    const target = Array.isArray(prey) ? prey[0] ?? null : prey;
+    if (!target) return;
+    const speed = numP(op, "speed", 3);
+    for (const t of targets) {
+      const dx = target.obj.position.x - t.obj.position.x;
+      const dy = target.obj.position.y - t.obj.position.y;
+      const dz = target.obj.position.z - t.obj.position.z;
+      const len = Math.hypot(dx, dy, dz);
+      if (len < 0.05) continue;
+      const step = speed * dt / len;
+      t.obj.position.x += dx * step;
+      t.obj.position.y += dy * step;
+      t.obj.position.z += dz * step;
+    }
+  }
+  function stepNavMove(op, targets) {
+    const agentRaw = evalDataInput(op.id, "agent");
+    const agent = Array.isArray(agentRaw) ? agentRaw[0] ?? null : agentRaw;
+    if (!agent) return;
+    const yOff = numP(op, "yOffset", 0);
+    for (const t of targets) {
+      t.obj.position.x = agent.obj.position.x;
+      t.obj.position.y = agent.obj.position.y + yOff;
+      t.obj.position.z = agent.obj.position.z;
+      t.obj.rotation.y = agent.obj.rotation.y;
+    }
+  }
+  function driveFsmContainers(dt) {
+    for (const c of graph.nodes) {
+      if (c.type !== "fsm.container") continue;
+      for (const e of graph.edges) {
+        if (e.dstNode !== c.id || e.dstPort !== "event") continue;
+        const src = nodeOf(e.srcNode);
+        if (!src || src.type !== "flow.compare") continue;
+        const key = `${c.id}\0${e.srcNode}`;
+        const nowTrue = evalDataOutput(e.srcNode, "result") === true;
+        const prev = fsmCondState.get(key);
+        fsmCondState.set(key, nowTrue);
+        if (nowTrue && prev === false) {
+          enterFsmContainer(c, /* @__PURE__ */ new Set(), strP(src, "event", ""), "event");
+        }
+      }
+      const cur = fsmCurrent.get(c.id);
+      if (cur === void 0) continue;
+      for (const child of containerChildren(c.id)) {
+        if (child.stateName && child.stateName !== cur) continue;
+        const t = child.opType ?? child.type;
+        if (t !== "op.patrol" && t !== "op.chase") continue;
+        const targets = resolveTargets(child.id);
+        if (!targets.length) continue;
+        if (t === "op.patrol") stepPatrol(child, targets, dt);
+        else stepChase(child, targets, dt);
+      }
+    }
+  }
+  const fsmCondState = /* @__PURE__ */ new Map();
   return {
     update(dt) {
       elapsed += dt;
+      driveFsmContainers(dt);
       for (const entryId of tickChainEntries) {
         cascadeExec(entryId);
       }
       for (const behavior of frameOps) {
         const { node, targets, baseY } = behavior;
         const opType = node.opType ?? node.type;
+        if (!nodeActive(node)) continue;
         if (opType === "op.spin") {
           const dx = numP(node, "speedX") * DEG * dt;
           const dy = numP(node, "speedY") * DEG * dt;
@@ -499,6 +728,12 @@ function createGraphBehaviors(ctx) {
             const base = baseY.get(t.id) ?? t.obj.position.y;
             t.obj.position.y = base + y;
           }
+        } else if (opType === "op.patrol") {
+          stepPatrol(node, targets, dt);
+        } else if (opType === "op.chase") {
+          stepChase(node, targets, dt);
+        } else if (opType === "op.navMove") {
+          stepNavMove(node, targets);
         }
       }
     },

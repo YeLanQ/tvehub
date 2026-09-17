@@ -54,6 +54,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/material.mjs",
   "engine/runtime/mesh.mjs",
   "engine/runtime/model.mjs",
+  "engine/runtime/nav.mjs",
   "engine/runtime/nodes.mjs",
   "engine/runtime/pak.mjs",
   "engine/runtime/particles.mjs",

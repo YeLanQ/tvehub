@@ -478,13 +478,20 @@ async fn show_window_with_project(
     Ok(())
 }
 
-/// 窗口启动时拉取待交付项目（取走后清空，保证只交付一次）
+/// 窗口启动时拉取待交付项目。
+/// 不删除条目：窗口页面重载（HMR/Ctrl+R）后重新拉取同一项目可完整恢复会话；
+/// 同 label 再次交接时覆盖，窗口销毁（Destroyed）时清理。
 #[tauri::command]
 async fn take_pending_project(
     webview: tauri::Webview,
     state: tauri::State<'_, PendingProjects>,
 ) -> Result<Option<PendingProjectPayload>, String> {
-    Ok(state.0.lock().unwrap().remove(&webview.label().to_string()))
+    Ok(state
+        .0
+        .lock()
+        .unwrap()
+        .get(&webview.label().to_string())
+        .cloned())
 }
 
 /// 显示首页窗口（编辑器"关闭项目"后调用；编辑器窗口自行关闭销毁，无需 hide）
@@ -710,10 +717,11 @@ pub fn run() {
                     if let Some(state) = window.app_handle().try_state::<ActiveEditorWindow>() {
                         state.clear_if(&label);
                     }
-                    // 释放该窗口的网页预览服务器子进程（多会话按 label 分键，
-                    // 窗口销毁不经前端 stop，须兜底清理避免子进程/端口泄漏）
-                    if let Some(state) = window.app_handle().try_state::<preview::PreviewServerState>()
-                    {
+                    // 清理该窗口的待交付项目与网页预览服务器子进程
+                    if let Some(state) = window.app_handle().try_state::<PendingProjects>() {
+                        state.0.lock().unwrap().remove(&label);
+                    }
+                    if let Some(state) = window.app_handle().try_state::<preview::PreviewServerState>() {
                         preview::stop_server_for_label(&state, &label);
                     }
                 }

@@ -20,6 +20,7 @@ import { sceneApi, type HierarchyRowDto } from "../lib/scene-api";
 import { getAssetsStore } from "../app/stores/assets";
 import { getGraphBootStore } from "./boot-loading";
 import { fetchSceneEntities, type SceneEntity } from "./lib/scene-index";
+import { parseScriptClassMeta, type ScriptPropDef } from "../app/lib/script-compile";
 import {
   emptyGraphDoc,
   isGraphDoc,
@@ -140,6 +141,8 @@ interface GraphWindowStore {
   updateCustomNodeDef(id: string, patch: Partial<GCustomNodeDef>): void;
   /** 删除自定义节点定义（同时清理引用该类型的节点） */
   deleteCustomNodeDef(id: string): void;
+  /** 脚本 @property schema 懒解析（原型卡脚本卡用；AST 解析不执行用户代码） */
+  propSchemaFor(rel: string): Promise<ScriptPropDef[] | null>;
 }
 
 let singleton: GraphWindowStore | null = null;
@@ -179,6 +182,8 @@ export function getGraphWindowStore(): GraphWindowStore {
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   let sceneWatchInstalled = false;
   let sceneDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** 脚本 @property schema 解析缓存（rel → 进行中/已完成的解析 Promise） */
+  const propSchemaCache = new Map<string, Promise<ScriptPropDef[] | null>>();
   let sceneEnsureInFlight: Promise<void> | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let sceneToken = 0; // 换项目/换场景令牌：过期索引/侧车读取丢弃
@@ -413,6 +418,8 @@ export function getGraphWindowStore(): GraphWindowStore {
 
     setCanvas(bridge) {
       store.canvas = bridge;
+      // 桥接晚于装载完成时（页面重载后画布后挂载），补载已装载的图文档
+      if (bridge && graphDoc.nodes.length) bridge.loadDoc(graphDoc);
     },
 
     /** 打开场景资产：scene_open 切当前场景（会话唯一，项目级当前场景），
@@ -613,6 +620,27 @@ export function getGraphWindowStore(): GraphWindowStore {
         store.canvas?.loadDoc(doc);
       }
       store.markGraphDirty();
+    },
+
+    propSchemaFor(rel) {
+      let p = propSchemaCache.get(rel);
+      if (!p) {
+        const root = state.root;
+        p = root
+          ? api
+              .readText(root, rel)
+              .then((src) =>
+                src == null
+                  ? null
+                  : parseScriptClassMeta(src)
+                      .then((m: { props: ScriptPropDef[] | null }) => m.props)
+                      .catch(() => null),
+              )
+              .catch(() => null)
+          : Promise.resolve(null);
+        propSchemaCache.set(rel, p);
+      }
+      return p;
     },
   };
 

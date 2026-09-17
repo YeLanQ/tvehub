@@ -11,6 +11,18 @@
 // - 事件触发时沿 next → exec 级联执行下游操作链；
 // - 向后兼容：无 exec 入边的旧操作按 trigger 字段独立执行（无事件节点驱动的旧图）。
 //
+// 逻辑容器（多会话场景图：fsm.container / bt.container，可嵌套）：
+// - 容器内节点以 containerId 归属容器，不参与全局事件驱动，只由容器驱动；
+// - fsm.container：params.states（逗号分隔）声明状态、params.initial 初始状态。
+//   exec 入「进入」→ 激活 initial；「event」入端口 → 事件切换状态（事件名取
+//   源节点 params.event，缺省用源 exec 出端口名，如 branch 的 true/false）。
+//   进入状态 = 执行 containerId 归属且 stateName 匹配（无标签则任意状态）的
+//   直接子节点链，随后级联容器 next 下游；
+// - bt.container：exec 入「进入」→ 按子节点纵向排序依次执行归属节点链
+//   （顺序节点语义），完成后级联容器 next 下游；
+// - 嵌套：容器也是节点，作为其父容器的子节点递归进入/执行；fsm 子节点
+//   （含嵌套容器）仅在所属状态激活时执行（nodeActive 沿归属链逐层判定）。
+//
 // 目标解析（实体集通道，独立于 exec 链）：
 // - proto：按场景节点 id 精确匹配；match：按标签/类型批量匹配；
 // - op.out 实体透传 → 上游递归。
@@ -79,6 +91,22 @@ function setPath(obj: THREE.Object3D, path: string, value: number): boolean {
   }
 }
 
+/** 灯光分量路径写入（light 组件：强度/距离/聚光角；对象树内找首个光源） */
+function setLightPath(obj: THREE.Object3D, path: string, value: number): boolean {
+  if (!path.startsWith("light.")) return false;
+  let light: THREE.Light | null = null;
+  obj.traverse((o) => {
+    if (!light && (o as THREE.Light).isLight === true) light = o as THREE.Light;
+  });
+  if (!light) return false;
+  switch (path) {
+    case "light.intensity": light.intensity = value; return true;
+    case "light.distance": (light as THREE.PointLight).distance = value; return true;
+    case "light.angle": (light as THREE.SpotLight).angle = value * DEG; return true;
+    default: return false;
+  }
+}
+
 const DEG = Math.PI / 180;
 
 export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHandle {
@@ -108,6 +136,10 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     seen.add(refId);
     const node = nodeOf(refId);
     if (!node) return [];
+    // 逻辑容器：输出 = 自身作用域入端口的实体集（上游递归）
+    if (node.type === "fsm.container" || node.type === "bt.container") {
+      return resolveTargets(refId);
+    }
     if (node.type === "entity.proto") {
       const hit = byId.get(node.entityId ?? "");
       return hit ? [hit] : [];
@@ -178,10 +210,11 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     if (node.type === "var.set" && portId === "value") {
       return varStore.get(node.varId ?? "") ?? null;
     }
-    // flow.compare：求值 a op b → boolean
+    // flow.compare：求值 a op b → boolean（B 引脚未连线时回退 params.b 参数值）
     if (node.type === "flow.compare" && portId === "result") {
       const a = evalDataInput(nodeId, "a");
-      const b = evalDataInput(nodeId, "b");
+      const bRaw = evalDataInput(nodeId, "b");
+      const b = bRaw === null ? (typeof node.params?.b === "number" ? node.params.b : 0) : bRaw;
       const op = strP(node, "operator", ">");
       const an = typeof a === "number" ? a : 0;
       const bn = typeof b === "number" ? b : 0;
@@ -204,8 +237,8 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
       const item = loopItem.get(nodeId);
       return item ? [item] : null;
     }
-    // ----- 数学/工具节点（纯数据求值） -----
-    if (node.type.startsWith("math.")) {
+    // ----- 数学/工具/感知节点（纯数据求值） -----
+    if (node.type.startsWith("math.") || node.type === "sense.distance") {
       return evalMath(node, nodeId, portId);
     }
     // ----- 自定义节点（表达式求值） -----
@@ -245,6 +278,18 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     return null;
   }
 
+  /** 数据流求值（多入汇聚）：收集引脚上全部连线的值，实体集展开为单实体（路径点等） */
+  function evalDataInputs(nodeId: string, portId: string): DataValue[] {
+    const out: DataValue[] = [];
+    for (const e of graph.edges) {
+      if (e.dstNode !== nodeId || e.dstPort !== portId) continue;
+      const v = evalDataOutput(e.srcNode, e.srcPort);
+      if (Array.isArray(v)) out.push(...v);
+      else if (v !== null && v !== undefined) out.push(v);
+    }
+    return out;
+  }
+
   /** 数学/工具节点求值（纯数据，按 node.type 分支） */
   function evalMath(node: GNode, nodeId: string, portId: string): DataValue {
     const a = (): number => toNum(evalDataInput(nodeId, "a"));
@@ -277,6 +322,21 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
         return Math.max(mn, Math.min(mx, val));
       }
       case "math.abs": return Math.abs(a());
+      // 感知：两实体世界距离（原型卡接线后每帧拉取求值）
+      case "sense.distance": {
+        const unwrap = (v: DataValue): NodeObj | null => {
+          if (Array.isArray(v)) return v[0] ?? null;
+          return v && typeof v === "object" && "obj" in v ? (v as NodeObj) : null;
+        };
+        const from = unwrap(evalDataInput(nodeId, "from"));
+        const to = unwrap(evalDataInput(nodeId, "to"));
+        if (!from || !to) return 0;
+        return Math.hypot(
+          from.obj.position.x - to.obj.position.x,
+          from.obj.position.y - to.obj.position.y,
+          from.obj.position.z - to.obj.position.z,
+        );
+      }
       default: return null;
     }
   }
@@ -291,19 +351,25 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     return typeof v === "string" ? v : fb;
   };
 
-  // ----- exec 链邻接：node.id → portId → 下游 exec 目标 node ids -----
-  // 支持多 exec 出端口（next/true/false/loop/completed）
-  const execOut = new Map<string, Map<string, string[]>>();
+  // ----- exec 链邻接：node.id → portId → 下游 exec 目标（含目标入端口类型） -----
+  // 支持多 exec 出端口（next/true/false/loop/completed）；容器的 event 入端口
+  // （dstPort === "event"）也纳入邻接：进入容器时以「源端口名 / 源 params.event」
+  // 作为事件名做状态切换
+  const execOut = new Map<string, Map<string, { id: string; dstPort: string }[]>>();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec") continue;
-    const portMap = execOut.get(e.srcNode) ?? new Map<string, string[]>();
+    if (e.dstPort !== "exec" && e.dstPort !== "event") continue;
+    const portMap = execOut.get(e.srcNode) ?? new Map<string, { id: string; dstPort: string }[]>();
     const list = portMap.get(e.srcPort) ?? [];
-    list.push(e.dstNode);
+    list.push({ id: e.dstNode, dstPort: e.dstPort });
     portMap.set(e.srcPort, list);
     execOut.set(e.srcNode, portMap);
   }
   /** 取节点某 exec 出端口的下游 ids */
   function execNextOf(nodeId: string, port = "next"): string[] {
+    return (execOut.get(nodeId)?.get(port) ?? []).map((t) => t.id);
+  }
+  /** 取节点某 exec 出端口的下游目标（含目标入端口类型，容器语义用） */
+  function execTargetsOf(nodeId: string, port = "next"): { id: string; dstPort: string }[] {
     return execOut.get(nodeId)?.get(port) ?? [];
   }
 
@@ -320,9 +386,14 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
   function executeOp(op: GNode, targets: NodeObj[]): void {
     if (!targets.length) return;
     switch (op.opType ?? op.type) {
-      case "op.set":
-        for (const t of targets) setPath(t.obj, strP(op, "property"), numP(op, "value"));
+      case "op.set": {
+        const path = strP(op, "property");
+        const value = numP(op, "value");
+        for (const t of targets) {
+          if (!setPath(t.obj, path, value)) setLightPath(t.obj, path, value);
+        }
         break;
+      }
       case "op.setFsmParam":
         for (const t of targets) {
           try { logicApi.setParam({ id: t.id }, strP(op, "param"), numP(op, "value")); } catch { /* 跳过 */ }
@@ -340,28 +411,118 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     }
   }
 
-  /** exec 链级联：执行 op/var.set/flow.* → 沿 exec 出端口 → 下游 */
-  function cascadeExec(opId: string, seen = new Set<string>()): void {
+  // ----- 容器（fsm.container / bt.container）运行时状态 -----
+  /** FSM 容器当前状态（containerId → 状态名；未激活无键） */
+  const fsmCurrent = new Map<string, string>();
+  /** 容器直接子节点（containerId 归属，按纵向排序：BT 顺序语义用） */
+  function containerChildren(containerId: string): GNode[] {
+    return graph.nodes
+      .filter((n) => n.containerId === containerId)
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+  }
+  /** 节点在归属容器链上是否处于激活态（FSM 层：stateName 匹配当前状态；BT 层恒激活） */
+  function nodeActive(node: GNode): boolean {
+    if (!node.containerId) return true;
+    return activeIn(node.containerId, node, new Set<string>());
+  }
+  function activeIn(containerId: string, child: GNode, guard: Set<string>): boolean {
+    if (guard.has(containerId)) return true;
+    guard.add(containerId);
+    const c = nodeOf(containerId);
+    if (!c) return true;
+    if (c.type === "fsm.container") {
+      const cur = fsmCurrent.get(c.id);
+      // FSM 未激活（无入边驱动的纯整理容器）视为全状态可用
+      if (cur !== undefined && child.stateName && child.stateName !== cur) return false;
+    }
+    if (!c.containerId) return true;
+    return activeIn(c.containerId, c, guard);
+  }
+
+  /**
+   * 执行 FSM 容器：exec 入「进入」激活 initial；event 入「事件」按事件名切换
+   * 状态（事件名 = 触发源 params.event 优先，缺省触发源 exec 出端口名）。
+   * 激活状态 = 执行 containerId 归属且 stateName 匹配（无标签则任意状态）
+   * 的直接子节点链，随后级联容器 next 下游。
+   */
+  function enterFsmContainer(node: GNode, seen: Set<string>, eventName: string, dstPort: string): void {
+    const states = strP(node, "states")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!states.length) return;
+    const initial = strP(node, "initial", states[0]) || states[0];
+    let target: string;
+    if (dstPort === "event") {
+      if (!eventName || !states.includes(eventName)) return; // 非状态事件忽略
+      target = eventName;
+    } else {
+      target = states.includes(initial) ? initial : states[0];
+    }
+    fsmCurrent.set(node.id, target);
+    // 执行归属当前状态的直接子节点链（无状态标签的子节点任意状态都执行）
+    for (const child of containerChildren(node.id)) {
+      if (child.stateName && child.stateName !== target) continue;
+      cascadeExec(child.id, new Set(), "next", "exec");
+    }
+    // 状态切换完成 → 容器 next 下游
+    for (const t of execTargetsOf(node.id, "next")) cascadeExec(t.id, seen, "next", t.dstPort, eventName || target);
+  }
+
+  /** 执行 BT 容器：按子节点纵向排序依次执行，完成级联 next 下游 */
+  function enterBtContainer(node: GNode, seen: Set<string>): void {
+    for (const child of containerChildren(node.id)) {
+      if (!nodeActive(child)) continue;
+      cascadeExec(child.id, new Set(), "next", "exec");
+    }
+    for (const t of execTargetsOf(node.id, "next")) cascadeExec(t.id, seen, "next", t.dstPort);
+  }
+
+  /**
+   * exec 链级联：执行 op、var.set、flow 与容器节点 → 沿 exec 出端口 → 下游。
+   * eventName：触发方携带的事件名（源节点 params.event 优先，缺省源端口名），
+   * 进入 fsm.container 的 event 入端口时用于状态切换。
+   */
+  function cascadeExec(
+    opId: string,
+    seen = new Set<string>(),
+    viaSrcPort = "next",
+    viaDstPort = "exec",
+    eventName = "",
+  ): void {
     if (seen.has(opId)) return;
     seen.add(opId);
     const node = nodeOf(opId);
     if (!node) return;
+    // 下游传递的事件名：本节点 params.event 优先，否则沿用触发方事件名/端口名
+    const fireEv = strP(node, "event", "") || eventName || viaSrcPort;
+    // fsm.container：进入（exec）激活 initial；事件（event）按事件名切换状态
+    if (node.type === "fsm.container") {
+      enterFsmContainer(node, seen, eventName || viaSrcPort, viaDstPort);
+      return;
+    }
+    // bt.container：进入 → 顺序执行归属子节点链
+    if (node.type === "bt.container") {
+      enterBtContainer(node, seen);
+      return;
+    }
     // var.set：从 value 入引脚拉取数据 → 写入图变量
     if (node.type === "var.set") {
       const val = evalDataInput(opId, "value");
       if (val !== null) varStore.set(node.varId ?? "", val);
-      for (const id of execNextOf(opId)) cascadeExec(id, seen);
+      for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
       return;
     }
     // flow.branch：条件选择 true/false 分支
     if (node.type === "flow.branch") {
       const cond = evalDataInput(opId, "condition") === true;
-      for (const id of execNextOf(opId, cond ? "true" : "false")) cascadeExec(id, seen);
+      const port = cond ? "true" : "false";
+      for (const t of execTargetsOf(opId, port)) cascadeExec(t.id, seen, port, t.dstPort, fireEv || port);
       return;
     }
     // flow.compare：纯数据节点，exec 链中不执行（由 evalDataOutput 求值）
     if (node.type === "flow.compare") {
-      for (const id of execNextOf(opId)) cascadeExec(id, seen);
+      for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
       return;
     }
     // flow.for：计数循环
@@ -369,60 +530,62 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
       const start = numP(node, "start", 0);
       const end = numP(node, "end", 10);
       const step = numP(node, "step", 1);
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       const maxIter = 100000;
       let iter = 0;
       for (let i = start; (step > 0 ? i < end : i > end) && iter < maxIter; i += step, iter++) {
         loopIndex.set(opId, i);
-        for (const id of loop) cascadeExec(id, new Set());
+        for (const t of loop) cascadeExec(t.id, new Set(), "loop", t.dstPort, fireEv);
       }
       loopIndex.delete(opId);
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
     // flow.forEach：实体集遍历
     if (node.type === "flow.forEach") {
       const arr = evalDataInput(opId, "array");
       const items = Array.isArray(arr) ? arr : [];
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       for (const item of items) {
         loopItem.set(opId, item);
-        for (const id of loop) cascadeExec(id, new Set());
+        for (const t of loop) cascadeExec(t.id, new Set(), "loop", t.dstPort, fireEv);
       }
       loopItem.delete(opId);
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
     // flow.while：条件循环（最多 10000 次防死循环）
     if (node.type === "flow.while") {
-      const loop = execNextOf(opId, "loop");
-      const completed = execNextOf(opId, "completed");
+      const loop = execTargetsOf(opId, "loop");
+      const completed = execTargetsOf(opId, "completed");
       const maxIter = 10000;
       for (let i = 0; i < maxIter; i++) {
         if (evalDataInput(opId, "condition") !== true) break;
-        for (const id of loop) cascadeExec(id, new Set());
+        for (const t of loop) cascadeExec(t.id, new Set(), "loop", t.dstPort, fireEv);
       }
-      for (const id of completed) cascadeExec(id, seen);
+      for (const t of completed) cascadeExec(t.id, seen, "completed", t.dstPort, fireEv);
       return;
     }
-    // op.*：执行操作
+    // op.*：执行操作（容器内子节点仅在所属状态激活时执行）
     if (!node.type.startsWith("op.")) return;
+    if (!nodeActive(node)) return;
     const targets = resolveTargets(opId);
     executeOp(node, targets);
-    for (const id of execNextOf(opId)) cascadeExec(id, seen);
+    for (const t of execTargetsOf(opId, "next")) cascadeExec(t.id, seen, "next", t.dstPort, fireEv);
   }
 
   // ----- 事件节点 -----
+  // 容器内子节点（containerId 非空）不参与全局事件驱动，只由容器驱动
   const eventNodes = graph.nodes.filter((n) => n.type.startsWith("event."));
-  const onBeginNodes = eventNodes.filter((n) => n.type === "event.onBegin");
-  const onTickNodes = eventNodes.filter((n) => n.type === "event.onTick");
-  const onClickNodes = eventNodes.filter((n) => n.type === "event.onClick");
+  const onBeginNodes = eventNodes.filter((n) => n.type === "event.onBegin" && !n.containerId);
+  const onTickNodes = eventNodes.filter((n) => n.type === "event.onTick" && !n.containerId);
+  const onClickNodes = eventNodes.filter((n) => n.type === "event.onClick" && !n.containerId);
 
   // ----- 旧式操作（无 exec 入边，按 trigger 独立执行；向后兼容） -----
   const legacyOps = graph.nodes.filter(
-    (n) => n.type.startsWith("op.") && !hasExecInput.has(n.id),
+    (n) => n.type.startsWith("op.") && !hasExecInput.has(n.id) && !n.containerId,
   );
   const legacyStartOps = legacyOps.filter((n) => (n.opType ?? n.type) === "op.set" || (n.opType ?? n.type) === "op.setFsmParam");
   const legacySpinOps = legacyOps.filter((n) => (n.opType ?? n.type) === "op.spin");
@@ -442,9 +605,9 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
 
   // ----- frame：每帧行为 -----
   const frameOps: { node: GNode; targets: NodeObj[]; baseY: Map<string, number> }[] = [];
-  // 事件驱动的 tick 链中 op.spin/op.bob 需逐帧执行
+  // 事件驱动的 tick 链中 op.spin/op.bob/op.patrol/op.chase 需逐帧执行
   const tickChainOps: GNode[] = [];
-  // tick 链入口节点（每帧级联执行 var.set/flow.* 等非 spin/bob 节点）
+  // tick 链入口节点（每帧级联执行 var.set/flow.* 等非位移节点）
   const tickChainEntries: string[] = [];
   for (const ev of onTickNodes) {
     const next = execNextOf(ev.id);
@@ -458,13 +621,19 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
     seen.add(opId);
     const op = nodeOf(opId);
     if (!op) return;
-    if (op.type === "op.spin" || op.type === "op.bob") tickChainOps.push(op);
-    // 遍历所有 exec 出端口（next/true/false/loop/completed）
+    if (
+      op.type === "op.spin" || op.type === "op.bob" ||
+      op.type === "op.patrol" || op.type === "op.chase" || op.type === "op.navMove"
+    ) tickChainOps.push(op);
+    // 遍历所有 exec 出端口（next/true/false/loop/completed/event）
     const portMap = execOut.get(opId);
-    if (portMap) for (const [, ids] of portMap) for (const id of ids) collectFrameOps(id, seen);
+    if (portMap) for (const [, targets] of portMap) for (const t of targets) collectFrameOps(t.id, seen);
   }
-  // 合并事件驱动 + 旧式 frame ops
-  const allFrameOps = [...legacySpinOps, ...legacyBobOps, ...tickChainOps];
+  // 合并事件驱动 + 旧式 frame ops（含旧式无 exec 的巡逻/追击）
+  const legacyFrameOps = legacyOps.filter(
+    (n) => (n.opType ?? n.type) === "op.patrol" || (n.opType ?? n.type) === "op.chase" || (n.opType ?? n.type) === "op.navMove",
+  );
+  const allFrameOps = [...legacySpinOps, ...legacyBobOps, ...legacyFrameOps, ...tickChainOps];
   for (const op of allFrameOps) {
     const targets = resolveTargets(op.id);
     if (!targets.length) continue;
@@ -546,9 +715,141 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
 
   let elapsed = 0;
 
+  // ----- 巡逻/追击步进状态 -----
+  /** 巡逻相位（op.id\0target.id → 秒；周期由 距离/速度 推导） */
+  const patrolPhase = new Map<string, number>();
+  /** 巡逻基准位置（op.id\0target.id → 首次执行时的世界坐标） */
+  const patrolBase = new Map<string, { x: number; y: number; z: number }>();
+  /** 路径点模式：当前巡回的路径点下标（op.id\0target.id） */
+  const patrolWaypointIdx = new Map<string, number>();
+
+  /** 逐帧步进巡逻：路径口接入路径点 → 依次巡回；未接 → 沿轴三角波往返 */
+  function stepPatrol(op: GNode, targets: NodeObj[], dt: number): void {
+    // 路径点模式：路径口接入的实体位置即路径点（多入按连线顺序巡回）
+    const waypoints = evalDataInputs(op.id, "path").filter(
+      (v): v is NodeObj => v !== null && typeof v === "object" && "obj" in v,
+    );
+    if (waypoints.length) {
+      const speed = numP(op, "speed", 2);
+      for (const t of targets) {
+        const key = `${op.id}\u0000${t.id}`;
+        const idx = patrolWaypointIdx.get(key) ?? 0;
+        const wp = waypoints[idx % waypoints.length];
+        if (!wp) continue;
+        const dx = wp.obj.position.x - t.obj.position.x;
+        const dy = wp.obj.position.y - t.obj.position.y;
+        const dz = wp.obj.position.z - t.obj.position.z;
+        const len = Math.hypot(dx, dy, dz);
+        if (len < 0.3) {
+          patrolWaypointIdx.set(key, (idx + 1) % waypoints.length);
+          continue;
+        }
+        const step = (speed * dt) / len;
+        t.obj.position.x += dx * step;
+        t.obj.position.y += dy * step;
+        t.obj.position.z += dz * step;
+      }
+      return;
+    }
+    // 轴往返模式：沿轴在起点与起点+距离之间三角波往返
+    const dist = numP(op, "distance", 6);
+    const speed = numP(op, "speed", 2);
+    const axis = strP(op, "axis", "x");
+    const period = speed > 0 && dist > 0 ? (2 * dist) / speed : 0;
+    if (period <= 0) return;
+    for (const t of targets) {
+      const key = `${op.id}\u0000${t.id}`;
+      let base = patrolBase.get(key);
+      if (!base) {
+        base = { x: t.obj.position.x, y: t.obj.position.y, z: t.obj.position.z };
+        patrolBase.set(key, base);
+      }
+      let phase = (patrolPhase.get(key) ?? 0) + dt;
+      if (phase >= period) phase -= period;
+      patrolPhase.set(key, phase);
+      const half = period / 2;
+      const off = (phase < half ? phase : period - phase) * speed;
+      if (axis === "z") t.obj.position.z = base.z + off;
+      else if (axis === "y") t.obj.position.y = base.y + off;
+      else t.obj.position.x = base.x + off;
+    }
+  }
+
+  /** 逐帧步进追击：朝 prey 实体匀速移动 */
+  function stepChase(op: GNode, targets: NodeObj[], dt: number): void {
+    const prey = evalDataInput(op.id, "prey");
+    const target = Array.isArray(prey) ? prey[0] ?? null : (prey as NodeObj | null);
+    if (!target) return;
+    const speed = numP(op, "speed", 3);
+    for (const t of targets) {
+      const dx = target.obj.position.x - t.obj.position.x;
+      const dy = target.obj.position.y - t.obj.position.y;
+      const dz = target.obj.position.z - t.obj.position.z;
+      const len = Math.hypot(dx, dy, dz);
+      if (len < 0.05) continue;
+      const step = (speed * dt) / len;
+      t.obj.position.x += dx * step;
+      t.obj.position.y += dy * step;
+      t.obj.position.z += dz * step;
+    }
+  }
+
+  /**
+   * 导航移动：被移动对象每帧贴合导航代理的位姿（位置 + 朝向 + 高度偏移）。
+   * 代理本体由导航运行时沿路径点巡回驱动——角色模型挂此操作即可"借"代理寻路
+   * 巡逻，而不必自身是导航代理。
+   */
+  function stepNavMove(op: GNode, targets: NodeObj[]): void {
+    const agentRaw = evalDataInput(op.id, "agent");
+    const agent = Array.isArray(agentRaw) ? agentRaw[0] ?? null : (agentRaw as NodeObj | null);
+    if (!agent) return;
+    const yOff = numP(op, "yOffset", 0);
+    for (const t of targets) {
+      t.obj.position.x = agent.obj.position.x;
+      t.obj.position.y = agent.obj.position.y + yOff;
+      t.obj.position.z = agent.obj.position.z;
+      t.obj.rotation.y = agent.obj.rotation.y;
+    }
+  }
+
+  /** 逻辑容器的逐帧驱动：条件边轮询（比较节点上升沿 → 事件切状态）+ 激活状态的巡逻/追击步进 */
+  function driveFsmContainers(dt: number): void {
+    for (const c of graph.nodes) {
+      if (c.type !== "fsm.container") continue;
+      // 条件边轮询：源为 flow.compare 的 event 入边，条件上升沿触发状态切换
+      for (const e of graph.edges) {
+        if (e.dstNode !== c.id || e.dstPort !== "event") continue;
+        const src = nodeOf(e.srcNode);
+        if (!src || src.type !== "flow.compare") continue;
+        const key = `${c.id}\u0000${e.srcNode}`;
+        const nowTrue = evalDataOutput(e.srcNode, "result") === true;
+        const prev = fsmCondState.get(key);
+        fsmCondState.set(key, nowTrue);
+        if (nowTrue && prev === false) {
+          enterFsmContainer(c, new Set(), strP(src, "event", ""), "event");
+        }
+      }
+      // 激活状态的巡逻/追击逐帧步进
+      const cur = fsmCurrent.get(c.id);
+      if (cur === undefined) continue;
+      for (const child of containerChildren(c.id)) {
+        if (child.stateName && child.stateName !== cur) continue;
+        const t = child.opType ?? child.type;
+        if (t !== "op.patrol" && t !== "op.chase") continue;
+        const targets = resolveTargets(child.id);
+        if (!targets.length) continue;
+        if (t === "op.patrol") stepPatrol(child, targets, dt);
+        else stepChase(child, targets, dt);
+      }
+    }
+  }
+  const fsmCondState = new Map<string, boolean>();
+
   return {
     update(dt: number) {
       elapsed += dt;
+      // 逻辑容器驱动：条件轮询 + 激活状态的巡逻/追击步进
+      driveFsmContainers(dt);
       // tick 链每帧级联（var.set/flow.* 等非 spin/bob 节点；spin/bob 由下方 frame 循环处理）
       for (const entryId of tickChainEntries) {
         cascadeExec(entryId);
@@ -556,6 +857,8 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
       for (const behavior of frameOps) {
         const { node, targets, baseY } = behavior;
         const opType = node.opType ?? node.type;
+        // 容器内帧行为：所属状态未激活时暂停（激活恢复后从基准位继续）
+        if (!nodeActive(node)) continue;
         if (opType === "op.spin") {
           const dx = numP(node, "speedX") * DEG * dt;
           const dy = numP(node, "speedY") * DEG * dt;
@@ -574,6 +877,12 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
             const base = baseY.get(t.id) ?? t.obj.position.y;
             t.obj.position.y = base + y;
           }
+        } else if (opType === "op.patrol") {
+          stepPatrol(node, targets, dt);
+        } else if (opType === "op.chase") {
+          stepChase(node, targets, dt);
+        } else if (opType === "op.navMove") {
+          stepNavMove(node, targets);
         }
       }
     },

@@ -301,7 +301,8 @@ class ImprovedNoise {
 const DEFAULTS = {
   seed: 1,
   size: 200,
-  segments: 192,
+  // 256（2 的幂）：与编辑器默认一致，保持四叉树顶点简化启用
+  segments: 256,
   heightScale: 65,
   frequency: 0.01,
   octaves: 5,

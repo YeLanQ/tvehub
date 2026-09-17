@@ -32,23 +32,26 @@ import GraphMathCard from "./GraphMathCard.vue";
 import GraphCustomCard from "./GraphCustomCard.vue";
 import GraphCommentBox from "./GraphCommentBox.vue";
 import { getGraphWindowStore } from "../graphStore";
+import { api } from "../../lib/api";
 import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
 import {
   canConnectPorts,
   graphNodeLabel,
-  graphOpDefaults,
-  graphOpDef,
   graphPort,
   GRAPH_DEFAULT_COMMENT_COLOR,
   GRAPH_OP_DEFS,
   G_OP_TRIGGER_LABEL,
+  nodeDefaults,
   nodeMenuGroups,
+  nodeTypeDef,
+  isContainerType,
 
   normalizeGraphDoc,
   type GComment,
   type GNode,
   type ScriptGraphDoc,
 } from "../../framework/graph";
+import GraphContainerCard from "./GraphContainerCard.vue";
 
 const store = getGraphWindowStore();
 
@@ -68,6 +71,8 @@ const {
   fitView,
   onConnect,
   onNodeDragStart,
+  onNodeDrag,
+  onNodeDragStop,
   onPaneContextMenu,
   onNodeContextMenu,
   onEdgeContextMenu,
@@ -84,6 +89,7 @@ let lastMouse: { x: number; y: number } | null = null;
 function flowNodeType(type: string): string {
   if (type === "entity.proto") return "gproto";
   if (type === "entity.match") return "gmatch";
+  if (isContainerType(type)) return "glogic";
   if (type.startsWith("op.")) return "gop";
   if (type.startsWith("event.")) return "gevent";
   if (type.startsWith("var.")) return "gvar";
@@ -94,7 +100,14 @@ function flowNodeType(type: string): string {
 }
 
 function toFlowNode(n: GNode): Node {
-  return { id: n.id, type: flowNodeType(n.type), position: { x: n.x, y: n.y }, data: { g: n } };
+  const base: Node = { id: n.id, type: flowNodeType(n.type), position: { x: n.x, y: n.y }, data: { g: n } };
+  // 容器卡：显式尺寸（组件按 g.w/g.h 渲染，先声明避免首帧测量抖动）；
+  // 容器压低 z 序，归属子卡片保持在上层可点/可连
+  if (n.w && n.h) {
+    base.style = { width: `${n.w}px`, height: `${n.h}px` };
+    base.zIndex = -10;
+  }
+  return base;
 }
 
 function toFlowComment(c: GComment): Node {
@@ -263,6 +276,7 @@ function addProto(entityId: string, at?: { x: number; y: number }): void {
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = { id: uniqueNodeId(), type: "entity.proto", x: Math.round(pos.x), y: Math.round(pos.y), entityId };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -277,11 +291,13 @@ function addMatch(mode: "tag" | "type", at?: { x: number; y: number }): void {
     matchMode: mode,
     matchPattern: "",
   };
+  assignContainer(n, pos);
   putNode(n);
 }
 
 function addOp(opType: string, at?: { x: number; y: number }): void {
-  if (!graphOpDef(opType)) return;
+  // 注册表驱动：通用操作（GRAPH_OP_DEFS）与驱动器（op.navMove/chase/patrol）都可建
+  if (!nodeTypeDef(opType)) return;
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = {
@@ -290,8 +306,9 @@ function addOp(opType: string, at?: { x: number; y: number }): void {
     x: Math.round(pos.x),
     y: Math.round(pos.y),
     opType,
-    params: graphOpDefaults(opType),
+    params: nodeDefaults(opType),
   };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -300,6 +317,7 @@ function addEvent(eventType: string, at?: { x: number; y: number }): void {
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = { id: uniqueNodeId(), type: eventType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -308,6 +326,7 @@ function addVarNode(varType: string, at?: { x: number; y: number }): void {
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = { id: uniqueNodeId(), type: varType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -318,6 +337,7 @@ function addFlowNode(flowType: string, at?: { x: number; y: number }): void {
   const n: GNode = { id: uniqueNodeId(), type: flowType, x: Math.round(pos.x), y: Math.round(pos.y) };
   if (flowType === "flow.compare") n.params = { operator: ">" };
   if (flowType === "flow.for") n.params = { start: 0, end: 10, step: 1 };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -326,7 +346,110 @@ function addMathNode(mathType: string, at?: { x: number; y: number }): void {
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = { id: uniqueNodeId(), type: mathType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  assignContainer(n, pos);
   putNode(n);
+}
+
+/** 添加逻辑容器（fsm.container / bt.container；大框卡，子节点以 containerId 归属，可嵌套） */
+function addLogicContainer(logicType: string, at?: { x: number; y: number }): void {
+  if (!isContainerType(logicType)) return;
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = {
+    id: uniqueNodeId(),
+    type: logicType,
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    w: 560,
+    h: 340,
+    params: nodeDefaults(logicType),
+  };
+  // 容器可嵌套：创建位置落在其他容器内时归属该容器
+  assignContainer(n, pos);
+  putNode(n);
+}
+
+// ---------------------------------------------------------------------------
+// 容器归属（节点即容器内容）：落点/位置落在容器 rect 内即归属（嵌套取最内层）
+// ---------------------------------------------------------------------------
+
+/** 命中测试：包含 pos 的最小面积容器（excludeId 及其祖先链排除），无则 null */
+function containerAt(pos: { x: number; y: number }, excludeId?: string): GNode | null {
+  let best: GNode | null = null;
+  let bestArea = Infinity;
+  for (const n of nodes.value) {
+    const g = n.data?.g as GNode | undefined;
+    if (!g || !isContainerType(g.type) || g.id === excludeId) continue;
+    const w = g.w ?? 560;
+    const h = g.h ?? 340;
+    if (pos.x < g.x || pos.y < g.y || pos.x > g.x + w || pos.y > g.y + h) continue;
+    const area = w * h;
+    if (area < bestArea) {
+      bestArea = area;
+      best = g;
+    }
+  }
+  return best;
+}
+
+/** 位置归属容器（排除自身；排除会成环的目标——自身已在目标容器内的情况） */
+function assignContainer(n: GNode, pos: { x: number; y: number }): void {
+  const target = containerAt(pos, n.id);
+  if (!target) {
+    delete n.containerId;
+    return;
+  }
+  // 防环：目标容器的祖先链包含自身则不归属
+  let cur = target.containerId;
+  const guard = new Set<string>([n.id]);
+  while (cur && !guard.has(cur)) {
+    guard.add(cur);
+    cur = (nodes.value.find((x) => (x.data?.g as GNode | undefined)?.id === cur)?.data?.g as GNode | undefined)?.containerId;
+  }
+  if (cur === n.id) return;
+  n.containerId = target.id;
+}
+
+/** 容器拖动：整棵子树随容器平移（嵌套容器递归），并同步各节点的 g.x/g.y */
+function moveSubtree(containerId: string, dx: number, dy: number): void {
+  for (const n of nodes.value) {
+    const g = n.data?.g as GNode | undefined;
+    if (!g || g.containerId !== containerId) continue;
+    n.position = { x: n.position.x + dx, y: n.position.y + dy };
+    g.x = Math.round(n.position.x);
+    g.y = Math.round(n.position.y);
+    if (isContainerType(g.type)) moveSubtree(g.id, dx, dy);
+  }
+}
+
+const dragPrev = new Map<string, { x: number; y: number }>();
+
+/** 拖拽中：容器拖动带动子树；坐标回写 g.x/g.y（容器命中测试依赖它）；结束按位置重算归属 */
+function onNodeDragProcess(node: Node, isStop: boolean): void {
+  const g = node.data?.g as GNode | undefined;
+  if (!g) return;
+  const prev = dragPrev.get(node.id);
+  if (prev && isContainerType(g.type)) {
+    const dx = node.position.x - prev.x;
+    const dy = node.position.y - prev.y;
+    if (dx || dy) moveSubtree(g.id, dx, dy);
+  }
+  // 坐标回写：containerAt 用 g.x/g.y 判定归属，拖动后必须同步，否则命中测试
+  // 用的是过期矩形（表现为卡片拖进容器无法嵌入）
+  g.x = Math.round(node.position.x);
+  g.y = Math.round(node.position.y);
+  dragPrev.set(node.id, { x: node.position.x, y: node.position.y });
+  if (isStop) {
+    dragPrev.delete(node.id);
+    // 拖拽结束：按最终位置重算归属（容器拖动带动子树后子节点位置不变，跳过容器自身）
+    if (!isContainerType(g.type)) {
+      assignContainer(g, { x: g.x, y: g.y });
+    } else {
+      // 容器被拖入其他容器内则归属（嵌套）
+      assignContainer(g, { x: g.x + 8, y: g.y + 8 });
+    }
+    store.markGraphDirty();
+  }
 }
 
 /** 添加自定义节点（custom.xxx） */
@@ -334,6 +457,7 @@ function addCustomNode(customType: string, at?: { x: number; y: number }): void 
   requestSnapshot();
   const pos = at ?? mouseFlow();
   const n: GNode = { id: uniqueNodeId(), type: customType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  assignContainer(n, pos);
   putNode(n);
 }
 
@@ -358,7 +482,19 @@ function deleteSelection(): void {
   const selEdges = getSelectedEdges.value;
   if (!sel.length && !selEdges.length) return;
   requestSnapshot();
-  if (sel.length) removeNodes(sel);
+  // 容器删除级联：归属子树（含嵌套容器）一并删除
+  const doomed = new Set(sel.map((n) => n.id));
+  const expand = (id: string): void => {
+    for (const n of nodes.value) {
+      const g = n.data?.g as GNode | undefined;
+      if (!g || g.containerId !== id || doomed.has(n.id)) continue;
+      doomed.add(n.id);
+      if (isContainerType(g.type)) expand(g.id);
+    }
+  };
+  for (const n of sel) if (n.type !== "gcomment") expand(n.id);
+  const all = nodes.value.filter((n) => doomed.has(n.id));
+  if (all.length) removeNodes(all);
   if (selEdges.length) removeEdges(selEdges);
   store.setSelection(null, false);
   store.markGraphDirty();
@@ -400,17 +536,28 @@ function paste(at?: { x: number; y: number }): void {
   const dy = Math.round(anchor.y - (minY + (maxY - minY) / 2));
 
   const idMap = new Map<string, string>();
+  // 先为全部剪贴板元素分配新 id（容器归属重映射需要完整映射，与顺序无关）
+  for (const n of clip.nodes) {
+    const isCard = n.type !== "gcomment";
+    const ref = (n.data?.g ?? n.data?.c) as { id: string } | undefined;
+    if (ref?.id) idMap.set(ref.id, isCard ? uniqueNodeId() : uniqueCommentId());
+  }
   const newNodes: Node[] = clip.nodes.map((n) => {
     const isCard = n.type !== "gcomment";
-    const newId = isCard ? uniqueNodeId() : uniqueCommentId();
+    const ref = (n.data?.g ?? n.data?.c) as { id: string } | undefined;
+    const newId = idMap.get(ref?.id ?? "") ?? (isCard ? uniqueNodeId() : uniqueCommentId());
     if (n.type === "gcomment") {
       const c = n.data?.c as GComment;
-      idMap.set(c.id, newId);
       return toFlowComment({ ...c, id: newId, x: c.x + dx, y: c.y + dy });
     }
     const g = n.data?.g as GNode;
-    idMap.set(g.id, newId);
-    return toFlowNode({ ...JSON.parse(JSON.stringify(g)), id: newId, x: g.x + dx, y: g.y + dy });
+    const copy = JSON.parse(JSON.stringify({ ...g, id: newId, x: g.x + dx, y: g.y + dy })) as GNode;
+    // 容器归属重映射：随复制容器走；原容器不在复制集内则清除归属
+    if (copy.containerId) {
+      copy.containerId = idMap.get(copy.containerId) ?? "";
+      if (!copy.containerId) delete copy.containerId;
+    }
+    return toFlowNode(copy);
   });
   const newEdges: Edge[] = clip.edges
     .filter((e) => idMap.has(e.srcNode) && idMap.has(e.dstNode))
@@ -445,7 +592,92 @@ onConnect((params) => {
   if (occupied.length) removeEdges(occupied);
   addEdges([makeEdge(params.source, params.sourceHandle ?? "", params.target, params.targetHandle ?? "", uniqueEdgeId())]);
   store.markGraphDirty();
+  // 状态机卡片接入状态机容器：容器自动读取该卡片绑定的 .fsm 资产状态
+  void importFsmStatesIfWired(params.source, params.target, params.targetHandle ?? "");
 });
+
+/**
+ * 逻辑容器接入原型卡：连线落到容器「作用域」入端口且源是携带对应逻辑资产
+ * 的原型卡时，读取资产写回容器——
+ * - fsm.container + .fsm：状态名写入状态列表，initial 取入口状态；
+ * - bt.container + .bt：模式取树根类型，并统计树节点构成写入摘要。
+ * 读取失败仅提示，不阻断连线。
+ */
+interface FsmAssetGraph {
+  states?: { id?: string; name?: string }[];
+  entry?: string;
+}
+
+interface BtAssetNode {
+  type?: string;
+  children?: BtAssetNode[];
+}
+
+async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPort: string): Promise<void> {
+  const container = findNode(targetId)?.data?.g as GNode | undefined;
+  if (!container || !isContainerType(container.type) || dstPort !== "in") return;
+  const isFsm = container.type === "fsm.container";
+  const wantKind = isFsm ? "fsm" : "bt";
+  const source = findNode(sourceId)?.data?.g as GNode | undefined;
+  if (!source || source.type !== "entity.proto") return;
+  const entity = store.sceneEntities.find((e) => e.id === source.entityId);
+  if (!entity || entity.logic?.kind !== wantKind) {
+    store.showToast(isFsm ? "作用域需接入携带 .fsm 的状态机原型卡" : "作用域需接入携带 .bt 的行为树原型卡");
+    return;
+  }
+  const asset = entity.logic.asset;
+  if (!asset) {
+    store.showToast(`该原型未绑定 .${wantKind} 资产，容器无法读取`);
+    return;
+  }
+  const root = store.root;
+  if (!root) return;
+  try {
+    const text = await api.readText(root, asset);
+    const parsed = JSON.parse(text ?? "{}") as Record<string, unknown>;
+    if (isFsm) {
+      const graph = ((parsed.graph ?? parsed) ?? {}) as FsmAssetGraph;
+      const names = (Array.isArray(graph.states) ? graph.states : [])
+        .map((s) => (typeof s.name === "string" ? s.name.trim() : ""))
+        .filter(Boolean);
+      if (!names.length) {
+        store.showToast("状态机资产内没有状态");
+        return;
+      }
+      const entryState = (graph.states ?? []).find((s) => s.id === graph.entry)?.name ?? "";
+      if (!container.params || typeof container.params !== "object") container.params = {};
+      container.params.states = names.join(",");
+      container.params.initial = names.includes(entryState) ? entryState : names[0];
+      store.markGraphDirty();
+      store.showToast(`状态机容器已读取状态：${names.join(" / ")}`);
+      return;
+    }
+    // bt.container：模式取树根类型；统计树节点构成写入摘要 chips
+    const tree = ((parsed.tree ?? parsed) ?? {}) as BtAssetNode;
+    const counts = new Map<string, number>();
+    let total = 0;
+    const walk = (n: BtAssetNode | undefined): void => {
+      if (!n || typeof n !== "object") return;
+      total += 1;
+      const t = typeof n.type === "string" ? n.type : "?";
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+      for (const c of Array.isArray(n.children) ? n.children : []) walk(c);
+    };
+    walk(tree);
+    if (!total) {
+      store.showToast("行为树资产内没有节点");
+      return;
+    }
+    const rootType = typeof tree.type === "string" ? tree.type : "sequence";
+    if (!container.params || typeof container.params !== "object") container.params = {};
+    container.params.mode = rootType;
+    container.params.treeSummary = `${total} 节点 · ${[...counts.entries()].map(([t, c]) => `${t}×${c}`).join("、")}`;
+    store.markGraphDirty();
+    store.showToast(`行为树容器已读取资产：${total} 个节点`);
+  } catch (e) {
+    store.showToast(`读取逻辑资产失败: ${e}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 选区 / 拖拽 / 层级拖入 / 右键菜单
@@ -462,6 +694,8 @@ watch(getSelectedNodes, (sel: GraphNode[]) => {
 });
 
 onNodeDragStart(() => requestSnapshot());
+onNodeDrag(({ node }) => onNodeDragProcess(node, false));
+onNodeDragStop(({ node }) => onNodeDragProcess(node, true));
 
 /** 层级面板拖入：dragover 需 preventDefault 才允许 drop */
 function onDragOver(e: DragEvent): void {
@@ -507,12 +741,25 @@ onPaneContextMenu((event) => {
     label: d.label,
     onClick: () => addCustomNode(d.type, ctxFlowPos),
   }));
-  const opItems: CtxMenuItem[] = GRAPH_OP_DEFS.map((d) => ({
+  // 驱动器（帧驱动的移动类操作）与其余原子操作分组展示
+  const DRIVER_OP_TYPES = new Set(["op.patrol", "op.chase", "op.navMove"]);
+  const opItems: CtxMenuItem[] = GRAPH_OP_DEFS.filter((d) => !DRIVER_OP_TYPES.has(d.type)).map((d) => ({
     label: `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）`,
     onClick: () => addOp(d.type, ctxFlowPos),
   }));
+  const driverItems: CtxMenuItem[] = [
+    { label: "导航移动（跟随 Nav Agent）", onClick: () => addOp("op.navMove", ctxFlowPos) },
+    { label: "追击目标", onClick: () => addOp("op.chase", ctxFlowPos) },
+    { label: "路径巡逻", onClick: () => addOp("op.patrol", ctxFlowPos) },
+  ];
+  const logicItems: CtxMenuItem[] = (nodeMenuGroups().find((g) => g.category === "logic")?.items ?? []).map((d) => ({
+    label: d.label,
+    onClick: () => addLogicContainer(d.type, ctxFlowPos),
+  }));
   const items: CtxMenuItem[] = [
     { label: "添加事件", children: eventItems },
+    { label: "添加逻辑容器", children: logicItems },
+    { label: "添加驱动器", children: driverItems },
     { label: "添加变量节点", children: varItems },
     { label: "添加控制流", children: flowItems },
     { label: "添加数学/工具", children: mathItems },
@@ -625,6 +872,9 @@ onBeforeUnmount(() => {
     >
       <template #node-gproto="p">
         <GraphProtoCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-glogic="p">
+        <GraphContainerCard :id="p.id" :data="p.data" :selected="p.selected" />
       </template>
       <template #node-gmatch="p">
         <GraphMatchCard :id="p.id" :data="p.data" :selected="p.selected" />
