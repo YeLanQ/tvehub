@@ -24,13 +24,17 @@ createApp(HomeView).mount("#app");
 
 if (isTauri()) {
   // 窗口在配置中以 visible:false 创建：等首帧渲染完成后再显示，
-  // 避免 WebView2 就绪前的白屏闪过。双 rAF 确保内容已提交渲染。
-  requestAnimationFrame(() => {
+  // 避免 WebView2 就绪前的白屏闪过。双 rAF 确保内容已提交渲染；
+  // 隐藏窗口的 rAF 可能被 WebView2 节流（永不触发），用短超时兜底放行，
+  // 否则首页会卡在隐藏态永不显示。
+  const shown = new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
-      getCurrentWindow()
-        .show()
-        .then(() => debugLog("boot", "home window shown"))
-        .catch((e) => debugLog("boot", `show home window failed: ${e}`));
+      requestAnimationFrame(() => resolve());
     });
   });
+  const fallback = new Promise<void>((resolve) => setTimeout(resolve, 250));
+  void Promise.race([shown, fallback])
+    .then(() => getCurrentWindow().show())
+    .then(() => debugLog("boot", "home window shown"))
+    .catch((e) => debugLog("boot", `show home window failed: ${e}`));
 }

@@ -413,7 +413,8 @@ struct PendingProjectPayload {
 }
 
 /// 显示目标窗口并写入待交付项目（统一入口：首页打开编辑器/图窗口均经此）。
-/// 编辑器窗口（label 以 "editor-" 前缀）不存在时动态创建；冷启动时窗口 listen 未就绪，
+/// 编辑器（editor-*）与场景图（graph-*）窗口不存在时按 label 前缀动态创建
+/// （多会话：每个会话独立窗口，关闭即销毁）；冷启动时窗口 listen 未就绪，
 /// 事件广播会丢失，由窗口启动后主动 take_pending_project 拉取。
 #[tauri::command]
 async fn show_window_with_project(
@@ -432,16 +433,37 @@ async fn show_window_with_project(
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.show();
         let _ = w.set_focus();
-    } else if label.starts_with("editor-") {
-        // 动态创建编辑器窗口（多会话：每个项目独立窗口 + 独立引擎实例）
-        // 窗口保持隐藏，前端 App.vue standby() 布防蒙版后主动 show()，避免空白闪现
+    } else if label.starts_with("editor-") || label.starts_with("graph-") {
+        // 动态创建窗口（多会话：每个会话独立窗口 + 独立引擎实例，关闭即销毁）
+        // 窗口保持隐藏，前端布防装载蒙版后主动 show()，避免空白闪现
         // 背景色取编辑器主题底色（--bg #1a1a2e）：WebView 首帧呈现前原生窗口
         // 默认白底，加载过快时 show 与揭幕贴近，白底会以"闪屏"形式露出来
-        let title = format!("TvE Editor – {}", state.0.lock().unwrap().get(&label).map(|p| p.name.as_str()).unwrap_or(""));
-        let _w = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+        let pending = state
+            .0
+            .lock()
+            .unwrap()
+            .get(&label)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let (url, title, min_w, min_h) = if label.starts_with("editor-") {
+            (
+                tauri::WebviewUrl::App("index.html".into()),
+                format!("TvE Editor – {pending}"),
+                1300.0,
+                860.0,
+            )
+        } else {
+            (
+                tauri::WebviewUrl::App("graph.html".into()),
+                format!("TvE Graph – {pending}"),
+                960.0,
+                600.0,
+            )
+        };
+        let _w = tauri::WebviewWindowBuilder::new(&app, &label, url)
             .title(title)
             .inner_size(1300.0, 860.0)
-            .min_inner_size(1300.0, 860.0)
+            .min_inner_size(min_w, min_h)
             .visible(false)
             .decorations(false)
             .background_color(tauri::window::Color(26, 26, 46, 255))
@@ -477,18 +499,14 @@ async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 窗口关闭行为（声明式生命周期配置）
 enum CloseAction {
-    /// 隐藏窗口（常驻，保留前端状态），可选显示另一窗口
-    Hide { show: Option<&'static str> },
     /// 退出应用
     Exit,
 }
 
 /// 窗口生命周期配置表：新增可重开窗口只需在此加一行，不再改 on_window_event match。
-/// 动态编辑器窗口（label "editor-*"）不在表中 → 走默认销毁（关闭即释放资源）。
-const WINDOW_LIFECYCLE: &[(&str, CloseAction)] = &[
-    ("graph", CloseAction::Hide { show: None }),
-    ("home", CloseAction::Exit),
-];
+/// 动态编辑器/图窗口（label "editor-*" / "graph-*"）不在表中 → 走默认销毁
+/// （关闭即释放 Webview + 引擎资源，多会话：每次打开创建新窗口）。
+const WINDOW_LIFECYCLE: &[(&str, CloseAction)] = &[("home", CloseAction::Exit)];
 
 // ---------------------------------------------------------------------------
 // base64（免第三方依赖：预览二进制贴图导出 + 前端纹理读取共用）
@@ -664,24 +682,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             let label = window.label().to_string();
             // 窗口关闭行为查 WINDOW_LIFECYCLE 表：新增可重开窗口只需在表里加一行，
-            // 不再改本闭包。home 关闭 = 退出应用；graph 关闭 = 隐藏保留前端状态。
-            // 动态编辑器窗口（editor-*）不在表中 → 走默认销毁（关闭即释放引擎+GPU+Worker）。
+            // 不再改本闭包。home 关闭 = 退出应用。
+            // 动态编辑器/图窗口（editor-* / graph-*）不在表中 → 走默认销毁
+            // （关闭即释放 Webview + 引擎 + GPU + Worker）。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let action = WINDOW_LIFECYCLE
                     .iter()
                     .find(|(l, _)| *l == label)
                     .map(|(_, a)| a);
                 match action {
-                    Some(CloseAction::Hide { show }) => {
-                        api.prevent_close();
-                        let _ = window.hide();
-                        if let Some(target) = show {
-                            if let Some(w) = window.app_handle().get_webview_window(target) {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
-                    }
                     Some(CloseAction::Exit) => {
                         window.app_handle().exit(0);
                     }

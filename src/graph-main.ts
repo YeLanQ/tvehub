@@ -1,7 +1,8 @@
-// 场景图窗口入口（Tauri 窗口 label "graph"，url graph.html）：
-// 与编辑器窗口（main）同级、常驻隐藏的统一节点图编辑器。窗口内继承层级/资产/
-// 预览（层级经共享场景会话读取，预览导出与编辑器同一链路）。打开体验与编辑器
-// 一致：窗口由 Hub「打开场景图」经统一窗口交接（window-handoff）交付项目。
+// 场景图窗口入口（多会话：Tauri 动态窗口 label "graph-N"，url graph.html）：
+// 与编辑器窗口（editor-*）同级的多会话节点图编辑器——每次从 Hub「打开场景图」
+// 动态创建独立窗口，关闭即销毁（Webview + 图引擎整体释放）。窗口内继承层级/
+// 资产/预览（层级经共享场景会话读取，预览导出与编辑器同一链路）。打开体验与
+// 编辑器一致：统一窗口交接交付项目。
 // 双渠道：后端待交付状态（冷启动拉取兜底）+ window:project-open 事件（热启动直达）。
 import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";
@@ -12,6 +13,7 @@ import { getGraphBootStore } from "./graph-window/boot-loading";
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
 import { api } from "./lib/api";
+import { sceneApi } from "./lib/scene-api";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
 import "./styles/global.scss";
 
@@ -33,6 +35,7 @@ if (!isTauri()) {
   // 浏览器直开 graph.html：没有窗口系统与后端，降级提示（功能在桌面端可用）
   store.markDegraded();
 } else {
+  const myLabel = getCurrentWindow().label;
   // 冷启动补偿：统一交接写入后端待交付状态，事件广播可能在 listen 安装前丢失。
   // 这里主动拉取（取走后清空），保证首次打开也拿到项目。
   void api
@@ -49,7 +52,7 @@ if (!isTauri()) {
   void listen<WindowProjectPayload & { label: string }>(
     "window:project-open",
     (e) => {
-      if (e.payload.label !== "graph") return;
+      if (e.payload.label !== myLabel) return;
       debugLog("boot", `graph window got project: ${e.payload.name}`);
       void store.applyProject(e.payload.root, e.payload.name);
     },
@@ -59,13 +62,15 @@ if (!isTauri()) {
     if (!store.root || e.payload.root !== store.root) return;
     void store.handleFsChanged(e.payload.paths);
   });
-  // 蒙版布防：窗口保持隐藏，统一交接显示时蒙版已在（与编辑器窗口的 BootMask
-  // 布防一致，杜绝旧内容闪现）
+  // 蒙版布防：多会话窗口由 Rust 动态创建时隐藏，挂载前布防 → 初始渲染即含蒙版
+  // （GraphApp onMounted 等首帧呈现后 show），杜绝空白/旧内容闪现
   getGraphBootStore().standby();
-  // 窗口关闭请求（X 按钮 / 系统关闭）：Rust 侧 prevent_close + hide，前端收到
-  // 事件后立即布防蒙版，下次 show 窗口时蒙版已就位，杜绝旧场景闪现。
+  // 窗口关闭（X 按钮 / 系统关闭）：多会话架构走默认销毁（Rust 侧不 prevent_close）。
+  // 销毁前刷写防抖中的图会话存盘并关闭本窗口的后端场景会话（按窗口 label 分键），
+  // 释放会话内存；Webview + 图引擎随窗口销毁整体释放。
   void getCurrentWindow().onCloseRequested(() => {
-    getGraphBootStore().standby();
+    void store.flushGraph();
+    void sceneApi.close().catch(() => {});
   });
 }
 

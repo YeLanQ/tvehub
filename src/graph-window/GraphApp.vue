@@ -10,13 +10,14 @@
  * 快捷键：Ctrl+Z/Y 会话撤销重做、Ctrl+C/V 剪贴板、Delete 删除、F 适配视图
  * （文本输入焦点时让位给 WebView 默认行为）。
  */
-import { onMounted, onUnmounted, type Component } from "vue";
+import { nextTick, onMounted, onUnmounted, type Component } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ContextMenu from "../ui-kit/components/ContextMenu.vue";
 import WindowControls from "../ui-kit/components/WindowControls.vue";
 import { isTauri } from "../lib/tauri-env";
 import { isEditingText } from "../app/commands/context";
 import { getGraphWindowStore } from "./graphStore";
+import { getGraphBootStore } from "./boot-loading";
 import { graphDocks } from "./docks";
 import type { DockZoneId } from "../docks/types";
 import DockZone from "../docks/DockZone.vue";
@@ -119,9 +120,23 @@ function onPageHide(): void {
   void store.flushGraph();
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   window.addEventListener("pagehide", onPageHide);
+  if (isTauri()) {
+    // 多会话：窗口由 Rust 动态创建时隐藏，布防已在 graph-main 挂载前完成
+    // （初始渲染即含蒙版）。等含蒙版的首帧呈现后再 show（双 rAF 等合成器
+    // 提交，隐藏窗口 rAF 被节流时由超时兜底；原生背景色为深色不露白）
+    getGraphBootStore().standby();
+    await nextTick();
+    await Promise.race([
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, 250)),
+    ]);
+    void getCurrentWindow().show().catch(() => {});
+  }
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
