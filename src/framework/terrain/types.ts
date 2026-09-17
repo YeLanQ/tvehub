@@ -50,7 +50,9 @@ export interface TerrainSettings {
 export const DEFAULT_TERRAIN_SETTINGS: TerrainSettings = {
   seed: 1,
   size: 200,
-  segments: 192,
+  // 256（2 的幂）：自适应四叉树顶点简化（simplify）要求 segments 为 2 的幂，
+  // 非 2 次幂会静默回退均匀网格（无顶点优化），新建地形默认必须持有优化
+  segments: 256,
   heightScale: 65,
   frequency: 0.01,
   octaves: 5,

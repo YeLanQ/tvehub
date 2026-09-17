@@ -53,7 +53,7 @@ console.log("[1] 数据层：默认值 / parse 收敛 / 深拷贝 / 签名");
 {
   const d = DEFAULT_TERRAIN_SETTINGS;
   check("默认设置齐全（17 字段）", Object.keys(d).length === 17);
-  check("默认 segments/size 为示例同款", d.segments === 192 && d.size === 200);
+  check("默认 segments/size（256 = 2 的幂，默认持有四叉树顶点优化）", d.segments === 256 && d.size === 200);
 
   // 缺失字段 → 全默认
   const empty = parseTerrainSettings(undefined);
@@ -163,9 +163,19 @@ console.log("[3] 程序化生成：确定性 / 几何规模 / 采样 / 顶点色
 
   const pos = a.geometry.getAttribute("position") as THREE.BufferAttribute;
   const idx = a.geometry.getIndex();
-  check("顶点数 = (segments+1)²", pos.count === 33 * 33);
-  check("索引覆盖全部 quad（菱形三角化）", idx !== null && idx.count === 32 * 32 * 6);
-  check("颜色属性存在且规模一致", (a.geometry.getAttribute("color") as THREE.BufferAttribute).count === pos.count);
+  // segments=32 是 2 的幂 → 四叉树顶点简化启用：顶点/索引 ≤ 全网格规模，
+  // 且三角形索引全部落在顶点范围内
+  check("顶点数 ≤ (segments+1)²（简化启用）", pos.count <= 33 * 33 && pos.count > 33 * 2);
+  let maxIdx = 0;
+  if (idx) {
+    const arr = idx.array as ArrayLike<number>;
+    for (let i = 0; i < arr.length; i++) if (arr[i] > maxIdx) maxIdx = arr[i];
+  }
+  check(
+    "索引规模合法（3 的倍数、不越界、至少 4 个三角形）",
+    idx !== null && idx.count % 3 === 0 && idx.count >= 12 && maxIdx < pos.count,
+  );
+  check("颜色纹理已烘焙（DataTexture）", !!a.colorTexture && (a.colorTexture as THREE.DataTexture).isDataTexture === true);
   check("法线已计算", a.geometry.getAttribute("normal") !== undefined);
 
   // 包围：XZ 在 ±size/2，Y 在 [minY, maxY]
@@ -179,17 +189,6 @@ console.log("[3] 程序化生成：确定性 / 几何规模 / 采样 / 顶点色
   }
   check("XZ 包围在 ±size/2 且 Y 在 [minY, maxY]", within);
   check("有限高度（无 NaN）", Number.isFinite(a.minY) && Number.isFinite(a.maxY));
-
-  // 顶点色归一（线性空间 0..1）
-  const col = a.geometry.getAttribute("color") as THREE.BufferAttribute;
-  let colorsOk = true;
-  for (let i = 0; i < col.count && colorsOk; i++) {
-    for (let k = 0; k < 3; k++) {
-      const v = col.array instanceof Float32Array ? col.array[i * 3 + k] : 0;
-      if (!(v >= 0 && v <= 1)) colorsOk = false;
-    }
-  }
-  check("顶点色在 [0,1]", colorsOk);
 
   // 采样：网格点处 sampleHeight == heights；格中点落在两端之间
   const half = a.size / 2;
@@ -206,6 +205,18 @@ console.log("[3] 程序化生成：确定性 / 几何规模 / 采样 / 顶点色
   const args = addNodeArgs("terrain", "root");
   check("node-menu terrain → kind terrain", args !== null && args.kind === "terrain");
   check("菜单类型串全部可映射", collectAddMenuTypes(items).every((t) => addNodeArgs(t, "root") !== null));
+
+  // 默认参数（segments=256，2 的幂）→ 四叉树顶点简化必须启用：
+  // 顶点数严格小于全网格（257²），且非 2 次幂（192）才回退全网格
+  const def = buildTerrain(DEFAULT_TERRAIN_SETTINGS);
+  const defPos = def.geometry.getAttribute("position") as THREE.BufferAttribute;
+  check(
+    "默认参数持有顶点优化（顶点数 < (segments+1)²）",
+    defPos.count < 257 * 257 && defPos.count > 0,
+  );
+  const legacy = buildTerrain(parseTerrainSettings({ ...DEFAULT_TERRAIN_SETTINGS, segments: 192 }));
+  const legacyPos = legacy.geometry.getAttribute("position") as THREE.BufferAttribute;
+  check("非 2 次幂 segments 回退均匀网格（顶点数 = (segments+1)²）", legacyPos.count === 193 * 193);
 }
 
 // ===========================================================================
@@ -227,24 +238,27 @@ console.log("[4] 同步器：__terrainMesh / 层跟随 / 签名重建");
   const obj = sync.getObjectMap().get(node.id)!;
   check("地形节点映射为 Group", (obj as THREE.Group).isGroup === true);
   check("nodeKind 标记", obj.userData.nodeKind === "terrainNode");
-  const mesh = obj.children.find((c) => c.name === "__terrainMesh") as THREE.Mesh | undefined;
-  check("同步器挂 __terrainMesh", !!mesh && mesh.isMesh === true);
-  check("网格跟随节点层", !!mesh && mesh.layers.mask === obj.layers.mask);
-  check("投射/接收阴影", !!mesh && mesh.castShadow === true && mesh.receiveShadow === true);
-  const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
-  check("顶点色材质", !!mat && mat.vertexColors === true);
+  const group = obj.children.find((c) => c.name === "__terrainMesh") as THREE.Group | undefined;
+  check("同步器挂 __terrainMesh 组（4×4 分块）", !!group && group.isGroup === true && group.children.length === 16);
+  const chunk0 = group?.children[0] as THREE.Mesh | undefined;
+  check("分块为 Mesh", !!chunk0 && chunk0.isMesh === true);
+  check("网格跟随节点层", !!chunk0 && chunk0.layers.mask === obj.layers.mask);
+  check("投射/接收阴影", !!chunk0 && chunk0.castShadow === true && chunk0.receiveShadow === true);
+  const mat = group?.userData.terrainMaterial as THREE.MeshStandardMaterial | undefined;
+  check("颜色纹理材质（map = colorTexture）", !!mat && !!mat.map);
 
-  const sig1 = mesh?.userData.terrainSig;
-  const geoBefore = mesh?.geometry;
+  const sig1 = group?.userData.terrainSig;
+  const geoBefore = chunk0?.geometry;
   // 设置不变：重复刷新不重建
   sync.onGraphChange({ kind: "properties", nodeId: node.id } as never, graph);
-  const meshAfterNoop = obj.children.find((c) => c.name === "__terrainMesh") as THREE.Mesh;
-  check("设置未变不重建几何", meshAfterNoop.geometry === geoBefore);
+  const chunkNoop = (obj.children.find((c) => c.name === "__terrainMesh") as THREE.Group).children[0] as THREE.Mesh;
+  check("设置未变不重建几何", chunkNoop.geometry === geoBefore);
   // 设置变化：签名变化重建
   node.terrain = parseTerrainSettings({ size: 100, segments: 32, seed: DEFAULT_TERRAIN_SETTINGS.seed + 5 });
   sync.onGraphChange({ kind: "properties", nodeId: node.id } as never, graph);
-  const mesh2 = obj.children.find((c) => c.name === "__terrainMesh") as THREE.Mesh;
-  check("设置变化重建几何", mesh2.geometry !== geoBefore && mesh2.userData.terrainSig !== sig1);
+  const group2 = obj.children.find((c) => c.name === "__terrainMesh") as THREE.Group;
+  const chunk2 = group2.children[0] as THREE.Mesh;
+  check("设置变化重建几何", chunk2.geometry !== geoBefore && group2.userData.terrainSig !== sig1);
   check("旧几何已释放", (geoBefore as THREE.BufferGeometry | null) !== null);
 }
 

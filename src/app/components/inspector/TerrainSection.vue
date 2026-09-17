@@ -195,6 +195,14 @@ function hexToNum(hex: string): number {
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
+/** 吸附到最近且落在取值域内的 2 的幂：自适应四叉树顶点简化要求 segments
+ *  为 2 的幂（≥4），非 2 次幂会静默回退均匀网格（无顶点优化） */
+function snapSegments(v: number): number {
+  const clamped = clamp(Math.round(v), L.segments.min, L.segments.max);
+  const a = 2 ** Math.floor(Math.log2(clamped));
+  const b = 2 ** Math.ceil(Math.log2(clamped));
+  return clamp((clamped - a) <= (b - clamped) ? a : b, L.segments.min, L.segments.max);
+}
 function onColor(label: string, e: Event): void {
   emit("update", label, hexToNum((e.target as HTMLInputElement).value));
 }
@@ -301,14 +309,14 @@ function onColor(label: string, e: Event): void {
       />
     </div>
     <div class="field">
-      <label title="Segments：每边网格数（顶点数 = (N+1)²）。越大越细腻，重建越慢">Segments</label>
+      <label title="Segments：每边网格数（顶点数 = (N+1)²）。越大越细腻，重建越慢；须为 2 的幂以启用自适应顶点优化（平坦区域自动降密度）">Segments</label>
       <NumberField
         :model-value="s.segments"
         :step="16"
         :min="L.segments.min"
         :max="L.segments.max"
-        title="每边网格数"
-        @commit="(v) => emit('update', 'Set Segments', clamp(Math.round(v), L.segments.min, L.segments.max))"
+        title="每边网格数（自动取最近的 2 的幂：64/128/256…，以启用顶点优化）"
+        @commit="(v) => emit('update', 'Set Segments', snapSegments(v))"
       />
     </div>
     <div class="field">
