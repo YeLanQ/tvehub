@@ -193,7 +193,7 @@ onUnmounted(() => {
 
             <button title="撤销（Ctrl+Z，会话内）" @click="store.canvas?.undo()">撤销</button>
             <button title="重做（Ctrl+Y）" @click="store.canvas?.redo()">重做</button>
-            <span class="gsave-state" title="脚本图随场景自动保存（.tve 旁路，不产生图资产）">
+            <span class="gsave-state" title="脚本图随场景自动保存（graph/ 目录）">
               {{ store.graphDirty ? "自动保存中…" : store.lastSavedAt ? `已保存 ${store.lastSavedAt}` : "" }}
             </span>
             <button title="关闭脚本图窗口" @click="closeWindow()">关闭</button>

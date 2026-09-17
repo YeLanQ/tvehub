@@ -9,7 +9,7 @@
 //   项目配置的主场景（空则兜底），可在资产面板双击场景切换；层级/实体索引
 //   只反映本窗口会话，与编辑器窗口互不干扰；
 // - 场景实体索引：sceneApi.doc() 遍历为扁平实体表（原型卡片实时属性/匹配求值）；
-// - 图会话：随场景自动持久化到 .tve/script-graph/ 旁路（用户不感知文件），
+// - 图会话：随场景自动持久化到 graph/ 目录（与 assets/src 同级），
 //   防抖自动保存；预览导出时随产物注入（script-graph.json）由运行时解释执行；
 // - 画布桥：GraphCanvas 挂载时注入（拖入原型/建操作/剪贴板/会话快照 undo）。
 // ---------------------------------------------------------------------------
@@ -74,9 +74,9 @@ export interface GraphModalState {
   resolve: ((v: string | null) => void) | null;
 }
 
-  /** 场景 → 侧车文件相对路径（.tve 旁路，用户不感知；dot 目录不进资产/meta） */
+  /** 场景 → 脚本图文件相对路径（graph/ 目录，与 assets/src 同级） */
   function sidecarRel(sceneRel: string): string {
-    return `.tve/script-graph/${sceneRel.replace(/\//g, "__")}.json`;
+    return `graph/${sceneRel.replace(/\//g, "__")}.json`;
   }
 
 interface GraphWindowStore {
@@ -192,7 +192,7 @@ export function getGraphWindowStore(): GraphWindowStore {
     }, 4000);
   }
 
-  /** 会话图落盘（.tve 旁路；点目录不进资产面板与 .meta） */
+  /** 会话图落盘（graph/ 目录；与 assets/src 同级） */
   async function writeSidecar(): Promise<void> {
     const root = state.root;
     if (!root) return;

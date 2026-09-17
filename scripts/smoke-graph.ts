@@ -444,8 +444,8 @@ console.log("⑤ 工作台与无图资产契约");
 
   const store = read("src/graph-window/graphStore.ts");
   check(
-    store.includes("sidecarRel") && store.includes(".tve/script-graph/") && store.includes("writeText"),
-    "store：图会话侧车自动保存（.tve 旁路，无图资产）",
+    store.includes("sidecarRel") && store.includes("graph/") && store.includes("writeText"),
+    "store：图会话 graph/ 目录自动保存",
   );
   check(
     store.includes("fetchSceneEntities") && store.includes("markGraphDirty") && store.includes("flushGraph"),
