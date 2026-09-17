@@ -39,6 +39,24 @@ export function assetKindMatches(kind: string, filterId: string): boolean {
   return kind === filterId;
 }
 
+// ---------------------------------------------------------------------------
+// 过滤状态跨窗口共享（编辑器资产面板写入，图窗口资产面板只读跟随）：
+// 经后端 UI 状态 KV（ui_state）持久化 + ui-state:changed 事件广播，键按项目根隔离。
+// ---------------------------------------------------------------------------
+
+/** 资产面板过滤状态（搜索/类型/排序/视图） */
+export interface AssetFilterState {
+  query?: string;
+  typeFilter?: string;
+  sortBy?: string;
+  viewMode?: "grid" | "list";
+}
+
+/** 过滤状态共享键（两窗口资产面板必须用同一键，跟随才生效） */
+export function assetFilterStateKey(root: string): string {
+  return `tve:asset-filter:${root}`;
+}
+
 /** 当前目录内容：目录在前、文件在后；搜索时递归展示匹配资产。 */
 export function listDirectoryChildren(
   assets: AssetEntry[],

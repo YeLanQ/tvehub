@@ -12,7 +12,9 @@ import { getAssetsStore } from "../../app/stores/assets";
 import AssetToolbar from "../../app/components/AssetToolbar.vue";
 import AssetEntryCell from "../../app/components/AssetEntryCell.vue";
 import {
+  assetFilterStateKey,
   listDirectoryChildren,
+  type AssetFilterState,
   type ChildEntry,
 } from "../../app/lib/asset-browser";
 import { uiStateGet, uiStateSet, onUiStateChange } from "../../lib/ui-state";
@@ -79,15 +81,9 @@ function persistCollapsedDirs(): void {
 watch(collapseKey, () => void loadCollapsedDirs(), { immediate: true });
 
 // 过滤状态（搜索/类型/排序/视图）从编辑器资产面板同步：
-// 编辑器写入后端 UI 状态 KV（键 = tve:graph:asset-filter）并广播变更事件，
-// 本面板经 onUiStateChange 实时跟随（只读，不回写）
-const FILTER_KEY = "tve:graph:asset-filter";
-interface AssetFilterState {
-  query?: string;
-  typeFilter?: string;
-  sortBy?: string;
-  viewMode?: "grid" | "list";
-}
+// 编辑器写入后端 UI 状态 KV（共享键见 assetFilterStateKey）并广播变更事件，
+// 本面板经 onUiStateChange 实时跟随（只读，不回写）；键按项目根隔离
+const filterKey = computed(() => assetFilterStateKey(store.root ?? ""));
 function applyFilter(f: AssetFilterState | null): void {
   if (!f) return;
   if (typeof f.query === "string") query.value = f.query;
@@ -97,6 +93,17 @@ function applyFilter(f: AssetFilterState | null): void {
 }
 
 let unlistenFilter: (() => void) | null = null;
+
+/** 跟随当前项目的过滤状态（换项目时重订阅） */
+async function followFilter(key: string): Promise<void> {
+  unlistenFilter?.();
+  unlistenFilter = await onUiStateChange<AssetFilterState | null>(key, (v) => applyFilter(v));
+  const f = await uiStateGet<AssetFilterState | null>(key);
+  if (key === filterKey.value) applyFilter(f); // 已再切项目：丢弃过期结果
+}
+
+// setup 作用域注册：面板随停靠切换反复挂载/卸载，watcher 随作用域自动停止
+watch(filterKey, (k) => void followFilter(k), { immediate: true });
 
 function toggleDir(path: string): void {
   const next = new Set(collapsed.value);
@@ -130,9 +137,8 @@ const crumbs = computed(() => {
   return crumbs;
 });
 
-const children = computed(() =>
-  listDirectoryChildren(assetsStore.assets, currentDir.value, query.value, typeFilter.value, sortBy.value)
-    .filter((e) => e.kind !== "json" && e.kind !== "graph"),
+const children = computed<ChildEntry[]>(() =>
+  listDirectoryChildren(assetsStore.assets, currentDir.value, query.value, typeFilter.value, sortBy.value),
 );
 
 function navigate(path: string): void {
@@ -183,11 +189,6 @@ function onEntryDblclick(item: ChildEntry): void {
 onMounted(() => {
   // 数据与编辑器同源：装载失败留给装载蒙版阶段提示（assets 阶段已 load）
   if (store.root && !assetsStore.assets.length) void assetsStore.load(store.root);
-  // 过滤状态跟随编辑器资产面板（后端 UI 状态 KV 变更事件，跨窗口可靠）
-  void onUiStateChange<AssetFilterState | null>(FILTER_KEY, (v) => applyFilter(v)).then((off) => {
-    unlistenFilter = off;
-  });
-  void uiStateGet<AssetFilterState | null>(FILTER_KEY).then((f) => applyFilter(f));
 });
 onUnmounted(() => {
   unlistenFilter?.();

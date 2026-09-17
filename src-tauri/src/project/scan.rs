@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use super::{AssetEntry, MetaEntry};
 
 /// 递归扫描目录为平铺资产表（目录在前、深度优先）。
-/// 跳过隐藏目录（`.` 开头）与构建输出目录（build），跳过 `.meta`（资产元数据不作为资产项）。
+/// 跳过隐藏目录（`.` 开头）与内部产物目录（build=构建输出、graph=脚本图侧车），
+/// 跳过 `.meta`（资产元数据）与项目根的 `*.config.json`（系统配置）——均不作为资产项。
 pub fn scan_tree(root: &Path) -> Result<Vec<AssetEntry>, String> {
     if !root.is_dir() {
         return Err(format!("'{}' 不是目录", root.display()));
@@ -25,7 +26,7 @@ fn scan_tree_inner(base: &Path, dir: &Path, out: &mut Vec<AssetEntry>) -> Result
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            if dname.starts_with('.') || dname == "build" {
+            if dname.starts_with('.') || dname == "build" || dname == "graph" {
                 continue;
             }
         }
@@ -51,6 +52,14 @@ fn scan_tree_inner(base: &Path, dir: &Path, out: &mut Vec<AssetEntry>) -> Result
                 .file_name()
                 .map(|s| s.to_string_lossy().ends_with(".meta"))
                 .unwrap_or(false)
+            {
+                continue;
+            }
+            // 项目根的系统配置文件（project.config.json / build.config.json 等）不作为资产项
+            if dir == base
+                && p.file_name()
+                    .map(|s| s.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
             {
                 continue;
             }

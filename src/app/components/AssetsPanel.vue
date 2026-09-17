@@ -15,7 +15,9 @@ import { setAssetSelection } from "../lib/active-panel";
 import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import {
   ASSET_TYPE_FILTERS,
+  assetFilterStateKey,
   listDirectoryChildren,
+  type AssetFilterState,
   type ChildEntry,
 } from "../lib/asset-browser";
 import {
@@ -182,29 +184,29 @@ const sortBy = ref("name");
 const viewMode = ref<"grid" | "list">("grid");
 
 // ---------------------------------------------------------------------------
-// 过滤状态共享（搜索/类型/排序/视图）：写入共享键，脚本图窗口的资产面板跟随
-// 同一份过滤（后端 UI 状态 KV + ui-state:changed 事件跨窗口；键按项目隔离）。
+// 过滤状态共享（搜索/类型/排序/视图）：写入共享键（assetFilterStateKey，键按
+// 项目隔离），脚本图窗口的资产面板跟随同一份过滤（后端 UI 状态 KV +
+// ui-state:changed 事件跨窗口）。
 // ---------------------------------------------------------------------------
-const filterKey = computed(
-  () => `tve:graph:asset-filter:${projectStore.currentPath ?? ""}`,
-);
+const filterKey = computed(() => assetFilterStateKey(projectStore.currentPath ?? ""));
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
 function persistFilter(): void {
   if (filterTimer != null) clearTimeout(filterTimer);
   filterTimer = setTimeout(() => {
     filterTimer = null;
-    void uiStateSet(filterKey.value, {
+    const f: AssetFilterState = {
       query: query.value,
       typeFilter: typeFilter.value,
       sortBy: sortBy.value,
       viewMode: viewMode.value,
-    });
+    };
+    void uiStateSet(filterKey.value, f);
   }, 250);
 }
 
 async function loadFilter(): Promise<void> {
-  const f = await uiStateGet<Record<string, unknown>>(filterKey.value);
+  const f = await uiStateGet<AssetFilterState | null>(filterKey.value);
   if (!f) return;
   if (typeof f.query === "string") query.value = f.query;
   if (typeof f.typeFilter === "string" && ASSET_TYPE_FILTERS.some((t) => t.id === f.typeFilter)) {
