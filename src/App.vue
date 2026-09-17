@@ -139,6 +139,7 @@ onMounted(async () => {
   }
   // Tauri 下布防装载蒙版（编辑器窗口启动时隐藏，Rust 在首页交接项目后才 show）：
   // 窗口被显示时蒙版已就位，项目装载完成前不露出旧编辑器内容。
+  // 布防已在 main.ts 挂载前完成（初始渲染即含蒙版），这里幂等重入兜底。
   // 浏览器直开（无窗口系统）不布防，编辑器直接可见。
   if (isTauri()) {
     getBootLoadingStore().standby();

@@ -69,4 +69,8 @@ if (!isTauri()) {
   });
 }
 
+// 多会话冷启动：编辑器窗口由 Rust 创建时隐藏，项目经交接通道送达。
+// 挂载前先布防装载蒙版 → 初始渲染即含蒙版：无论 WebView 何时呈现首帧，
+// 都不会先闪现无蒙版的编辑器骨架（兜底项目）再看到蒙版淡入。
+if (isTauri()) getBootLoadingStore().standby();
 createApp(App).mount("#app");

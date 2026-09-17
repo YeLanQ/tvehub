@@ -231,11 +231,13 @@ export function mountEditor(container: HTMLElement): Promise<void> {
             logStore.log("warn", `场景打开失败（回退初始场景）: ${e}`, "engine");
           }
         }
-        if (!loaded && !engine.isDisposed()) {
+        if (!loaded && !engine.isDisposed() && boot.state.phase !== "standby") {
           // 空场景/损坏场景/未开项目 → 初始场景（经后端 scene_load_doc 落会话）。
           // 未开项目（root 为空）时必须不携带 rel：否则兜底会话会以默认 rel
           // （assets/Main.scene）落键，后续打开同名真实场景时 scene_open 复用兜底
           // 而不读盘。root 非空时才携带 rel 作为保存目标（新项目首次保存建场景文件）。
+          // 多会话冷启动布防期（standby）不建兜底：项目正由交接通道送达，
+          // 此时建兜底会话要二次关闭，且蒙版下用户不可见，纯浪费。
           try {
             await engine.materials.preload([DEFAULT_MATERIAL_REL]);
             if (engine.isDisposed()) return;
