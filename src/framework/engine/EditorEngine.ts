@@ -1409,6 +1409,27 @@ export class EditorEngine {
   }
 
   /**
+   * 预取贴图引用：颜色/数据两种通道变体都装填缓存（材质编译与粒子/地形/UI
+   * 取图时直接命中，避免揭幕后贴图逐张弹入）；.texcube 走天空盒装载路径。
+   * onProgress 可选：逐项汇报进度（项目装载蒙版用）。
+   */
+  async preloadTextures(
+    rels: string[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
+    let done = 0;
+    for (const rel of rels) {
+      if (this.isDisposed()) return;
+      if (rel.toLowerCase().endsWith(".texcube")) {
+        await this.loadTexCubeTexture(rel);
+      } else {
+        await Promise.all([this.loadTexture(rel, true), this.loadTexture(rel, false)]);
+      }
+      onProgress?.(++done, rels.length);
+    }
+  }
+
+  /**
    * 预取材质引用及其挂载的着色器：节点入图即按正确外观渲染
    * （渲染分支与 Hook 都先取到再刷新，避免先默认外观后跳变）。
    * onProgress 可选：逐项汇报材质预取进度（项目装载蒙版用）。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, type Component } from "vue";
+import { nextTick, onMounted, onUnmounted, type Component } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { dispatchCommand } from "./app/commands";
 import { isEditingText } from "./app/commands/context";
@@ -143,6 +143,16 @@ onMounted(async () => {
   // 浏览器直开（无窗口系统）不布防，编辑器直接可见。
   if (isTauri()) {
     getBootLoadingStore().standby();
+    // 等含蒙版的首帧呈现后再显示窗口：show() 若早于首帧提交，会先露出
+    // 原生底色/上一帧。双 rAF 等合成器提交；隐藏窗口 rAF 若被节流则由
+    // 超时兜底放行（原生背景色已设为深色，不会露白）
+    await nextTick();
+    await Promise.race([
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, 250)),
+    ]);
     // 多会话：窗口由 Rust 创建时隐藏，蒙版布防后才显示，避免空白/默认 loading 闪现
     void getCurrentWindow().show().catch(() => {});
   }

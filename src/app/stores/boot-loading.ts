@@ -14,13 +14,18 @@ import { readonly, reactive } from "vue";
 export type BootPhase = "idle" | "standby" | "loading" | "ready";
 export type BootStageStatus = "pending" | "active" | "done" | "failed";
 
-/** 装载阶段（固定顺序，蒙版按此渲染） */
+/** 装载阶段（固定顺序，蒙版按此渲染）：
+ *  引擎/配置/场景文档 → 场景引用的全部产物（材质含着色器 / 模型 / 贴图 /
+ *  音频 / 项目脚本编译）全部就绪 → 最后构建场景图揭幕 */
 export const BOOT_STAGES = [
   { id: "engine", label: "初始化渲染引擎" },
   { id: "project", label: "读取项目配置" },
   { id: "scene", label: "解析场景文档" },
   { id: "materials", label: "加载材质资产" },
   { id: "models", label: "加载模型资产" },
+  { id: "textures", label: "加载贴图资产" },
+  { id: "audio", label: "加载音频资产" },
+  { id: "scripts", label: "编译项目脚本" },
   { id: "graph", label: "构建场景图" },
 ] as const;
 
@@ -81,6 +86,9 @@ export function getBootLoadingStore(): BootLoadingStore {
   });
 
   let startedAt = 0;
+  /** 蒙版开始可见（布防）时刻：最短停留从可见起点起算，而非 begin()，
+   *  避免装载极快时蒙版一闪而过、揭幕与窗口早期帧挤在一起产生闪屏 */
+  let armedAt = 0;
   /** 令牌：失效 begin/fail/finish 竞态下残留的收尾定时器 */
   let token = 0;
 
@@ -110,6 +118,9 @@ export function getBootLoadingStore(): BootLoadingStore {
       if (state.phase === "loading") return;
       token += 1;
       state.error = "";
+      // 已处于 standby 的重入不重置可见起点（保持最早时刻）；
+      // 从 idle/ready 重新布防（新窗口 / 关闭项目回首页）才重新起算
+      if (state.phase !== "standby") armedAt = Date.now();
       state.phase = "standby";
     },
     begin(projectName) {
@@ -149,7 +160,10 @@ export function getBootLoadingStore(): BootLoadingStore {
       for (const s of state.stages) {
         if (s.status === "pending" || s.status === "active") s.status = "done";
       }
-      settleAfter(Math.max(SETTLE_TAIL_MS, MIN_DISPLAY_MS - (Date.now() - startedAt)));
+      // 最短停留从蒙版可见起点（布防）起算：装载过快时也保证蒙版
+      // 至少完整显示 MIN_DISPLAY_MS，揭幕不与窗口首帧挤在一起
+      const visibleFrom = armedAt ? Math.min(armedAt, startedAt) : startedAt;
+      settleAfter(Math.max(SETTLE_TAIL_MS, MIN_DISPLAY_MS - (Date.now() - visibleFrom)));
     },
   };
 

@@ -339,6 +339,18 @@ export class AudioSystem {
     return task;
   }
 
+  /**
+   * 预解码音频资产进缓冲缓存（项目装载蒙版用）：逐项装载并汇报进度，
+   * 已缓存的 rel 直接命中缓存承诺，不重复解码。
+   */
+  async preload(rels: string[], onProgress?: (done: number, total: number) => void): Promise<void> {
+    let done = 0;
+    for (const rel of rels) {
+      await this.loadBuffer(rel);
+      onProgress?.(++done, rels.length);
+    }
+  }
+
   /** 外部（资产改写/删除）通知某音频内容已更新：清除缓冲并重载引用绑定 */
   invalidate(rel: string): void {
     if (!rel) return;

@@ -435,6 +435,8 @@ async fn show_window_with_project(
     } else if label.starts_with("editor-") {
         // 动态创建编辑器窗口（多会话：每个项目独立窗口 + 独立引擎实例）
         // 窗口保持隐藏，前端 App.vue standby() 布防蒙版后主动 show()，避免空白闪现
+        // 背景色取编辑器主题底色（--bg #1a1a2e）：WebView 首帧呈现前原生窗口
+        // 默认白底，加载过快时 show 与揭幕贴近，白底会以"闪屏"形式露出来
         let title = format!("TvE Editor – {}", state.0.lock().unwrap().get(&label).map(|p| p.name.as_str()).unwrap_or(""));
         let _w = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
             .title(title)
@@ -442,6 +444,7 @@ async fn show_window_with_project(
             .min_inner_size(1300.0, 860.0)
             .visible(false)
             .decorations(false)
+            .background_color(tauri::window::Color(26, 26, 46, 255))
             .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu")
             .build()
             .map_err(|e| e.to_string())?;

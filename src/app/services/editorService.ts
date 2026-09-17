@@ -9,6 +9,8 @@ import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
 import { setupCompressedGltfSupport, collectModelMaterialOverrideRels } from "../../framework/mesh";
 import { initModelDecodeWorker } from "../../framework/mesh/model-decode-worker-bridge";
+import { AUDIO_EXTS } from "../../framework/audio/types";
+import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
 import { sceneApi, type SceneLoadResult } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import { loadMaterialDoc } from "../lib/materials";
@@ -281,7 +283,9 @@ export function mountEditor(container: HTMLElement): Promise<void> {
 }
 
 /**
- * 应用后端装载结果：预取引用（材质/模型）→ 镜像重建 → 历史状态同步。
+ * 应用后端装载结果：预取场景引用的全部产物（材质含着色器 / 模型 / 贴图 /
+ * 音频 / 项目脚本编译）→ 镜像重建 → 历史状态同步——全部就绪后才建图揭幕，
+ * 节点入图即按最终外观渲染，不出现揭幕后逐项弹入。
  * 装载期间向 boot-loading store 逐段汇报进度（非装载路径的切换场景调用
  * 处于 idle 态，store 忽略汇报，不弹蒙版）。
  * 返回是否装载了有效根节点（false = 空场景，调用方回退初始场景）。
@@ -308,11 +312,98 @@ async function applySceneLoadResult(engine: EditorEngine, result: SceneLoadResul
     );
   }
   boot.complete("models");
+  // 贴图：场景文档直接引用（粒子贴图/地形 splatmap/UI 图片/天空 TextureCube）
+  // + 材质参数内的贴图通道（.mat 内的贴图引用不在场景文档里，材质预取后提取）
+  const textureRefs = collectTextureRefs(rootJson, engine, materialRefs);
+  if (textureRefs.length) {
+    boot.activate("textures");
+    await engine.preloadTextures(textureRefs, (done, total) =>
+      boot.progress("textures", done, total),
+    );
+  }
+  boot.complete("textures");
+  // 音频：场景文档引用的音频资产预解码进缓冲缓存
+  const audioRefs = collectRelsByExt(rootJson, AUDIO_EXTS as readonly string[]);
+  if (audioRefs.length) {
+    boot.activate("audio");
+    await engine.audio.preload(audioRefs, (done, total) =>
+      boot.progress("audio", done, total),
+    );
+  }
+  boot.complete("audio");
+  // 项目脚本：冷启动会话预热编译（错误仅记日志不阻塞装载；场景热切换
+  // 处于 idle 态时跳过编译，阶段由 finish 兜底标记完成）
+  if (boot.state.phase === "loading") {
+    const projectRoot = getProjectStore().currentPath;
+    if (projectRoot) {
+      boot.activate("scripts");
+      try {
+        const scripts = await loadProjectScripts(projectRoot);
+        if (scripts.length) {
+          const { errors } = await compileProjectScripts(scripts);
+          for (const [rel, err] of Object.entries(errors)) {
+            logStore.log("error", `脚本编译失败 ${rel}: ${err}`, "engine");
+          }
+        }
+      } catch (e) {
+        logStore.log("warn", `项目脚本预热编译失败: ${e}`, "engine");
+      }
+    }
+    boot.complete("scripts");
+  }
   boot.activate("graph");
   engine.applySceneDocRoot(rootJson);
   engine.graph.history.update(result.history);
   boot.complete("graph");
   return true;
+}
+
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "avif"]);
+
+function extOf(rel: string): string {
+  const dot = rel.lastIndexOf(".");
+  return dot < 0 ? "" : rel.slice(dot + 1).toLowerCase();
+}
+
+/** 深度遍历 JSON，把每个字符串交给 visit（资产引用收集用） */
+function walkDocStrings(v: unknown, visit: (s: string) => void): void {
+  if (typeof v === "string") {
+    visit(v);
+  } else if (Array.isArray(v)) {
+    for (const item of v) walkDocStrings(item, visit);
+  } else if (v && typeof v === "object") {
+    for (const value of Object.values(v as Record<string, unknown>)) walkDocStrings(value, visit);
+  }
+}
+
+/**
+ * 收集场景的贴图引用：场景文档直接引用 + 已装载材质参数内的贴图通道引用。
+ * 命中图片/TextureCube 扩展名即收集（误收集仅多一次空装载，无副作用），去重。
+ */
+function collectTextureRefs(
+  doc: JsonRecord,
+  engine: EditorEngine,
+  materialRefs: string[],
+): string[] {
+  const rels = new Set<string>();
+  const visit = (s: string): void => {
+    if (!s || s.length > 512) return;
+    const ext = extOf(s);
+    if (ext === "texcube" || IMAGE_EXTS.has(ext)) rels.add(s);
+  };
+  walkDocStrings(doc, visit);
+  for (const matRel of materialRefs) walkDocStrings(engine.materials.paramsFor(matRel), visit);
+  return [...rels];
+}
+
+/** 按扩展名从场景文档收集资产引用（音频等；大小写不敏感，去重） */
+function collectRelsByExt(doc: JsonRecord, exts: readonly string[]): string[] {
+  const wanted = new Set(exts.map((e) => e.toLowerCase()));
+  const rels = new Set<string>();
+  walkDocStrings(doc, (s) => {
+    if (s && s.length <= 512 && wanted.has(extOf(s))) rels.add(s);
+  });
+  return [...rels];
 }
 
 /** 打开/切换项目内 .scene 资产：后端 scene_open 重装会话 + 镜像重建（无需重进编辑器） */
