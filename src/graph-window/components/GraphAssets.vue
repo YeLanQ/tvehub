@@ -131,7 +131,8 @@ const crumbs = computed(() => {
 });
 
 const children = computed(() =>
-  listDirectoryChildren(assetsStore.assets, currentDir.value, query.value, typeFilter.value, sortBy.value),
+  listDirectoryChildren(assetsStore.assets, currentDir.value, query.value, typeFilter.value, sortBy.value)
+    .filter((e) => e.kind !== "json"),
 );
 
 function navigate(path: string): void {
