@@ -13,6 +13,8 @@
 import { onMounted, onUnmounted, type Component } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ContextMenu from "../ui-kit/components/ContextMenu.vue";
+import WindowControls from "../ui-kit/components/WindowControls.vue";
+import { isTauri } from "../lib/tauri-env";
 import { isEditingText } from "../app/commands/context";
 import { getGraphWindowStore } from "./graphStore";
 import { graphDocks } from "./docks";
@@ -39,16 +41,25 @@ import "@vue-flow/minimap/dist/style.css";
 import "@vue-flow/node-resizer/dist/style.css";
 
 const store = getGraphWindowStore();
+const win = getCurrentWindow();
+const inTauri = isTauri();
 
-/** 关闭场景图窗口（隐藏；会话图已自动保存） */
-async function closeWindow(): Promise<void> {
-  await store.flushGraph();
-  try {
-    await getCurrentWindow().hide();
-  } catch {
-    /* 非 Tauri 环境忽略 */
-  }
+/** 工具栏空白区域 mousedown：启动窗口原生拖拽 */
+function onDragDown(e: MouseEvent): void {
+  if (!inTauri || e.button !== 0) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("button, .project-info, .tool-switch")) return;
+  void win.startDragging();
 }
+
+/** 双击工具栏空白区域切换最大化 */
+function onDragDblClick(e: MouseEvent): void {
+  if (!inTauri) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("button, .project-info, .tool-switch")) return;
+  void win.toggleMaximize();
+}
+
 
 /** 停靠区分隔条拖拽：调整区域尺寸（与编辑器同款分隔条） */
 function onSplitDown(e: MouseEvent, zone: DockZoneId) {
@@ -120,6 +131,7 @@ onUnmounted(() => {
 
 <template>
   <div class="graph-app" @contextmenu.prevent>
+
     <template v-if="store.degraded">
       <div class="gboot">
         <div class="gboot-title">TVE GRAPH</div>
@@ -131,7 +143,11 @@ onUnmounted(() => {
       <div class="gworkspace">
         <!-- 顶部工具栏（与编辑器同款结构：项目信息 + 居中视图切换 + 右侧动作） -->
         <header class="toolbar">
-          <div class="toolbar-groups">
+          <div
+            class="toolbar-groups"
+            @mousedown="onDragDown"
+            @dblclick="onDragDblClick"
+          >
             <div class="project-info" :title="store.root ?? ''">
               <span class="project-name">{{ store.projectName }}</span>
               <span class="scene-name mono">{{ store.sceneRel }}</span>
@@ -170,7 +186,9 @@ onUnmounted(() => {
             <span class="gsave-state" title="场景图随场景自动保存（graph/ 目录）">
               {{ store.graphDirty ? "自动保存中…" : store.lastSavedAt ? `已保存 ${store.lastSavedAt}` : "" }}
             </span>
-            <button title="关闭场景图窗口" @click="closeWindow()">关闭</button>
+
+            <!-- 窗口控制按钮（合并自独立标题栏） -->
+            <WindowControls />
           </div>
         </header>
 

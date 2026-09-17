@@ -1,11 +1,24 @@
 .toolbar-groups {
   flex: 1;
   min-width: 0;
+  height: 100%;
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 12px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 窗口控制按钮组（合并自独立标题栏）：占满工具栏高度 */
+.toolbar-groups .title-bar-controls {
+  align-self: stretch;
+  margin-right: -12px;
+}
+
+.toolbar-groups .title-btn {
+  display: flex;
 }
 
 /* 项目信息：项目名 + 场景路径（上下层）；点击打开项目设置 */

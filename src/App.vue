@@ -10,6 +10,7 @@ import ScriptEditorPanel from "./app/components/ScriptEditorPanel.vue";
 import DockZone from "./docks/DockZone.vue";
 import DockLayer from "./docks/DockLayer.vue";
 import ContextMenu from "./components/ContextMenu.vue";
+
 import HierarchyPanel from "./app/components/HierarchyPanel.vue";
 import InspectorPanel from "./app/components/InspectorPanel.vue";
 import ConsolePanel from "./app/components/ConsolePanel.vue";
@@ -153,7 +154,7 @@ onUnmounted(() => {
 <template>
   <div class="editor" @contextmenu.prevent>
     <!-- 编辑器界面（首页在独立窗口 home.html 中；本窗口常驻编辑器视图） -->
-    <!-- 顶部工具栏 -->
+    <!-- 顶部工具栏（含窗口控制按钮，合并自独立标题栏） -->
     <header class="toolbar">
       <Toolbar />
     </header>

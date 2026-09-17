@@ -4,6 +4,8 @@ export { default as PromptDialog } from "./components/PromptDialog.vue";
 export { default as NumberField } from "./components/NumberField.vue";
 export { default as ContextMenu } from "./components/ContextMenu.vue";
 export { default as Slider } from "./components/Slider.vue";
+export { default as TitleBar } from "./components/TitleBar.vue";
+export { default as WindowControls } from "./components/WindowControls.vue";
 
 export {
   confirm,

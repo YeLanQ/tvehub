@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { dispatchCommand } from "../commands";
+import { isTauri } from "../../lib/tauri-env";
+import WindowControls from "../../ui-kit/components/WindowControls.vue";
 import "../../styles/components/toolbar.scss";
 
 const store = getEditorStore();
 const projectStore = getProjectStore();
 const { state } = store;
+const win = getCurrentWindow();
+const inTauri = isTauri();
 
 const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
   { key: "scene", label: "场景", title: "场景编辑" },
@@ -31,10 +36,31 @@ const editorDirty = computed(() => store.dirty());
 function setViewMode(mode: ViewMode): void {
   store.setViewMode(mode);
 }
+
+/** 工具栏空白区域 mousedown：启动窗口原生拖拽 */
+function onDragDown(e: MouseEvent): void {
+  if (!inTauri || e.button !== 0) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("button, .project-info, .tool-switch")) return;
+  void win.startDragging();
+}
+
+/** 双击工具栏空白区域切换最大化 */
+function onDragDblClick(e: MouseEvent): void {
+  if (!inTauri) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("button, .project-info, .tool-switch")) return;
+  void win.toggleMaximize();
+}
 </script>
 
 <template>
-  <div class="toolbar-groups">
+  <div
+    class="toolbar-groups"
+
+    @mousedown="onDragDown"
+    @dblclick="onDragDblClick"
+  >
     <!-- 项目信息：点击打开/关闭项目设置面板（物理引擎/重力/启停在其中的「物理」分类） -->
     <div
       class="project-info"
@@ -89,6 +115,9 @@ function setViewMode(mode: ViewMode): void {
       保存
       <span v-if="editorDirty" class="save-dirty-dot" aria-label="有未保存修改"></span>
     </button>
-    <button @click="dispatchCommand('editor.close')" title="关闭项目返回首页">关闭</button>
+
+
+    <!-- 窗口控制按钮（合并自独立标题栏） -->
+    <WindowControls />
   </div>
 </template>

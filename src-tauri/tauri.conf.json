@@ -20,6 +20,7 @@
         "minWidth": 1300,
         "minHeight": 860,
         "visible": false,
+        "decorations": false,
         "url": "home.html",
         "backgroundColor": "#000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
@@ -32,6 +33,7 @@
         "minWidth": 1300,
         "minHeight": 860,
         "visible": false,
+        "decorations": false,
         "url": "index.html",
         "backgroundColor": "#000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
@@ -44,6 +46,7 @@
         "minWidth": 960,
         "minHeight": 600,
         "visible": false,
+        "decorations": false,
         "url": "graph.html",
         "backgroundColor": "#000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"

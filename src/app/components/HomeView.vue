@@ -15,6 +15,7 @@ import { onMounted, ref, watch } from "vue";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import TitleBar from "../../ui-kit/components/TitleBar.vue";
 import ProjectsSection from "./home/ProjectsSection.vue";
 import TemplatesSection from "./home/TemplatesSection.vue";
 import PreferencesSection from "./home/PreferencesSection.vue";
@@ -127,6 +128,9 @@ watch(showNewProject, (val) => {
 
 <template>
   <div class="home" @click="closeMenu">
+    <!-- 自定义标题栏（无边框窗口） -->
+    <TitleBar title="TvE Hub" />
+
     <div class="home-body">
       <!-- 左侧导航 -->
       <nav class="home-nav">
