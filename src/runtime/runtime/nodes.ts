@@ -106,17 +106,10 @@ export function buildSceneTree(rootJson, scene, ctx) {
     return group;
   }
 
-  /** 导航代理节点：可见锥体占位（指向 +Z，与导航移动朝向约定一致）；移动由导航运行时驱动 */
+  /** 导航代理节点：自身无渲染体（不可见锚点）；位姿由导航运行时驱动，
+   *  可见角色经「导航移动」操作贴合代理位姿，或把网格作为子节点挂入 */
   function wrapNavAgent(json) {
-    const group = new THREE.Group();
-    const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(0.45, 1.4, 4),
-      new THREE.MeshBasicMaterial({ color: 0x58a6ff }),
-    );
-    cone.rotation.x = Math.PI / 2;
-    cone.position.y = 0.55;
-    group.add(cone);
-    return group;
+    return new THREE.Group();
   }
 
   /** 地形节点：Group 承载节点变换，烘焙高度场网格挂 __terrainMesh（与编辑器同结构）；
