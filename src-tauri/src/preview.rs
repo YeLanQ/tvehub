@@ -2,7 +2,11 @@
 //! - `export_web_preview`：把前端上传的网页运行产物（index.html / player / three /
 //!   scene.json / config.json）写入 `<root>/.tmp/web-preview`，并在本机 127.0.0.1 上
 //!   起（或复用）一个极简静态文件服务器，返回可内嵌的 base URL；
-//! - `stop_web_preview`：停止该服务器并释放端口。
+//! - `stop_web_preview`：停止该窗口的服务器并释放端口。
+//!
+//! 多会话：服务器按调用窗口（webview label）分键，每窗口独立服务器 + 独立
+//! 临时端口（OS 分配），A/B 窗口分别预览各自项目互不串台；窗口销毁时由
+//! `stop_server_for_label` 兜底释放子进程。
 //!
 //! 服务器只做最小静态文件服务（GET，无目录列表/无 Keep-Alive/无压缩），
 //! 全部用 std 实现，不引入第三方依赖；路径守卫防止越界读取。
@@ -18,15 +22,16 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-/// Tauri managed：当前网页预览服务器（同一时刻只服务一个项目）
+/// Tauri managed：各窗口的网页预览服务器（多会话：按 webview label 分键，
+/// 每个窗口独立服务器 + 独立临时端口，避免 A 窗口热切换目录后 B 窗口串台）。
 #[derive(Default)]
 pub struct PreviewServerState {
-    inner: Mutex<Option<PreviewServer>>,
+    inner: Mutex<HashMap<String, PreviewServer>>,
 }
 
 struct PreviewServer {
     /// 当前服务目录：可热切换（切到构建产物 / 网页预览产物）而不重建监听。
-    /// 监听套接字一旦重建，外部浏览器（固定端口 39110）在途请求会被中断，
+    /// 监听套接字一旦重建，外部浏览器在途请求会被中断，
     /// 表现为 net::ERR_CONNECTION_ABORTED。
     root: Arc<Mutex<PathBuf>>,
     base_url: String,
@@ -35,10 +40,6 @@ struct PreviewServer {
     /// 子进程 stdin（热切换目录用）
     child_stdin: ChildStdin,
 }
-
-/// 预览服务器固定端口：避免每次重启端口漂移导致外部引用（书签/控制端抓取）失效。
-/// 被占用（其他进程或旧实例未退净）时回退随机端口，保证功能可用。
-const PREVIEW_FIXED_PORT: u16 = 39110;
 
 /// 清空并重建导出目录，写入文本与二进制产物（路径守卫：拒绝绝对路径/越界段）
 fn write_export(
@@ -414,15 +415,18 @@ pub(crate) fn gltf_sibling_rel(model_rel: &str, uri: &str) -> Option<String> {
 }
 
 /// 启动网页预览服务器（服务项目内指定目录），返回可内嵌的 base URL。
-/// dir 缺省服务 `<root>/.tmp/web-preview`（编辑器内嵌预览）；构建面板传
-/// "build/web" 预览构建产物。同目录已有服务器时直接复用（URL 稳定不漂移）；
-/// 切换目录（如网页预览 ↔ 构建预览）才停旧起新。
+/// 多会话：按调用窗口（webview label）分键，每窗口独立服务器 + 独立临时端口，
+/// A/B 窗口分别预览各自项目互不串台。dir 缺省服务 `<root>/.tmp/web-preview`
+/// （编辑器内嵌预览）；构建面板传 "build/web" 预览构建产物。同窗口同目录已有
+/// 服务器时直接复用；切换目录（如网页预览 ↔ 构建预览）才热切换服务根。
 #[tauri::command]
 pub async fn start_web_preview_server(
     state: tauri::State<'_, PreviewServerState>,
+    webview: tauri::Webview,
     root: String,
     dir: Option<String>,
 ) -> Result<String, String> {
+    let label = webview.label().to_string();
     let root_path = PathBuf::from(&root);
     let rel = dir.unwrap_or_else(|| ".tmp/web-preview".to_string());
     if rel.contains('\\') || rel.split('/').any(|s| s == ".." || s.is_empty()) {
@@ -432,10 +436,9 @@ pub async fn start_web_preview_server(
     if !out.is_dir() {
         return Err(format!("预览产物目录不存在，请先导出: '{}'", out.display()));
     }
-    let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
-    // 已在运行：只热切换服务目录（不重建监听、端口不漂移、在途请求不中断）。
-    // 外部浏览器常驻固定端口（书签/手动打开）时，重建监听会让整页资源加载中断。
-    if let Some(old) = guard.as_mut() {
+    let mut servers = state.inner.lock().map_err(|e| e.to_string())?;
+    // 本窗口已在运行：只热切换服务目录（不重建监听、端口不漂移、在途请求不中断）
+    if let Some(old) = servers.get_mut(&label) {
         let mut cur = old.root.lock().map_err(|e| e.to_string())?;
         if *cur != out {
             // 通过 stdin 通知子进程热切换目录
@@ -447,28 +450,42 @@ pub async fn start_web_preview_server(
     }
     let server = start_server(out)?;
     let url = server.base_url.clone();
-    guard.replace(server);
+    servers.insert(label, server);
     Ok(url)
 }
 
-/// 停止网页预览服务器（释放端口；不影响编辑器视口）
+/// 停止调用窗口的网页预览服务器（释放端口；不影响其他窗口的预览）
 #[tauri::command]
-pub async fn stop_web_preview(state: tauri::State<'_, PreviewServerState>) -> Result<(), String> {
-    let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
-    if let Some(server) = guard.take() {
+pub async fn stop_web_preview(
+    state: tauri::State<'_, PreviewServerState>,
+    webview: tauri::Webview,
+) -> Result<(), String> {
+    let label = webview.label().to_string();
+    if let Some(server) = state.inner.lock().map_err(|e| e.to_string())?.remove(&label) {
         stop_server(server);
     }
     Ok(())
 }
 
+/// 窗口销毁时释放该窗口的预览服务器子进程（多会话：编辑器/图窗口关闭即销毁，
+/// 不经前端 stop，须由 Rust 侧兜底清理，避免子进程与端口泄漏）。
+pub fn stop_server_for_label(state: &PreviewServerState, label: &str) {
+    if let Ok(mut servers) = state.inner.lock() {
+        if let Some(server) = servers.remove(label) {
+            stop_server(server);
+        }
+    }
+}
+
 fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
-    // 子进程隔离：用当前 exe 启动 --preview-server 模式，崩溃不影响主应用
+    // 子进程隔离：用当前 exe 启动 --preview-server 模式，崩溃不影响主应用。
+    // 端口传 0（OS 分配临时空闲端口）：多会话下每窗口独立服务器，固定端口
+    // 会互相抢占；实际端口经子进程 stdout 首行 base URL 回传。
     let exe = std::env::current_exe().map_err(|e| format!("获取 exe 路径失败: {e}"))?;
-    let port = PREVIEW_FIXED_PORT.to_string();
     let root_str = root.display().to_string();
     let mut child = Command::new(&exe)
         .arg("--preview-server")
-        .arg(&port)
+        .arg("0")
         .arg(&root_str)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -500,11 +517,9 @@ fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
 /// 进程内启动预览服务器（测试用：不启动子进程，直接在线程中运行）
 #[cfg(test)]
 fn start_server_inproc(root: PathBuf) -> Result<PreviewServerInproc, String> {
-    let listener = match TcpListener::bind(("127.0.0.1", PREVIEW_FIXED_PORT)) {
-        Ok(l) => l,
-        Err(_) => TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("绑定预览服务器端口失败: {}", e))?,
-    };
+    // 与生产 start_server 一致：端口 0 交由 OS 分配空闲端口
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("绑定预览服务器端口失败: {}", e))?;
     let addr = listener
         .local_addr()
         .map_err(|e| format!("读取预览服务器地址失败: {}", e))?;
@@ -805,10 +820,7 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use super::{
-        collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc,
-        PREVIEW_FIXED_PORT,
-    };
+    use super::{collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc};
 
     /// 材质引用的着色器（.mat 的 shader）与其贴图参数（props）必须随产物打包：
     /// 缺失会让产物内效果整体消失（且只表现为"没效果"，不好排查）。
@@ -916,23 +928,16 @@ mod tests {
     }
 
     #[test]
-    fn preview_server_reuses_fixed_port() {
-        // 应用本体在跑时固定端口被其预览服务器占用 → 跳过（不漂移由运行期保证）
-        if std::net::TcpStream::connect(("127.0.0.1", PREVIEW_FIXED_PORT)).is_ok() {
-            eprintln!("固定端口被运行中的应用占用，跳过");
-            return;
-        }
-        // 固定端口：连续启动/停止，端口不漂移（外部引用的 URL 保持有效）
-        // 用进程内版本测试（子进程版本在测试二进制中不可用）
+    fn preview_server_allocates_distinct_free_ports() {
+        // 多会话：每个窗口独立服务器，端口由 OS 分配（0），互不冲突
         let root = std::env::temp_dir().join("tve-preview-port-test");
         fs::create_dir_all(&root).unwrap();
         let a = start_server_inproc(root.clone()).unwrap();
-        let url_a = a.base_url.clone();
-        assert!(url_a.ends_with(&PREVIEW_FIXED_PORT.to_string()));
-        // 真实生命周期：停旧 → 起新，端口不漂移
-        stop_server_inproc(a);
         let b = start_server_inproc(root).unwrap();
-        assert_eq!(url_a, b.base_url);
+        assert_ne!(a.base_url, b.base_url, "两个服务器应各自拿到独立端口");
+        assert!(a.base_url.starts_with("http://127.0.0.1:"));
+        assert!(b.base_url.starts_with("http://127.0.0.1:"));
+        stop_server_inproc(a);
         stop_server_inproc(b);
     }
 

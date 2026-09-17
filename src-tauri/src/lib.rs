@@ -685,7 +685,7 @@ pub fn run() {
             // 不再改本闭包。home 关闭 = 退出应用。
             // 动态编辑器/图窗口（editor-* / graph-*）不在表中 → 走默认销毁
             // （关闭即释放 Webview + 引擎 + GPU + Worker）。
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api: _, .. } = event {
                 let action = WINDOW_LIFECYCLE
                     .iter()
                     .find(|(l, _)| *l == label)
@@ -706,9 +706,15 @@ pub fn run() {
                 }
             }
             if let tauri::WindowEvent::Destroyed = event {
-                if label.starts_with("editor-") {
+                if label.starts_with("editor-") || label.starts_with("graph-") {
                     if let Some(state) = window.app_handle().try_state::<ActiveEditorWindow>() {
                         state.clear_if(&label);
+                    }
+                    // 释放该窗口的网页预览服务器子进程（多会话按 label 分键，
+                    // 窗口销毁不经前端 stop，须兜底清理避免子进程/端口泄漏）
+                    if let Some(state) = window.app_handle().try_state::<preview::PreviewServerState>()
+                    {
+                        preview::stop_server_for_label(&state, &label);
                     }
                 }
             }
