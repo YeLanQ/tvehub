@@ -144,6 +144,8 @@ registerCommand({
     // 关闭后端场景会话与 asset:// 协议项目根（下次打开项目时重建）
     void sceneApi.close().catch(() => {});
     void api.setCurrentProjectRoot(null).catch(() => {});
+    // 停止所有音频播放（编辑器窗口仅隐藏不销毁，音频不会自动停）
+    if (editor.state.mounted) editor.engine.audio.unbindAll();
     // 双窗口：显示首页窗口（Rust 侧隐藏编辑器窗口，保留编辑器前端状态）；
     // 蒙版重新布防——下次从首页打开项目时编辑器窗口被 show 的瞬间蒙版已就位，
     // 装载完成前不露出本项目旧内容。浏览器环境无窗口系统，回退单窗口内的视图切换

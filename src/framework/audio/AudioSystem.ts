@@ -89,6 +89,13 @@ export class AudioSystem {
   private listenerHost: THREE.Camera | null = null;
   /** 手势解锁监听是否已安装 */
   private gestureInstalled = false;
+  /** autoplay 自动起播开关（编辑器中关闭，仅手动 play() 起播；预览/导出产物中开启） */
+  private autoplayEnabled = true;
+
+  /** 设置 autoplay 自动起播开关（编辑器 false / 预览 true） */
+  setAutoplayEnabled(enabled: boolean): void {
+    this.autoplayEnabled = enabled;
+  }
 
   onChange(l: AudioChangeListener): () => void {
     this.listeners.add(l);
@@ -138,6 +145,7 @@ export class AudioSystem {
 
   /** 上下文解锁后补起 autoplay 绑定（解锁前 startIfReady 均被挂起） */
   private applyAutoplay(): void {
+    if (!this.autoplayEnabled) return;
     for (const b of [...this.bindings.values()]) {
       if (b.settings.autoplay && !b.userStopped && !b.playing) this.startIfReady(b);
     }
@@ -195,7 +203,7 @@ export class AudioSystem {
       }
       // 自动播放意图跟随数据（手动停止过则不抢播）
       if (settings.autoplay && !prevAutoplay) existing.userStopped = false;
-      if (settings.autoplay && !existing.userStopped && !existing.playing) {
+      if (this.autoplayEnabled && settings.autoplay && !existing.userStopped && !existing.playing) {
         this.startIfReady(existing);
       }
       return;
@@ -273,6 +281,7 @@ export class AudioSystem {
 
   /** 就绪即播（autoplay 意图 + 上下文运行中；手动停止/已起播过不重复） */
   private startIfReady(b: Binding): void {
+    if (!this.autoplayEnabled) return;
     if (!b.ready || !b.emitter || !b.settings.autoplay || b.userStopped) return;
     if (b.started || b.playing || this.context()?.state !== "running") return;
     this.playEmitter(b, true);

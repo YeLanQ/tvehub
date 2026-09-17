@@ -14,6 +14,7 @@ import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus } from "./app/lib/devtools";
 import { api } from "./lib/api";
 import { getBootLoadingStore } from "./app/stores/boot-loading";
+import { getEditorStore } from "./app/stores/editor";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
 
 debugLog("boot", "app script started");
@@ -65,9 +66,13 @@ if (!isTauri()) {
   // 仅编辑器窗口安装监听器（事件广播到所有窗口，首页监听会重复执行命令）。
   void restoreDevToolsStatus();
   // 窗口关闭请求（X 按钮 / 系统关闭）：Rust 侧 prevent_close + hide，前端收到
-  // 事件后立即布防蒙版，下次 show 窗口时蒙版已就位，杜绝旧场景闪现。
+  // 事件后立即布防蒙版 + 停止音频（窗口仅隐藏不销毁，音频不会自动停）。
   void getCurrentWindow().onCloseRequested(() => {
     getBootLoadingStore().standby();
+    try {
+      const store = getEditorStore();
+      if (store.state.mounted) store.engine.audio.unbindAll();
+    } catch { /* 引擎未挂载时无需处理 */ }
   });
 }
 

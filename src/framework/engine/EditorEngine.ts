@@ -610,6 +610,8 @@ export class EditorEngine {
       this.updateOrthoSkyQuad();
     });
     this.audio.ensureGestureResume();
+    // 编辑器中不自动起播 autoplay（仅手动点击播放；autoplay 数据标记随场景保存，预览/导出产物中生效）
+    this.audio.setAutoplayEnabled(false);
     this.graph.onChange((c) => this.onGraphChange(c));
     this.events.on("select:changed", () => this.onSelectionChanged());
     this.setupViewportClickHandler();
