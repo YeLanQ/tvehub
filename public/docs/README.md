@@ -9,6 +9,7 @@ tve（three-visual-editor）内置 3D 场景编辑器与脚本 SDK 的用户文�
 - **做动画**：[动画编辑器](editor/animation.md)（关键帧）+ [内置组件门面](sdk/components.md)（骨骼动画/动画图）；
 - **写脚本**：从 [SDK 总览](sdk/overview.md) 入门，[装饰器](sdk/decorators.md) 声明属性，[engine 入口](sdk/engine.md) 查全量 API；
 - **自定义效果**：[着色器与自定义效果](editor/shaders.md)；
+- **做行为逻辑**：[场景图](editor/graph.md)（可视化节点编辑运行时行为）；
 - **发布**：[预览与构建](editor/preview-build.md)。
 
 ## 约定
@@ -24,6 +25,7 @@ tve（three-visual-editor）内置 3D 场景编辑器与脚本 SDK 的用户文�
 | [编辑器总览](editor/overview.md) | 双窗口架构、停靠布局、工具栏、视图模式、快捷键、控制台、撤销 |
 | [项目管理](editor/projects.md) | 首页、新建/打开项目、目录结构、项目设置四页、创意工坊、开发者服务 |
 | [场景编辑](editor/scene.md) | 层级面板、节点类型、视口、粒子系统、阴影、层与标签、场景文件格式 |
+| [场景图](editor/graph.md) | 场景图窗口、节点类型、连线、变量、自定义节点、预览执行、.graph 格式 |
 | [UI 系统](editor/ui.md) | UI 画布与 Widget、锚点布局、文本/图片/按钮/布局容器、缩放适配、布局配方 |
 | [检查器与组件](editor/inspector.md) | 全部组件卡片字段、添加组件、物理、动画卡、脚本组件属性 |
 | [资产系统](editor/assets.md) | 资产面板、导入、资产类型、材质参数全集、预制体 |
