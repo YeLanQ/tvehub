@@ -15,6 +15,7 @@ import { onMounted, ref, watch } from "vue";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import PromptDialog from "./PromptDialog.vue";
 import TitleBar from "../../ui-kit/components/TitleBar.vue";
 import ProjectsSection from "./home/ProjectsSection.vue";
 import TemplatesSection from "./home/TemplatesSection.vue";
@@ -244,6 +245,8 @@ watch(showNewProject, (val) => {
 
     <!-- 全局确认弹窗（首页窗口独立挂载：垃圾篓/移除等 confirm 依赖它） -->
     <ConfirmDialog />
+    <!-- 全局输入弹窗（首页窗口独立挂载：重命名项目等 prompt 依赖它） -->
+    <PromptDialog />
 
     <NewProjectDialog
       v-if="showNewProject"

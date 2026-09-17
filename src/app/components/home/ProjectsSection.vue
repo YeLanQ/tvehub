@@ -13,6 +13,7 @@ import { ref } from "vue";
 import { getProjectStore, type RecentProject } from "../../stores/project";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm } from "../../lib/confirm";
+import { prompt } from "../../lib/prompt";
 import { api } from "../../../lib/api";
 import { openScriptGraphWindow } from "../../lib/graph-launch";
 
@@ -106,15 +107,24 @@ async function trashProject(path: string, name: string) {
 }
 
 async function renameProject(path: string, name: string) {
-  const newName = window.prompt("新项目名:", name);
-  if (!newName || newName.trim() === name) return;
+  const newName = await prompt({
+    title: "重命名项目",
+    label: "新项目名",
+    initial: name,
+    confirmText: "重命名",
+  });
+  if (!newName || newName === name) return;
   menuPath.value = null;
   try {
-    await api.renameProject(path, newName.trim());
+    await api.renameProject(path, newName);
     await projectStore.refreshRecent();
   } catch (e) {
     console.error("重命名失败:", e);
-    alert("重命名失败: " + e);
+    await confirm({
+      title: "重命名失败",
+      message: String(e),
+      confirmText: "确定",
+    });
   }
 }
 
