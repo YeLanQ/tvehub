@@ -445,7 +445,11 @@ async fn show_window_with_project(
             .visible(false)
             .decorations(false)
             .background_color(tauri::window::Color(26, 26, 46, 255))
-            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu")
+            // 注意：不要再加 --force-high-performance-gpu。混合显卡机型
+            // （核显驱动屏幕 + 独显渲染）下该参数强制 Chromium 在独显渲染，
+            // 呈现面跨适配器交给核显合成，resize 与独显启停时会瞬间丢帧——
+            // 表现为整个窗口/视口黑闪或透明。让 WebView2 自选 GPU 即可稳定。
+            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
             .build()
             .map_err(|e| e.to_string())?;
     }

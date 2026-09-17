@@ -23,7 +23,7 @@
         "decorations": false,
         "url": "home.html",
         "backgroundColor": "#000",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
       },
       {
 
@@ -37,7 +37,7 @@
         "decorations": false,
         "url": "graph.html",
         "backgroundColor": "#000",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
       }
     ],
     "security": {
