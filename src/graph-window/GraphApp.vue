@@ -10,25 +10,18 @@
  * 快捷键：Ctrl+Z/Y 会话撤销重做、Ctrl+C/V 剪贴板、Delete 删除、F 适配视图
  * （文本输入焦点时让位给 WebView 默认行为）。
  */
-import { computed, markRaw, onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, type Component } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ContextMenu from "../ui-kit/components/ContextMenu.vue";
 import { isEditingText } from "../app/commands/context";
 import { getGraphWindowStore } from "./graphStore";
-import {
-  graphDocks,
-  GRAPH_ALL_ZONES,
-  GRAPH_DOCK_PANEL_LABEL,
-  type GraphDockPanelId,
-  type GraphDockZoneId,
-} from "./docks";
-import { beginZoneResize } from "./graph-dock-resize";
-import { graphDockDnd } from "./graph-dock-dnd";
+import { graphDocks } from "./docks";
+import type { DockZoneId } from "../docks/types";
+import DockZone from "../docks/DockZone.vue";
+import DockLayer from "../docks/DockLayer.vue";
 import GraphAssets from "./components/GraphAssets.vue";
 import GraphBootMask from "./components/GraphBootMask.vue";
 import GraphCanvas from "./components/GraphCanvas.vue";
-import GraphDockZone from "./components/GraphDockZone.vue";
-import GraphFloatingDock from "./components/GraphFloatingDock.vue";
 import GraphHierarchy from "./components/GraphHierarchy.vue";
 import GraphModal from "./components/GraphModal.vue";
 import GraphPreview from "./components/GraphPreview.vue";
@@ -58,39 +51,20 @@ async function closeWindow(): Promise<void> {
 }
 
 /** 停靠区分隔条拖拽：调整区域尺寸（与编辑器同款分隔条） */
-function onSplitDown(e: MouseEvent, zone: GraphDockZoneId) {
+function onSplitDown(e: MouseEvent, zone: DockZoneId) {
   if (e.button !== 0) return;
   e.preventDefault();
-  beginZoneResize(zone, e.clientX, e.clientY);
+  graphDocks.beginZoneResize(zone, e.clientX, e.clientY);
 }
 
-/** 拖拽预览用的面板组件映射（面板由 store 驱动，多实例无状态冲突） */
-const PANEL_COMP: Record<GraphDockPanelId, unknown> = {
-  hierarchy: markRaw(GraphHierarchy),
-  inspector: markRaw(NodeInspector),
-  variables: markRaw(GraphVariablePanel),
-  customNodes: markRaw(GraphCustomNodePanel),
-  assets: markRaw(GraphAssets),
+/** 停靠面板组件映射（面板由 store 驱动，多实例无状态冲突） */
+const PANEL_COMP: Record<string, Component> = {
+  hierarchy: GraphHierarchy,
+  inspector: NodeInspector,
+  variables: GraphVariablePanel,
+  customNodes: GraphCustomNodePanel,
+  assets: GraphAssets,
 };
-
-/** 拖拽预览框：落在目标停靠区的矩形（与编辑器 App 同实现） */
-const previewStyle = computed(() => {
-  const t = graphDockDnd.target;
-  if (!t || t.kind !== "zone") return null;
-  for (const z of GRAPH_ALL_ZONES) {
-    const el = document.querySelector<HTMLElement>(`.graph-app .dock-zone.${z}`);
-    if (el && z === t.zone) {
-      const r = el.getBoundingClientRect();
-      return {
-        left: `${r.left}px`,
-        top: `${r.top}px`,
-        width: `${r.width}px`,
-        height: `${r.height}px`,
-      };
-    }
-  }
-  return null;
-});
 
 function onKeydown(e: KeyboardEvent): void {
   if (!store.ready || store.degraded) return;
@@ -202,11 +176,9 @@ onUnmounted(() => {
 
         <!-- 主体：左停靠（层级）+ 中央画布/预览 + 右停靠（检查器），分隔条可调宽 -->
         <div class="gbody">
-          <GraphDockZone zone="left">
-            <template #hierarchy><GraphHierarchy /></template>
-          </GraphDockZone>
+          <DockZone :sys="graphDocks" :panels="PANEL_COMP" zone="left" />
           <div
-            v-if="graphDocks.zones.left.length"
+            v-if="graphDocks.layout.zones.left.length"
             class="splitter split-v"
             title="拖拽调整左侧宽度"
             @mousedown="onSplitDown($event, 'left')"
@@ -233,28 +205,22 @@ onUnmounted(() => {
           </main>
 
           <div
-            v-if="graphDocks.zones.right.length"
+            v-if="graphDocks.layout.zones.right.length"
             class="splitter split-v"
             title="拖拽调整右侧宽度"
             @mousedown="onSplitDown($event, 'right')"
           ></div>
-          <GraphDockZone zone="right">
-            <template #inspector><NodeInspector /></template>
-            <template #variables><GraphVariablePanel /></template>
-            <template #customNodes><GraphCustomNodePanel /></template>
-          </GraphDockZone>
+          <DockZone :sys="graphDocks" :panels="PANEL_COMP" zone="right" />
         </div>
 
         <!-- 底部停靠（资产）+ 分隔条 -->
         <div
-          v-if="graphDocks.zones.bottom.length"
+          v-if="graphDocks.layout.zones.bottom.length"
           class="splitter split-h"
           title="拖拽调整底部高度"
           @mousedown="onSplitDown($event, 'bottom')"
         ></div>
-        <GraphDockZone zone="bottom">
-          <template #assets><GraphAssets /></template>
-        </GraphDockZone>
+        <DockZone :sys="graphDocks" :panels="PANEL_COMP" zone="bottom" />
 
         <!-- 状态条 -->
         <footer class="gstatus">
@@ -264,34 +230,8 @@ onUnmounted(() => {
         </footer>
       </div>
 
-      <!-- 浮动面板（拖出停靠区的面板） -->
-      <GraphFloatingDock v-for="f in graphDocks.floating" :key="f.id" :win="f">
-        <template #hierarchy><GraphHierarchy /></template>
-        <template #inspector><NodeInspector /></template>
-        <template #variables><GraphVariablePanel /></template>
-        <template #customNodes><GraphCustomNodePanel /></template>
-        <template #assets><GraphAssets /></template>
-      </GraphFloatingDock>
-
-      <!-- 拖拽幽灵（跟随鼠标的面板标签；仅实际拖拽时显示） -->
-      <div
-        v-if="graphDockDnd.active && graphDockDnd.moved && graphDockDnd.panel"
-        class="dock-ghost"
-        :style="{ left: graphDockDnd.clientX + 'px', top: graphDockDnd.clientY + 'px' }"
-      >
-        {{ GRAPH_DOCK_PANEL_LABEL[graphDockDnd.panel] }}
-      </div>
-      <!-- 拖拽捕获层：仅实际拖拽时渲染，盖住 iframe 等吞掉鼠标事件的区域 -->
-      <div v-if="graphDockDnd.active && graphDockDnd.moved" class="dock-drag-overlay"></div>
-
-      <!-- 拖拽预览：落点位置实时显示面板内容 -->
-      <div
-        v-if="graphDockDnd.active && graphDockDnd.moved && graphDockDnd.panel && graphDockDnd.target && previewStyle"
-        class="dock-preview"
-        :style="previewStyle"
-      >
-        <component :is="PANEL_COMP[graphDockDnd.panel]" />
-      </div>
+      <!-- 浮动窗口 + 拖拽幽灵/捕获层/落点预览（停靠系统胶水层） -->
+      <DockLayer :sys="graphDocks" :panels="PANEL_COMP" />
 
       <!-- 装载蒙版（与编辑器打开体验一致） + 全局弹层 -->
       <GraphBootMask />

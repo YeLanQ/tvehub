@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, type Component } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { dispatchCommand } from "./app/commands";
 import { isEditingText } from "./app/commands/context";
@@ -7,8 +7,8 @@ import Toolbar from "./app/components/Toolbar.vue";
 import Viewport from "./app/components/Viewport.vue";
 import WebPreviewPanel from "./app/components/WebPreviewPanel.vue";
 import ScriptEditorPanel from "./app/components/ScriptEditorPanel.vue";
-import DockZone from "./app/components/DockZone.vue";
-import FloatingDock from "./app/components/FloatingDock.vue";
+import DockZone from "./docks/DockZone.vue";
+import DockLayer from "./docks/DockLayer.vue";
 import ContextMenu from "./components/ContextMenu.vue";
 import HierarchyPanel from "./app/components/HierarchyPanel.vue";
 import InspectorPanel from "./app/components/InspectorPanel.vue";
@@ -24,7 +24,7 @@ import { logicEditorState } from "./app/composables/logic-editor";
 import ProjectSettingsPanel from "./app/components/ProjectSettingsPanel.vue";
 import BuildPanel from "./app/components/BuildPanel.vue";
 import BootMask from "./app/components/BootMask.vue";
-import { docks, dockDnd, beginZoneResize, DOCK_PANEL_LABEL, type DockPanelId, type DockZoneId, ALL_ZONES } from "./app/docks";
+import { docks, type DockZoneId } from "./app/docks";
 import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
 import { getBootLoadingStore } from "./app/stores/boot-loading";
@@ -53,39 +53,17 @@ function goScene() {
 function onSplitDown(e: MouseEvent, zone: DockZoneId) {
   if (e.button !== 0) return;
   e.preventDefault();
-  beginZoneResize(zone, e.clientX, e.clientY);
+  docks.beginZoneResize(zone, e.clientX, e.clientY);
 }
 
-/** 拖拽预览用的面板组件映射 */
-const PANEL_COMP: Record<DockPanelId, any> = {
+/** 停靠面板组件映射（DockZone 渲染激活页签 / DockLayer 渲染拖拽预览共用） */
+const PANEL_COMP: Record<string, Component> = {
   hierarchy: HierarchyPanel,
   inspector: InspectorPanel,
   console: ConsolePanel,
   assets: AssetsPanel,
   animation: AnimationEditorPanel,
 };
-function panelComponent(p: DockPanelId) {
-  return PANEL_COMP[p];
-}
-
-/** 拖拽预览位置：落点停靠区的矩形 */
-const previewStyle = computed(() => {
-  const t = dockDnd.target;
-  if (!t || t.kind !== "zone") return null;
-  for (const z of ALL_ZONES) {
-    const el = document.querySelector<HTMLElement>(`.dock-zone.${z}`);
-    if (el && z === t.zone) {
-      const r = el.getBoundingClientRect();
-      return {
-        left: `${r.left}px`,
-        top: `${r.top}px`,
-        width: `${r.width}px`,
-        height: `${r.height}px`,
-      };
-    }
-  }
-  return null;
-});
 
 /** 订阅 Rust 原生菜单/快捷键事件（撤销/保存/关闭 → 前端执行） */
 let unlistenNative: UnlistenFn | null = null;
@@ -182,9 +160,9 @@ onUnmounted(() => {
 
       <!-- 主体（停靠布局：左侧/右侧停靠区 + 中央视口） -->
       <div class="editor-body">
-        <DockZone zone="left" />
+        <DockZone :sys="docks" :panels="PANEL_COMP" zone="left" />
         <div
-          v-if="docks.zones.left.length"
+          v-if="docks.layout.zones.left.length"
           class="splitter split-v"
           title="拖拽调整左侧宽度"
           @mousedown="onSplitDown($event, 'left')"
@@ -205,45 +183,25 @@ onUnmounted(() => {
         </main>
 
         <div
-          v-if="docks.zones.right.length"
+          v-if="docks.layout.zones.right.length"
           class="splitter split-v"
           title="拖拽调整右侧宽度"
           @mousedown="onSplitDown($event, 'right')"
         ></div>
-        <DockZone zone="right" />
+        <DockZone :sys="docks" :panels="PANEL_COMP" zone="right" />
       </div>
 
       <!-- 底部停靠区（历史） -->
       <div
-        v-if="docks.zones.bottom.length"
+        v-if="docks.layout.zones.bottom.length"
         class="splitter split-h"
         title="拖拽调整底部高度"
         @mousedown="onSplitDown($event, 'bottom')"
       ></div>
-      <DockZone zone="bottom" />
+      <DockZone :sys="docks" :panels="PANEL_COMP" zone="bottom" />
 
-      <!-- 浮动窗口（拖出停靠区的面板） -->
-      <FloatingDock v-for="f in docks.floating" :key="f.id" :win="f" />
-
-      <!-- 拖拽幽灵（跟随鼠标的面板标签；仅实际拖拽时显示） -->
-      <div
-        v-if="dockDnd.active && dockDnd.moved && dockDnd.panel"
-        class="dock-ghost"
-        :style="{ left: dockDnd.clientX + 'px', top: dockDnd.clientY + 'px' }"
-      >
-        {{ DOCK_PANEL_LABEL[dockDnd.panel] }}
-      </div>
-      <!-- 拖拽捕获层：仅实际拖拽时渲染，盖住 iframe 等吞掉鼠标事件的区域 -->
-      <div v-if="dockDnd.active && dockDnd.moved" class="dock-drag-overlay"></div>
-
-      <!-- 拖拽预览：落点位置实时显示面板内容 -->
-      <div
-        v-if="dockDnd.active && dockDnd.moved && dockDnd.panel && dockDnd.target && previewStyle"
-        class="dock-preview"
-        :style="previewStyle"
-      >
-        <component :is="panelComponent(dockDnd.panel)" />
-      </div>
+      <!-- 浮动窗口 + 拖拽幽灵/捕获层/落点预览（停靠系统胶水层） -->
+      <DockLayer :sys="docks" :panels="PANEL_COMP" />
 
       <!-- 全局右键菜单 -->
       <ContextMenu />

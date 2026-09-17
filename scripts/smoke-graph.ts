@@ -546,25 +546,25 @@ console.log("⑤ 工作台与无图资产契约");
     "资产：编辑器同源数据 + 真件复用（工具栏/条目）",
   );
 
-  // 停靠系统：图窗口复刻编辑器 docks（页签拖拽/浮动/分隔条调宽），布局键隔离
+  // 停靠系统：编辑器/图窗口共用 src/docks 工厂（页签拖拽/浮动/分隔条调宽），布局键隔离
   const docks = read("src/graph-window/docks.ts");
   check(
-    docks.includes("tve:graph:dock-layout:v1") && docks.includes("initGraphDocks") && docks.includes("uiStateSet"),
-    "dock：图窗口布局注册表（层级/检查器/变量/资产）+ 后端 UI 状态 KV 持久化",
+    docks.includes("tve:graph:dock-layout:v1") && docks.includes("createDockSystem"),
+    "dock：图窗口布局实例（层级/检查器/变量/资产）+ 独立持久化键",
   );
   check(docks.includes('"variables"') && docks.includes("变量"), "dock：变量面板注册");
   check(docks.includes('"customNodes"') && docks.includes("自定义"), "dock：自定义节点面板注册");
-  const dnd = read("src/graph-window/graph-dock-dnd.ts");
-  check(dnd.includes("beginTabDrag") && dnd.includes("dock-dragging"), "dock：页签拖拽（移动/停靠/浮动）");
-  const zone = read("src/graph-window/components/GraphDockZone.vue");
+  const dockFactory = read("src/docks/create-docks.ts");
+  check(dockFactory.includes("beginTabDrag") && dockFactory.includes("dock-dragging"), "dock：页签拖拽（移动/停靠/浮动）");
+  const zone = read("src/docks/DockZone.vue");
   check(
     zone.includes('class="dock-zone"') && zone.includes("data-dock-tab") && zone.includes("dock-body"),
     "dock：停靠区同款页签/落点/空区细条",
   );
   const appSrc = read("src/graph-window/GraphApp.vue");
   check(
-    appSrc.includes("GraphDockZone") && appSrc.includes("beginZoneResize") && appSrc.includes("splitter") && appSrc.includes("GraphFloatingDock") && appSrc.includes("dock-ghost"),
-    "工作区：停靠区 + 分隔条调宽 + 浮动面板 + 拖拽幽灵",
+    appSrc.includes("DockZone") && appSrc.includes("graphDocks.beginZoneResize") && appSrc.includes("splitter") && appSrc.includes("DockLayer"),
+    "工作区：停靠区 + 分隔条调宽 + 浮动面板/拖拽幽灵（DockLayer）",
   );
 
   // 旧资产化路线确已移除

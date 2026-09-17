@@ -3,7 +3,7 @@
 // - seq：打开请求序号（AssetInspector/组件卡「在动画编辑器中打开」递增），
 //   面板监听 seq 变化加载对应剪辑；dockTo 把面板带到前台（底部停靠区）。
 import { reactive } from "vue";
-import { dockTo } from "../docks/docks-layout";
+import { docks } from "../docks";
 import { enterAnimEditMode, exitAnimEditMode } from "./anim-edit-mode";
 
 export const animEditor = reactive({
@@ -23,5 +23,5 @@ export function openInAnimEditor(rel: string, nodeId?: string): void {
   if (nodeId) enterAnimEditMode(nodeId);
   else exitAnimEditMode();
   animEditor.seq += 1;
-  dockTo("animation", "bottom");
+  docks.dockTo("animation", "bottom");
 }
