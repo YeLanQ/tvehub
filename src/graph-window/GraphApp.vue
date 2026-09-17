@@ -32,6 +32,8 @@ import GraphFloatingDock from "./components/GraphFloatingDock.vue";
 import GraphHierarchy from "./components/GraphHierarchy.vue";
 import GraphModal from "./components/GraphModal.vue";
 import GraphPreview from "./components/GraphPreview.vue";
+import GraphVariablePanel from "./components/GraphVariablePanel.vue";
+import GraphCustomNodePanel from "./components/GraphCustomNodePanel.vue";
 import NodeInspector from "./components/NodeInspector.vue";
 import "../styles/graph-window.scss";
 import "../styles/components/app.scss";
@@ -66,6 +68,8 @@ function onSplitDown(e: MouseEvent, zone: GraphDockZoneId) {
 const PANEL_COMP: Record<GraphDockPanelId, unknown> = {
   hierarchy: markRaw(GraphHierarchy),
   inspector: markRaw(NodeInspector),
+  variables: markRaw(GraphVariablePanel),
+  customNodes: markRaw(GraphCustomNodePanel),
   assets: markRaw(GraphAssets),
 };
 
@@ -236,6 +240,8 @@ onUnmounted(() => {
           ></div>
           <GraphDockZone zone="right">
             <template #inspector><NodeInspector /></template>
+            <template #variables><GraphVariablePanel /></template>
+            <template #customNodes><GraphCustomNodePanel /></template>
           </GraphDockZone>
         </div>
 
@@ -262,6 +268,8 @@ onUnmounted(() => {
       <GraphFloatingDock v-for="f in graphDocks.floating" :key="f.id" :win="f">
         <template #hierarchy><GraphHierarchy /></template>
         <template #inspector><NodeInspector /></template>
+        <template #variables><GraphVariablePanel /></template>
+        <template #customNodes><GraphCustomNodePanel /></template>
         <template #assets><GraphAssets /></template>
       </GraphFloatingDock>
 

@@ -7,7 +7,7 @@
 import { reactive, watch } from "vue";
 import { uiStateGet, uiStateSet } from "../lib/ui-state";
 
-export type GraphDockPanelId = "hierarchy" | "inspector" | "assets";
+export type GraphDockPanelId = "hierarchy" | "inspector" | "assets" | "variables" | "customNodes";
 export type GraphDockZoneId = "left" | "right" | "bottom";
 
 export interface GraphFloatingDock {
@@ -28,18 +28,20 @@ export interface GraphDockLayout {
   sizes: { left: number; right: number; bottom: number };
 }
 
-export const GRAPH_ALL_PANELS: GraphDockPanelId[] = ["hierarchy", "inspector", "assets"];
+export const GRAPH_ALL_PANELS: GraphDockPanelId[] = ["hierarchy", "inspector", "variables", "customNodes", "assets"];
 export const GRAPH_ALL_ZONES: GraphDockZoneId[] = ["left", "right", "bottom"];
 
 export const GRAPH_DOCK_PANEL_LABEL: Record<GraphDockPanelId, string> = {
   hierarchy: "层级",
   inspector: "检查器",
+  variables: "变量",
+  customNodes: "自定义",
   assets: "资产",
 };
 
 function defaults(): GraphDockLayout {
   return {
-    zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["assets"] },
+    zones: { left: ["hierarchy"], right: ["inspector", "variables", "customNodes"], bottom: ["assets"] },
     active: { left: "hierarchy", right: "inspector", bottom: "assets" },
     floating: [],
     sizes: { left: 270, right: 300, bottom: 240 },

@@ -25,6 +25,11 @@ import { MiniMap } from "@vue-flow/minimap";
 import GraphProtoCard from "./GraphProtoCard.vue";
 import GraphMatchCard from "./GraphMatchCard.vue";
 import GraphOpCard from "./GraphOpCard.vue";
+import GraphEventCard from "./GraphEventCard.vue";
+import GraphVarCard from "./GraphVarCard.vue";
+import GraphFlowCard from "./GraphFlowCard.vue";
+import GraphMathCard from "./GraphMathCard.vue";
+import GraphCustomCard from "./GraphCustomCard.vue";
 import GraphCommentBox from "./GraphCommentBox.vue";
 import { getGraphWindowStore } from "../graphStore";
 import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
@@ -37,6 +42,8 @@ import {
   GRAPH_DEFAULT_COMMENT_COLOR,
   GRAPH_OP_DEFS,
   G_OP_TRIGGER_LABEL,
+  nodeMenuGroups,
+
   normalizeGraphDoc,
   type GComment,
   type GNode,
@@ -73,16 +80,28 @@ let lastMouse: { x: number; y: number } | null = null;
 // 模型 ↔ 画布互转
 // ---------------------------------------------------------------------------
 
+/** GNode.type → Vue Flow 节点类型 */
+function flowNodeType(type: string): string {
+  if (type === "entity.proto") return "gproto";
+  if (type === "entity.match") return "gmatch";
+  if (type.startsWith("op.")) return "gop";
+  if (type.startsWith("event.")) return "gevent";
+  if (type.startsWith("var.")) return "gvar";
+  if (type.startsWith("flow.")) return "gflow";
+  if (type.startsWith("math.")) return "gmath";
+  if (type.startsWith("custom.")) return "gcustom";
+  return "gcomment";
+}
+
 function toFlowNode(n: GNode): Node {
-  const type = n.kind === "proto" ? "gproto" : n.kind === "match" ? "gmatch" : n.kind === "op" ? "gop" : "gcomment";
-  return { id: n.id, type, position: { x: n.x, y: n.y }, data: { g: n } };
+  return { id: n.id, type: flowNodeType(n.type), position: { x: n.x, y: n.y }, data: { g: n } };
 }
 
 function toFlowComment(c: GComment): Node {
   return { id: c.id, type: "gcomment", position: { x: c.x, y: c.y }, data: { c } };
 }
 
-/** 通道 → 连线样式：实体集绿色细线；执行链白线 + 箭头 */
+/** 通道 → 连线样式：执行链白线+箭头；实体集绿色细线；数据引脚青色细线 */
 function makeEdge(srcNode: string, srcPort: string, dstNode: string, dstPort: string, id: string): Edge {
   const base: Edge = { id, source: srcNode, sourceHandle: srcPort, target: dstNode, targetHandle: dstPort };
   if (srcPort === "next") {
@@ -92,13 +111,20 @@ function makeEdge(srcNode: string, srcPort: string, dstNode: string, dstPort: st
       markerEnd: { type: MarkerType.ArrowClosed, color: "#f2f2f2", width: 18, height: 18 },
     };
   }
+  if (srcPort === "value") {
+    return {
+      ...base,
+      style: { stroke: "#88c0d0", strokeWidth: 1.5 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#88c0d0", width: 16, height: 16 },
+    };
+  }
   return { ...base, style: { stroke: "#6a9955", strokeWidth: 1.5 } };
 }
 
 function serializeDoc(): ScriptGraphDoc | null {
   const list = nodes.value;
   if (!list) return null;
-  const doc: ScriptGraphDoc = { nodes: [], edges: [], comments: [] };
+  const doc: ScriptGraphDoc = { nodes: [], edges: [], comments: [], variables: store.graphVariables, customNodes: store.graphCustomNodes };
   for (const n of list) {
     if (n.type === "gcomment") {
       const c = n.data?.c as GComment | undefined;
@@ -236,7 +262,7 @@ function addProto(entityId: string, at?: { x: number; y: number }): void {
   }
   requestSnapshot();
   const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), kind: "proto", x: Math.round(pos.x), y: Math.round(pos.y), entityId };
+  const n: GNode = { id: uniqueNodeId(), type: "entity.proto", x: Math.round(pos.x), y: Math.round(pos.y), entityId };
   putNode(n);
 }
 
@@ -245,7 +271,7 @@ function addMatch(mode: "tag" | "type", at?: { x: number; y: number }): void {
   const pos = at ?? mouseFlow();
   const n: GNode = {
     id: uniqueNodeId(),
-    kind: "match",
+    type: "entity.match",
     x: Math.round(pos.x),
     y: Math.round(pos.y),
     matchMode: mode,
@@ -260,12 +286,54 @@ function addOp(opType: string, at?: { x: number; y: number }): void {
   const pos = at ?? mouseFlow();
   const n: GNode = {
     id: uniqueNodeId(),
-    kind: "op",
+    type: opType,
     x: Math.round(pos.x),
     y: Math.round(pos.y),
     opType,
     params: graphOpDefaults(opType),
   };
+  putNode(n);
+}
+
+/** 添加事件节点（执行链入口） */
+function addEvent(eventType: string, at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), type: eventType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  putNode(n);
+}
+
+/** 添加变量节点（var.get / var.set） */
+function addVarNode(varType: string, at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), type: varType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  putNode(n);
+}
+
+/** 添加控制流节点（flow.branch/compare/for/forEach/while） */
+function addFlowNode(flowType: string, at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), type: flowType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  if (flowType === "flow.compare") n.params = { operator: ">" };
+  if (flowType === "flow.for") n.params = { start: 0, end: 10, step: 1 };
+  putNode(n);
+}
+
+/** 添加数学/工具节点（math.add/sub/.../vec3Make/...） */
+function addMathNode(mathType: string, at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), type: mathType, x: Math.round(pos.x), y: Math.round(pos.y) };
+  putNode(n);
+}
+
+/** 添加自定义节点（custom.xxx） */
+function addCustomNode(customType: string, at?: { x: number; y: number }): void {
+  requestSnapshot();
+  const pos = at ?? mouseFlow();
+  const n: GNode = { id: uniqueNodeId(), type: customType, x: Math.round(pos.x), y: Math.round(pos.y) };
   putNode(n);
 }
 
@@ -413,11 +481,43 @@ let ctxFlowPos = { x: 0, y: 0 };
 
 onPaneContextMenu((event) => {
   ctxFlowPos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+  const eventItems: CtxMenuItem[] = [
+    { label: "On Begin（启动时）", onClick: () => addEvent("event.onBegin", ctxFlowPos) },
+    { label: "On Tick（每帧）", onClick: () => addEvent("event.onTick", ctxFlowPos) },
+    { label: "On Click（点击时）", onClick: () => addEvent("event.onClick", ctxFlowPos) },
+  ];
+  const varItems: CtxMenuItem[] = [
+    { label: "Get 变量（读取）", onClick: () => addVarNode("var.get", ctxFlowPos) },
+    { label: "Set 变量（写入）", onClick: () => addVarNode("var.set", ctxFlowPos) },
+  ];
+  const flowItems: CtxMenuItem[] = [
+    { label: "分支（Branch）", onClick: () => addFlowNode("flow.branch", ctxFlowPos) },
+    { label: "比较（Compare）", onClick: () => addFlowNode("flow.compare", ctxFlowPos) },
+    { label: "For 循环", onClick: () => addFlowNode("flow.for", ctxFlowPos) },
+    { label: "ForEach 循环", onClick: () => addFlowNode("flow.forEach", ctxFlowPos) },
+    { label: "While 循环", onClick: () => addFlowNode("flow.while", ctxFlowPos) },
+  ];
+  const mathGroup = nodeMenuGroups().find((g) => g.category === "math");
+  const mathItems: CtxMenuItem[] = (mathGroup?.items ?? []).map((d) => ({
+    label: d.label,
+    onClick: () => addMathNode(d.type, ctxFlowPos),
+  }));
+  const customGroup = nodeMenuGroups().find((g) => g.category === "custom");
+  const customItems: CtxMenuItem[] = (customGroup?.items ?? []).map((d) => ({
+    label: d.label,
+    onClick: () => addCustomNode(d.type, ctxFlowPos),
+  }));
   const opItems: CtxMenuItem[] = GRAPH_OP_DEFS.map((d) => ({
     label: `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）`,
     onClick: () => addOp(d.type, ctxFlowPos),
   }));
   const items: CtxMenuItem[] = [
+    { label: "添加事件", children: eventItems },
+    { label: "添加变量节点", children: varItems },
+    { label: "添加控制流", children: flowItems },
+    { label: "添加数学/工具", children: mathItems },
+    ...(customItems.length ? [{ label: "添加自定义节点", children: customItems }] : []),
+    { separator: true },
     { label: "添加原型", disabled: true },
     { label: "从左侧层级拖入实体生成原型", disabled: true },
     { separator: true },
@@ -531,6 +631,21 @@ onBeforeUnmount(() => {
       </template>
       <template #node-gop="p">
         <GraphOpCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gevent="p">
+        <GraphEventCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gvar="p">
+        <GraphVarCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gflow="p">
+        <GraphFlowCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gmath="p">
+        <GraphMathCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gcustom="p">
+        <GraphCustomCard :id="p.id" :data="p.data" :selected="p.selected" />
       </template>
       <template #node-gcomment="p">
         <GraphCommentBox :id="p.id" :data="p.data" :selected="p.selected" />

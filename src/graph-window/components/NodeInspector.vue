@@ -9,9 +9,11 @@
 import { computed, ref, watch } from "vue";
 import { getGraphWindowStore } from "../graphStore";
 import {
+  G_COMPARE_OPERATORS,
   G_OP_TRIGGER_LABEL,
   GRAPH_COMMENT_COLORS,
   graphOpDef,
+  nodeTypeDef,
   type GComment,
   type GNode,
 } from "../../framework/graph";
@@ -30,16 +32,26 @@ watch(
   },
 );
 
-const def = computed(() => (g.value?.kind === "op" ? graphOpDef(g.value.opType ?? "") : null));
+const def = computed(() => (g.value?.type.startsWith("op.") ? graphOpDef(g.value.opType ?? g.value.type) : null));
+const eventDef = computed(() => (g.value?.type.startsWith("event.") ? nodeTypeDef(g.value.type) : null));
+const varDef = computed(() => (g.value?.type.startsWith("var.") ? nodeTypeDef(g.value.type) : null));
+const flowDef = computed(() => (g.value?.type.startsWith("flow.") ? nodeTypeDef(g.value.type) : null));
+const mathDef = computed(() => (g.value?.type.startsWith("math.") ? nodeTypeDef(g.value.type) : null));
+const customDef = computed(() => (g.value?.type.startsWith("custom.") ? nodeTypeDef(g.value.type) : null));
+/** 变量节点引用的图变量 */
+const referencedVar = computed(() => {
+  if (!g.value?.type.startsWith("var.")) return null;
+  return store.graphVariables.find((v) => v.id === g.value?.varId) ?? null;
+});
 /** 原型对应的场景实体（实时属性参照） */
 const entity = computed<SceneEntity | null>(() => {
-  if (g.value?.kind !== "proto") return null;
+  if (g.value?.type !== "entity.proto") return null;
   return store.sceneEntities.find((e) => e.id === g.value?.entityId) ?? null;
 });
 
 /** 匹配节点的实时命中 */
 const matched = computed(() => {
-  if (g.value?.kind !== "match") return [];
+  if (g.value?.type !== "entity.match") return [];
   const tagList = g.value.matchMode === "type"
     ? store.sceneEntities.filter((e) => e.type === (g.value?.matchPattern ?? ""))
     : store.sceneEntities.filter((e) => e.tag === (g.value?.matchPattern ?? ""));
@@ -48,7 +60,7 @@ const matched = computed(() => {
 
 /** 模式串候选（场景中去重的标签 / 类型键） */
 const patternOptions = computed(() => {
-  if (g.value?.kind !== "match") return [];
+  if (g.value?.type !== "entity.match") return [];
   return [...new Set(store.sceneEntities.map((e) => (g.value?.matchMode === "type" ? e.type : e.tag)).filter(Boolean))];
 });
 
@@ -58,7 +70,7 @@ const vecText = (v: { x: number; y: number; z: number }): string =>
 // ----- 操作参数提交 -----
 
 function commitParam(key: string, raw: string | boolean): void {
-  if (g.value?.kind !== "op") return;
+  if (!g.value?.type.startsWith("op.")) return;
   const defV = def.value;
   if (!defV) return;
   const f = defV.fields.find((x) => x.key === key);
@@ -80,10 +92,52 @@ function commitParam(key: string, raw: string | boolean): void {
 // ----- 匹配参数提交 -----
 
 function commitMatch(patch: { matchMode?: "tag" | "type"; matchPattern?: string }): void {
-  if (g.value?.kind !== "match") return;
+  if (g.value?.type !== "entity.match") return;
   store.canvas?.requestSnapshot();
   if (patch.matchMode) g.value.matchMode = patch.matchMode;
   if (patch.matchPattern !== undefined) g.value.matchPattern = patch.matchPattern;
+  store.markGraphDirty();
+}
+
+// ----- 变量节点参数提交 -----
+
+function commitVarId(varId: string): void {
+  if (!g.value?.type.startsWith("var.")) return;
+  store.canvas?.requestSnapshot();
+  g.value.varId = varId || undefined;
+  store.markGraphDirty();
+}
+
+// ----- 控制流参数提交 -----
+
+function commitFlowParam(key: string, raw: string): void {
+  if (!g.value?.type.startsWith("flow.")) return;
+  store.canvas?.requestSnapshot();
+  if (!g.value.params) g.value.params = {};
+  if (key === "operator") g.value.params[key] = String(raw);
+  else g.value.params[key] = Number(raw) || 0;
+  store.markGraphDirty();
+}
+
+// ----- 自定义节点参数提交 -----
+
+function commitCustomParam(key: string, raw: string | boolean): void {
+  if (!g.value?.type.startsWith("custom.")) return;
+  const defV = customDef.value;
+  if (!defV) return;
+  const f = defV.fields?.find((x) => x.key === key);
+  if (!f) return;
+  store.canvas?.requestSnapshot();
+  if (!g.value.params || typeof g.value.params !== "object") g.value.params = {};
+  if (f.kind === "number") {
+    let n = Number(raw);
+    if (!Number.isFinite(n)) n = Number(f.fallback);
+    g.value.params[key] = n;
+  } else if (f.kind === "boolean") {
+    g.value.params[key] = raw === true;
+  } else {
+    g.value.params[key] = String(raw);
+  }
   store.markGraphDirty();
 }
 
@@ -107,7 +161,7 @@ function commitCommentColor(color: string): void {
 <template>
   <div class="ginspector">
     <!-- 原型：实体实时属性参照 -->
-    <template v-if="g?.kind === 'proto'">
+    <template v-if="g?.type === 'entity.proto'">
       <div class="ginsp-head">
         <span class="ginsp-dot" style="background: #569cd6"></span>
         <span class="ginsp-static">{{ entity?.name || "原型" }}</span>
@@ -136,7 +190,7 @@ function commitCommentColor(color: string): void {
     </template>
 
     <!-- 匹配 -->
-    <template v-else-if="g?.kind === 'match'">
+    <template v-else-if="g?.type === 'entity.match'">
       <div class="ginsp-head">
         <span class="ginsp-dot" style="background: #c586c0"></span>
         <span class="ginsp-static">匹配</span>
@@ -166,7 +220,7 @@ function commitCommentColor(color: string): void {
     </template>
 
     <!-- 操作 -->
-    <template v-else-if="g?.kind === 'op' && def">
+    <template v-else-if="g?.type.startsWith('op.') && def">
       <div class="ginsp-head">
         <span class="ginsp-dot" :style="{ background: def.color }"></span>
         <span class="ginsp-static">{{ def.label }}</span>
@@ -197,6 +251,125 @@ function commitCommentColor(color: string): void {
         </label>
       </div>
       <div class="ginsp-desc">{{ def.desc }}。连接原型/匹配卡片到「目标」引脚决定作用对象；「执行」链可在应用时级联下游操作。行为在预览中执行。</div>
+    </template>
+
+    <!-- 事件节点 -->
+    <template v-else-if="g?.type.startsWith('event.') && eventDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: eventDef.color }"></span>
+        <span class="ginsp-static">{{ eventDef.label }}</span>
+        <span class="ginsp-trigger">{{ eventDef.trigger ? G_OP_TRIGGER_LABEL[eventDef.trigger] : "" }}</span>
+      </div>
+      <div class="ginsp-desc">{{ eventDef.desc }}</div>
+      <div class="ginsp-hint">从「执行」引脚连线到操作节点的「执行」入引脚，构成执行链。事件触发时沿链级联执行。</div>
+    </template>
+
+    <!-- 变量节点 -->
+    <template v-else-if="g?.type.startsWith('var.') && varDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: varDef.color }"></span>
+        <span class="ginsp-static">{{ varDef.label }}</span>
+        <span class="ginsp-trigger">{{ referencedVar ? referencedVar.dataType : "未绑定" }}</span>
+      </div>
+      <div class="ginsp-fields">
+        <label class="gfield">
+          <span class="gfield-label">变量</span>
+          <select :value="g.varId ?? ''" @change="commitVarId(($event.target as HTMLSelectElement).value)">
+            <option value="">— 未绑定 —</option>
+            <option v-for="v in store.graphVariables" :key="v.id" :value="v.id">
+              {{ v.name }}（{{ v.dataType }}）
+            </option>
+          </select>
+        </label>
+      </div>
+      <div class="ginsp-desc">{{ varDef.desc }}</div>
+      <template v-if="g.type === 'var.get'">
+        <div class="ginsp-hint">纯数据节点：从「值」引脚连线到下游数据入引脚。值在拉取时从图变量读取。</div>
+      </template>
+      <template v-else>
+        <div class="ginsp-hint">执行链节点：从「值」入引脚拉取数据写入变量，沿「执行」出引脚级联下游。</div>
+      </template>
+    </template>
+
+    <!-- 控制流节点 -->
+    <template v-else-if="g?.type.startsWith('flow.') && flowDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: flowDef.color }"></span>
+        <span class="ginsp-static">{{ flowDef.label }}</span>
+      </div>
+      <div class="ginsp-fields">
+        <!-- Compare: 运算符选择 -->
+        <label v-if="g.type === 'flow.compare'" class="gfield">
+          <span class="gfield-label">运算</span>
+          <select :value="String(g.params?.operator ?? '>')" @change="commitFlowParam('operator', ($event.target as HTMLSelectElement).value)">
+            <option v-for="op in G_COMPARE_OPERATORS" :key="op" :value="op">{{ op }}</option>
+          </select>
+        </label>
+        <!-- For: start/end/step -->
+        <template v-if="g.type === 'flow.for'">
+          <label class="gfield">
+            <span class="gfield-label">起始</span>
+            <input type="number" step="1" :value="Number(g.params?.start ?? 0)" @change="commitFlowParam('start', ($event.target as HTMLInputElement).value)" />
+          </label>
+          <label class="gfield">
+            <span class="gfield-label">结束</span>
+            <input type="number" step="1" :value="Number(g.params?.end ?? 10)" @change="commitFlowParam('end', ($event.target as HTMLInputElement).value)" />
+          </label>
+          <label class="gfield">
+            <span class="gfield-label">步长</span>
+            <input type="number" step="1" :value="Number(g.params?.step ?? 1)" @change="commitFlowParam('step', ($event.target as HTMLInputElement).value)" />
+          </label>
+        </template>
+      </div>
+      <div class="ginsp-desc">{{ flowDef.desc }}</div>
+      <div v-if="g.type === 'flow.compare'" class="ginsp-hint">纯数据节点：比较 A 与 B，结果从「结果」引脚输出。连到 Branch 的「条件」引脚做条件分支。</div>
+      <div v-else-if="g.type === 'flow.branch'" class="ginsp-hint">条件为真走「真」分支，否则走「假」分支。条件从数据入引脚拉取（可连 Compare 结果或 var.get）。</div>
+      <div v-else-if="g.type === 'flow.for'" class="ginsp-hint">从起始到结束步进，每次触发「循环」分支。「索引」引脚输出当前迭代值。结束后走「完成」分支。</div>
+      <div v-else-if="g.type === 'flow.forEach'" class="ginsp-hint">遍历实体集，每次触发「循环」分支。「当前」引脚输出当前实体。结束后走「完成」分支。</div>
+      <div v-else-if="g.type === 'flow.while'" class="ginsp-hint">条件为真时循环触发「循环」分支。条件为假或达到上限（10000）后走「完成」分支。</div>
+    </template>
+
+    <!-- 数学/工具节点 -->
+    <template v-else-if="g?.type.startsWith('math.') && mathDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: mathDef.color }"></span>
+        <span class="ginsp-static">{{ mathDef.label }}</span>
+      </div>
+      <div class="ginsp-desc">{{ mathDef.desc }}</div>
+      <div class="ginsp-hint">纯数据节点：从输入引脚拉取数据，计算结果从输出引脚输出。连线到下游数据入引脚驱动求值。</div>
+    </template>
+
+    <!-- 自定义节点 -->
+    <template v-else-if="g?.type.startsWith('custom.') && customDef">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: customDef.color }"></span>
+        <span class="ginsp-static">{{ customDef.label }}</span>
+      </div>
+      <div v-if="customDef.desc" class="ginsp-desc">{{ customDef.desc }}</div>
+      <div v-if="customDef.fields?.length" class="ginsp-fields">
+        <label v-for="f in customDef.fields" :key="f.key" class="gfield">
+          <span class="gfield-label">{{ f.label }}</span>
+          <input
+            v-if="f.kind === 'number'"
+            type="number"
+            :step="0.1"
+            :value="Number(g.params?.[f.key] ?? f.fallback)"
+            @change="commitCustomParam(f.key, ($event.target as HTMLInputElement).value)"
+          />
+          <input
+            v-else-if="f.kind === 'boolean'"
+            type="checkbox"
+            :checked="g.params?.[f.key] === true"
+            @change="commitCustomParam(f.key, ($event.target as HTMLInputElement).checked)"
+          />
+          <input
+            v-else
+            :value="String(g.params?.[f.key] ?? '')"
+            @change="commitCustomParam(f.key, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+      </div>
+      <div class="ginsp-hint">自定义节点：从输入引脚拉取数据，按用户定义的表达式求值，结果从输出引脚输出。在「自定义节点」面板编辑定义。</div>
     </template>
 
     <!-- 注释框 -->

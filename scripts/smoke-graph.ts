@@ -29,8 +29,14 @@ import {
   graphPort,
   isGraphDoc,
   normalizeGraphDoc,
+  nodeTypeDef,
+  nodeMenuGroups,
+  nextGraphVariableId,
+  registerCustomNodeDefs,
   type GNode,
   type GPortInfo,
+  type GVariable,
+  type GCustomNodeDef,
 } from "../src/framework/graph";
 
 let passed = 0;
@@ -44,9 +50,9 @@ function check(cond: boolean, msg: string): void {
   }
 }
 
-const port = (id: string, channel: GPortInfo["channel"], direction: GPortInfo["direction"]): GPortInfo => ({
+const port = (id: string, dataType: GPortInfo["dataType"], direction: GPortInfo["direction"]): GPortInfo => ({
   id,
-  channel,
+  dataType,
   direction,
 });
 
@@ -86,19 +92,228 @@ console.log("① 会话模型");
   check(!isGraphDoc({}), "isGraphDoc 拒绝非图");
 
   // 端口通道表：原型/匹配只有实体集源；操作有实体入/执行入/实体出/执行出
-  const proto: GNode = { id: "p", kind: "proto", x: 0, y: 0, entityId: "e" };
-  const op: GNode = { id: "o", kind: "op", x: 0, y: 0, opType: "op.spin", params: {} };
-  check(graphNodePorts(proto).length === 1 && graphNodePorts(proto)[0].channel === "entities", "原型仅实体集源端口");
+  const proto: GNode = { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "e" };
+  const op: GNode = { id: "o", type: "op.spin", x: 0, y: 0, opType: "op.spin", params: {} };
+  check(graphNodePorts(proto).length === 1 && graphNodePorts(proto)[0].dataType === "entities", "原型仅实体集源端口");
   check(graphNodePorts(op).length === 4, "操作节点四端口");
-  check(graphPort(op, "in", "in")?.channel === "entities", "op.in = 实体集入");
-  check(graphPort(op, "exec", "in")?.channel === "exec", "op.exec = 执行链入");
+  check(graphPort(op, "in", "in")?.dataType === "entities", "op.in = 实体集入");
+  check(graphPort(op, "exec", "in")?.dataType === "exec", "op.exec = 执行链入");
   check(!canConnectPorts(port("out", "entities", "out"), port("exec", "exec", "in")), "实体集 → 执行链拒绝");
   check(canConnectPorts(port("out", "entities", "out"), port("in", "entities", "in")), "实体集 → 实体集");
 
+  // 事件节点端口：onBegin/onTick 仅有 next（exec 出）；onClick 有 in（entities 入）+ next
+  const onBegin: GNode = { id: "eb", type: "event.onBegin", x: 0, y: 0 };
+  const onTick: GNode = { id: "et", type: "event.onTick", x: 0, y: 0 };
+  const onClick: GNode = { id: "ec", type: "event.onClick", x: 0, y: 0 };
+  check(graphNodePorts(onBegin).length === 1 && graphPort(onBegin, "next", "out")?.dataType === "exec", "onBegin 仅 next(exec) 出端口");
+  check(graphNodePorts(onTick).length === 1 && graphPort(onTick, "next", "out")?.dataType === "exec", "onTick 仅 next(exec) 出端口");
+  check(graphNodePorts(onClick).length === 2 && graphPort(onClick, "in", "in")?.dataType === "entities", "onClick 有 in(entities) 入 + next(exec) 出");
+  check(canConnectPorts(port("next", "exec", "out"), port("exec", "exec", "in")), "exec → exec 可连");
+
+  // 节点类型注册表
+  check(nodeTypeDef("event.onBegin")?.category === "event", "event.onBegin 注册为 event 类别");
+  check(nodeTypeDef("entity.proto")?.category === "entity", "entity.proto 注册为 entity 类别");
+  check(nodeTypeDef("op.spin")?.category === "op", "op.spin 注册为 op 类别");
+  const groups = nodeMenuGroups();
+  check(groups.some((g) => g.category === "event" && g.items.length === 3), "右键菜单含事件分组（3 个事件节点）");
+
   // 标签推导显示名
-  const m: GNode = { id: "m", kind: "match", x: 0, y: 0, matchMode: "tag", matchPattern: "enemy" };
+  const m: GNode = { id: "m", type: "entity.match", x: 0, y: 0, matchMode: "tag", matchPattern: "enemy" };
   check(graphNodeLabel(m).includes("enemy"), "匹配节点显示名含模式串");
-  check(graphNodeLabel({ id: "x", kind: "proto", x: 0, y: 0 }, { entityName: () => "Box01" }) === "Box01", "原型显示名取实体名");
+  check(graphNodeLabel({ id: "x", type: "entity.proto", x: 0, y: 0 }, { entityName: () => "Box01" }) === "Box01", "原型显示名取实体名");
+
+  // ----- 变量系统 -----
+  // var.get / var.set 节点类型注册
+  check(nodeTypeDef("var.get")?.category === "variable", "var.get 注册为 variable 类别");
+  check(nodeTypeDef("var.set")?.category === "variable", "var.set 注册为 variable 类别");
+  const vg: GNode = { id: "vg", type: "var.get", x: 0, y: 0, varId: "v1" };
+  const vs: GNode = { id: "vs", type: "var.set", x: 0, y: 0, varId: "v1" };
+  // var.get：仅 value 出引脚（any 类型）
+  check(graphNodePorts(vg).length === 1 && graphPort(vg, "value", "out")?.dataType === "any", "var.get 仅 value(any) 出端口");
+  // var.set：exec 入 + value 数据入 + next 出 + value 出
+  check(graphNodePorts(vs).length === 4, "var.set 四端口（exec入/value入/next出/value出）");
+  check(graphPort(vs, "exec", "in")?.dataType === "exec", "var.set.exec = 执行链入");
+  check(graphPort(vs, "value", "in")?.dataType === "any", "var.set.value入 = any 数据入");
+  check(graphPort(vs, "next", "out")?.dataType === "exec", "var.set.next = 执行链出");
+  check(graphPort(vs, "value", "out")?.dataType === "any", "var.set.value出 = any 数据出");
+  // any 类型可连 number/boolean/string
+  check(canConnectPorts(port("value", "any", "out"), port("value", "any", "in")), "any → any 可连");
+  check(canConnectPorts(port("value", "any", "out"), port("in", "entities", "in")), "any → entities 可连");
+
+  // 变量收敛
+  const vDoc = normalizeGraphDoc({
+    nodes: [
+      { id: "n1", type: "var.get", x: 0, y: 0, varId: "v1" },
+      { id: "n2", type: "var.set", x: 0, y: 0, varId: "v_bad" },
+    ],
+    edges: [],
+    comments: [],
+    variables: [
+      { id: "v1", name: "speed", dataType: "number", value: 42 },
+      { id: "v1", name: "dup", dataType: "number", value: 0 },
+      { id: "v2", name: "flag", dataType: "boolean", value: true },
+      { id: "v3", name: "label", dataType: "string", value: "hello" },
+      { id: "v4", name: "bad", dataType: "nope", value: 0 },
+    ],
+  });
+  check(vDoc.variables?.length === 5, `变量 id 冲突生成新 id（5 个，实际 ${vDoc.variables?.length}）`);
+  check(vDoc.variables?.[0].name === "speed", "变量名保留");
+  check(vDoc.variables?.[2].name === "flag" && vDoc.variables?.[2].value === true, "布尔变量收敛");
+  check(vDoc.variables?.[3].name === "label" && vDoc.variables?.[3].value === "hello", "字符串变量收敛");
+  check(vDoc.variables?.[4].dataType === "number", "非法类型回退 number");
+  // varId 收敛
+  check(vDoc.nodes[0].varId === "v1", "var.get.varId 保留");
+  check(vDoc.nodes[1].varId === "v_bad", "var.set.varId 保留（即使引用不存在的变量）");
+
+  // 变量节点显示名
+  const varNameResolver = (id: string): string | null => {
+    const v = vDoc.variables?.find((x) => x.id === id);
+    return v ? v.name : null;
+  };
+  check(graphNodeLabel({ id: "x", type: "var.get", x: 0, y: 0, varId: "v1" }, { varName: varNameResolver }) === "speed", "var.get 显示名取变量名");
+  check(graphNodeLabel({ id: "x", type: "var.set", x: 0, y: 0 }, { varName: varNameResolver }) === "变量", "var.set 无 varId 显示「变量」");
+
+  // 变量 id 生成
+  check(nextGraphVariableId({ variables: [{ id: "v1", name: "a", dataType: "number", value: 0 }] }) === "v2", "nextGraphVariableId 跳过已有");
+
+  // 右键菜单含变量分组
+  const vGroups = nodeMenuGroups();
+  check(vGroups.some((g) => g.category === "variable" && g.items.length === 2), "右键菜单含变量分组（var.get + var.set）");
+  // 控制流节点注册
+  check(nodeTypeDef("flow.branch")?.category === "flow", "flow.branch 注册为 flow 类别");
+  check(nodeTypeDef("flow.compare")?.category === "flow", "flow.compare 注册为 flow 类别");
+  check(nodeTypeDef("flow.for")?.category === "flow", "flow.for 注册为 flow 类别");
+  check(nodeTypeDef("flow.forEach")?.category === "flow", "flow.forEach 注册为 flow 类别");
+  check(nodeTypeDef("flow.while")?.category === "flow", "flow.while 注册为 flow 类别");
+  check(vGroups.some((g) => g.category === "flow" && g.items.length === 5), "右键菜单含控制流分组（5 个节点）");
+  // Branch 端口
+  const branch: GNode = { id: "br", type: "flow.branch", x: 0, y: 0 };
+  check(graphNodePorts(branch).length === 4, "flow.branch 四端口");
+  check(graphPort(branch, "exec", "in")?.dataType === "exec", "branch.exec = 执行入");
+  check(graphPort(branch, "condition", "in")?.dataType === "boolean", "branch.condition = 布尔入");
+  check(graphPort(branch, "true", "out")?.dataType === "exec", "branch.true = 执行出");
+  check(graphPort(branch, "false", "out")?.dataType === "exec", "branch.false = 执行出");
+  // Compare 端口（纯数据）
+  const cmp: GNode = { id: "cmp", type: "flow.compare", x: 0, y: 0, params: { operator: ">" } };
+  check(graphNodePorts(cmp).length === 3, "flow.compare 三端口");
+  check(graphPort(cmp, "a", "in")?.dataType === "number", "compare.a = 数值入");
+  check(graphPort(cmp, "result", "out")?.dataType === "boolean", "compare.result = 布尔出");
+  // For 端口
+  const forNode: GNode = { id: "fo", type: "flow.for", x: 0, y: 0, params: { start: 0, end: 10, step: 1 } };
+  check(graphNodePorts(forNode).length === 7, "flow.for 七端口");
+  check(graphPort(forNode, "loop", "out")?.dataType === "exec", "for.loop = 执行出");
+  check(graphPort(forNode, "index", "out")?.dataType === "number", "for.index = 数值出");
+  check(graphPort(forNode, "completed", "out")?.dataType === "exec", "for.completed = 执行出");
+  // ForEach 端口
+  const feNode: GNode = { id: "fe", type: "flow.forEach", x: 0, y: 0 };
+  check(graphNodePorts(feNode).length === 5, "flow.forEach 五端口");
+  check(graphPort(feNode, "array", "in")?.dataType === "entities", "forEach.array = 实体集入");
+  check(graphPort(feNode, "item", "out")?.dataType === "entity", "forEach.item = 实体出");
+  // While 端口
+  const whNode: GNode = { id: "wh", type: "flow.while", x: 0, y: 0 };
+  check(graphNodePorts(whNode).length === 4, "flow.while 四端口");
+  check(graphPort(whNode, "loop", "out")?.dataType === "exec", "while.loop = 执行出");
+  check(graphPort(whNode, "completed", "out")?.dataType === "exec", "while.completed = 执行出");
+  // 控制流连线兼容性
+  check(canConnectPorts(port("result", "boolean", "out"), port("condition", "boolean", "in")), "compare.result → branch.condition 可连");
+  check(canConnectPorts(port("true", "exec", "out"), port("exec", "exec", "in")), "branch.true → op.exec 可连");
+  check(canConnectPorts(port("loop", "exec", "out"), port("exec", "exec", "in")), "for.loop → op.exec 可连");
+  // 控制流节点 normalize
+  const fDoc = normalizeGraphDoc({
+    nodes: [
+      { id: "n1", type: "flow.branch", x: 0, y: 0 },
+      { id: "n2", type: "flow.compare", x: 0, y: 0, params: { operator: ">=" } },
+      { id: "n3", type: "flow.for", x: 0, y: 0, params: { start: "x", end: 5, step: 1 } },
+    ],
+    edges: [],
+    comments: [],
+  });
+  check(fDoc.nodes.length === 3, "控制流节点 normalize 保留");
+  check(fDoc.nodes[1].params?.operator === ">=", "compare.operator 保留");
+  check(fDoc.nodes[2].params?.start === 0 && fDoc.nodes[2].params?.end === 5, "for 循环参数收敛（非数值回退缺省）");
+
+  // ----- 数学/工具节点 -----
+  const mathTypes = ["math.add", "math.sub", "math.mul", "math.div", "math.mod", "math.sin", "math.cos", "math.tan", "math.vec3Make", "math.vec3Break", "math.stringConcat", "math.toString", "math.lerp", "math.clamp", "math.abs"];
+  for (const mt of mathTypes) {
+    check(nodeTypeDef(mt)?.category === "math", `${mt} 注册为 math 类别`);
+  }
+  check(vGroups.some((g) => g.category === "math" && g.items.length === mathTypes.length), `右键菜单含数学分组（${mathTypes.length} 个节点）`);
+  // 算术端口
+  const addN: GNode = { id: "add", type: "math.add", x: 0, y: 0 };
+  check(graphNodePorts(addN).length === 3, "math.add 三端口（a/b 入 + result 出）");
+  check(graphPort(addN, "a", "in")?.dataType === "number", "add.a = 数值入");
+  check(graphPort(addN, "result", "out")?.dataType === "number", "add.result = 数值出");
+  // 向量端口
+  const v3m: GNode = { id: "v3m", type: "math.vec3Make", x: 0, y: 0 };
+  check(graphNodePorts(v3m).length === 4, "math.vec3Make 四端口（x/y/z 入 + v 出）");
+  check(graphPort(v3m, "v", "out")?.dataType === "vec3", "vec3Make.v = 向量出");
+  const v3b: GNode = { id: "v3b", type: "math.vec3Break", x: 0, y: 0 };
+  check(graphPort(v3b, "v", "in")?.dataType === "vec3", "vec3Break.v = 向量入");
+  check(graphPort(v3b, "x", "out")?.dataType === "number", "vec3Break.x = 数值出");
+  // 字符串端口
+  const sc: GNode = { id: "sc", type: "math.stringConcat", x: 0, y: 0 };
+  check(graphPort(sc, "a", "in")?.dataType === "string" && graphPort(sc, "result", "out")?.dataType === "string", "stringConcat 端口 = string");
+  const ts: GNode = { id: "ts", type: "math.toString", x: 0, y: 0 };
+  check(graphPort(ts, "value", "in")?.dataType === "any", "toString.value = any 入");
+  // 数学节点连线兼容性
+  check(canConnectPorts(port("result", "number", "out"), port("a", "number", "in")), "add.result → add.a 可连");
+  check(canConnectPorts(port("result", "number", "out"), port("condition", "boolean", "in")) === false, "number → boolean 拒绝");
+  check(canConnectPorts(port("v", "vec3", "out"), port("v", "vec3", "in")), "vec3 → vec3 可连");
+  // 数学节点 normalize
+  const mDoc = normalizeGraphDoc({
+    nodes: [
+      { id: "m1", type: "math.add", x: 0, y: 0 },
+      { id: "m2", type: "math.vec3Make", x: 0, y: 0 },
+      { id: "m3", type: "math.nope", x: 0, y: 0 },
+    ],
+    edges: [
+      { id: "me1", srcNode: "m1", srcPort: "result", dstNode: "m2", dstPort: "x" },
+    ],
+    comments: [],
+  });
+  check(mDoc.nodes.length === 2, "数学节点 normalize 保留（未知 math 类型剔除）");
+  check(mDoc.edges.length === 1, "数学节点数据流连线保留");
+
+  // ----- 自定义节点定义 -----
+  const customDef: GCustomNodeDef = {
+    id: "cd1",
+    type: "custom.myAdd",
+    label: "我的加法",
+    desc: "a + b + offset",
+    color: "#4ec9b0",
+    inputs: [{ id: "a", label: "A", dataType: "number" }, { id: "b", label: "B", dataType: "number" }],
+    outputs: [{ id: "result", label: "结果", dataType: "number" }],
+    fields: [{ key: "offset", label: "偏移", kind: "number", fallback: 0 }],
+    expressions: { result: "a + b + offset" },
+  };
+  registerCustomNodeDefs([customDef]);
+  check(nodeTypeDef("custom.myAdd")?.category === "custom", "自定义节点注册为 custom 类别");
+  check(nodeTypeDef("custom.myAdd")?.label === "我的加法", "自定义节点 label");
+  const customNode: GNode = { id: "cn", type: "custom.myAdd", x: 0, y: 0, params: { offset: 10 } };
+  check(graphNodePorts(customNode).length === 3, "自定义节点三端口（a/b 入 + result 出）");
+  check(graphPort(customNode, "a", "in")?.dataType === "number", "custom.a = 数值入");
+  check(graphPort(customNode, "result", "out")?.dataType === "number", "custom.result = 数值出");
+  // 自定义节点在右键菜单
+  const cGroups = nodeMenuGroups();
+  check(cGroups.some((g) => g.category === "custom" && g.items.some((i) => i.type === "custom.myAdd")), "右键菜单含自定义分组");
+  // 自定义节点 normalize
+  const cDoc = normalizeGraphDoc({
+    nodes: [
+      { id: "cn1", type: "custom.myAdd", x: 0, y: 0, params: { offset: 5 } },
+      { id: "cn2", type: "custom.nope", x: 0, y: 0 },
+    ],
+    edges: [],
+    comments: [],
+    customNodes: [customDef, { id: "cd1", type: "custom.dup", label: "重复", desc: "", color: "#4ec9b0", inputs: [], outputs: [], fields: [], expressions: {} }],
+  });
+  check(cDoc.nodes.length === 1, "自定义节点 normalize 保留（未知 custom 类型因未注册而剔除）");
+  check(cDoc.nodes[0].params?.offset === 5, "自定义节点参数保留");
+  check(cDoc.customNodes?.length === 2, "自定义节点定义 normalize（id 冲突生成新 id）");
+  check(cDoc.customNodes?.[0].type === "custom.myAdd", "自定义节点定义 type 保留");
+  check(cDoc.customNodes?.[1].type === "custom.dup", "自定义节点定义 id 冲突但 type 不同仍保留");
+  // 注册后未知类型变已知
+  registerCustomNodeDefs(cDoc.customNodes ?? []);
+  check(nodeTypeDef("custom.dup")?.category === "custom", "normalize 后自定义节点已注册");
 
   const g1 = normalizeGraphDoc(emptyGraphDoc());
   check(g1.nodes.length === 0, "空图合法");
@@ -132,6 +347,30 @@ console.log("③ 运行时契约");
   check(beh.includes("pointerdown") && beh.includes("Raycaster"), "点击行为走指针射线");
   check(beh.includes("logicApi") && beh.includes(".fire("), "FSM 事件经 engine.logic 语义");
   check(beh.includes("update(dt"), "每帧行为推进");
+  check(beh.includes("cascadeExec") && beh.includes("execNext"), "exec 链级联（事件→exec→next→...）");
+  check(beh.includes("event.onBegin") && beh.includes("event.onTick") && beh.includes("event.onClick"), "事件节点驱动（onBegin/onTick/onClick）");
+  check(beh.includes("hasExecInput") && beh.includes("legacyOps"), "向后兼容：无 exec 入边的旧操作按 trigger 独立执行");
+  // 数据流求值引擎
+  check(beh.includes("DataValue") && beh.includes("evalDataOutput") && beh.includes("evalDataInput"), "数据流求值引擎（evalDataOutput/evalDataInput）");
+  check(beh.includes("varStore"), "图变量存储（varStore）");
+  check(beh.includes('node.type === "var.set"') && beh.includes("varStore.set"), "var.set 在 exec 链中写入变量");
+  check(beh.includes('node.type === "var.get"') && beh.includes("varStore.get"), "var.get 输出求值读变量");
+  check(beh.includes("tickChainVarSets") || beh.includes("tickChainEntries"), "tick 链每帧级联执行");
+  // 控制流执行引擎
+  check(beh.includes("execOut") && beh.includes("execNextOf"), "exec 出端口按端口索引（execOut/execNextOf）");
+  check(beh.includes('node.type === "flow.branch"'), "flow.branch 条件分支执行");
+  check(beh.includes('node.type === "flow.compare"') && beh.includes("operator"), "flow.compare 比较求值");
+  check(beh.includes('node.type === "flow.for"') && beh.includes("loopIndex"), "flow.for 计数循环 + 索引上下文");
+  check(beh.includes('node.type === "flow.forEach"') && beh.includes("loopItem"), "flow.forEach 实体遍历 + 当前项上下文");
+  check(beh.includes('node.type === "flow.while"') && beh.includes("10000"), "flow.while 条件循环 + 死循环防护");
+  // 数学求值引擎
+  check(beh.includes("evalMath") || beh.includes('node.type === "math.add"'), "数学节点求值（evalMath / math.add 分支）");
+  check(beh.includes("math.vec3Make") || beh.includes("vec3"), "向量节点求值（vec3 数据类型支持）");
+  check(beh.includes("math.stringConcat") || beh.includes("toStr"), "字符串节点求值");
+  // 自定义节点表达式求值
+  check(beh.includes("customExprCache") || beh.includes("custom."), "自定义节点表达式编译缓存");
+  check(beh.includes("new Function") || beh.includes("expressions"), "自定义节点表达式动态编译");
+  check(beh.includes("customDefMap"), "自定义节点定义查找表");
 
   const player = read("public/web-preview/player.mjs");
   check(player.includes("engine/runtime/graph-behaviors.mjs"), "player 导入解释器");
@@ -223,20 +462,65 @@ console.log("⑤ 工作台与无图资产契约");
 
   const canvas = read("src/graph-window/components/GraphCanvas.vue");
   check(
-    canvas.includes("#node-gproto") && canvas.includes("#node-gmatch") && canvas.includes("#node-gop") && canvas.includes("#node-gcomment"),
-    "画布：原型/匹配/操作/注释框四类插槽",
+    canvas.includes("#node-gproto") && canvas.includes("#node-gmatch") && canvas.includes("#node-gop") && canvas.includes("#node-gcomment") && canvas.includes("#node-gvar"),
+    "画布：原型/匹配/操作/变量/注释框五类插槽",
   );
   check(
     canvas.includes("application/x-tve-entity") && canvas.includes("addProto"),
     "画布：层级拖入生成原型",
   );
   check(canvas.includes("is-valid-connection") && canvas.includes("requestSnapshot"), "画布：连线校验/会话快照");
+  check(canvas.includes("addVarNode") && canvas.includes("var.get") && canvas.includes("var.set"), "画布：变量节点创建（addVarNode）");
+  check(canvas.includes("addFlowNode") && canvas.includes("flow.branch") && canvas.includes("flow.compare") && canvas.includes("flow.for"), "画布：控制流节点创建（addFlowNode）");
+  check(canvas.includes("#node-gflow"), "画布：控制流卡片插槽");
+  check(canvas.includes("addMathNode") && canvas.includes("math.") && canvas.includes("#node-gmath"), "画布：数学节点创建 + 卡片插槽");
+  check(canvas.includes("nodeMenuGroups") && canvas.includes("mathItems"), "画布：右键菜单数学分组（nodeMenuGroups 驱动）");
+  check(canvas.includes("addCustomNode") && canvas.includes("#node-gcustom"), "画布：自定义节点创建 + 卡片插槽");
+  check(canvas.includes("customItems") || canvas.includes("custom."), "画布：右键菜单自定义分组");
 
   const inspector = read("src/graph-window/components/NodeInspector.vue");
   check(
     inspector.includes("sceneEntities") && inspector.includes("commitParam") && inspector.includes("G_OP_TRIGGER_LABEL"),
     "检查器：实体属性参照/操作参数表/触发徽标",
   );
+  check(inspector.includes("varDef") && inspector.includes("commitVarId") && inspector.includes("graphVariables"), "检查器：变量节点面板（变量选择器）");
+  check(inspector.includes("flowDef") && inspector.includes("commitFlowParam") && inspector.includes("G_COMPARE_OPERATORS"), "检查器：控制流面板（运算符/循环参数）");
+  check(inspector.includes("mathDef"), "检查器：数学节点面板（mathDef）");
+  check(inspector.includes("customDef") && inspector.includes("commitCustomParam"), "检查器：自定义节点面板（customDef + commitCustomParam）");
+
+  // 数学卡片
+  const mathCard = read("src/graph-window/components/GraphMathCard.vue");
+  check(mathCard.includes("nodeTypeDef") && mathCard.includes("pinColor"), "数学卡片：注册表驱动端口 + dataType 配色");
+
+  // 自定义节点卡片
+  const customCard = read("src/graph-window/components/GraphCustomCard.vue");
+  check(customCard.includes("nodeTypeDef") && customCard.includes("gcustom"), "自定义卡片：注册表驱动 + gcustom 类");
+
+  // 自定义节点定义面板
+  const customPanel = read("src/graph-window/components/GraphCustomNodePanel.vue");
+  check(customPanel.includes("addCustomNodeDef") && customPanel.includes("updateCustomNodeDef") && customPanel.includes("deleteCustomNodeDef"), "自定义节点面板：增删改方法");
+  check(customPanel.includes("expressions") && customPanel.includes("addPort"), "自定义节点面板：表达式编辑 + 端口增删");
+
+  // store 自定义节点管理
+  check(
+    store.includes("graphCustomNodes") && store.includes("addCustomNodeDef") && store.includes("updateCustomNodeDef") && store.includes("deleteCustomNodeDef"),
+    "store：自定义节点定义管理方法",
+  );
+  check(store.includes("registerCustomNodeDefs"), "store：自定义节点注册表同步");
+  check(store.includes("customNodes: state.graphCustomNodes"), "store：自动保存合并自定义节点定义表");
+
+  // 变量面板
+  const varPanel = read("src/graph-window/components/GraphVariablePanel.vue");
+  check(varPanel.includes("addVariable") && varPanel.includes("renameVariable") && varPanel.includes("deleteVariable"), "变量面板：增删改方法");
+  check(varPanel.includes("setVariableType") && varPanel.includes("setVariableValue"), "变量面板：类型/值编辑");
+
+  // store 变量管理
+  check(
+    store.includes("graphVariables") && store.includes("addVariable") && store.includes("renameVariable") && store.includes("deleteVariable") && store.includes("setVariableType") && store.includes("setVariableValue"),
+    "store：图变量管理方法",
+  );
+  check(store.includes("serializeDoc") && store.includes("variables: state.graphVariables"), "store：自动保存合并变量表");
+
 
   const preview = read("src/graph-window/components/GraphPreview.vue");
   check(
@@ -266,8 +550,10 @@ console.log("⑤ 工作台与无图资产契约");
   const docks = read("src/graph-window/docks.ts");
   check(
     docks.includes("tve:graph:dock-layout:v1") && docks.includes("initGraphDocks") && docks.includes("uiStateSet"),
-    "dock：图窗口布局注册表（层级/检查器/资产）+ 后端 UI 状态 KV 持久化",
+    "dock：图窗口布局注册表（层级/检查器/变量/资产）+ 后端 UI 状态 KV 持久化",
   );
+  check(docks.includes('"variables"') && docks.includes("变量"), "dock：变量面板注册");
+  check(docks.includes('"customNodes"') && docks.includes("自定义"), "dock：自定义节点面板注册");
   const dnd = read("src/graph-window/graph-dock-dnd.ts");
   check(dnd.includes("beginTabDrag") && dnd.includes("dock-dragging"), "dock：页签拖拽（移动/停靠/浮动）");
   const zone = read("src/graph-window/components/GraphDockZone.vue");

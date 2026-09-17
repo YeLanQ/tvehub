@@ -11,14 +11,67 @@
 // 预览导出时随产物注入，由运行时解释器（runtime/graph-behaviors）执行。
 // ---------------------------------------------------------------------------
 
-/** 节点种类：原型（拖入实体）/ 匹配（标签|类型筛选）/ 操作（原子行为） */
-export type GNodeKind = "proto" | "match" | "op";
+/** 节点种类：原型（拖入实体）/ 匹配（标签|类型筛选）/ 操作（原子行为）/ 事件（执行链入口） */
+export type GNodeKind = "proto" | "match" | "op" | "event";
+
+/** 图变量数据类型（标量；vec3 后续扩展） */
+export type GVarDataType = "number" | "boolean" | "string";
+
+/** 图变量（具名数据槽，全图共享；var.get/var.set 节点引用） */
+export interface GVariable {
+  /** 图内唯一 id（v1、v2…） */
+  id: string;
+  /** 用户可见名 */
+  name: string;
+  /** 数据类型 */
+  dataType: GVarDataType;
+  /** 初始值（运行时复位用） */
+  value: number | boolean | string;
+}
+
+/** 自定义节点端口定义（用户可扩展节点类型的端口） */
+export interface GCustomPort {
+  id: string;
+  label: string;
+  dataType: string;
+}
+
+/** 自定义节点字段定义（检查器编辑的字面量参数） */
+export interface GCustomField {
+  key: string;
+  label: string;
+  kind: "number" | "boolean" | "string";
+  fallback: number | boolean | string;
+}
+
+/** 自定义节点定义（用户定义的节点类型；表达式求值驱动） */
+export interface GCustomNodeDef {
+  /** 定义 id（cd1、cd2…） */
+  id: string;
+  /** 节点类型键（须以 "custom." 开头） */
+  type: string;
+  /** 显示名 */
+  label: string;
+  /** 描述 */
+  desc: string;
+  /** 颜色（#rrggbb） */
+  color: string;
+  /** 输入端口 */
+  inputs: GCustomPort[];
+  /** 输出端口 */
+  outputs: GCustomPort[];
+  /** 可编辑字段 */
+  fields: GCustomField[];
+  /** 每个输出端口的求值表达式（JS 表达式，可引用输入端口 id、字段 key、Math） */
+  expressions: Record<string, string>;
+}
 
 /** 图节点（画布上的一个卡片） */
 export interface GNode {
   /** 图内唯一 id（n1、n2…） */
   id: string;
-  kind: GNodeKind;
+  /** 节点类型键（注册表查找：如 "entity.proto"、"op.spin"、"event.onBegin"） */
+  type: string;
   /** 画布坐标（卡片左上角） */
   x: number;
   y: number;
@@ -30,8 +83,12 @@ export interface GNode {
   /** op：操作类型（须在 OP_DEFS 注册）+ 参数表 */
   opType?: string;
   params?: Record<string, number | boolean | string>;
-  /** 显示名覆盖（缺省按 kind/type 推导） */
+  /** 显示名覆盖（缺省按 type 推导） */
   title?: string;
+  /** var.get/var.set：引用的图变量 id */
+  varId?: string;
+  /** 旧格式 kind（迁移用，normalizeGraphDoc 后统一为 type） */
+  kind?: string;
 }
 
 /**
@@ -64,6 +121,10 @@ export interface ScriptGraphDoc {
   nodes: GNode[];
   edges: GEdge[];
   comments: GComment[];
+  /** 图变量（具名数据槽，var.get/var.set 引用） */
+  variables?: GVariable[];
+  /** 自定义节点定义（用户可扩展节点类型） */
+  customNodes?: GCustomNodeDef[];
 }
 
 /** 注释框可选主题色 */
@@ -111,55 +172,43 @@ export function nextGraphCommentId(g: Pick<ScriptGraphDoc, "comments">): string 
   return id;
 }
 
-/**
- * 节点的端口定义（kind = 通道类型）：
- * - proto/match：源端口 "out"（实体集）；
- * - op：目标端口 "in"（实体集，单入）与 "exec"（执行链，单入），
- *   源端口 "out"（实体集透传，供操作串联共用同一目标集）与 "next"（执行链）。
- */
-export interface GPortInfo {
-  id: string;
-  direction: "in" | "out";
-  /** 通道：entities = 实体集；exec = 执行链 */
-  channel: "entities" | "exec";
+/** 图内不冲突的变量 id（v1、v2…） */
+export function nextGraphVariableId(g: Pick<ScriptGraphDoc, "variables">): string {
+  const vars = g.variables ?? [];
+  let i = vars.length + 1;
+  let id = `v${i}`;
+  const used = new Set(vars.map((v) => v.id));
+  while (used.has(id)) id = `v${++i}`;
+  return id;
 }
 
-export function graphNodePorts(node: GNode): GPortInfo[] {
-  if (node.kind === "proto" || node.kind === "match") {
-    return [{ id: "out", direction: "out", channel: "entities" }];
-  }
-  return [
-    { id: "in", direction: "in", channel: "entities" },
-    { id: "exec", direction: "in", channel: "exec" },
-    { id: "out", direction: "out", channel: "entities" },
-    { id: "next", direction: "out", channel: "exec" },
-  ];
+/** 图内不冲突的自定义节点定义 id（cd1、cd2…） */
+export function nextCustomNodeDefId(g: Pick<ScriptGraphDoc, "customNodes">): string {
+  const defs = g.customNodes ?? [];
+  let i = defs.length + 1;
+  let id = `cd${i}`;
+  const used = new Set(defs.map((d) => d.id));
+  while (used.has(id)) id = `cd${++i}`;
+  return id;
 }
 
-/** 查节点端口（不存在 null） */
-export function graphPort(node: GNode, portId: string, direction: "in" | "out"): GPortInfo | null {
-  return graphNodePorts(node).find((p) => p.id === portId && p.direction === direction) ?? null;
-}
-
-/** 两端口能否相连（通道一致即可；方向由调用方保证 src=out / dst=in） */
-export function canConnectPorts(src: GPortInfo, dst: GPortInfo): boolean {
-  return src.channel === dst.channel;
-}
-
-/** 节点显示名（title 覆盖 → 实体名/匹配串/操作名） */
+/** 节点显示名（title 覆盖 → 实体名/匹配串/类型名） */
 export function graphNodeLabel(
   node: GNode,
-  resolve?: { entityName?: (id: string) => string | null; opLabel?: (type: string) => string },
+  resolve?: { entityName?: (id: string) => string | null; typeLabel?: (type: string) => string; varName?: (id: string) => string | null },
 ): string {
   const t = typeof node.title === "string" ? node.title.trim() : "";
   if (t) return t;
-  if (node.kind === "proto") {
+  if (node.type === "entity.proto") {
     return resolve?.entityName?.(node.entityId ?? "") || "原型";
   }
-  if (node.kind === "match") {
+  if (node.type === "entity.match") {
     return node.matchMode === "type" ? `类型: ${node.matchPattern || "…"}` : `标签: ${node.matchPattern || "…"}`;
   }
-  return resolve?.opLabel?.(node.opType ?? "") || "操作";
+  if (node.type === "var.get" || node.type === "var.set") {
+    return resolve?.varName?.(node.varId ?? "") || "变量";
+  }
+  return resolve?.typeLabel?.(node.type) || node.type;
 }
 
 export { str as graphStr, num as graphNum };

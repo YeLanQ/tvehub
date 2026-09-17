@@ -16,7 +16,7 @@ const g = computed(() => props.data.g);
 
 const matched = computed(() => {
   const node = g.value;
-  if (node.kind !== "match") return [];
+  if (node.type !== "entity.match") return [];
   return node.matchMode === "type"
     ? byType(store.sceneEntities, node.matchPattern ?? "")
     : byTag(store.sceneEntities, node.matchPattern ?? "");

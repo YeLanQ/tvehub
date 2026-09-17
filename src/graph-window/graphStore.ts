@@ -24,8 +24,14 @@ import {
   emptyGraphDoc,
   isGraphDoc,
   normalizeGraphDoc,
+  nextGraphVariableId,
+  nextCustomNodeDefId,
+  registerCustomNodeDefs,
   type GComment,
+  type GCustomNodeDef,
   type GNode,
+  type GVariable,
+  type GVarDataType,
   type ScriptGraphDoc,
 } from "../framework/graph";
 
@@ -92,6 +98,10 @@ interface GraphWindowStore {
   readonly lastSavedAt: string;
   readonly selectedId: string | null;
   readonly selectedIsComment: boolean;
+  /** 图变量表（var.get/var.set 引用） */
+  readonly graphVariables: GVariable[];
+  /** 自定义节点定义表（用户可扩展节点类型） */
+  readonly graphCustomNodes: GCustomNodeDef[];
   canvas: GraphCanvasBridge | null;
 
   applyProject(root: string, name: string): Promise<void>;
@@ -112,6 +122,22 @@ interface GraphWindowStore {
   showToast(text: string): void;
   /** 卸载前冲刷未落盘的图会话 */
   flushGraph(): Promise<void>;
+  /** 添加图变量 */
+  addVariable(): void;
+  /** 重命名图变量 */
+  renameVariable(id: string, name: string): void;
+  /** 删除图变量（同时清理引用该变量的节点 varId） */
+  deleteVariable(id: string): void;
+  /** 改图变量类型（同时修正初始值） */
+  setVariableType(id: string, dataType: GVarDataType): void;
+  /** 改图变量初始值 */
+  setVariableValue(id: string, value: number | boolean | string): void;
+  /** 添加自定义节点定义 */
+  addCustomNodeDef(): void;
+  /** 更新自定义节点定义 */
+  updateCustomNodeDef(id: string, patch: Partial<GCustomNodeDef>): void;
+  /** 删除自定义节点定义（同时清理引用该类型的节点） */
+  deleteCustomNodeDef(id: string): void;
 }
 
 let singleton: GraphWindowStore | null = null;
@@ -144,6 +170,8 @@ export function getGraphWindowStore(): GraphWindowStore {
     lastSavedAt: "",
     selectedId: null as string | null,
     selectedIsComment: false,
+    graphVariables: [] as GVariable[],
+    graphCustomNodes: [] as GCustomNodeDef[],
   });
 
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,6 +197,9 @@ export function getGraphWindowStore(): GraphWindowStore {
     const root = state.root;
     if (!root) return;
     try {
+      // 从画布序列化当前状态 + 合并变量表
+      const canvasDoc = store.canvas?.serializeDoc() ?? graphDoc;
+      graphDoc = { ...canvasDoc, variables: state.graphVariables, customNodes: state.graphCustomNodes };
       await api.writeText(root, sidecarRel(state.sceneRel), JSON.stringify(graphDoc, null, 2));
       state.graphDirty = false;
       state.lastSavedAt = new Date().toLocaleTimeString();
@@ -286,6 +317,12 @@ export function getGraphWindowStore(): GraphWindowStore {
     get selectedIsComment() {
       return state.selectedIsComment;
     },
+    get graphVariables() {
+      return state.graphVariables;
+    },
+    get graphCustomNodes() {
+      return state.graphCustomNodes;
+    },
     canvas: null,
 
     async applyProject(root, name) {
@@ -302,6 +339,8 @@ export function getGraphWindowStore(): GraphWindowStore {
       state.centerMode = "graph";
       state.graphDirty = false;
       state.lastSavedAt = "";
+      state.graphVariables = [];
+      state.graphCustomNodes = [];
       graphDoc = { nodes: [], edges: [], comments: [] };
       store.canvas?.loadDoc(graphDoc);
       installSceneWatch();
@@ -332,6 +371,9 @@ export function getGraphWindowStore(): GraphWindowStore {
         } catch {
           graphDoc = { nodes: [], edges: [], comments: [] };
         }
+        state.graphVariables = graphDoc.variables ?? [];
+        state.graphCustomNodes = graphDoc.customNodes ?? [];
+        registerCustomNodeDefs(state.graphCustomNodes);
         store.canvas?.loadDoc(graphDoc);
         boot.complete("graph");
         boot.finish();
@@ -397,6 +439,9 @@ export function getGraphWindowStore(): GraphWindowStore {
       } catch {
         graphDoc = emptyGraphDoc();
       }
+      state.graphVariables = graphDoc.variables ?? [];
+      state.graphCustomNodes = graphDoc.customNodes ?? [];
+      registerCustomNodeDefs(state.graphCustomNodes);
       store.canvas?.loadDoc(graphDoc);
       showToastNow(`已打开场景 ${rel}`);
     },
@@ -462,6 +507,105 @@ export function getGraphWindowStore(): GraphWindowStore {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = null;
       if (state.graphDirty) await writeSidecar();
+    },
+
+    addVariable() {
+      const dummy = { nodes: [], edges: [], comments: [], variables: state.graphVariables };
+      const id = nextGraphVariableId(dummy);
+      const existing = state.graphVariables;
+      let name = `var${existing.length + 1}`;
+      let i = 1;
+      while (existing.some((v) => v.name === name)) name = `var${existing.length + ++i}`;
+      state.graphVariables.push({ id, name, dataType: "number", value: 0 });
+      store.markGraphDirty();
+    },
+
+    renameVariable(id, name) {
+      const v = state.graphVariables.find((x) => x.id === id);
+      if (!v) return;
+      const trimmed = name.trim().slice(0, 64);
+      if (!trimmed) return;
+      v.name = trimmed;
+      store.markGraphDirty();
+    },
+
+    deleteVariable(id) {
+      const idx = state.graphVariables.findIndex((x) => x.id === id);
+      if (idx < 0) return;
+      state.graphVariables.splice(idx, 1);
+      // 清理引用该变量的节点 varId（画布上 var.get/var.set 节点）
+      const doc = store.canvas?.serializeDoc();
+      if (doc) {
+        for (const n of doc.nodes) {
+          if (n.varId === id) n.varId = undefined;
+        }
+        store.canvas?.loadDoc(doc);
+      }
+      store.markGraphDirty();
+    },
+
+    setVariableType(id, dataType) {
+      const v = state.graphVariables.find((x) => x.id === id);
+      if (!v) return;
+      v.dataType = dataType;
+      // 修正初始值
+      if (dataType === "number") v.value = typeof v.value === "number" ? v.value : 0;
+      else if (dataType === "boolean") v.value = v.value === true;
+      else v.value = String(v.value);
+      store.markGraphDirty();
+    },
+
+    setVariableValue(id, value) {
+      const v = state.graphVariables.find((x) => x.id === id);
+      if (!v) return;
+      v.value = value;
+      store.markGraphDirty();
+    },
+
+    addCustomNodeDef() {
+      const dummy = { nodes: [], edges: [], comments: [], customNodes: state.graphCustomNodes };
+      const id = nextCustomNodeDefId(dummy);
+      const existing = state.graphCustomNodes;
+      let typeName = `custom.node${existing.length + 1}`;
+      let i = 1;
+      while (existing.some((d) => d.type === typeName)) typeName = `custom.node${existing.length + ++i}`;
+      const def: GCustomNodeDef = {
+        id,
+        type: typeName,
+        label: `自定义节点 ${existing.length + 1}`,
+        desc: "",
+        color: "#4ec9b0",
+        inputs: [{ id: "a", label: "A", dataType: "number" }],
+        outputs: [{ id: "result", label: "结果", dataType: "number" }],
+        fields: [],
+        expressions: { result: "a" },
+      };
+      state.graphCustomNodes.push(def);
+      registerCustomNodeDefs(state.graphCustomNodes);
+      store.markGraphDirty();
+    },
+
+    updateCustomNodeDef(id, patch) {
+      const d = state.graphCustomNodes.find((x) => x.id === id);
+      if (!d) return;
+      Object.assign(d, patch);
+      registerCustomNodeDefs(state.graphCustomNodes);
+      store.markGraphDirty();
+    },
+
+    deleteCustomNodeDef(id) {
+      const idx = state.graphCustomNodes.findIndex((x) => x.id === id);
+      if (idx < 0) return;
+      const def = state.graphCustomNodes[idx];
+      state.graphCustomNodes.splice(idx, 1);
+      registerCustomNodeDefs(state.graphCustomNodes);
+      // 清理引用该类型的节点
+      const doc = store.canvas?.serializeDoc();
+      if (doc) {
+        doc.nodes = doc.nodes.filter((n) => n.type !== def.type);
+        store.canvas?.loadDoc(doc);
+      }
+      store.markGraphDirty();
     },
   };
 
