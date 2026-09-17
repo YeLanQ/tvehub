@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * 脚本图窗口壳（Tauri 窗口 label "graph"，与编辑器窗口同级）：
- * 打开体验与编辑器一致——Hub「打开脚本图」显示窗口时装载蒙版已在，按阶段
- * 汇报「扫描资产 / 打开场景会话 / 装载脚本图」后揭幕进入工作区。
+ * 场景图窗口壳（Tauri 窗口 label "graph"，与编辑器窗口同级）：
+ * 打开体验与编辑器一致——Hub「打开场景图」显示窗口时装载蒙版已在，按阶段
+ * 汇报「扫描资产 / 打开场景会话 / 装载场景图」后揭幕进入工作区。
  * 工作区复用编辑器的停靠系统（同款页签拖拽/浮动/分隔条调宽，布局独立持久化）：
  * 左停靠（层级）+ 中央画布/预览 + 右停靠（检查器）+ 底部停靠（资产）。
- * 脚本图会话随场景自动持久化（.tve 旁路，无图资产概念）；对原型的操作是
+ * 场景图会话随场景自动持久化（.tve 旁路，无图资产概念）；对原型的操作是
  * 预览运行时执行的逻辑，不改动编辑器场景。
  * 快捷键：Ctrl+Z/Y 会话撤销重做、Ctrl+C/V 剪贴板、Delete 删除、F 适配视图
  * （文本输入焦点时让位给 WebView 默认行为）。
@@ -40,7 +40,7 @@ import "@vue-flow/node-resizer/dist/style.css";
 
 const store = getGraphWindowStore();
 
-/** 关闭脚本图窗口（隐藏；会话图已自动保存） */
+/** 关闭场景图窗口（隐藏；会话图已自动保存） */
 async function closeWindow(): Promise<void> {
   await store.flushGraph();
   try {
@@ -123,7 +123,7 @@ onUnmounted(() => {
     <template v-if="store.degraded">
       <div class="gboot">
         <div class="gboot-title">TVE GRAPH</div>
-        <div class="gboot-hint">脚本图窗口需要在桌面端使用（Hub 项目卡片右键 →「打开脚本图」）</div>
+        <div class="gboot-hint">场景图窗口需要在桌面端使用（Hub 项目卡片右键 →「打开场景图」）</div>
       </div>
     </template>
     <template v-else>
@@ -146,7 +146,7 @@ onUnmounted(() => {
                 :class="{ active: store.centerMode === 'graph' }"
                 role="tab"
                 :aria-selected="store.centerMode === 'graph'"
-                title="脚本图编辑"
+                title="场景图编辑"
                 @click="store.setCenterMode('graph')"
               >
                 图
@@ -156,7 +156,7 @@ onUnmounted(() => {
                 :class="{ active: store.centerMode === 'preview' }"
                 role="tab"
                 :aria-selected="store.centerMode === 'preview'"
-                title="网页预览：图上定义的行为在此执行（与编辑器同一导出链路 + 脚本图注入）"
+                title="网页预览：图上定义的行为在此执行（与编辑器同一导出链路 + 场景图注入）"
                 @click="store.setCenterMode('preview')"
               >
                 预览
@@ -167,10 +167,10 @@ onUnmounted(() => {
 
             <button title="撤销（Ctrl+Z，会话内）" @click="store.canvas?.undo()">撤销</button>
             <button title="重做（Ctrl+Y）" @click="store.canvas?.redo()">重做</button>
-            <span class="gsave-state" title="脚本图随场景自动保存（graph/ 目录）">
+            <span class="gsave-state" title="场景图随场景自动保存（graph/ 目录）">
               {{ store.graphDirty ? "自动保存中…" : store.lastSavedAt ? `已保存 ${store.lastSavedAt}` : "" }}
             </span>
-            <button title="关闭脚本图窗口" @click="closeWindow()">关闭</button>
+            <button title="关闭场景图窗口" @click="closeWindow()">关闭</button>
           </div>
         </header>
 

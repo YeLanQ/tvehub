@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 脚本图窗口装载蒙版（GraphApp 根级挂载，fixed 盖住整个图窗口）：
- * Hub「打开脚本图」→ 项目交接装载期间展示阶段进度，全部就绪后淡出揭幕。
+ * 场景图窗口装载蒙版（GraphApp 根级挂载，fixed 盖住整个图窗口）：
+ * Hub「打开场景图」→ 项目交接装载期间展示阶段进度，全部就绪后淡出揭幕。
  * 数据源为 graph-window/boot-loading store；视觉复用编辑器 boot-mask.scss，
  * 与编辑器窗口打开体验一致。
  */
@@ -69,7 +69,7 @@ const percent = computed(() => {
         <div class="boot-percent">{{ percent }}%</div>
 
         <div v-if="boot.state.error" class="boot-error">{{ boot.state.error }}</div>
-        <div v-else class="boot-hint">资产与场景就绪后进入脚本图</div>
+        <div v-else class="boot-hint">资产与场景就绪后进入场景图</div>
       </div>
     </div>
   </Transition>

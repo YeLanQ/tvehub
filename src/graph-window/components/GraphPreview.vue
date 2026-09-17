@@ -36,7 +36,7 @@ let runSeq = 0;
 
 const previewUrl = computed(() => (baseUrl.value ? `${baseUrl.value}/index.html` : ""));
 
-/** 组装导出文件：网页运行时 + 项目配置（注入脚本图标记）+ 用户脚本编译产物 */
+/** 组装导出文件：网页运行时 + 项目配置（注入场景图标记）+ 用户脚本编译产物 */
 async function buildExportFiles(): Promise<Record<string, string>> {
   const root = store.root;
   if (!root) throw new Error("尚未打开项目");
@@ -53,7 +53,7 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     includeDracoDecoder: configUsesDracoCompression(configText),
     includeBasisDecoder: configUsesTextureCompression(configText),
   });
-  // 脚本图注入：图会话文档 + config 标记（player 检测到即装配行为解释器）
+  // 场景图注入：图会话文档 + config 标记（player 检测到即装配行为解释器）
   const graphDoc = store.canvas?.serializeDoc();
   if (graphDoc) {
     files["script-graph.json"] = JSON.stringify(graphDoc);
@@ -164,7 +164,7 @@ onMounted(() => {
       <span class="gpreview-scene">{{ store.sceneRel }}</span>
     </div>
     <div class="gpreview-body">
-      <iframe v-if="phase === 'ok'" :key="frameKey" :src="previewUrl" title="脚本图预览" />
+      <iframe v-if="phase === 'ok'" :key="frameKey" :src="previewUrl" title="场景图预览" />
       <div v-else-if="phase === 'error'" class="gpreview-error">预览失败：{{ errorText }}</div>
       <div v-else class="gpreview-loading">{{ hint }}</div>
     </div>

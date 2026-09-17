@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// 脚本图（Script Graph）会话数据类型（framework 层，不依赖 app/api 与 three）。
+// 场景图（Scene Graph，与场景绑定的行为图）会话数据类型（framework 层，不依赖 app/api 与 three）。
 //
-// 脚本图是一种"另外的编辑模式"：把层级中的实体拖入画布 → 按现有脚本语义
+// 场景图是一种"另外的编辑模式"：把层级中的实体拖入画布 → 按现有脚本语义
 // 生成原型卡片（变换卡必然有；灯光节点带灯光属性；脚本组件带 @property 属性卡；
 // 状态机拖入生成 FSM 容器卡）；卡片暴露的属性即编辑器/SDK 可操作的属性。
 // 图上对这些原型施加原子操作（操作节点），可用标签/类型匹配做批量——
@@ -116,7 +116,7 @@ export interface GComment {
   color: string;
 }
 
-/** 脚本图完整文档（随场景 sidecar 自动持久化 + 预览导出注入） */
+/** 场景图完整文档（随场景 sidecar 自动持久化 + 预览导出注入） */
 export interface ScriptGraphDoc {
   nodes: GNode[];
   edges: GEdge[];
@@ -140,7 +140,7 @@ function num(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
 
-/** 深拷贝脚本图 */
+/** 深拷贝场景图 */
 export function cloneGraphDoc(g: ScriptGraphDoc): ScriptGraphDoc {
   return JSON.parse(JSON.stringify(g)) as ScriptGraphDoc;
 }

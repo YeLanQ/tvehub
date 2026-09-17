@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// 脚本图（framework/graph + graph-window）冒烟测试（headless，无需 GPU）。
-// 脚本图是"另外的编辑模式"：层级实体拖入生成原型卡片，匹配节点按标签/类型
+// 场景图（framework/graph + graph-window）冒烟测试（headless，无需 GPU）。
+// 场景图是"另外的编辑模式"：层级实体拖入生成原型卡片，匹配节点按标签/类型
 // 批量圈定，原子操作节点定义预览运行时执行的行为（不回写场景、无图资产）。
 // 覆盖五段：
 // ① 会话模型：normalizeGraphDoc 收敛（kind/未知操作剔除/参数钳制/连线通道/
@@ -420,7 +420,7 @@ console.log("④ 窗口契约");
     "Hub 侧打开助手（统一窗口交接 handoffToWindow）",
   );
   const projects = read("src/app/components/home/ProjectsSection.vue");
-  check(projects.includes("openScriptGraphWindow") && projects.includes("打开脚本图"), "项目卡片菜单「打开脚本图」");
+  check(projects.includes("openScriptGraphWindow") && projects.includes("打开场景图"), "项目卡片菜单「打开场景图」");
 
   check(read("graph.html").includes("src/graph-main.ts"), "graph.html 入口");
   const gmain = read("src/graph-main.ts");
@@ -434,7 +434,7 @@ console.log("④ 窗口契约");
 
   // 编辑器界面不被改动（入口只在 Hub）
   const toolbar = read("src/app/components/Toolbar.vue");
-  check(!toolbar.includes("脚本图"), "编辑器工具栏未加脚本图入口");
+  check(!toolbar.includes("场景图"), "编辑器工具栏未加场景图入口");
 }
 
 // ===========================================================================
@@ -525,7 +525,7 @@ console.log("⑤ 工作台与无图资产契约");
   const preview = read("src/graph-window/components/GraphPreview.vue");
   check(
     preview.includes("script-graph.json") && preview.includes("scriptGraph") && preview.includes("exportWebPreviewFromScene"),
-    "预览：注入脚本图文档 + config 标记（与编辑器同一导出链路）",
+    "预览：注入场景图文档 + config 标记（与编辑器同一导出链路）",
   );
   const assetsPanel = read("src/graph-window/components/GraphAssets.vue");
   check(

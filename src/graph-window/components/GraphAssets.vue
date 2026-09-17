@@ -5,7 +5,7 @@
  * - 工具栏/条目单元格复用编辑器的 AssetToolbar / AssetEntryCell 真件，
  *   样式复用 assets-panel.scss（面包屑/搜索/类型筛选/排序/视图切换）；
  * - 文件夹树为只读复刻（无重命名/删除等编辑器动作，避免跨窗口操作场景会话）；
- * - 双击场景资产 = 打开该场景（切当前场景，层级/实体/脚本图随之切换）。
+ * - 双击场景资产 = 打开该场景（切当前场景，层级/实体/场景图随之切换）。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getAssetsStore } from "../../app/stores/assets";
@@ -251,6 +251,6 @@ onUnmounted(() => {
         <div v-if="!children.length" class="am-empty">当前目录没有资产</div>
       </div>
     </div>
-    <div class="gpanel-tip">双击场景资产打开（层级/实体/脚本图随之切换）</div>
+    <div class="gpanel-tip">双击场景资产打开（层级/实体/场景图随之切换）</div>
   </div>
 </template>

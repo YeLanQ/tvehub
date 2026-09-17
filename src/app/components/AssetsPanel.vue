@@ -185,7 +185,7 @@ const viewMode = ref<"grid" | "list">("grid");
 
 // ---------------------------------------------------------------------------
 // 过滤状态共享（搜索/类型/排序/视图）：写入共享键（assetFilterStateKey，键按
-// 项目隔离），脚本图窗口的资产面板跟随同一份过滤（后端 UI 状态 KV +
+// 项目隔离），场景图窗口的资产面板跟随同一份过滤（后端 UI 状态 KV +
 // ui-state:changed 事件跨窗口）。
 // ---------------------------------------------------------------------------
 const filterKey = computed(() => assetFilterStateKey(projectStore.currentPath ?? ""));

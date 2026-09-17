@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// 脚本图窗口装载进度 store（图窗口版 boot-loading）：
-// Hub「打开脚本图」→ 项目交接装载期间，蒙版按阶段展示「扫描资产清单 /
+// 场景图窗口装载进度 store（图窗口版 boot-loading）：
+// Hub「打开场景图」→ 项目交接装载期间，蒙版按阶段展示「扫描资产清单 /
 // 打开场景会话 / 解析脚本原型」进度，全部就绪后揭幕进入工作区。
 // 生命周期与编辑器 boot-loading 一致：standby（布防，窗口被 Rust show 时蒙版
 // 已在）→ loading（begin 后逐阶段汇报）→ ready（finish 揭幕）。
@@ -12,7 +12,7 @@ import { readonly, reactive } from "vue";
 export const GRAPH_BOOT_STAGES = [
   { id: "assets", label: "扫描资产清单" },
   { id: "scene", label: "打开场景会话" },
-  { id: "graph", label: "装载脚本图" },
+  { id: "graph", label: "装载场景图" },
 ] as const;
 
 export type GraphBootStageId = (typeof GRAPH_BOOT_STAGES)[number]["id"];

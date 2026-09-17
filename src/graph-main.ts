@@ -1,7 +1,7 @@
-// 脚本图窗口入口（Tauri 窗口 label "graph"，url graph.html）：
+// 场景图窗口入口（Tauri 窗口 label "graph"，url graph.html）：
 // 与编辑器窗口（main）同级、常驻隐藏的统一节点图编辑器。窗口内继承层级/资产/
 // 预览（层级经共享场景会话读取，预览导出与编辑器同一链路）。打开体验与编辑器
-// 一致：窗口由 Hub「打开脚本图」经统一窗口交接（window-handoff）交付项目。
+// 一致：窗口由 Hub「打开场景图」经统一窗口交接（window-handoff）交付项目。
 // 双渠道：后端待交付状态（冷启动拉取兜底）+ window:project-open 事件（热启动直达）。
 import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";

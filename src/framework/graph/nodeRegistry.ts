@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// 脚本图节点类型注册表（通用节点类型系统）：
+// 场景图节点类型注册表（通用节点类型系统）：
 // 每种节点类型定义其端口（输入/输出 + 数据类型）与可编辑字段，
 // 取代 graphTypes.ts 中按 kind 硬编码端口的旧模式。
 //
@@ -552,7 +552,7 @@ export function isGraphDoc(v: unknown): boolean {
 }
 
 /**
- * 任意来源 → 收敛的脚本图：
+ * 任意来源 → 收敛的场景图：
  * - 旧格式 kind/opType 自动迁移为 type；
  * - 未知 type 剔除；id 去重补齐；坐标钳制；
  * - proto.entityId / match 模式串收敛；
@@ -747,7 +747,7 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
   return { nodes, edges, comments, variables, customNodes };
 }
 
-/** 空白脚本图（新场景/装载失败回退） */
+/** 空白场景图（新场景/装载失败回退） */
 export function emptyGraphDoc(): ScriptGraphDoc {
   return { nodes: [], edges: [], comments: [], variables: [], customNodes: [] };
 }

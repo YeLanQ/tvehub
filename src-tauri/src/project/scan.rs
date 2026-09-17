@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use super::{AssetEntry, MetaEntry};
 
 /// 递归扫描目录为平铺资产表（目录在前、深度优先）。
-/// 跳过隐藏目录（`.` 开头）与内部产物目录（build=构建输出、graph=脚本图侧车），
+/// 跳过隐藏目录（`.` 开头）与内部产物目录（build=构建输出、graph=场景图侧车），
 /// 跳过 `.meta`（资产元数据）与项目根的 `*.config.json`（系统配置）——均不作为资产项。
 pub fn scan_tree(root: &Path) -> Result<Vec<AssetEntry>, String> {
     if !root.is_dir() {

@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// 脚本图窗口 store（模块级 reactive 单例，与项目 store 惯例一致）：
-// 脚本图是"另外的编辑模式"——把层级实体拖入画布生成原型卡片（按节点类型/组件
+// 场景图窗口 store（模块级 reactive 单例，与项目 store 惯例一致）：
+// 场景图是"另外的编辑模式"——把层级实体拖入画布生成原型卡片（按节点类型/组件
 // 暴露属性），用匹配节点按标签/类型批量圈定目标，用原子操作节点定义预览运行时
 // 执行的行为（不回写编辑器场景）。
 //
-// - 项目交接（Hub「打开脚本图」→ 统一窗口交接 window:project-open 事件）与资产清单；
+// - 项目交接（Hub「打开场景图」→ 统一窗口交接 window:project-open 事件）与资产清单；
 // - 场景会话按窗口隔离（后端会话表按 webview 标签分键）：本窗口默认打开
 //   项目配置的主场景（空则兜底），可在资产面板双击场景切换；层级/实体索引
 //   只反映本窗口会话，与编辑器窗口互不干扰；
@@ -74,7 +74,7 @@ export interface GraphModalState {
   resolve: ((v: string | null) => void) | null;
 }
 
-  /** 场景 → 脚本图文件相对路径（graph/ 目录，与 assets/src 同级；.graph 后缀） */
+  /** 场景 → 场景图文件相对路径（graph/ 目录，与 assets/src 同级；.graph 后缀） */
   function sidecarRel(sceneRel: string): string {
     const name = sceneRel.split("/").pop() ?? sceneRel;
     const base = name.replace(/\.scene$/i, "");
@@ -113,7 +113,7 @@ interface GraphWindowStore {
   toggleSnap(): void;
   setCenterMode(mode: "graph" | "preview"): void;
   setCanvas(bridge: GraphCanvasBridge | null): void;
-  /** 打开场景资产（切当前场景；层级/实体索引/对应场景的脚本图侧车随之切换） */
+  /** 打开场景资产（切当前场景；层级/实体索引/对应场景的场景图侧车随之切换） */
   openScene(rel: string): Promise<void>;
   ensureSceneSession(): Promise<void>;
   refreshHierarchy(): Promise<void>;
@@ -206,7 +206,7 @@ export function getGraphWindowStore(): GraphWindowStore {
       state.graphDirty = false;
       state.lastSavedAt = new Date().toLocaleTimeString();
     } catch (e) {
-      showToastNow(`脚本图自动保存失败: ${e}`);
+      showToastNow(`场景图自动保存失败: ${e}`);
     }
   }
 
@@ -364,7 +364,7 @@ export function getGraphWindowStore(): GraphWindowStore {
         boot.complete("scene");
 
         boot.activate("graph");
-        // 装载本场景的脚本图侧车（不存在即空白工作板）
+        // 装载本场景的场景图侧车（不存在即空白工作板）
         try {
           const text = await api.readText(root, sidecarRel(state.sceneRel));
           if (token !== sceneToken) return;
@@ -411,7 +411,7 @@ export function getGraphWindowStore(): GraphWindowStore {
     },
 
     /** 打开场景资产：scene_open 切当前场景（会话唯一，项目级当前场景），
-     *  层级/实体索引刷新并装载该场景的脚本图侧车 */
+     *  层级/实体索引刷新并装载该场景的场景图侧车 */
     async openScene(rel) {
       const root = state.root;
       if (!root || !rel.toLowerCase().endsWith(".scene") || rel === state.sceneRel) return;
@@ -432,7 +432,7 @@ export function getGraphWindowStore(): GraphWindowStore {
         state.sceneEntities = [];
       }
       if (token !== sceneToken) return;
-      // 装载该场景的脚本图侧车（不存在即空白工作板）
+      // 装载该场景的场景图侧车（不存在即空白工作板）
       try {
         const text = await api.readText(root, sidecarRel(rel));
         graphDoc = isGraphDoc(JSON.parse(text) as unknown)

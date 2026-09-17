@@ -56,7 +56,7 @@ function onOpenProject(path: string) {
   void openProject(path);
 }
 
-/** 项目卡片菜单「打开脚本图」：不经编辑器窗口，直接打开统一节点图编辑器 */
+/** 项目卡片菜单「打开场景图」：不经编辑器窗口，直接打开统一节点图编辑器 */
 function onOpenScriptGraph(path: string, name: string) {
   menuPath.value = null;
   void openScriptGraphWindow(path, name);
@@ -186,7 +186,7 @@ function toggleMenu(path: string) {
         <!-- 卡片操作菜单 -->
         <div v-if="menuPath === p.path" class="card-menu-pop" @click.stop>
           <button @click="onOpenProject(p.path)">打开项目</button>
-          <button @click="onOpenScriptGraph(p.path, p.name)">打开脚本图</button>
+          <button @click="onOpenScriptGraph(p.path, p.name)">打开场景图</button>
           <button @click="revealFolder(p.path)">在文件夹中显示</button>
           <button @click="renameProject(p.path, p.name)">重命名项目</button>
           <button class="danger" @click="trashProject(p.path, p.name)">移动到垃圾篓</button>
