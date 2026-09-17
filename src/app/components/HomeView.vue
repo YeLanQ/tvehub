@@ -97,9 +97,12 @@ async function handleProjectCreated(project: RecentProject) {
   await handoffToEditor();
 }
 
+/** 编辑器窗口 label 递增计数器（多会话：每次打开项目分配新 label） */
+let editorWindowCounter = 0;
+
 /**
- * 打开/新建项目成功后交接给编辑器窗口（统一窗口交接）：
- * 写入后端待交付状态 + 显示编辑器窗口 + 广播事件（冷启动由拉取兜底）。
+ * 打开/新建项目成功后交接给编辑器窗口（多会话：每次打开创建独立窗口）：
+ * 写入后端待交付状态 + 动态创建/显示编辑器窗口 + 广播事件。
  */
 async function handoffToEditor(): Promise<void> {
   if (!inTauri) {
@@ -109,9 +112,10 @@ async function handoffToEditor(): Promise<void> {
   }
   const root = projectStore.currentPath;
   if (!root) return;
+  const label = `editor-${++editorWindowCounter}`;
   try {
     await handoffToWindow(
-      "main",
+      label,
       root,
       projectStore.projectName ?? "",
       projectStore.sceneRel,

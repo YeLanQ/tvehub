@@ -260,12 +260,19 @@ pub async fn devtools_set_tool(
 // Rust 本地执行器：纯后端方法（查询/会话落盘）不经前端直接应答；其余仍转发前端。
 // ---------------------------------------------------------------------------
 
+/// 多会话：获取当前活跃编辑器窗口 label（devtools/MCP 命令路由目标）。
+/// 无活跃编辑器时回退 None，调用方各自处理（报错或跳过）。
+fn active_editor_label(app: &AppHandle) -> Option<String> {
+    app.state::<crate::ActiveEditorWindow>().get()
+}
+
 /// 会话当前打开的项目根（未打开项目返回 None；供 scene.list / asset.list 扫描用）。
-/// devtools/MCP 控制的是编辑器窗口的会话，固定驱动 label "main" 的当前场景。
+/// devtools/MCP 驱动活跃编辑器窗口的当前场景（多会话：最近聚焦的 editor-* 窗口）。
 async fn scene_root_of(app: &AppHandle) -> Option<String> {
+    let label = active_editor_label(app)?;
     let state = app.state::<crate::scene::SceneSession>();
     let hub = state.hub().ok()?;
-    crate::scene::scene_root_path_for(&hub, "main").ok().flatten()
+    crate::scene::scene_root_path_for(&hub, &label).ok().flatten()
 }
 
 fn project_recent_list(app: &AppHandle) -> Result<serde_json::Value, String> {
@@ -334,15 +341,17 @@ fn scene_root_blocking(app: &AppHandle) -> Option<String> {
 }
 
 fn scene_doc_blocking(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let label = active_editor_label(app).ok_or("没有活跃的编辑器窗口")?;
     let state = app.state::<crate::scene::SceneSession>();
     let mut hub = state.hub()?;
-    crate::scene::scene_doc_for(&mut hub, "main")
+    crate::scene::scene_doc_for(&mut hub, &label)
 }
 
 fn scene_save_blocking(app: &AppHandle) -> Result<(), String> {
+    let label = active_editor_label(app).ok_or("没有活跃的编辑器窗口")?;
     let state = app.state::<crate::scene::SceneSession>();
     let mut hub = state.hub()?;
-    crate::scene::scene_save_for(&mut hub, "main")
+    crate::scene::scene_save_for(&mut hub, &label)
 }
 
 /// MCP stdio 桥程序路径：与主程序同目录的 mcp.exe（不存在时回退为裸文件名，供用户自行修正）。
@@ -416,8 +425,15 @@ fn dispatch_command(line: &str, rt: &DevToolsRuntime, app: &AppHandle, tx: &Sync
         return;
     }
 
-    // 前端执行：登记待回复渠道，再发事件给前端执行器（编辑器窗口与首页窗口共用事件总线，
-    // 但只有编辑器窗口安装了监听器）。
+    // 前端执行：登记待回复渠道，再发事件给活跃编辑器窗口的前端执行器。
+    // 多会话：只有活跃编辑器窗口（最近聚焦的 editor-*）安装了监听器并持有引擎/场景状态。
+    let active_label = match active_editor_label(app) {
+        Some(l) => l,
+        None => {
+            send_reply(tx, id, serde_json::Value::Null, Some("没有活跃的编辑器窗口".to_string()));
+            return;
+        }
+    };
     let token = uuid::Uuid::new_v4().to_string();
     rt.pending.lock().unwrap().insert(
         token.clone(),
@@ -428,7 +444,7 @@ fn dispatch_command(line: &str, rt: &DevToolsRuntime, app: &AppHandle, tx: &Sync
     );
     let payload =
         serde_json::json!({ "id": id, "method": method, "params": params, "replyToken": token });
-    let _ = app.emit("devtools:cmd", payload);
+    let _ = app.emit_to(active_label, "devtools:cmd", payload);
 }
 
 fn writer_loop(mut stream: TcpStream, rx: Receiver<String>, stop: Arc<AtomicBool>) {

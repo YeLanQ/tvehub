@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main (editor), home and graph (script graph) windows",
-  "windows": ["main", "home", "graph"],
+  "description": "Capability for all windows (home, graph, dynamic editor-* windows)",
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
@@ -23,9 +23,11 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-center",
     "core:window:allow-close",
+    "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-outer-size",
     "core:window:allow-outer-position",
+    "core:window:allow-create",
     "opener:default",
     {
       "identifier": "opener:allow-open-path",

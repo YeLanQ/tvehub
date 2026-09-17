@@ -30,6 +30,7 @@ import { getEditorStore } from "./app/stores/editor";
 import { getProjectStore } from "./app/stores/project";
 import { getBootLoadingStore } from "./app/stores/boot-loading";
 import { isTauri } from "./lib/tauri-env";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getActivePanel,
   getAssetSelection,
@@ -141,6 +142,8 @@ onMounted(async () => {
   // 浏览器直开（无窗口系统）不布防，编辑器直接可见。
   if (isTauri()) {
     getBootLoadingStore().standby();
+    // 多会话：窗口由 Rust 创建时隐藏，蒙版布防后才显示，避免空白/默认 loading 闪现
+    void getCurrentWindow().show().catch(() => {});
   }
 });
 

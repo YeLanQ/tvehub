@@ -11,6 +11,7 @@ import { logStore } from "../stores/log";
 import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import { handoffToWindow } from "../lib/window-handoff";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import {
@@ -121,7 +122,7 @@ registerCommand({
     const ok = await project.openProject(path);
     if (!ok) throw new Error(`打开项目失败: ${path}`);
     await handoffToWindow(
-      "main",
+      getCurrentWindow().label,
       project.currentPath ?? "",
       project.projectName ?? "",
       project.sceneRel || DEFAULT_SCENE_REL,

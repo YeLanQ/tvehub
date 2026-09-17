@@ -31,11 +31,11 @@ export {
 let unlistenCmd: UnlistenFn | null = null;
 let logWatchStarted = false;
 
-/** 命令执行器只允许挂在编辑器窗口（main）：事件广播到所有窗口，若首页也监听，
- *  同一命令会在两个窗口各执行一次（首页还缺场景/引擎状态）。首页只启停/展示。 */
+/** 命令执行器只允许挂在编辑器窗口（editor-*）：事件定向发送到活跃编辑器窗口，
+ *  首页窗口不安装监听器（缺场景/引擎状态）。 */
 function isEditorWindow(): boolean {
   try {
-    return getCurrentWindow().label === "main";
+    return getCurrentWindow().label.startsWith("editor-");
   } catch {
     // 浏览器/单窗口兜底：视为编辑器执行端
     return true;

@@ -79,6 +79,8 @@ export async function handleProjectOpenedFromHome(
       boot.complete("project");
       applyProjectSetup(store.engine, root);
       await reloadEditorScene(root, rel);
+      // 恢复渲染循环（半冷态 → 热态：从首页返回时 rAF 已停，需显式恢复）
+      store.engine.setRenderingActive(true);
     } else {
       pendingProject = { root, rel };
       boot.activate("engine");

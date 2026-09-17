@@ -3,16 +3,16 @@
 
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
-import { getBootLoadingStore } from "../stores/boot-loading";
 import { getScriptsStore } from "../stores/scripts";
 import { logStore } from "../stores/log";
-import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import { isTauri } from "../../lib/tauri-env";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
 import { confirm } from "../lib/confirm";
 import { isEditingText } from "./context";
 import { registerCommand } from "./registry";
+import { disposeEditor } from "../services/editorService";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 registerCommand({
   id: "editor.undo",
@@ -141,17 +141,14 @@ registerCommand({
         if (!discard) return;
       }
     }
-    // 关闭后端场景会话与 asset:// 协议项目根（下次打开项目时重建）
-    void sceneApi.close().catch(() => {});
-    void api.setCurrentProjectRoot(null).catch(() => {});
-    // 停止所有音频播放（编辑器窗口仅隐藏不销毁，音频不会自动停）
-    if (editor.state.mounted) editor.engine.audio.unbindAll();
-    // 双窗口：显示首页窗口（Rust 侧隐藏编辑器窗口，保留编辑器前端状态）；
-    // 蒙版重新布防——下次从首页打开项目时编辑器窗口被 show 的瞬间蒙版已就位，
-    // 装载完成前不露出本项目旧内容。浏览器环境无窗口系统，回退单窗口内的视图切换
+    // 多会话架构：关闭项目 = 销毁引擎 + 关闭窗口（释放 GPU/Worker/内存）
+    // 后端场景会话由 disposeEditor → sceneApi.close 清理
+    disposeEditor();
     if (isTauri()) {
+      // 显示首页窗口（如果还有其他编辑器窗口开着，首页可能已可见）
       await api.showHomeWindow();
-      getBootLoadingStore().standby();
+      // 关闭本编辑器窗口（Rust 侧走默认销毁，释放 WebView + GPU 上下文）
+      await getCurrentWindow().close().catch(() => {});
     } else {
       project.setView("home");
     }

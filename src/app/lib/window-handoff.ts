@@ -18,7 +18,7 @@ export interface WindowProjectPayload {
 }
 
 /** 统一窗口交接：写入后端待交付状态 + 显示窗口 + 广播事件。
- *  label = "main"（编辑器）/ "graph"（场景图）。 */
+ *  label = "editor-*"（动态编辑器窗口）/ "graph"（场景图）。 */
 export async function handoffToWindow(
   label: string,
   root: string,

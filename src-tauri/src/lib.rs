@@ -383,6 +383,26 @@ async fn dev_app_dirs(app: tauri::AppHandle) -> Result<Vec<(String, String)>, St
 #[derive(Default)]
 struct PendingProjects(std::sync::Mutex<std::collections::HashMap<String, PendingProjectPayload>>);
 
+/// 当前活跃编辑器窗口 label（多会话：devtools/MCP 命令路由到最近聚焦的编辑器窗口）。
+/// 窗口聚焦时更新；窗口关闭时若为当前活跃则清空（由剩余编辑器窗口竞争或下次聚焦恢复）。
+#[derive(Default)]
+pub(crate) struct ActiveEditorWindow(std::sync::Mutex<Option<String>>);
+
+impl ActiveEditorWindow {
+    pub(crate) fn get(&self) -> Option<String> {
+        self.0.lock().unwrap().clone()
+    }
+    fn set(&self, label: String) {
+        *self.0.lock().unwrap() = Some(label);
+    }
+    fn clear_if(&self, label: &str) {
+        let mut guard = self.0.lock().unwrap();
+        if guard.as_deref() == Some(label) {
+            *guard = None;
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PendingProjectPayload {
@@ -393,7 +413,8 @@ struct PendingProjectPayload {
 }
 
 /// 显示目标窗口并写入待交付项目（统一入口：首页打开编辑器/图窗口均经此）。
-/// 冷启动时窗口 listen 未就绪，事件广播会丢失，由窗口启动后主动 take_pending_project 拉取。
+/// 编辑器窗口（label 以 "editor-" 前缀）不存在时动态创建；冷启动时窗口 listen 未就绪，
+/// 事件广播会丢失，由窗口启动后主动 take_pending_project 拉取。
 #[tauri::command]
 async fn show_window_with_project(
     app: tauri::AppHandle,
@@ -411,6 +432,19 @@ async fn show_window_with_project(
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.show();
         let _ = w.set_focus();
+    } else if label.starts_with("editor-") {
+        // 动态创建编辑器窗口（多会话：每个项目独立窗口 + 独立引擎实例）
+        // 窗口保持隐藏，前端 App.vue standby() 布防蒙版后主动 show()，避免空白闪现
+        let title = format!("TvE Editor – {}", state.0.lock().unwrap().get(&label).map(|p| p.name.as_str()).unwrap_or(""));
+        let _w = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title(title)
+            .inner_size(1300.0, 860.0)
+            .min_inner_size(1300.0, 860.0)
+            .visible(false)
+            .decorations(false)
+            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-high-performance-gpu")
+            .build()
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -424,12 +458,9 @@ async fn take_pending_project(
     Ok(state.0.lock().unwrap().remove(&webview.label().to_string()))
 }
 
-/// 显示首页窗口并隐藏编辑器（编辑器"关闭项目"后调用）
+/// 显示首页窗口（编辑器"关闭项目"后调用；编辑器窗口自行关闭销毁，无需 hide）
 #[tauri::command]
 async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
-    }
     if let Some(home) = app.get_webview_window("home") {
         let _ = home.show();
         let _ = home.set_focus();
@@ -445,9 +476,9 @@ enum CloseAction {
     Exit,
 }
 
-/// 窗口生命周期配置表：新增可重开窗口只需在此加一行，不再改 on_window_event match
+/// 窗口生命周期配置表：新增可重开窗口只需在此加一行，不再改 on_window_event match。
+/// 动态编辑器窗口（label "editor-*"）不在表中 → 走默认销毁（关闭即释放资源）。
 const WINDOW_LIFECYCLE: &[(&str, CloseAction)] = &[
-    ("main", CloseAction::Hide { show: Some("home") }),
     ("graph", CloseAction::Hide { show: None }),
     ("home", CloseAction::Exit),
 ];
@@ -607,6 +638,7 @@ pub fn run() {
         .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
         .manage(PendingProjects::default())
+        .manage(ActiveEditorWindow::default())
         .manage(task::TaskManager::default())
         .manage(devtools::DevToolsState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
@@ -623,10 +655,11 @@ pub fn run() {
         })
         // 双窗口均不显示原生菜单栏；编辑器快捷键由前端 keydown 统一处理
         .on_window_event(|window, event| {
+            let label = window.label().to_string();
             // 窗口关闭行为查 WINDOW_LIFECYCLE 表：新增可重开窗口只需在表里加一行，
-            // 不再改本闭包。home 关闭 = 退出应用；main/graph 关闭 = 隐藏保留前端状态。
+            // 不再改本闭包。home 关闭 = 退出应用；graph 关闭 = 隐藏保留前端状态。
+            // 动态编辑器窗口（editor-*）不在表中 → 走默认销毁（关闭即释放引擎+GPU+Worker）。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let label = window.label();
                 let action = WINDOW_LIFECYCLE
                     .iter()
                     .find(|(l, _)| *l == label)
@@ -646,6 +679,21 @@ pub fn run() {
                         window.app_handle().exit(0);
                     }
                     None => {}
+                }
+            }
+            // 多会话：追踪活跃编辑器窗口（devtools/MCP 命令路由目标）
+            if let tauri::WindowEvent::Focused(focused) = event {
+                if *focused && label.starts_with("editor-") {
+                    if let Some(state) = window.app_handle().try_state::<ActiveEditorWindow>() {
+                        state.set(label.clone());
+                    }
+                }
+            }
+            if let tauri::WindowEvent::Destroyed = event {
+                if label.starts_with("editor-") {
+                    if let Some(state) = window.app_handle().try_state::<ActiveEditorWindow>() {
+                        state.clear_if(&label);
+                    }
                 }
             }
         })
