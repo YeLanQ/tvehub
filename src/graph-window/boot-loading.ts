@@ -51,6 +51,8 @@ export interface GraphBootStore {
   fail: (message: string) => void;
   /** 全部就绪：未汇报的阶段兜底标记完成，停留最短时长后揭幕 */
   finish: () => void;
+  /** 直接揭幕（standby → ready）：项目已就绪无需重新装载时使用 */
+  reveal: () => void;
 }
 
 let singleton: GraphBootStore | null = null;
@@ -125,6 +127,10 @@ export function getGraphBootStore(): GraphBootStore {
         if (s.status === "pending" || s.status === "active") s.status = "done";
       }
       settleAfter(Math.max(SETTLE_TAIL_MS, MIN_DISPLAY_MS - (Date.now() - startedAt)));
+    },
+    reveal() {
+      token += 1;
+      state.phase = "ready";
     },
   };
 

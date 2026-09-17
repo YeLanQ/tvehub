@@ -329,7 +329,12 @@ export function getGraphWindowStore(): GraphWindowStore {
 
     async applyProject(root, name) {
       // 同一项目重复交接幂等；换项目则重置会话（场景与实体 id 都随之变化）
-      if (state.root === root && state.ready) return;
+      if (state.root === root && state.ready) {
+        // 蒙版可能因窗口关闭事件处于 standby 态，项目已就绪直接揭幕
+        const boot = getGraphBootStore();
+        if (boot.state.phase === "standby") boot.reveal();
+        return;
+      }
       const boot = getGraphBootStore();
       boot.begin(name);
       state.root = root;

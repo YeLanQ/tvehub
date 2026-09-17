@@ -3,6 +3,7 @@
 // （window-handoff）交付项目：后端待交付状态 + window:project-open 事件双渠道。
 import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App.vue";
 import "./styles/global.scss";
 import "./app/commands"; // 注册命令层（编辑器窗口命令入口）
@@ -12,6 +13,7 @@ import { handleProjectOpenedFromHome } from "./app/services/editorService";
 import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus } from "./app/lib/devtools";
 import { api } from "./lib/api";
+import { getBootLoadingStore } from "./app/stores/boot-loading";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
 
 debugLog("boot", "app script started");
@@ -62,6 +64,11 @@ if (!isTauri()) {
   // 开发者服务：控制服务器若已启用（首页开启），恢复命令监听与日志推送。
   // 仅编辑器窗口安装监听器（事件广播到所有窗口，首页监听会重复执行命令）。
   void restoreDevToolsStatus();
+  // 窗口关闭请求（X 按钮 / 系统关闭）：Rust 侧 prevent_close + hide，前端收到
+  // 事件后立即布防蒙版，下次 show 窗口时蒙版已就位，杜绝旧场景闪现。
+  void getCurrentWindow().onCloseRequested(() => {
+    getBootLoadingStore().standby();
+  });
 }
 
 createApp(App).mount("#app");

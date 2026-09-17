@@ -5,6 +5,7 @@
 // 双渠道：后端待交付状态（冷启动拉取兜底）+ window:project-open 事件（热启动直达）。
 import { createApp } from "vue";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import GraphApp from "./graph-window/GraphApp.vue";
 import { getGraphWindowStore } from "./graph-window/graphStore";
 import { getGraphBootStore } from "./graph-window/boot-loading";
@@ -61,6 +62,11 @@ if (!isTauri()) {
   // 蒙版布防：窗口保持隐藏，统一交接显示时蒙版已在（与编辑器窗口的 BootMask
   // 布防一致，杜绝旧内容闪现）
   getGraphBootStore().standby();
+  // 窗口关闭请求（X 按钮 / 系统关闭）：Rust 侧 prevent_close + hide，前端收到
+  // 事件后立即布防蒙版，下次 show 窗口时蒙版已就位，杜绝旧场景闪现。
+  void getCurrentWindow().onCloseRequested(() => {
+    getGraphBootStore().standby();
+  });
 }
 
 createApp(GraphApp).mount("#app");
