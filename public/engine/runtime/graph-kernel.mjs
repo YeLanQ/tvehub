@@ -121,11 +121,11 @@ const ENTITY_TYPES = [
     type: "entity.proto",
     category: "entity",
     label: "原型",
-    desc: "拖入场景实体生成原型卡片，属性以场景当前值为参照",
+    desc: "拖入场景实体生成原型卡片，属性以场景当前值为参照；「接入」口把实体集/数据传给实体上的脚本",
     color: "#4ec9b0",
-    inputs: [],
+    inputs: [{ id: "in", label: "接入", direction: "in", dataType: "any", multi: true }],
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
-    capabilities: { entitySource: true }
+    capabilities: { entitySource: true, scriptInlet: true }
   },
   {
     type: "entity.match",
@@ -1044,6 +1044,51 @@ function createGraphKernel(ctx, modules) {
       }
     }
   }
+  const inletNodes = graph.nodes.filter(
+    (n) => !n.unresolved && hasNodeTypeCapability(n.type, "scriptInlet")
+  );
+  const inletSigs = /* @__PURE__ */ new Map();
+  function inletSignature(values) {
+    return values.map((v) => {
+      if (Array.isArray(v)) return `E[${v.map((x) => x && typeof x === "object" && "id" in x ? x.id : "?").join(",")}]`;
+      if (v && typeof v === "object" && "id" in v) return `e:${String(v.id)}`;
+      if (v && typeof v === "object" && "x" in v && "y" in v && "z" in v) {
+        const w = v;
+        return `v:${w.x},${w.y},${w.z}`;
+      }
+      return `${typeof v}:${String(v)}`;
+    }).join("|");
+  }
+  function deliverGraphInputs() {
+    for (const node of inletNodes) {
+      const values = evalDataInputs(node.id, "in");
+      const sig = inletSignature(values);
+      if (inletSigs.get(node.id) === sig) continue;
+      inletSigs.set(node.id, sig);
+      if (!values.length) continue;
+      const eid = node.entityId ?? "";
+      if (!eid) {
+        warnOnce(`inlet-noentity:${node.id}`, `[graph] 原型 (${node.id}) 接入口已接线但未引用场景实体，值无处交付`);
+        continue;
+      }
+      if (!(scriptApi == null ? void 0 : scriptApi.setGraphInput)) {
+        warnOnce(`inlet-noapi:${node.id}`, `[graph] 原型 (${node.id}) 接入口已接线，但当前运行时未注入脚本交付通道（预览运行时过旧）——刷新/重装运行时后生效`);
+        continue;
+      }
+      if (scriptApi.setGraphInput(eid, "", values)) {
+        log(
+          `inlet-ok:${node.id}`,
+          `[graph] 接入口 (${node.id}) → 实体 ${eid} 脚本（${values.length} 项：${values.map((v) => v && typeof v === "object" && "id" in v ? String(v.id) : String(v)).join(", ")}）`,
+          3
+        );
+      } else {
+        warnOnce(
+          `inlet-noscript:${node.id}:${eid}`,
+          `[graph] 原型 (${node.id}) 接入口的值无处交付：实体 ${eid} 上没有存活的脚本实例——接入口把数据传给脚本，请确认该实体挂有脚本组件`
+        );
+      }
+    }
+  }
   for (const ev of startEvents) {
     const next = execNextOf(ev.id);
     if (next.length) {
@@ -1052,6 +1097,7 @@ function createGraphKernel(ctx, modules) {
     }
   }
   for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
+  deliverGraphInputs();
   assembleFrameOps();
   postLog(
     "info",
@@ -1062,6 +1108,7 @@ function createGraphKernel(ctx, modules) {
       var _a2, _b2;
       elapsed += dt;
       sampleTimer += dt;
+      deliverGraphInputs();
       const framed = /* @__PURE__ */ new Set();
       for (const n of graph.nodes) {
         if (n.unresolved) continue;

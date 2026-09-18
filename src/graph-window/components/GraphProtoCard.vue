@@ -72,14 +72,39 @@ watch(
 function schemaOf(script: string): ScriptPropDef[] {
   return schemaCache.get(script) ?? [];
 }
-function propValueOf(s: EntityScript, key: string): string {
-  const v = s.props[key];
-  if (v === undefined) return "—";
-  if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") return String(Math.round(v * 100) / 100);
-  if (v && typeof v === "object") return "{…}";
-  const strv = String(v);
-  return strv.length > 18 ? strv.slice(0, 17) + "…" : strv;
+
+/** 数值收敛显示（两位小数内截尾） */
+function numText(v: number): string {
+  return String(Math.round(v * 100) / 100);
+}
+
+/**
+ * 脚本属性行取值：场景已存值优先；未存（或空串占位）回退 @property 声明的
+ * 默认值——新挂脚本尚未在检查器改过值时，卡片也能读出实际生效的属性值。
+ */
+function propRowOf(s: EntityScript, def: ScriptPropDef): { text: string; fromDefault: boolean; title: string } {
+  const stored = s.props[def.key];
+  const fromDefault = stored === undefined || stored === "";
+  const v = fromDefault ? def.default : stored;
+  let text: string;
+  if (v === undefined || v === null) text = "—";
+  else if (typeof v === "boolean") text = v ? "true" : "false";
+  else if (typeof v === "number") text = Number.isFinite(v) ? numText(v) : "—";
+  else if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    text =
+      typeof o.x === "number" && typeof o.y === "number" && typeof o.z === "number"
+        ? `(${numText(o.x)}, ${numText(o.y)}, ${numText(o.z)})`
+        : "{…}";
+  } else {
+    const strv = String(v);
+    text = strv.length > 18 ? strv.slice(0, 17) + "…" : strv;
+  }
+  return {
+    text,
+    fromDefault,
+    title: `脚本属性 @property ${def.key}（${fromDefault ? "@property 默认值，场景未另存" : "当前场景值"}）`,
+  };
 }
 /** 脚本路径显示名（src/ 前缀与 .ts 后缀省略） */
 function scriptLabel(rel: string): string {
@@ -197,10 +222,10 @@ function typeName(type: string): string {
             v-for="def in schemaOf(s.script)"
             :key="def.key"
             class="grow"
-            :title="`脚本属性 @property ${def.key}（当前场景值）`"
+            :title="propRowOf(s, def).title"
           >
             <span class="gk">{{ def.label || def.key }}</span>
-            <span class="gv mono">{{ propValueOf(s, def.key) }}</span>
+            <span class="gv mono" :class="{ dim: propRowOf(s, def).fromDefault }">{{ propRowOf(s, def).text }}</span>
           </div>
           <div v-if="schemaOf(s.script) !== null && schemaOf(s.script).length === 0" class="grow">
             <span class="gk">无 @property 声明</span>
@@ -236,7 +261,12 @@ function typeName(type: string): string {
     <div v-else class="gcard-missing">实体不在当前场景（可能已被删除）</div>
 
     <div class="gcard-body">
-      <div class="gcard-col"></div>
+      <div class="gcard-col">
+        <div class="gprow" title="接入口：把实体集/数据传给本卡实体上的脚本（脚本 onGraphInput 接收，或 this.graphInput 轮询）">
+          <Handle type="target" :position="Position.Left" id="in" class="gpin" :style="{ background: '#88c0d0' }" />
+          <span class="gpin-label">接入</span>
+        </div>
+      </div>
       <div class="gcard-col">
         <div class="gprow right">
           <span class="gpin-label">实体集</span>

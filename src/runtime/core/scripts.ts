@@ -410,6 +410,66 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     }
   }
 
+  // ----- 图接入口交付（原型卡「接入」→ 实体上脚本实例；graph-kernel 消费） -----
+
+  /** 图输入值收敛：NodeObj（带 id 标记）→ Entity，三分量对象 → 普通向量，标量透传 */
+  function convertGraphInputValue(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return v;
+    if (typeof v === "object") {
+      if (typeof v.id === "string" && v.id) return resolveNodeEntity(v.id);
+      const x = typeof v.x === "number" ? v.x : null;
+      const y = typeof v.y === "number" ? v.y : null;
+      const z = typeof v.z === "number" ? v.z : null;
+      if (x !== null && y !== null && z !== null) return { x, y, z };
+    }
+    return null;
+  }
+
+  /** onGraphInput 出错不拖垮脚本实例（每脚本只报一次） */
+  const graphInputWarned = new Set();
+
+  /**
+   * 接入口值交付：写入该节点上全部存活脚本实例的 this.graphInput（可轮询的
+   * 最新值）并回调 onGraphInput(value)（实现了才触发）。scriptRel 为空 = 全部
+   * 脚本；节点上没有存活脚本实例回 false（kernel 据此给可定位告警）。
+   */
+  function setScriptGraphInput(nodeId, scriptRel, value) {
+    const list = instancesByNode.get(nodeId);
+    if (!list || !list.length) return false;
+    const targets = list.filter((r) => !r.dead && (!scriptRel || r.script === scriptRel));
+    if (!targets.length) return false;
+    const converted = Array.isArray(value)
+      ? value.map(convertGraphInputValue).filter((v) => v !== null)
+      : convertGraphInputValue(value);
+    for (const record of targets) {
+      record.graphInput = converted;
+      // 字段模式脚本若恰好声明了同名 @property，字段归属脚本本身，不注入
+      const keys = Array.isArray(record.inst.constructor?.__tvePropKeys)
+        ? record.inst.constructor.__tvePropKeys
+        : [];
+      if (!keys.includes("graphInput")) {
+        try {
+          record.inst.graphInput = converted;
+        } catch {
+          /* 冻结/只读实例忽略 */
+        }
+      }
+      if (typeof record.inst.onGraphInput === "function") {
+        try {
+          record.inst.onGraphInput(converted);
+        } catch (e) {
+          if (!graphInputWarned.has(record.script)) {
+            graphInputWarned.add(record.script);
+            postLog("warn", `[脚本] ${record.script} onGraphInput() 出错: ${errText(e)}`);
+          }
+          console.error(e);
+        }
+      }
+    }
+    return true;
+  }
+
   return {
     /**
      * 固定步长驱动（播放器每帧最先调用，先于同帧 update/物理步进）：
@@ -449,6 +509,8 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     /** 脚本组件属性读/写（场景图 script:<路径>:<属性> 寻址；player 注入 graph ctx.scriptApi） */
     scriptProp,
     setScriptProp,
+    /** 图接入口交付（原型卡「接入」口 → 实体上脚本实例；player 注入 graph scriptApi） */
+    setScriptGraphInput,
     dispose,
   };
 }

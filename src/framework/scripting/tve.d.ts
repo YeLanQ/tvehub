@@ -188,6 +188,12 @@ export function nodeType(options?: {
 export type ComponentProps = Record<string, unknown>;
 
 /**
+ * 场景图接入口传入值（原型卡「接入」口 → 本实体上的脚本组件）：
+ * 实体（集）为 Entity/Entity[]，数据为标量/向量；未接入或上游为空为 null。
+ */
+export type GraphInputValue = Entity | Entity[] | number | boolean | string | Vec3 | null;
+
+/**
  * 组件生命周期回调契约（Component 基类的钩子接口；全部可选，按需实现）。
  * 调度方为播放器脚本宿主（engine/core/scripts.mjs）：
  * 全部实例化后先统一 onEnable 再统一 onStart；
@@ -203,6 +209,14 @@ export interface ComponentLifecycle {
 
   /** 生命周期：全部脚本实例创建后、首个 onUpdate 前调用一次（初始化玩法逻辑） */
   onStart?(): void;
+
+  /**
+   * 场景图接入口：本实体原型卡片的「接入」口收到新值时调用（值变化边沿触发；
+   * 装配期收到初值即回调一次）。value 与 this.graphInput 同源；实体集为
+   * Entity[]，数据为标量/向量。仅场景图模式（预览/导出注入 script-graph.json）
+   * 且接入口接线时触发。
+   */
+  onGraphInput?(value: GraphInputValue): void;
 
   /** 生命周期：每帧调用（delta = 距上一帧的秒数） */
   onUpdate?(delta: number): void;
@@ -310,6 +324,13 @@ export class Component<P extends ComponentProps = ComponentProps> implements Com
    * 兼容旧静态 props 声明的脚本。不要在本视图写入。
    */
   readonly props: Readonly<P>;
+
+  /**
+   * 场景图接入口的最新值（只读轮询；与 onGraphInput 的 value 同源）：
+   * 原型卡「接入」口接入实体集 → Entity[]，接入数据 → 标量/向量，
+   * 未接线/上游为空 → null。仅场景图模式下由宿主写入。
+   */
+  readonly graphInput: GraphInputValue;
 
   /** 生命周期：实例创建后调用（全部实例的 onEnable 先于全部 onStart） */
   onEnable?(): void;

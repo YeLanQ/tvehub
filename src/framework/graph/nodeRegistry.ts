@@ -54,9 +54,11 @@ export const G_DATA_TYPE_LABEL: Record<GDataType, string> = {
   any: "任意",
 };
 
-/** 两数据类型能否相连（同类型 / any 通配 / entity→entities 提升） */
+/** 两数据类型能否相连（同类型 / any 通配 / entity→entities 提升；exec 通道独占） */
 export function canConnectDataTypes(src: GDataType, dst: GDataType): boolean {
   if (src === dst) return true;
+  // 执行链通道与数据通道互不相连（exec 出入只接 exec，杜绝静默无效连线）
+  if (src === "exec" || dst === "exec") return false;
   if (src === "any" || dst === "any") return true;
   if (src === "entity" && dst === "entities") return true;
   if (src === "entities" && dst === "entity") return true;
@@ -95,6 +97,11 @@ export type GNodeCategory = "entity" | "event" | "op" | "flow" | "math" | "varia
 export interface GNodeCapabilities {
   /** 实体集源（proto/match）：out 引脚求值 = 自身解析出的实体集 */
   entitySource?: boolean;
+  /**
+   * 脚本接入口（proto）：in 引脚接入的实体集/数据在变化时交付给所引实体上的
+   * 脚本实例（脚本 onGraphInput 接收 / this.graphInput 轮询）
+   */
+  scriptInlet?: boolean;
   /** 执行链入口（事件节点）：按 trigger 在运行时绑定（start/frame/click） */
   eventEntry?: boolean;
   /** 原子操作（一次性语义，有 executor） */
@@ -257,11 +264,11 @@ const ENTITY_TYPES: GNodeTypeDef[] = [
     type: "entity.proto",
     category: "entity",
     label: "原型",
-    desc: "拖入场景实体生成原型卡片，属性以场景当前值为参照",
+    desc: "拖入场景实体生成原型卡片，属性以场景当前值为参照；「接入」口把实体集/数据传给实体上的脚本",
     color: "#4ec9b0",
-    inputs: [],
+    inputs: [{ id: "in", label: "接入", direction: "in", dataType: "any", multi: true }],
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
-    capabilities: { entitySource: true },
+    capabilities: { entitySource: true, scriptInlet: true },
   },
   {
     type: "entity.match",

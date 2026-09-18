@@ -43,6 +43,7 @@ export default class Spin extends Component {
 | --- | --- |
 | `onEnable()` | 实例创建后调用；**全部实例的 onEnable 先于全部 onStart**，此时可安全引用其他实体与组件 |
 | `onStart()` | 全部脚本实例创建后、首个 `onUpdate` 前调用一次（初始化玩法逻辑） |
+| `onGraphInput(value)` | 场景图接入口：本实体原型卡「接入」口收到新值时调用（值变化边沿触发；装配期收到初值即回调一次）。实体集为 `Entity[]`，数据为标量/向量；同值可随时读 `this.graphInput`。仅场景图模式且接入口接线时触发 |
 | `onFixedUpdate(fixedDelta)` | 固定步长更新，每 1/60 秒一次（与物理步进同频）。帧率无关：一帧内可能不调用或连续调用多次（掉帧补偿，上限 4 次）；**先于同帧 onUpdate 与物理步进**。适合施力/速度等与物理相关的确定性逻辑 |
 | `onUpdate(delta)` | 每帧调用，`delta` 为距上一帧的秒数 |
 | `onLateUpdate(delta)` | 每帧一次；全部脚本/动画/物理/粒子更新后、渲染前调用。相机跟随等需要覆盖本帧一切位姿写入的逻辑放这里 |

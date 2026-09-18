@@ -724,8 +724,15 @@ async function main() {
         for (const m of mods) if (m && typeof m === "object" && typeof m.id === "string") extModules.push(m);
       }
       // scriptApi：图属性路径 script:<路径>:<属性> 的读写通道（脚本 @property 实时值）
+      // + 接入口交付（原型卡「接入」→ 实体上脚本实例 onGraphInput/graphInput）
       const scriptApi = typeof scripts.scriptProp === "function"
-        ? { getProp: scripts.scriptProp, setProp: scripts.setScriptProp }
+        ? {
+            getProp: scripts.scriptProp,
+            setProp: scripts.setScriptProp,
+            ...(typeof scripts.setScriptGraphInput === "function"
+              ? { setGraphInput: scripts.setScriptGraphInput }
+              : {}),
+          }
         : undefined;
       graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav, scriptApi }, extModules);
     } catch (e) {

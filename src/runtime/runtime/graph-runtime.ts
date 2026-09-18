@@ -168,6 +168,12 @@ export interface GraphScriptApi {
   getProp(nodeId: string, scriptRel: string, key: string): number | boolean | string | null;
   /** 写 @property（字段模式可写；legacy 只读视图回 false） */
   setProp(nodeId: string, scriptRel: string, key: string, value: number | boolean | string): boolean;
+  /**
+   * 接入口交付（原型卡「接入」→ 实体上脚本实例；可选，旧宿主缺省不可用）：
+   * value 为 DataValue[]（实体集已展开为单实体项）；交付给该实体全部存活脚本
+   * （写入 this.graphInput 并回调 onGraphInput），无人接收回 false。
+   */
+  setGraphInput?(nodeId: string, scriptRel: string, value: unknown): boolean;
 }
 
 /** 运行时装配上下文（player 注入） */

@@ -426,6 +426,9 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+
+        // 脚本属性行回退 @property 默认值（场景未另存）时的弱化呈现
+        &.dim { opacity: 0.62; }
       }
     }
 

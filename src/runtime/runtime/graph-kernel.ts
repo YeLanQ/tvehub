@@ -601,6 +601,68 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 接入口交付（scriptInlet 能力节点，如原型卡「接入」）：in 引脚接入的实体集/
+  // 数据变化时交付给所引实体上的脚本实例（onGraphInput / this.graphInput）。
+  // 交付走数据通道拉模型求值，与 exec 链无关；初值在 start 装配后交付一次。
+  // ---------------------------------------------------------------------------
+
+  const inletNodes = graph.nodes.filter(
+    (n) => !n.unresolved && hasNodeTypeCapability(n.type, "scriptInlet"),
+  );
+  /** 上次交付值签名（去重：同值不重复回调 onGraphInput） */
+  const inletSigs = new Map<string, string>();
+
+  /** 值签名（实体按 id、向量按分量、标量按字面量；跨帧比较用） */
+  function inletSignature(values: DataValue[]): string {
+    return values
+      .map((v) => {
+        if (Array.isArray(v)) return `E[${v.map((x) => (x && typeof x === "object" && "id" in x ? x.id : "?")).join(",")}]`;
+        if (v && typeof v === "object" && "id" in v) return `e:${String(v.id)}`;
+        if (v && typeof v === "object" && "x" in v && "y" in v && "z" in v) {
+          const w = v as { x: number; y: number; z: number };
+          return `v:${w.x},${w.y},${w.z}`;
+        }
+        return `${typeof v}:${String(v)}`;
+      })
+      .join("|");
+  }
+
+  /** 全量求值并按需交付（值变化才回调；空集只记签名不交付） */
+  function deliverGraphInputs(): void {
+    for (const node of inletNodes) {
+      const values = evalDataInputs(node.id, "in");
+      const sig = inletSignature(values);
+      if (inletSigs.get(node.id) === sig) continue;
+      inletSigs.set(node.id, sig);
+      // 空集（未接线/上游为空）只记签名不交付：脚本侧 this.graphInput 回归 null
+      if (!values.length) continue;
+      const eid = node.entityId ?? "";
+      if (!eid) {
+        warnOnce(`inlet-noentity:${node.id}`, `[graph] 原型 (${node.id}) 接入口已接线但未引用场景实体，值无处交付`);
+        continue;
+      }
+      if (!scriptApi?.setGraphInput) {
+        warnOnce(`inlet-noapi:${node.id}`, `[graph] 原型 (${node.id}) 接入口已接线，但当前运行时未注入脚本交付通道（预览运行时过旧）——刷新/重装运行时后生效`);
+        continue;
+      }
+      if (scriptApi.setGraphInput(eid, "", values)) {
+        log(
+          `inlet-ok:${node.id}`,
+          `[graph] 接入口 (${node.id}) → 实体 ${eid} 脚本（${values.length} 项：${values
+            .map((v) => (v && typeof v === "object" && "id" in v ? String(v.id) : String(v)))
+            .join(", ")}）`,
+          3,
+        );
+      } else {
+        warnOnce(
+          `inlet-noscript:${node.id}:${eid}`,
+          `[graph] 原型 (${node.id}) 接入口的值无处交付：实体 ${eid} 上没有存活的脚本实例——接入口把数据传给脚本，请确认该实体挂有脚本组件`,
+        );
+      }
+    }
+  }
+
   // ----- start：装配即执行一次（事件链 + 旧式 trigger=start）-----
   // 时序：kernel 服务面就绪后执行；驱动器基准捕获（assembleFrameOps）
   // 在 start 之后，保证 bob/patrol 基准位取属性落位后的位置
@@ -612,6 +674,8 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     }
   }
   for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
+  // 接入口初值交付（脚本 onStart 之后：onGraphInput 首回调即携带最新值）
+  deliverGraphInputs();
   assembleFrameOps();
 
   // 装配摘要（预览控制台回传编辑器：用于确认"图是否被装载、装载了什么"）
@@ -624,6 +688,8 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     update(dt: number) {
       elapsed += dt;
       sampleTimer += dt;
+      // 接入口值变化检测与交付（onGraphInput 边沿语义；轮询读 this.graphInput）
+      deliverGraphInputs();
       // 容器每帧驱动（状态轮询、激活态子驱动步进等，语义在容器行为模块内）
       const framed = new Set<ContainerBehavior>();
       for (const n of graph.nodes) {

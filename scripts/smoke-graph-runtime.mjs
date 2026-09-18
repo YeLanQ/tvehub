@@ -116,6 +116,7 @@ function boot(doc, opts = {}) {
     camera,
     logicApi: { fire() {}, setParam() {} },
     graph: doc,
+    scriptApi: opts.scriptApi,
   });
   return { scene, handle, built };
 }
@@ -692,6 +693,74 @@ console.log("[11] 路径点接线：获取子级输出直连（按序巡回）/ 
     `跨父级路径点按世界坐标巡回（31s 后 x=${m3?.position.x.toFixed(1)}；局部坐标实现只会停在 10 附近）`,
   );
   handle.dispose();
+}
+
+console.log("[12] 原型卡「接入」口：实体集/数据交付给实体上的脚本（onGraphInput 通道）");
+{
+  // 场景 A：匹配卡实体集 → 原型接入口；装配期交付初值，值不变不重复回调
+  posted.length = 0;
+  const deliveries = [];
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }],
+    nodes: [
+      { id: "n1", type: "entity.proto", x: 0, y: 0, entityId: "crate-1" },
+      { id: "n2", type: "entity.match", x: 0, y: 160, matchMode: "tag", matchPattern: "pickup" },
+      { id: "n3", type: "var.get", x: 0, y: 300, varId: "v1" },
+    ],
+    edges: [
+      { id: "eA", srcNode: "n2", srcPort: "out", dstNode: "n1", dstPort: "in" },
+      { id: "eB", srcNode: "n3", srcPort: "value", dstNode: "n1", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [{ id: "v1", name: "power", dataType: "number", value: 7 }],
+    customNodes: [],
+  };
+  const { handle } = boot(doc, {
+    scriptApi: {
+      getProp: () => null,
+      setProp: () => false,
+      setGraphInput: (nodeId, _rel, value) => {
+        deliveries.push({ nodeId, value });
+        return true;
+      },
+    },
+  });
+  ok(deliveries.length === 1, `装配期交付初值 1 次（实际 ${deliveries.length}）`);
+  const v = deliveries[0]?.value;
+  ok(
+    Array.isArray(v) && v.length === 2 && v[0]?.id === "crate-1" && v[1] === 7,
+    `初值 = [实体 crate-1, 标量 7]（实际 ${JSON.stringify(v?.map((x) => (x?.id ?? x)))}）`,
+  );
+  ok(deliveries[0]?.nodeId === "crate-1", "交付按原型引用的实体 id 寻址");
+  advance(handle, 0.5);
+  ok(deliveries.length === 1, `值不变不重复回调（30 帧 still ${deliveries.length}）`);
+  ok(
+    infoLines().some((l) => l.includes("接入口") && l.includes("crate-1")),
+    "接入口交付日志（引擎日志通道可见）",
+  );
+  handle.dispose();
+
+  // 场景 B：实体上没有脚本实例（setGraphInput 回 false）→ 可定位告警
+  posted.length = 0;
+  const doc2 = {
+    ...doc,
+    nodes: [
+      { id: "n1", type: "entity.proto", x: 0, y: 0, entityId: "crate-1" },
+      { id: "n2", type: "entity.match", x: 0, y: 160, matchMode: "tag", matchPattern: "pickup" },
+    ],
+    edges: [{ id: "eA", srcNode: "n2", srcPort: "out", dstNode: "n1", dstPort: "in" }],
+    variables: [],
+  };
+  const { handle: h2 } = boot(doc2, {
+    scriptApi: { getProp: () => null, setProp: () => false, setGraphInput: () => false },
+  });
+  advance(h2, 0.1);
+  ok(
+    warnLines().some((w) => w.includes("接入口") && w.includes("没有存活的脚本实例")),
+    "无人接收给出可定位告警（实体未挂脚本）",
+  );
+  h2.dispose();
 }
 
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);

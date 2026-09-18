@@ -294,6 +294,49 @@ async function createScripts({ nodes, cfg, animations, audios, physics, clipAnim
       return false;
     }
   }
+  function convertGraphInputValue(v) {
+    if (v === null || v === void 0) return null;
+    if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return v;
+    if (typeof v === "object") {
+      if (typeof v.id === "string" && v.id) return resolveNodeEntity(v.id);
+      const x = typeof v.x === "number" ? v.x : null;
+      const y = typeof v.y === "number" ? v.y : null;
+      const z = typeof v.z === "number" ? v.z : null;
+      if (x !== null && y !== null && z !== null) return { x, y, z };
+    }
+    return null;
+  }
+  const graphInputWarned = /* @__PURE__ */ new Set();
+  function setScriptGraphInput(nodeId, scriptRel, value) {
+    var _a;
+    const list = instancesByNode.get(nodeId);
+    if (!list || !list.length) return false;
+    const targets = list.filter((r) => !r.dead && (!scriptRel || r.script === scriptRel));
+    if (!targets.length) return false;
+    const converted = Array.isArray(value) ? value.map(convertGraphInputValue).filter((v) => v !== null) : convertGraphInputValue(value);
+    for (const record of targets) {
+      record.graphInput = converted;
+      const keys = Array.isArray((_a = record.inst.constructor) == null ? void 0 : _a.__tvePropKeys) ? record.inst.constructor.__tvePropKeys : [];
+      if (!keys.includes("graphInput")) {
+        try {
+          record.inst.graphInput = converted;
+        } catch {
+        }
+      }
+      if (typeof record.inst.onGraphInput === "function") {
+        try {
+          record.inst.onGraphInput(converted);
+        } catch (e) {
+          if (!graphInputWarned.has(record.script)) {
+            graphInputWarned.add(record.script);
+            postLog("warn", `[脚本] ${record.script} onGraphInput() 出错: ${errText(e)}`);
+          }
+          console.error(e);
+        }
+      }
+    }
+    return true;
+  }
   return {
     /**
      * 固定步长驱动（播放器每帧最先调用，先于同帧 update/物理步进）：
@@ -333,6 +376,8 @@ async function createScripts({ nodes, cfg, animations, audios, physics, clipAnim
     /** 脚本组件属性读/写（场景图 script:<路径>:<属性> 寻址；player 注入 graph ctx.scriptApi） */
     scriptProp,
     setScriptProp,
+    /** 图接入口交付（原型卡「接入」口 → 实体上脚本实例；player 注入 graph scriptApi） */
+    setScriptGraphInput,
     dispose
   };
 }
