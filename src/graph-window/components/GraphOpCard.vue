@@ -53,7 +53,7 @@ function pinBg(dataType: string): string {
     <div class="gcard-head">
       <span class="gcard-dot"></span>
       <span class="gcard-title">{{ label }}</span>
-      <span class="gcard-badge">{{ triggerLabel }}</span>
+      <span v-if="trigger" class="gcard-badge">{{ triggerLabel }}</span>
     </div>
     <div v-if="summary" class="gcard-summary" :title="summary">{{ summary }}</div>
     <div class="gcard-body">

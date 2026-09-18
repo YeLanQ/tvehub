@@ -51,7 +51,7 @@ const summary = computed(() => {
     </div>
     <div v-if="unresolved" class="gcard-summary" :title="g.type">节点类型 {{ g.type }} 的模块未装载</div>
     <div v-else-if="def?.desc" class="gcard-summary" :title="def.desc">{{ def.desc }}</div>
-    <div v-else-if="summary" class="gcard-summary" :title="summary">{{ summary }}</div>
+    <div v-if="!unresolved && summary" class="gcard-summary" :title="summary">{{ summary }}</div>
     <div v-if="!unresolved" class="gcard-body">
       <div class="gcard-col">
         <div v-for="p in def?.inputs" :key="p.id" class="gprow">

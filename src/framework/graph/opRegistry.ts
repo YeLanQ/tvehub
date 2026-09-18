@@ -1,12 +1,16 @@
 // ---------------------------------------------------------------------------
 // 场景图原子操作目录（单一事实源，编辑器面板/检查器/运行时解释器共用）：
 // 每种操作 = 一种预览运行时行为，触发时机由类型固定 ——
-// - start：运行时启动时执行一次（属性设置 / FSM 事件 / FSM 参数）；
-// - frame：每帧执行（持续旋转 / 上下浮动，delta 累计语义）；
-// - click：实体被点击时执行（显隐切换）。
+// - start：运行时启动时执行一次（属性设置 / FSM 参数）；
+// - frame：每帧执行（持续旋转 / 上下浮动 / 路径巡逻 / 追击 / 导航移动，delta 累计语义）；
+// - click：实体被点击时执行（FSM 事件）。
+// 去重原则：可被通用卡组合替代的一次性卡不注册（如「点击显隐」= 属性读取 visible
+// → 分支 → 设置属性 visible 0/1，已移除），避免同名功能两张卡并存。
 // 参数表 fields 即卡片/检查器的可编辑项，缺省值同为新建与收敛回退。
-// 运行语义与 tve SDK 对齐：属性路径即 Entity 暴露的属性（position/rotation/
-// scale 各分量、visible），FSM 操作经 engine.logic（fire/setParam）。
+// 运行语义与 tve SDK 对齐：属性路径为点分通用路径（变换各分量/visible 基础
+// 之上，运行时另支持 light/material 分量、userData 与 script: 脚本属性，
+// 解析规则见 runtime/graph-prop-path.ts；路径只寻址实体自身属性，子级需先经
+// 「获取子级」/ForEach 换作用对象），FSM 操作经 engine.logic（fire/setParam）。
 // ---------------------------------------------------------------------------
 
 /** 操作触发时机（由操作类型固定） */
@@ -39,7 +43,7 @@ export const G_OP_TRIGGER_LABEL: Record<GOpTrigger, string> = {
   click: "点击时",
 };
 
-/** 可设属性路径候选（Entity 暴露的分量；setProperty 用） */
+/** 变换/可见性基础属性路径候选（运行时另支持 light·material·script: 等通用路径；子级属性先经「获取子级」/ForEach 换目标，见 runtime/graph-prop-path.ts） */
 export const G_PROPERTY_PATHS = [
   "position.x",
   "position.y",
@@ -77,7 +81,7 @@ export const GRAPH_OP_DEFS: GOpDef[] = [
     trigger: "start",
     color: "#4ec9b0",
     fields: [
-      { key: "property", label: "属性", kind: "string", fallback: "position.y" },
+      { key: "property", label: "属性", kind: "string", fallback: "position.y", placeholder: "点选候选或直接输入路径（如 light.intensity）" },
       { key: "value", label: "值", kind: "number", fallback: 0, step: 0.1 },
     ],
   },
@@ -124,14 +128,6 @@ export const GRAPH_OP_DEFS: GOpDef[] = [
     trigger: "start",
     color: "#569cd6",
     fields: [F_S("param", "参数名"), F_N("value", "值", 1, 0.1)],
-  },
-  {
-    type: "op.toggleVisible",
-    label: "点击显隐",
-    desc: "目标被点击时切换可见性（指针射线命中实体）",
-    trigger: "click",
-    color: "#c586c0",
-    fields: [],
   },
 ];
 

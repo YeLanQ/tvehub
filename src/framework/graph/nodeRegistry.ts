@@ -273,6 +273,24 @@ const ENTITY_TYPES: GNodeTypeDef[] = [
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
     capabilities: { entitySource: true },
   },
+  {
+    type: "entity.prop",
+    category: "entity",
+    label: "属性读取",
+    desc: "拉模型读取目标实体的任意属性（点分路径，不限于位置/旋转/状态）",
+    color: "#569cd6",
+    inputs: [{ id: "target", label: "实体", direction: "in", dataType: "entity" }],
+    outputs: [{ id: "value", label: "值", direction: "out", dataType: "any" }],
+    fields: [
+      {
+        key: "property",
+        label: "属性路径",
+        kind: "string",
+        fallback: "position.x",
+        placeholder: "点选候选或直接输入路径（悬停查看语法）",
+      },
+    ],
+  },
 ];
 
 /** 事件类节点（执行链入口） */
@@ -326,14 +344,37 @@ const OP_TYPES: GNodeTypeDef[] = GRAPH_OP_DEFS.map((op: GOpDef): GNodeTypeDef =>
   capabilities: { op: true, ...(op.trigger === "frame" ? { driver: true } : {}) },
 }));
 
-// op.patrol：追加「路径点」引脚（路径口接入路径点实体 → 依次巡回），并归入驱动器分组
+// op.patrol：追加「路径点」引脚（路径口接入路径点实体 → 依次巡回）
 const patrolDef = OP_TYPES.find((d) => d.type === "op.patrol");
 if (patrolDef) {
   patrolDef.inputs.splice(1, 0, {
     id: "path", label: "路径点", direction: "in", dataType: "entities", multi: true,
   });
-  patrolDef.category = "driver";
 }
+
+// 帧驱动类操作（持续旋转/上下浮动/路径巡逻）统一归入「驱动器」分组：
+// 「操作」组只留一次性/交互语义（设置属性/FSM 事件/FSM 参数/获取子级），
+// 避免同一帧驱动语义在两组各出现一张卡。
+for (const d of OP_TYPES) {
+  if (d.trigger === "frame") d.category = "driver";
+}
+
+// op.children「获取子级」：实体集变换卡（目标集 → 直属子级实体集）。
+// 纯实体集通道语义（无 exec 引脚、无 trigger）：out 经 core-entity 解析器
+// 输出各目标在场景树中的直属子级（按对象树标记，多个目标按连线顺序合并去重），
+// 可接任意「目标/集合」入引脚做批量操作，或 ForEach 遍历按序取每个子级（其
+// 「当前」引脚现在也能接操作「目标」通道）。深层孙级经链式多张本卡获取。
+OP_TYPES.push({
+  type: "op.children",
+  category: "op",
+  label: "获取子级",
+  desc: "获取目标实体的直属子级实体数组（场景层级中的下一层；多目标合并去重），输出实体集可接操作/遍历/属性读取的集合引脚；属性路径不再支持子级寻址，读写子级属性先经本卡换作用对象，配合 ForEach 遍历按序取每个子级",
+  color: "#6a9955",
+  inputs: [P_ENTITIES_IN],
+  outputs: [P_ENTITIES_OUT],
+  fields: [],
+  capabilities: { entitySource: true },
+});
 
 /**
  * 驱动器（帧驱动的移动类操作）：对象贴合导航代理位姿 / 追击目标 / 路径巡逻。
@@ -550,11 +591,12 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
     type: "fsm.container",
     category: "logic",
     label: "状态机容器",
-    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；事件入端口触发状态切换，进入状态时执行归属该状态的子节点链；支持嵌套",
+    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；「事件」入端口按事件名切换状态，「条件」入端口接入比较结果（结果为真时切换为比较卡「触发事件名」指定的状态）；进入状态时执行归属该状态的子节点链；支持嵌套",
     color: "#569cd6",
     inputs: [
       P_EXEC_IN, // 进入容器（激活 initial 状态）
-      { id: "event", label: "事件", direction: "in", dataType: "exec", multi: true }, // 状态切换
+      { id: "event", label: "事件", direction: "in", dataType: "exec", multi: true }, // 按事件名切换
+      { id: "condition", label: "条件", direction: "in", dataType: "boolean", multi: true }, // 比较结果驱动切换
       { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true },
     ],
     outputs: [

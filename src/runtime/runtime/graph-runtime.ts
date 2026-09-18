@@ -86,6 +86,8 @@ export interface GraphKernel {
   clearLoopIndex(id: string): void;
   loopItem(id: string): NodeObj | undefined;
   setLoopItem(id: string, item: NodeObj): void;
+  /** 清除遍历上下文（ForEach 遍历结束后调用：「当前」引脚回归空，不残留最后一个元素） */
+  clearLoopItem(id: string): void;
   /** 容器：归属子节点（纵向排序）/ 归属链激活判定 */
   containerChildren(containerId: string): GNode[];
   nodeActive(node: GNode): boolean;
@@ -95,8 +97,12 @@ export interface GraphKernel {
   inFrameLoop(nodeId: string): boolean;
   /** 诊断告警（同 key 只提示一次；预览控制台实时回传编辑器，静默失败可定位） */
   warnOnce(key: string, msg: string): void;
+  /** 诊断日志（info 级；同 key 最多输出 limit 次，缺省 1 次——逐帧语义不刷屏） */
+  log(key: string, msg: string, limit?: number): void;
   /** 启动以来的累计时间（秒） */
   elapsed(): number;
+  /** 脚本组件属性访问（script:<路径>:<属性> 寻址；player 未注入时该命名空间不可用） */
+  scriptApi?: GraphScriptApi;
 }
 
 /** 原子操作执行器（一次性语义：属性设置 / 显隐 / FSM 事件…） */
@@ -156,6 +162,14 @@ export interface GraphRuntimeModule {
   dispose?(): void;
 }
 
+/** 脚本组件属性访问器（script:<路径>:<属性>；由 player 经 scripts 运行时注入） */
+export interface GraphScriptApi {
+  /** 读 @property 实时值（非脚本/键不存在/对象值 → null） */
+  getProp(nodeId: string, scriptRel: string, key: string): number | boolean | string | null;
+  /** 写 @property（字段模式可写；legacy 只读视图回 false） */
+  setProp(nodeId: string, scriptRel: string, key: string, value: number | boolean | string): boolean;
+}
+
 /** 运行时装配上下文（player 注入） */
 export interface GraphBehaviorsCtx {
   scene: THREE.Scene;
@@ -168,6 +182,8 @@ export interface GraphBehaviorsCtx {
   graph: ScriptGraphDoc;
   /** 导航运行时（可选）：追击类驱动器借此暂停/恢复目标的导航巡回 */
   navApi?: { setAgentPaused(id: string, paused: boolean): void };
+  /** 脚本组件属性访问（可选）：属性路径的 script: 命名空间 */
+  scriptApi?: GraphScriptApi;
 }
 
 export interface GraphBehaviorsHandle {
@@ -183,11 +199,19 @@ export interface GraphBehaviorsHandle {
 export function toNum(v: DataValue): number {
   return typeof v === "number" ? v : 0;
 }
-/** 字符串提取（DataValue → string） */
+/** 字符串提取（DataValue → string；vec3/实体按可读形式收敛） */
 export function toStr(v: DataValue): string {
   if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") return String(Math.round(v * 1000) / 1000);
   if (typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return `[${v.map((x) => x.id).join(", ")}]`;
+  if (v && typeof v === "object") {
+    if ("obj" in v) return v.id || v.obj.name || "(实体)";
+    if ("x" in v && "y" in v && "z" in v) {
+      const s = (n: number) => Math.round(n * 1000) / 1000;
+      return `(${s(v.x)}, ${s(v.y)}, ${s(v.z)})`;
+    }
+  }
   return "";
 }
 /** 实体提取（DataValue → 首个 NodeObj；单实体/实体集通吃） */

@@ -369,6 +369,47 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     }
   }
 
+  // ----- 脚本属性访问（场景图 script:<路径>:<属性> 寻址；图运行时 scriptApi 消费） -----
+
+  /** 节点上的脚本实例记录定位（relPath 精确匹配 → 缺省首个存活实例） */
+  function findScriptRecord(nodeId, scriptRel) {
+    const list = instancesByNode.get(nodeId);
+    if (!list || !list.length) return null;
+    if (scriptRel) {
+      const exact = list.find((r) => r.script === scriptRel && !r.dead);
+      if (exact) return exact;
+    }
+    return list.find((r) => !r.dead) ?? null;
+  }
+
+  /** 读 @property 实时值（字段模式读 inst 字段；legacy 读 props 快照；非标量回 null） */
+  function scriptProp(nodeId, scriptRel, key) {
+    const record = findScriptRecord(nodeId, scriptRel);
+    if (!record) return null;
+    let v = record.inst[key];
+    if (v === undefined && record.inst.props) v = record.inst.props[key];
+    const t = typeof v;
+    if (t === "number") return Number.isFinite(v) ? v : null;
+    if (t === "boolean" || t === "string") return v;
+    return null;
+  }
+
+  /** 写 @property（仅字段模式可写；legacy props 是冻结视图，回 false） */
+  function setScriptProp(nodeId, scriptRel, key, value) {
+    const record = findScriptRecord(nodeId, scriptRel);
+    if (!record) return false;
+    const keys = Array.isArray(record.inst.constructor?.__tvePropKeys)
+      ? record.inst.constructor.__tvePropKeys
+      : [];
+    if (!keys.includes(key)) return false;
+    try {
+      record.inst[key] = value;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     /**
      * 固定步长驱动（播放器每帧最先调用，先于同帧 update/物理步进）：
@@ -405,6 +446,9 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         callLifecycle(record, "onLateUpdate", dt);
       }
     },
+    /** 脚本组件属性读/写（场景图 script:<路径>:<属性> 寻址；player 注入 graph ctx.scriptApi） */
+    scriptProp,
+    setScriptProp,
     dispose,
   };
 }

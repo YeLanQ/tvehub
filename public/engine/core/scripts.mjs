@@ -262,6 +262,38 @@ async function createScripts({ nodes, cfg, animations, audios, physics, clipAnim
       callLifecycle(record, started ? "onCollisionEnter" : "onCollisionExit", other);
     }
   }
+  function findScriptRecord(nodeId, scriptRel) {
+    const list = instancesByNode.get(nodeId);
+    if (!list || !list.length) return null;
+    if (scriptRel) {
+      const exact = list.find((r) => r.script === scriptRel && !r.dead);
+      if (exact) return exact;
+    }
+    return list.find((r) => !r.dead) ?? null;
+  }
+  function scriptProp(nodeId, scriptRel, key) {
+    const record = findScriptRecord(nodeId, scriptRel);
+    if (!record) return null;
+    let v = record.inst[key];
+    if (v === void 0 && record.inst.props) v = record.inst.props[key];
+    const t = typeof v;
+    if (t === "number") return Number.isFinite(v) ? v : null;
+    if (t === "boolean" || t === "string") return v;
+    return null;
+  }
+  function setScriptProp(nodeId, scriptRel, key, value) {
+    var _a;
+    const record = findScriptRecord(nodeId, scriptRel);
+    if (!record) return false;
+    const keys = Array.isArray((_a = record.inst.constructor) == null ? void 0 : _a.__tvePropKeys) ? record.inst.constructor.__tvePropKeys : [];
+    if (!keys.includes(key)) return false;
+    try {
+      record.inst[key] = value;
+      return true;
+    } catch {
+      return false;
+    }
+  }
   return {
     /**
      * 固定步长驱动（播放器每帧最先调用，先于同帧 update/物理步进）：
@@ -298,6 +330,9 @@ async function createScripts({ nodes, cfg, animations, audios, physics, clipAnim
         callLifecycle(record, "onLateUpdate", dt);
       }
     },
+    /** 脚本组件属性读/写（场景图 script:<路径>:<属性> 寻址；player 注入 graph ctx.scriptApi） */
+    scriptProp,
+    setScriptProp,
     dispose
   };
 }

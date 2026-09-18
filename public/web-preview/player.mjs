@@ -723,7 +723,11 @@ async function main() {
         );
         for (const m of mods) if (m && typeof m === "object" && typeof m.id === "string") extModules.push(m);
       }
-      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav }, extModules);
+      // scriptApi：图属性路径 script:<路径>:<属性> 的读写通道（脚本 @property 实时值）
+      const scriptApi = typeof scripts.scriptProp === "function"
+        ? { getProp: scripts.scriptProp, setProp: scripts.setScriptProp }
+        : undefined;
+      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav, scriptApi }, extModules);
     } catch (e) {
       postLog("error", `脚本图行为启动失败: ${e?.message ?? e}`);
     }

@@ -23,7 +23,7 @@ const GRAPH_OP_DEFS = [
     trigger: "start",
     color: "#4ec9b0",
     fields: [
-      { key: "property", label: "属性", kind: "string", fallback: "position.y" },
+      { key: "property", label: "属性", kind: "string", fallback: "position.y", placeholder: "点选候选或直接输入路径（如 light.intensity）" },
       { key: "value", label: "值", kind: "number", fallback: 0, step: 0.1 }
     ]
   },
@@ -70,14 +70,6 @@ const GRAPH_OP_DEFS = [
     trigger: "start",
     color: "#569cd6",
     fields: [F_S("param", "参数名"), F_N("value", "值", 1, 0.1)]
-  },
-  {
-    type: "op.toggleVisible",
-    label: "点击显隐",
-    desc: "目标被点击时切换可见性（指针射线命中实体）",
-    trigger: "click",
-    color: "#c586c0",
-    fields: []
   }
 ];
 new Map(GRAPH_OP_DEFS.map((d) => [d.type, d]));
@@ -144,6 +136,24 @@ const ENTITY_TYPES = [
     inputs: [],
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
     capabilities: { entitySource: true }
+  },
+  {
+    type: "entity.prop",
+    category: "entity",
+    label: "属性读取",
+    desc: "拉模型读取目标实体的任意属性（点分路径，不限于位置/旋转/状态）",
+    color: "#569cd6",
+    inputs: [{ id: "target", label: "实体", direction: "in", dataType: "entity" }],
+    outputs: [{ id: "value", label: "值", direction: "out", dataType: "any" }],
+    fields: [
+      {
+        key: "property",
+        label: "属性路径",
+        kind: "string",
+        fallback: "position.x",
+        placeholder: "点选候选或直接输入路径（悬停查看语法）"
+      }
+    ]
   }
 ];
 const EVENT_TYPES = [
@@ -202,8 +212,21 @@ if (patrolDef) {
     dataType: "entities",
     multi: true
   });
-  patrolDef.category = "driver";
 }
+for (const d of OP_TYPES) {
+  if (d.trigger === "frame") d.category = "driver";
+}
+OP_TYPES.push({
+  type: "op.children",
+  category: "op",
+  label: "获取子级",
+  desc: "获取目标实体的直属子级实体数组（场景层级中的下一层；多目标合并去重），输出实体集可接操作/遍历/属性读取的集合引脚；属性路径不再支持子级寻址，读写子级属性先经本卡换作用对象，配合 ForEach 遍历按序取每个子级",
+  color: "#6a9955",
+  inputs: [P_ENTITIES_IN],
+  outputs: [P_ENTITIES_OUT],
+  fields: [],
+  capabilities: { entitySource: true }
+});
 const DRIVER_TYPES = [
   {
     type: "op.navMove",
@@ -509,13 +532,15 @@ const LOGIC_TYPES = [
     type: "fsm.container",
     category: "logic",
     label: "状态机容器",
-    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；事件入端口触发状态切换，进入状态时执行归属该状态的子节点链；支持嵌套",
+    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；「事件」入端口按事件名切换状态，「条件」入端口接入比较结果（结果为真时切换为比较卡「触发事件名」指定的状态）；进入状态时执行归属该状态的子节点链；支持嵌套",
     color: "#569cd6",
     inputs: [
       P_EXEC_IN,
       // 进入容器（激活 initial 状态）
       { id: "event", label: "事件", direction: "in", dataType: "exec", multi: true },
-      // 状态切换
+      // 按事件名切换
+      { id: "condition", label: "条件", direction: "in", dataType: "boolean", multi: true },
+      // 比较结果驱动切换
       { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true }
     ],
     outputs: [
@@ -584,7 +609,8 @@ function nodeTypeDef(type) {
 }
 const EMPTY_EVENT = "";
 function createGraphKernel(ctx, modules) {
-  const { scene, dom, camera, logicApi, graph, navApi } = ctx;
+  var _a, _b;
+  const { scene, dom, camera, logicApi, graph, navApi, scriptApi } = ctx;
   const ops = {};
   const drivers = {};
   const data = {};
@@ -604,13 +630,13 @@ function createGraphKernel(ctx, modules) {
   const byId = /* @__PURE__ */ new Map();
   const all = [];
   scene.traverse((o) => {
-    var _a, _b, _c;
-    const id = typeof ((_a = o.userData) == null ? void 0 : _a.nodeId) === "string" ? o.userData.nodeId : "";
+    var _a2, _b2, _c;
+    const id = typeof ((_a2 = o.userData) == null ? void 0 : _a2.nodeId) === "string" ? o.userData.nodeId : "";
     if (!id || byId.has(id)) return;
     const n = {
       obj: o,
       id,
-      kind: typeof ((_b = o.userData) == null ? void 0 : _b.nodeKind) === "string" ? o.userData.nodeKind : "",
+      kind: typeof ((_b2 = o.userData) == null ? void 0 : _b2.nodeKind) === "string" ? o.userData.nodeKind : "",
       tag: typeof ((_c = o.userData) == null ? void 0 : _c.nodeTag) === "string" ? o.userData.nodeTag : ""
     };
     byId.set(id, n);
@@ -623,6 +649,13 @@ function createGraphKernel(ctx, modules) {
     warnedKeys.add(key);
     postLog("warn", msg);
   }
+  const loggedCounts = /* @__PURE__ */ new Map();
+  function log(key, msg, limit = 1) {
+    const used = loggedCounts.get(key) ?? 0;
+    if (used >= limit) return;
+    loggedCounts.set(key, used + 1);
+    postLog("info", msg);
+  }
   const sampleCounts = /* @__PURE__ */ new Map();
   const SAMPLE_LIMIT = 2;
   const sampleVector = new THREE.Vector3();
@@ -634,18 +667,18 @@ function createGraphKernel(ctx, modules) {
   const loopItem = /* @__PURE__ */ new Map();
   let elapsed = 0;
   const numP = (n, key, fb = 0) => {
-    var _a;
-    const v = (_a = n.params) == null ? void 0 : _a[key];
+    var _a2;
+    const v = (_a2 = n.params) == null ? void 0 : _a2[key];
     return typeof v === "number" && Number.isFinite(v) ? v : fb;
   };
   const strP = (n, key, fb = "") => {
-    var _a;
-    const v = (_a = n.params) == null ? void 0 : _a[key];
+    var _a2;
+    const v = (_a2 = n.params) == null ? void 0 : _a2[key];
     return typeof v === "string" ? v : fb;
   };
   const boolP = (n, key) => {
-    var _a;
-    return ((_a = n.params) == null ? void 0 : _a[key]) === true;
+    var _a2;
+    return ((_a2 = n.params) == null ? void 0 : _a2[key]) === true;
   };
   function resolveSet(refId, seen = /* @__PURE__ */ new Set()) {
     if (seen.has(refId)) return [];
@@ -719,12 +752,12 @@ function createGraphKernel(ctx, modules) {
     execOut.set(e.srcNode, portMap);
   }
   function execNextOf(nodeId, port = "next") {
-    var _a;
-    return (((_a = execOut.get(nodeId)) == null ? void 0 : _a.get(port)) ?? []).map((t) => t.id);
+    var _a2;
+    return (((_a2 = execOut.get(nodeId)) == null ? void 0 : _a2.get(port)) ?? []).map((t) => t.id);
   }
   function execTargetsOf(nodeId, port = "next") {
-    var _a;
-    return ((_a = execOut.get(nodeId)) == null ? void 0 : _a.get(port)) ?? [];
+    var _a2;
+    return ((_a2 = execOut.get(nodeId)) == null ? void 0 : _a2.get(port)) ?? [];
   }
   const hasExecInput = /* @__PURE__ */ new Set();
   for (const e of graph.edges) {
@@ -759,12 +792,12 @@ function createGraphKernel(ctx, modules) {
     return inst;
   }
   function stepDriver(node, dt, targets) {
-    var _a;
+    var _a2;
     const inst = driverInst(node);
     if (!inst) return;
     const ts = targets ?? resolveTargets(node.id);
     if (!ts.length) return;
-    (_a = inst.boot) == null ? void 0 : _a.call(inst, ts);
+    (_a2 = inst.boot) == null ? void 0 : _a2.call(inst, ts);
     inst.step(dt, ts);
   }
   function cascadeNext(node, ec, port = "next", eventName) {
@@ -793,13 +826,27 @@ function createGraphKernel(ctx, modules) {
       cascadeNext(node, ec);
       return;
     }
-    const executor = ops[node.type];
-    if (executor && hasNodeTypeCapability(node.type, "op")) {
+    if (ops[node.type] && hasNodeTypeCapability(node.type, "op")) {
       if (!nodeActive(node)) return;
-      executor(kernel, node, resolveTargets(opId));
+      runOp(node, resolveTargets(opId));
       cascadeNext(node, ec);
       return;
     }
+  }
+  function runOp(node, targets) {
+    var _a2;
+    const ex = ops[node.type];
+    if (!ex) return;
+    const label = ((_a2 = nodeTypeDef(node.type)) == null ? void 0 : _a2.label) ?? node.type;
+    if (!targets.length) {
+      warnOnce(
+        `op-no-target:${node.id}`,
+        `[graph] 操作「${label}」(${node.id}) 无目标实体，已跳过——请检查「目标」口连线（原型/匹配/获取子级/容器作用域）`
+      );
+      return;
+    }
+    log(`op-run:${node.id}`, `[graph] 执行「${label}」(${node.id}) → 目标 [${targets.map((t) => t.id).join(", ")}]`, 5);
+    ex(kernel, node, targets);
   }
   const kernel = {
     graph,
@@ -827,23 +874,42 @@ function createGraphKernel(ctx, modules) {
     clearLoopIndex: (id) => loopIndex.delete(id),
     loopItem: (id) => loopItem.get(id),
     setLoopItem: (id, item) => loopItem.set(id, item),
+    clearLoopItem: (id) => loopItem.delete(id),
     containerChildren,
     nodeActive,
     stepDriver,
     inFrameLoop: (nodeId) => frameOpsNodes.has(nodeId),
     warnOnce,
-    elapsed: () => elapsed
+    log,
+    elapsed: () => elapsed,
+    scriptApi
   };
   const eventNodes = graph.nodes.filter(
     (n) => !n.containerId && !n.unresolved && hasNodeTypeCapability(n.type, "eventEntry")
   );
   const triggerOf = (n) => {
-    var _a;
-    return (_a = typeDefOf(n)) == null ? void 0 : _a.trigger;
+    var _a2;
+    return (_a2 = typeDefOf(n)) == null ? void 0 : _a2.trigger;
   };
   const startEvents = eventNodes.filter((n) => triggerOf(n) === "start");
   const tickEvents = eventNodes.filter((n) => triggerOf(n) === "frame");
   const clickEvents = eventNodes.filter((n) => triggerOf(n) === "click");
+  for (const ev of eventNodes) {
+    if (execNextOf(ev.id).length) continue;
+    const label = ((_a = nodeTypeDef(ev.type)) == null ? void 0 : _a.label) ?? ev.type;
+    warnOnce(
+      `event-no-chain:${ev.id}`,
+      `[graph] 事件「${label}」(${ev.id}) 未接入执行链（「执行」出引脚无连线），触发时不会有任何行为`
+    );
+  }
+  for (const ev of clickEvents) {
+    if (execNextOf(ev.id).length && !resolveTargets(ev.id).length) {
+      warnOnce(
+        `click-no-target:${ev.id}`,
+        `[graph] 事件「On Click」(${ev.id}) 未接入目标实体（「目标」入引脚），点击不会触发——接入原型/匹配卡片圈定可点击对象`
+      );
+    }
+  }
   const legacyOps = graph.nodes.filter(
     (n) => !n.containerId && !n.unresolved && !hasExecInput.has(n.id) && (hasNodeTypeCapability(n.type, "op") || hasNodeTypeCapability(n.type, "driver"))
   );
@@ -871,11 +937,11 @@ function createGraphKernel(ctx, modules) {
   const frameOps = [];
   const frameOpsNodes = /* @__PURE__ */ new Set();
   function assembleFrameOps() {
-    var _a, _b, _c, _d;
+    var _a2, _b2, _c, _d;
     for (const op of [...legacyFrameOps, ...tickChainDrivers]) {
       const targets = resolveTargets(op.id);
       if (!targets.length) {
-        const label = ((_a = nodeTypeDef(op.type)) == null ? void 0 : _a.label) ?? op.type;
+        const label = ((_a2 = nodeTypeDef(op.type)) == null ? void 0 : _a2.label) ?? op.type;
         warnOnce(
           `driver-no-target:${op.id}`,
           `[graph] 驱动器「${label}」(${op.type}, 节点 ${op.id}) 无目标实体，已跳过——请检查「目标」口连线，以及被连实体是否存在（路径点口只接路径点，被移动对象要接目标口）`
@@ -884,7 +950,7 @@ function createGraphKernel(ctx, modules) {
       }
       frameOps.push({ node: op, targets });
       frameOpsNodes.add(op.id);
-      (_c = (_b = driverInst(op)) == null ? void 0 : _b.boot) == null ? void 0 : _c.call(_b, targets);
+      (_c = (_b2 = driverInst(op)) == null ? void 0 : _b2.boot) == null ? void 0 : _c.call(_b2, targets);
       postLog(
         "info",
         `[graph] 帧驱动器「${((_d = nodeTypeDef(op.type)) == null ? void 0 : _d.label) ?? op.type}」(${op.id}) → 目标实体 [${targets.map((t) => t.id).join(", ")}]`
@@ -925,11 +991,11 @@ function createGraphKernel(ctx, modules) {
     }
     const hits = raycaster.intersectObjects([...allTargets.values()].map((t) => t.obj), true);
     const hitId = (() => {
-      var _a;
+      var _a2;
       for (const h of hits) {
         let o = h.object;
         while (o) {
-          const id = typeof ((_a = o.userData) == null ? void 0 : _a.nodeId) === "string" ? o.userData.nodeId : "";
+          const id = typeof ((_a2 = o.userData) == null ? void 0 : _a2.nodeId) === "string" ? o.userData.nodeId : "";
           if (id && allTargets.has(id)) return id;
           o = o.parent;
         }
@@ -937,15 +1003,18 @@ function createGraphKernel(ctx, modules) {
       return "";
     })();
     if (!hitId) return;
+    const hit = byId.get(hitId);
     for (const entry of allClickOps) {
       if (!entry.targets.some((t) => t.id === hitId)) continue;
       if (triggerOf(entry.node) !== "click") continue;
-      const ex = ops[entry.node.type];
-      const hit = byId.get(hitId);
-      if (ex && hit) ex(kernel, entry.node, [hit]);
+      if (hit) runOp(entry.node, [hit]);
     }
     for (const oc of onClickCascades) {
       if (!oc.targets.some((t) => t.id === hitId)) continue;
+      postLog(
+        "info",
+        `[graph] 指针命中 ${hitId}（${(hit == null ? void 0 : hit.obj.name) ?? ""}）→ 级联事件链 ${execNextOf(oc.ev.id).length} 个下游`
+      );
       for (const id of execNextOf(oc.ev.id)) cascadeExec(id);
     }
   }
@@ -977,14 +1046,12 @@ function createGraphKernel(ctx, modules) {
   }
   for (const ev of startEvents) {
     const next = execNextOf(ev.id);
-    if (next) for (const id of next) cascadeExec(id);
+    if (next.length) {
+      log(`ev-start:${ev.id}`, `[graph] 事件「${((_b = nodeTypeDef(ev.type)) == null ? void 0 : _b.label) ?? ev.type}」(${ev.id}) 触发 → 级联 ${next.length} 个下游`);
+      for (const id of next) cascadeExec(id);
+    }
   }
-  for (const op of legacyStartOps) {
-    const ex = ops[op.type];
-    if (!ex) continue;
-    const targets = resolveTargets(op.id);
-    if (targets.length) ex(kernel, op, targets);
-  }
+  for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
   assembleFrameOps();
   postLog(
     "info",
@@ -992,7 +1059,7 @@ function createGraphKernel(ctx, modules) {
   );
   return {
     update(dt) {
-      var _a, _b;
+      var _a2, _b2;
       elapsed += dt;
       sampleTimer += dt;
       const framed = /* @__PURE__ */ new Set();
@@ -1004,9 +1071,15 @@ function createGraphKernel(ctx, modules) {
           framed.add(beh);
         }
       }
-      for (const beh of framed) (_a = beh.frameEnd) == null ? void 0 : _a.call(beh, kernel, dt);
-      for (const entryId of tickChainEntries) {
-        cascadeExec(entryId);
+      for (const beh of framed) (_a2 = beh.frameEnd) == null ? void 0 : _a2.call(beh, kernel, dt);
+      if (tickChainEntries.length) {
+        log(
+          "tick-chain",
+          `[graph] 每帧执行链步进中（${tickChainEntries.length} 个入口，事件节点 ${tickEvents.length}）`
+        );
+        for (const entryId of tickChainEntries) {
+          cascadeExec(entryId);
+        }
       }
       for (const behavior of frameOps) {
         if (!nodeActive(behavior.node)) continue;
@@ -1024,15 +1097,15 @@ function createGraphKernel(ctx, modules) {
           t.obj.getWorldPosition(sampleVector);
           postLog(
             "info",
-            `[graph] 帧驱动采样「${((_b = nodeTypeDef(b.node.type)) == null ? void 0 : _b.label) ?? b.node.type}」(${b.node.id}) 目标 ${t.id}（名称 ${t.obj.name}）世界位置 (${sampleVector.x.toFixed(2)}, ${sampleVector.y.toFixed(2)}, ${sampleVector.z.toFixed(2)}) 参数 ${JSON.stringify(b.node.params ?? {})}`
+            `[graph] 帧驱动采样「${((_b2 = nodeTypeDef(b.node.type)) == null ? void 0 : _b2.label) ?? b.node.type}」(${b.node.id}) 目标 ${t.id}（名称 ${t.obj.name}）世界位置 (${sampleVector.x.toFixed(2)}, ${sampleVector.y.toFixed(2)}, ${sampleVector.z.toFixed(2)}) 参数 ${JSON.stringify(b.node.params ?? {})}`
           );
         }
       }
     },
     dispose() {
-      var _a;
+      var _a2;
       dom.removeEventListener("pointerdown", onPointerDown);
-      for (const m of modules) (_a = m.dispose) == null ? void 0 : _a.call(m);
+      for (const m of modules) (_a2 = m.dispose) == null ? void 0 : _a2.call(m);
     }
   };
 }

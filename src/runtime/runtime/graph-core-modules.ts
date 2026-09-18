@@ -6,8 +6,9 @@
 // 注入模块（L1 脚本图模块）与本文件模块经同一张 handler 表合并，无特权差异。
 //
 // 模块清单：
-// - core-entity     实体集源解析（entity.proto 精确 / entity.match 标签|类型）
-// - core-ops        一次性原子操作（op.set / op.setFsmParam / op.toggleVisible / op.fireFsm）
+// - core-entity     实体集源解析（entity.proto 精确 / entity.match 标签|类型 /
+//                   op.children 直属子级 / flow.forEach 当前实体）
+// - core-ops        一次性原子操作（op.set / op.setFsmParam / op.fireFsm）
 // - core-drivers    驱动器（op.spin / op.bob / op.patrol / op.chase / op.navMove）
 // - core-data       拉模型数据求值（var / flow.compare / loop 上下文 / math / sense / custom 表达式）
 // - core-exec       执行链路由（var.set / flow.branch / flow.for / flow.forEach / flow.while）
@@ -28,6 +29,36 @@ import {
   type GraphRuntimeModule,
   type NodeObj,
 } from "./graph-runtime";
+import { readPropPath, writePropPath } from "./graph-prop-path";
+
+/**
+ * 对象世界坐标平移分量（matrixWorld 平移列；不引入 THREE 值导入）。
+ * 先刷新父链矩阵（与 three getWorldPosition 同语义）——图在渲染前写入位姿时，
+ * matrixWorld 可能还是上一帧的，直接读会得到过期坐标。
+ */
+function worldPos(obj: THREE.Object3D): { x: number; y: number; z: number } {
+  obj.updateWorldMatrix(true, false);
+  const e = obj.matrixWorld.elements;
+  return { x: e[12] ?? 0, y: e[13] ?? 0, z: e[14] ?? 0 };
+}
+
+/** 祖先链判定（obj 是否在 root 子树内）：移动者不能把"自己的子级"当路径点/追击目标 */
+function isDescendantOf(obj: THREE.Object3D, root: THREE.Object3D): boolean {
+  let p: THREE.Object3D | null = obj.parent;
+  while (p) {
+    if (p === root) return true;
+    p = p.parent;
+  }
+  return false;
+}
+
+/** 异常文本（诊断日志附加信息；非 Error 走 String 兜底） */
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** 比较运算符白名单（与框架层 G_COMPARE_OPERATORS 一致；运行时自持副本，非法值给出告警） */
+const COMPARE_OPERATORS = [">", "<", "==", ">=", "<=", "!="];
 
 // ---------------------------------------------------------------------------
 // 属性路径写入（Entity 暴露的分量：position/rotation/scale 各分量 + visible）
@@ -89,8 +120,64 @@ export function createCoreEntityModule(): GraphRuntimeModule {
       },
       "entity.match": (k, node) => {
         const p = node.matchPattern ?? "";
-        if (!p) return [];
-        return k.sceneAll.filter((n) => (node.matchMode === "type" ? n.kind === p : n.tag === p));
+        if (!p) {
+          k.warnOnce(
+            `match-nopattern:${node.id}`,
+            `[graph] 匹配卡 (${node.id}) 未设置匹配串（命中 0 个实体）——在检查器选择标签/类型`,
+          );
+          return [];
+        }
+        const hit = k.sceneAll.filter((n) => (node.matchMode === "type" ? n.kind === p : n.tag === p));
+        if (!hit.length) {
+          k.warnOnce(
+            `match-empty:${node.id}:${p}`,
+            `[graph] 匹配卡 (${node.id}) ${node.matchMode === "type" ? "类型" : "标签"}「${p}」未命中任何实体（下游操作无目标）`,
+          );
+        } else {
+          k.log(
+            `match-hit:${node.id}:${p}`,
+            `[graph] 匹配卡 (${node.id}) ${node.matchMode === "type" ? "类型" : "标签"}「${p}」命中 ${hit.length} 个实体 [${hit.map((h) => h.id).join(", ")}]`,
+            3,
+          );
+        }
+        return hit;
+      },
+      // op.children「获取子级」：目标集的直属子级实体（对象树中带 nodeId 标记的
+      // 子对象；内部烘焙/包装子树无标记自然排除），多目标按连线顺序合并去重
+      "op.children": (k, node) => {
+        const out: NodeObj[] = [];
+        const seen = new Set<string>();
+        const targets = k.resolveTargets(node.id);
+        for (const t of targets) {
+          for (const child of t.obj.children) {
+            const cid = typeof child.userData?.nodeId === "string" ? child.userData.nodeId : "";
+            if (!cid || seen.has(cid)) continue;
+            const hit = k.sceneById.get(cid);
+            if (!hit) continue; // 标记存在但未被索引（异常兜底）
+            seen.add(cid);
+            out.push(hit);
+          }
+        }
+        // 解析结果日志（限额；输出"空子级集"也记录——下游无目标时据此定位）
+        if (targets.length && !out.length) {
+          k.warnOnce(
+            `children-empty:${node.id}`,
+            `[graph] 获取子级 (${node.id})：目标 [${targets.map((t) => t.id).join(", ")}] 没有直属子级实体（输出空集）`,
+          );
+        } else if (out.length) {
+          k.log(
+            `children-hit:${node.id}`,
+            `[graph] 获取子级 (${node.id})：目标 [${targets.map((t) => t.id).join(", ")}] → 子级 [${out.map((o) => o.id).join(", ")}]`,
+            3,
+          );
+        }
+        return out;
+      },
+      // flow.forEach「当前」引脚：迭代上下文内解析为当前实体（配合获取子级按序索引子级；
+      // 迭代外为空 → 下游操作不执行，与数据引脚的 loopItem 回退语义一致）
+      "flow.forEach": (k, node) => {
+        const item = k.loopItem(node.id);
+        return item ? [item] : [];
       },
     },
   };
@@ -108,24 +195,52 @@ export function createCoreOpsModule(): GraphRuntimeModule {
         if (!targets.length) return;
         const path = k.strP(node, "property");
         const value = k.numP(node, "value");
+        if (!path) {
+          k.warnOnce(`set-nopath:${node.id}`, `[graph] 设置属性 (${node.id}) 未填写属性路径（未生效）——检查器「属性」输入点选或手输`);
+          return;
+        }
         for (const t of targets) {
-          if (!setPath(t.obj, path, value)) setLightPath(t.obj, path, value);
+          // 快路径（变换分量/灯光分量）→ 通用路径（visible/材质/userData/script:…）
+          if (setPath(t.obj, path, value)) { k.log(`set-ok:${node.id}`, `[graph] 设置属性：${path} = ${value} → ${t.id}`, 5); continue; }
+          if (setLightPath(t.obj, path, value)) { k.log(`set-ok:${node.id}`, `[graph] 设置属性：${path} = ${value} → ${t.id}`, 5); continue; }
+          if (!writePropPath(t, path, value, k.scriptApi)) {
+            k.warnOnce(
+              `set-miss:${node.id}:${path}:${t.id}`,
+              `[graph] 设置属性「${path}」失败：目标实体 ${t.id} 上该路径不可写（检查路径拼写与实体组件；要设置子级属性，先接「获取子级」/ForEach 把作用对象换成子级；脚本属性用 script:<脚本路径>:<属性>）`,
+            );
+          } else {
+            k.log(`set-ok:${node.id}`, `[graph] 设置属性：${path} = ${value} → ${t.id}`, 5);
+          }
         }
       },
       "op.setFsmParam": (k, node, targets) => {
-        if (!targets.length) return;
+        const key = k.strP(node, "param");
+        if (!key) {
+          k.warnOnce(`setparam-nokey:${node.id}`, `[graph] FSM 参数 (${node.id}) 未填写参数名，已跳过`);
+          return;
+        }
         for (const t of targets) {
-          try { k.logicApi.setParam({ id: t.id }, k.strP(node, "param"), k.numP(node, "value")); } catch { /* 跳过 */ }
+          try {
+            k.logicApi.setParam({ id: t.id }, key, k.numP(node, "value"));
+            k.log(`setparam-ok:${node.id}`, `[graph] FSM 参数：${t.id}.${key} = ${k.numP(node, "value")}`, 5);
+          } catch (e) {
+            k.warnOnce(`setparam-fail:${node.id}:${t.id}`, `[graph] FSM 参数写入失败（${t.id} 可能没有状态机运行器）: ${errText(e)}`);
+          }
         }
       },
-      "op.toggleVisible": (_k, _node, targets) => {
-        if (!targets.length) return;
-        for (const t of targets) t.obj.visible = !t.obj.visible;
-      },
       "op.fireFsm": (k, node, targets) => {
-        if (!targets.length) return;
+        const ev = k.strP(node, "event");
+        if (!ev) {
+          k.warnOnce(`fire-nokev:${node.id}`, `[graph] FSM 事件 (${node.id}) 未填写事件名，已跳过`);
+          return;
+        }
         for (const t of targets) {
-          try { k.logicApi.fire({ id: t.id }, k.strP(node, "event")); } catch { /* 跳过 */ }
+          try {
+            k.logicApi.fire({ id: t.id }, ev);
+            k.log(`fire-ok:${node.id}`, `[graph] FSM 事件：${t.id} ← ${ev}`, 5);
+          } catch (e) {
+            k.warnOnce(`fire-fail:${node.id}:${t.id}`, `[graph] FSM 事件发送失败（${t.id} 可能没有状态机运行器）: ${errText(e)}`);
+          }
         }
       },
     },
@@ -188,23 +303,57 @@ export function createCoreDriversModule(): GraphRuntimeModule {
         const wpIdx = new Map<string, number>();
         return {
           step(dt, targets) {
-            // 路径点模式：路径口接入的实体位置即路径点（多入按连线顺序巡回）
+            // 路径点模式：路径口接入的实体位置即路径点（多入按连线顺序巡回）。
+            // 路径口接的是「实体集」输出（获取子级/匹配/原型等）；ForEach「当前」
+            // 一类遍历期引脚在帧驱动器求值时不在遍历上下文，解析为空 → 回退轴往返
+            const waypointEdges = k.graph.edges.filter((e) => e.dstNode === node.id && e.dstPort === "path");
             const waypoints = k.evalInputs(node.id, "path").map(unwrapEntity).filter((v): v is NodeObj => !!v);
+            if (!waypoints.length && waypointEdges.length) {
+              const src = k.nodeOf(waypointEdges[0].srcNode);
+              k.warnOnce(
+                `patrol-path-empty:${node.id}`,
+                `[graph] 路径巡逻 (${node.id}) 的「路径点」口已接线（源：${src?.type ?? "?"}）但解析不到实体，已回退为轴往返——` +
+                  `路径点请直接接实体集输出（获取子级/匹配/原型）；ForEach「当前」是遍历期引脚（帧驱动器求值时不在遍历上下文，取不到值）`,
+              );
+            }
+            if (!waypoints.length && !waypointEdges.length) {
+              k.log(
+                `patrol-axis:${node.id}`,
+                `[graph] 路径巡逻 (${node.id}) 未接路径点 → 轴往返模式（轴 ${k.strP(node, "axis", "x")}，距离 ${k.numP(node, "distance", 6)}，速度 ${k.numP(node, "speed", 2)}）`,
+              );
+            }
             if (waypoints.length) {
               const speed = k.numP(node, "speed", 2);
               for (const t of targets) {
                 const idx = wpIdx.get(t.id) ?? 0;
                 const wp = waypoints[idx % waypoints.length];
                 if (!wp) continue;
-                const dx = wp.obj.position.x - t.obj.position.x;
-                const dy = wp.obj.position.y - t.obj.position.y;
-                const dz = wp.obj.position.z - t.obj.position.z;
-                const len = Math.hypot(dx, dy, dz);
-                if (len < WAYPOINT_ARRIVE) {
+                // 路径点与移动者常挂在不同父级下（子级挂在父实体下、移动者在别处），
+                // 局部坐标不可比：一律在世界坐标下判定到达/计算方向，写回时换算回父空间
+                if (wp.obj === t.obj || isDescendantOf(wp.obj, t.obj)) {
+                  k.warnOnce(
+                    `patrol-self-wp:${node.id}:${t.id}`,
+                    `[graph] 路径巡逻 (${node.id})：路径点 ${wp.id} 是移动者自身或其子级——其位置随移动者一起移动，巡逻永远到不了；路径点应为独立实体`,
+                  );
                   wpIdx.set(t.id, (idx + 1) % waypoints.length);
                   continue;
                 }
-                const step = (speed * dt) / len;
+                const moverWorld = worldPos(t.obj);
+                const wpWorld = worldPos(wp.obj);
+                if (Math.hypot(moverWorld.x - wpWorld.x, moverWorld.y - wpWorld.y, moverWorld.z - wpWorld.z) < WAYPOINT_ARRIVE) {
+                  wpIdx.set(t.id, (idx + 1) % waypoints.length);
+                  continue;
+                }
+                const target = t.obj.position.clone(); // 借位 Vector3 实例（不引入 THREE 值导入）
+                wp.obj.getWorldPosition(target);
+                t.obj.parent?.worldToLocal(target); // 世界 → 移动者父空间
+                const dx = target.x - t.obj.position.x;
+                const dy = target.y - t.obj.position.y;
+                const dz = target.z - t.obj.position.z;
+                const len = Math.hypot(dx, dy, dz);
+                if (!len) continue;
+                // 步长按世界单位折算（父级带缩放时仍保持 speed units/s）
+                const step = (speed * dt) / Math.hypot(moverWorld.x - wpWorld.x, moverWorld.y - wpWorld.y, moverWorld.z - wpWorld.z);
                 t.obj.position.x += dx * step;
                 t.obj.position.y += dy * step;
                 t.obj.position.z += dz * step;
@@ -239,15 +388,28 @@ export function createCoreDriversModule(): GraphRuntimeModule {
       "op.chase": (k, node) => ({
         step(dt, targets) {
           const prey = unwrapEntity(k.evalInput(node.id, "prey"));
-          if (!prey) return;
+          if (!prey) {
+            k.warnOnce(
+              `chase-noprey:${node.id}`,
+              `[graph] 追击目标 (${node.id}) 的「追击目标」口未接入实体（不移动）——接入原型/匹配/获取子级`,
+            );
+            return;
+          }
           const speed = k.numP(node, "speed", 3);
           for (const t of targets) {
-            const dx = prey.obj.position.x - t.obj.position.x;
-            const dy = prey.obj.position.y - t.obj.position.y;
-            const dz = prey.obj.position.z - t.obj.position.z;
-            const len = Math.hypot(dx, dy, dz);
-            if (len < CHASE_STOP) continue;
-            const step = (speed * dt) / len;
+            // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
+            if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
+            const moverWorld = worldPos(t.obj);
+            const preyWorld = worldPos(prey.obj);
+            const worldDist = Math.hypot(moverWorld.x - preyWorld.x, moverWorld.y - preyWorld.y, moverWorld.z - preyWorld.z);
+            if (worldDist < CHASE_STOP) continue;
+            const target = t.obj.position.clone();
+            prey.obj.getWorldPosition(target);
+            t.obj.parent?.worldToLocal(target);
+            const dx = target.x - t.obj.position.x;
+            const dy = target.y - t.obj.position.y;
+            const dz = target.z - t.obj.position.z;
+            const step = (speed * dt) / worldDist;
             t.obj.position.x += dx * step;
             t.obj.position.y += dy * step;
             t.obj.position.z += dz * step;
@@ -258,7 +420,13 @@ export function createCoreDriversModule(): GraphRuntimeModule {
       "op.navMove": (k, node) => ({
         step(_dt, targets) {
           const agent = unwrapEntity(k.evalInput(node.id, "agent"));
-          if (!agent) return;
+          if (!agent) {
+            k.warnOnce(
+              `navmove-noagent:${node.id}`,
+              `[graph] 导航移动 (${node.id}) 的「导航代理」口未接入实体（不移动）——接入 Nav Agent 原型卡`,
+            );
+            return;
+          }
           const yOff = k.numP(node, "yOffset", 0);
           for (const t of targets) {
             t.obj.position.x = agent.obj.position.x;
@@ -314,7 +482,7 @@ export function createCoreDataModule(): GraphRuntimeModule {
   // 数学节点：标量二元/一元求值工厂
   const numIn = (k: GraphKernel, node: GNode, port: string): number => toNum(k.evalInput(node.id, port));
 
-  /** 比较运算符求值（与框架层 G_COMPARE_OPERATORS 语义一致） */
+  /** 比较运算符求值（与框架层 G_COMPARE_OPERATORS 语义一致；此处为运行时自持副本） */
   function compareValues(an: number, op: string, bn: number): boolean {
     switch (op) {
       case ">": return an > bn;
@@ -330,7 +498,14 @@ export function createCoreDataModule(): GraphRuntimeModule {
   return {
     id: "core-data",
     data: {
-      "var.get": (k, node, portId) => (portId === "value" ? k.varGet(node.varId ?? "") : undefined),
+      "var.get": (k, node, portId) => {
+        if (portId !== "value") return undefined;
+        if (!node.varId) {
+          k.warnOnce(`var-unbound:${node.id}`, `[graph] Get 变量 (${node.id}) 未绑定图变量，输出空值——在检查器选择变量`);
+          return null;
+        }
+        return k.varGet(node.varId);
+      },
       // var.set：输出 = 已写入的值（exec 链执行时写入 varStore，此处读回）
       "var.set": (k, node, portId) => (portId === "value" ? k.varGet(node.varId ?? "") : undefined),
       // flow.compare：a op b → boolean（B 引脚未连线时回退 params.b 参数值）
@@ -339,7 +514,12 @@ export function createCoreDataModule(): GraphRuntimeModule {
         const an = numIn(k, node, "a");
         const bRaw = k.evalInput(node.id, "b");
         const bn = bRaw === null ? k.numP(node, "b") : toNum(bRaw);
-        return compareValues(an, k.strP(node, "operator", ">"), bn);
+        const op = k.strP(node, "operator", ">");
+        if (!COMPARE_OPERATORS.includes(op)) {
+          k.warnOnce(`compare-badop:${node.id}:${op}`, `[graph] 比较卡 (${node.id}) 运算符「${op}」非法（可选 ${COMPARE_OPERATORS.join(" ")}），结果恒为假`);
+          return false;
+        }
+        return compareValues(an, op, bn);
       },
       "flow.for": (k, node, portId) => (portId === "index" ? k.loopIndex(node.id) ?? 0 : undefined),
       "flow.forEach": (k, node, portId) => {
@@ -351,8 +531,22 @@ export function createCoreDataModule(): GraphRuntimeModule {
       "math.add": (k, node) => numIn(k, node, "a") + numIn(k, node, "b"),
       "math.sub": (k, node) => numIn(k, node, "a") - numIn(k, node, "b"),
       "math.mul": (k, node) => numIn(k, node, "a") * numIn(k, node, "b"),
-      "math.div": (k, node) => { const bv = numIn(k, node, "b"); return bv === 0 ? 0 : numIn(k, node, "a") / bv; },
-      "math.mod": (k, node) => { const bv = numIn(k, node, "b"); return bv === 0 ? 0 : numIn(k, node, "a") % bv; },
+      "math.div": (k, node) => {
+        const bv = numIn(k, node, "b");
+        if (bv === 0) {
+          k.warnOnce(`div-zero:${node.id}`, `[graph] 除法 (${node.id}) 除数为 0（回退 0）——检查除数连线/参数`);
+          return 0;
+        }
+        return numIn(k, node, "a") / bv;
+      },
+      "math.mod": (k, node) => {
+        const bv = numIn(k, node, "b");
+        if (bv === 0) {
+          k.warnOnce(`mod-zero:${node.id}`, `[graph] 取余 (${node.id}) 除数为 0（回退 0）——检查除数连线/参数`);
+          return 0;
+        }
+        return numIn(k, node, "a") % bv;
+      },
       // 三角（角度制输入）
       "math.sin": (k, node) => Math.sin(numIn(k, node, "a") * DEG),
       "math.cos": (k, node) => Math.cos(numIn(k, node, "a") * DEG),
@@ -379,16 +573,46 @@ export function createCoreDataModule(): GraphRuntimeModule {
       "math.lerp": (k, node) => { const av = numIn(k, node, "a"), bv = numIn(k, node, "b"), t = numIn(k, node, "t"); return av + (bv - av) * t; },
       "math.clamp": (k, node) => Math.max(numIn(k, node, "min"), Math.min(numIn(k, node, "max"), numIn(k, node, "value"))),
       "math.abs": (k, node) => Math.abs(numIn(k, node, "a")),
+      // 属性读取卡：实体集通道取首个实体，按通用属性路径拉取该实体自身的任意属性
+      // （position.x / rotation.y(度) / worldPosition.z / visible / light.intensity /
+      //   material.opacity / userData.key / script:<路径>:<属性>；子级先经获取子级/ForEach 换目标）
+      "entity.prop": (k, node, portId) => {
+        if (portId !== "value") return undefined;
+        const path = k.strP(node, "property");
+        const ent = unwrapEntity(k.evalInput(node.id, "target"));
+        if (!ent) {
+          // 实体口空（未接线/上游实体缺失）时静默回 null 会表现为"值恒为空"
+          k.warnOnce(
+            `prop-no-entity:${node.id}`,
+            `[graph] 属性读取 (${node.id}) 的「实体」口未解析到实体（输出空值）——接入原型/匹配/获取子级或 ForEach「当前」`,
+          );
+          return null;
+        }
+        const v = readPropPath(ent, path, k.scriptApi);
+        if (v === null && path) {
+          // 路径拼错/该实体没有该属性：一次性可定位告警（逐帧拉取不刷屏）
+          k.warnOnce(
+            `prop-miss:${node.id}:${path}`,
+            `[graph] 属性读取 (${node.id}) 路径「${path}」在实体 ${ent.id} 上不可读（检查路径拼写；可用路径见检查器候选）`,
+          );
+        }
+        return v;
+      },
       // 感知：两实体世界距离（原型卡接线后每帧拉取求值）
       "sense.distance": (k, node) => {
         const from = unwrapEntity(k.evalInput(node.id, "from"));
         const to = unwrapEntity(k.evalInput(node.id, "to"));
-        if (!from || !to) return 0;
-        return Math.hypot(
-          from.obj.position.x - to.obj.position.x,
-          from.obj.position.y - to.obj.position.y,
-          from.obj.position.z - to.obj.position.z,
-        );
+        if (!from || !to) {
+          // 缺输入时回退 0：若静默，用户会看到"距离恒为 0"却不知原因
+          k.warnOnce(
+            `sense-miss:${node.id}`,
+            `[graph] 实体距离 (${node.id}) 的「从/到」未接入实体（回退 0）——两端口都需连接原型/匹配/获取子级等实体源`,
+          );
+          return 0;
+        }
+        const a = worldPos(from.obj);
+        const b = worldPos(to.obj);
+        return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
       },
     },
     // 自定义节点（expression 能力类型）：按输出端口的 JS 表达式求值
@@ -410,7 +634,12 @@ export function createCoreDataModule(): GraphRuntimeModule {
         args.push(Math);
         try {
           return compiled.fn(...args) as DataValue;
-        } catch {
+        } catch (e) {
+          // 表达式运行时异常（引用未定义变量/类型错误）：静默 null 会让卡片"看起来没接对"
+          k.warnOnce(
+            `custom-fail:${node.id}:${portId}`,
+            `[graph] 自定义节点「${node.title || node.type}」(${node.id}) 表达式求值失败（端口 ${portId}）：${errText(e)}`,
+          );
           return null;
         }
       },
@@ -441,6 +670,11 @@ export function createCoreExecModule(): GraphRuntimeModule {
       "flow.branch": (k, node, ec) => {
         const cond = k.evalInput(node.id, "condition") === true;
         const port = cond ? "true" : "false";
+        k.log(
+          `branch:${node.id}`,
+          `[graph] 分支 (${node.id}) 条件=${cond ? "真" : "假"} → 走「${cond ? "真" : "假"}」分支（条件来源：${k.graph.edges.find((e) => e.dstNode === node.id && e.dstPort === "condition")?.srcNode ?? "未连线（恒假）"}）`,
+          3,
+        );
         for (const t of k.execTargetsOf(node.id, port)) {
           k.cascade(t.id, { seen: ec.seen, viaSrcPort: port, viaDstPort: t.dstPort, eventName: ec.fireEv || port });
         }
@@ -469,10 +703,20 @@ export function createCoreExecModule(): GraphRuntimeModule {
         const items = unwrapEntities(k.evalInput(node.id, "array"));
         const loop = k.execTargetsOf(node.id, "loop");
         const completed = k.execTargetsOf(node.id, "completed");
+        if (!items.length) {
+          k.warnOnce(
+            `foreach-empty:${node.id}`,
+            `[graph] ForEach 循环 (${node.id}) 的「集合」为空，循环体不执行（直接走「完成」分支）——检查上游实体集（原型/匹配/获取子级）`,
+          );
+        }
+        k.log(`foreach:${node.id}`, `[graph] ForEach 循环 (${node.id}) 遍历 ${items.length} 个实体`, 3);
         for (const item of items) {
           k.setLoopItem(node.id, item);
           for (const t of loop) k.cascade(t.id, { seen: new Set(), viaSrcPort: "loop", viaDstPort: t.dstPort, eventName: ec.fireEv });
         }
+        // 遍历期结束：「当前」引脚回归空。帧驱动器（巡逻/追击等）每帧求值时
+        // 不在遍历上下文，若不清空会读到"最后一个元素"这一过期值
+        k.clearLoopItem(node.id);
         for (const t of completed) k.cascade(t.id, { seen: ec.seen, viaSrcPort: "completed", viaDstPort: t.dstPort, eventName: ec.fireEv });
       },
       // flow.while：条件循环（最多 WHILE_MAX_ITER 次防死循环）
@@ -513,16 +757,35 @@ export function createCoreContainersModule(): GraphRuntimeModule {
    */
   function fsmSwitch(k: GraphKernel, node: GNode, seen: Set<string>, evName: string, viaDstPort: string): void {
     const states = k.strP(node, "states").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!states.length) return;
+    if (!states.length) {
+      k.warnOnce(
+        `fsm-no-states:${node.id}`,
+        `[graph] 状态机容器 (${node.id}) 未配置状态列表，状态切换被忽略——把携带 .fsm 的原型卡连到「作用域」自动读取，或在检查器填写状态列表`,
+      );
+      return;
+    }
     const initial = k.strP(node, "initial", states[0]) || states[0];
     let target: string;
-    if (viaDstPort === "event") {
-      if (!evName || !states.includes(evName)) return; // 非状态事件忽略
+    if (viaDstPort === "event" || viaDstPort === "condition") {
+      if (!evName || !states.includes(evName)) {
+        // 非状态事件忽略（拼错事件名/比较卡未填触发事件名时的静默失效可定位）
+        k.warnOnce(
+          `fsm-bad-event:${node.id}:${evName}`,
+          `[graph] 状态机容器 (${node.id}) 收到事件「${evName || "(空)"}」，不在状态列表（${states.join(", ")}）——检查来源卡片的事件名/比较卡「触发事件名」`,
+        );
+        return;
+      }
       target = evName;
     } else {
       target = states.includes(initial) ? initial : states[0];
     }
+    const prev = fsmCurrent.get(node.id);
     fsmCurrent.set(node.id, target);
+    k.log(
+      `fsm-switch:${node.id}:${target}`,
+      `[graph] 状态机容器 (${node.id}) ${prev === undefined ? "进入" : `${prev} →`} 状态「${target}」（${viaDstPort === "condition" ? "条件上升沿" : viaDstPort === "event" ? "事件" : "进入端口"}）`,
+      3,
+    );
     // 执行归属当前状态的直接子节点链（无状态标签的子节点任意状态都执行）
     for (const child of k.containerChildren(node.id)) {
       if (child.stateName && child.stateName !== target) continue;
@@ -545,9 +808,10 @@ export function createCoreContainersModule(): GraphRuntimeModule {
       return true;
     },
     frame(k, node, dt) {
-      // 条件边轮询：源数据节点 result 引脚上升沿 → 事件切换状态
+      // 条件边轮询：源数据节点 result 引脚上升沿 → 按源卡「触发事件名」切换状态。
+      // 「条件」口（布尔数据边）+「事件」口（旧图兼容）一并轮询
       for (const e of k.graph.edges) {
-        if (e.dstNode !== node.id || e.dstPort !== "event") continue;
+        if (e.dstNode !== node.id || (e.dstPort !== "condition" && e.dstPort !== "event")) continue;
         const src = k.nodeOf(e.srcNode);
         if (!src || src.unresolved) continue;
         const key = `${node.id}\u0000${e.srcNode}`;
@@ -555,7 +819,7 @@ export function createCoreContainersModule(): GraphRuntimeModule {
         const prev = fsmCondState.get(key);
         fsmCondState.set(key, nowTrue);
         if (nowTrue && prev === false) {
-          fsmSwitch(k, node, new Set(), k.strP(src, "event"), "event");
+          fsmSwitch(k, node, new Set(), k.strP(src, "event"), e.dstPort);
         }
       }
       // 激活状态的子驱动器步进（纯容器驱动、不在全局 tick 链上的巡逻/追击/旋转等；
@@ -587,7 +851,20 @@ export function createCoreContainersModule(): GraphRuntimeModule {
   /** 进入 BT 容器：按子节点纵向排序依次执行归属节点链，完成级联 next 下游 */
   const bt: ContainerBehavior = {
     enter(k, node, ec) {
-      for (const child of k.containerChildren(node.id)) {
+      const children = k.containerChildren(node.id);
+      if (!children.length) {
+        k.warnOnce(
+          `bt-no-children:${node.id}`,
+          `[graph] 行为树容器 (${node.id}) 内没有归属子节点，进入后不执行任何行为——把行为节点拖入容器框内即归属`,
+        );
+      }
+      const mode = k.strP(node, "mode", "sequence") || "sequence";
+      k.log(
+        `bt-enter:${node.id}`,
+        `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`,
+        3,
+      );
+      for (const child of children) {
         if (!k.nodeActive(child)) continue;
         k.cascade(child.id, { seen: new Set(), viaSrcPort: "next", viaDstPort: "exec" });
       }

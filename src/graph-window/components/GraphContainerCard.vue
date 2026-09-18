@@ -65,7 +65,7 @@ const treeSummary = computed(() => (g.value.params?.treeSummary ?? "").toString(
     </div>
     <div class="gcontainer-hint">拖入节点到框内即归属（可嵌套）</div>
 
-    <!-- 端口：左侧 进入/事件/作用域，右侧 退出/输出 -->
+    <!-- 端口：左侧 进入/事件/条件（仅状态机）/作用域，右侧 退出/输出 -->
     <Handle type="target" :position="Position.Left" id="exec" class="gpin exec" :style="{ top: '38px' }" />
     <div class="gpin-label left" :style="{ top: '30px' }">进入</div>
     <Handle
@@ -77,8 +77,17 @@ const treeSummary = computed(() => (g.value.params?.treeSummary ?? "").toString(
       :style="{ top: '66px' }"
     />
     <div v-if="isFsm" class="gpin-label left" :style="{ top: '58px' }">事件</div>
-    <Handle type="target" :position="Position.Left" id="in" class="gpin entities" :style="{ top: '94px' }" />
-    <div class="gpin-label left" :style="{ top: '86px' }">作用域</div>
+    <Handle
+      v-if="isFsm"
+      type="target"
+      :position="Position.Left"
+      id="condition"
+      class="gpin data"
+      :style="{ top: '94px', background: '#c586c0' }"
+    />
+    <div v-if="isFsm" class="gpin-label left" :style="{ top: '86px' }">条件</div>
+    <Handle type="target" :position="Position.Left" id="in" class="gpin entities" :style="{ top: '122px' }" />
+    <div class="gpin-label left" :style="{ top: '114px' }">作用域</div>
     <Handle type="source" :position="Position.Right" id="next" class="gpin exec" :style="{ top: '38px' }" />
     <div class="gpin-label right" :style="{ top: '30px' }">退出</div>
     <Handle type="source" :position="Position.Right" id="out" class="gpin entities" :style="{ top: '94px' }" />

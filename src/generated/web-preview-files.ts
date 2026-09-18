@@ -38,6 +38,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/graph-behaviors.mjs",
   "engine/runtime/graph-core-modules.mjs",
   "engine/runtime/graph-kernel.mjs",
+  "engine/runtime/graph-prop-path.mjs",
   "engine/runtime/graph-runtime.mjs",
   "engine/runtime/heightFog.mjs",
   "engine/runtime/layerpass.mjs",

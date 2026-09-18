@@ -35,6 +35,7 @@ import {
   listGraphModules,
   moduleOfNodeType,
   nodeTypeDef,
+  nodeDefaults,
   nodeMenuGroups,
   normalizeGraphDoc,
   nextGraphVariableId,
@@ -47,6 +48,7 @@ import {
   type GCustomNodeDef,
 } from "../src/framework/graph";
 import { createGraphBehaviors } from "../src/runtime/runtime/graph-behaviors";
+import { readPropPath, writePropPath } from "../src/runtime/runtime/graph-prop-path";
 import type { GraphRuntimeModule, NodeObj } from "../src/runtime/runtime/graph-runtime";
 
 let passed = 0;
@@ -79,6 +81,18 @@ console.log("① 会话模型与模块注册表");
   check(listGraphModules().some((m) => m.id === "core-op"), "内置 core-op 模块已注册");
   check(moduleOfNodeType("op.spin") === "core-op", "类型归属模块查询");
   check(moduleOfNodeType("op.navMove") === "core-driver", "drive 类型归属 core-driver 模块");
+  // 属性读取卡（entity.prop）：实体类别 + 通用属性路径字段 + 值(any) 出端口
+  check(nodeTypeDef("entity.prop")?.category === "entity", "entity.prop 注册于实体类别");
+  check(moduleOfNodeType("entity.prop") === "core-entity", "entity.prop 归属 core-entity 模块");
+  check(graphPort({ id: "x", type: "entity.prop", x: 0, y: 0 } as GNode, "value", "out")?.dataType === "any", "entity.prop 值(any) 出端口");
+  check(graphPort({ id: "x", type: "entity.prop", x: 0, y: 0 } as GNode, "target", "in")?.dataType === "entity", "entity.prop 实体入引脚（实体集可直连，promotion）");
+  check(nodeDefaults("entity.prop").property === "position.x", "entity.prop 属性路径缺省 position.x");
+  // 获取子级卡（op.children）：操作分组 + 实体集源能力（resolvers 驱动，无 exec/trigger）
+  check(nodeTypeDef("op.children")?.category === "op", "op.children 注册于操作分组（添加操作菜单）");
+  check(hasNodeTypeCapability("op.children", "entitySource"), "op.children 实体集源能力");
+  check(moduleOfNodeType("op.children") === "core-op", "op.children 归属 core-op 模块");
+  check(nodeMenuGroups().some((gm) => gm.category === "op" && gm.items.some((i) => i.type === "op.children")), "op.children 进「添加操作」子菜单");
+  check(graphPort({ id: "x", type: "op.children", x: 0, y: 0 } as GNode, "in", "in")?.multi === true, "op.children 目标口可多入汇聚");
 
   const doc = normalizeGraphDoc({
     nodes: [
@@ -206,7 +220,7 @@ console.log("① 会话模型与模块注册表");
   check(canConnectPorts(port("next", "exec", "out"), port("exec", "exec", "in")), "exec → exec 可连");
 
   check(nodeTypeDef("event.onBegin")?.category === "event", "event.onBegin 注册为 event 类别");
-  check(nodeTypeDef("op.spin")?.category === "op", "op.spin 注册为 op 类别");
+  check(nodeTypeDef("op.spin")?.category === "driver", "op.spin 归驱动器类别（帧驱动语义单列）");
   const groups = nodeMenuGroups();
   check(groups.some((g) => g.category === "event" && g.items.length === 3), "右键菜单含事件分组（3 个事件节点）");
   const matchN: GNode = { id: "m", type: "entity.match", x: 0, y: 0, matchMode: "tag", matchPattern: "enemy" };
@@ -295,11 +309,19 @@ console.log("② 操作目录");
 {
   const types = GRAPH_OP_DEFS.map((d) => d.type);
   check(new Set(types).size === types.length, "操作类型唯一");
-  check(types.includes("op.set") && types.includes("op.spin") && types.includes("op.bob") && types.includes("op.fireFsm") && types.includes("op.setFsmParam") && types.includes("op.toggleVisible"), "六种原子操作齐备");
+  check(
+    types.includes("op.set") && types.includes("op.spin") && types.includes("op.bob") && types.includes("op.fireFsm") && types.includes("op.setFsmParam"),
+    "原子操作目录齐备",
+  );
+  check(!types.includes("op.toggleVisible"), "点击显隐已移除（功能重复：属性读取 visible + 分支 + 设置属性）");
   check(graphOpDef("op.spin")?.trigger === "frame", "spin = 每帧");
   check(graphOpDef("op.set")?.trigger === "start", "set = 启动时");
-  check(graphOpDef("op.toggleVisible")?.trigger === "click", "toggleVisible = 点击时");
   check(graphOpDef("op.fireFsm")?.trigger === "click", "fireFsm = 点击时");
+  // 帧驱动类操作统一归「驱动器」分组（与一次性操作分栏：操作组只留 set/setFsmParam/fireFsm/children）
+  check(nodeTypeDef("op.spin")?.category === "driver" && nodeTypeDef("op.bob")?.category === "driver", "spin/bob 归驱动器分组");
+  check(nodeTypeDef("op.set")?.category === "op" && nodeTypeDef("op.children")?.category === "op", "一次性操作留在操作分组");
+  check(nodeMenuGroups().some((g) => g.category === "driver" && g.items.some((i) => i.type === "op.spin")), "驱动器菜单含持续旋转");
+  check(!nodeMenuGroups().some((g) => g.category === "op" && g.items.some((i) => i.type === "op.spin")), "操作菜单不再混入帧驱动卡");
   const defaults = graphOpDefaults("op.spin");
   check(defaults.speedY === 45, "spin.speedY 缺省 45");
   check(Object.keys(graphOpDefaults("op.nope")).length === 0, "未知操作缺省参数为空");
@@ -505,6 +527,89 @@ console.log("③ 运行时真跑（kernel + core 模块 on mock 场景）");
     for (let i = 0; i < 60 * 5; i++) handle.update(1 / 60);
     check(APPROX(mover.position.x, 10, 0.35), `到点后停在路径点附近（实际 ${mover.position.x}）`);
   }
+  {
+    // 接线矩阵 E：路径点接「获取子级」输出 → 子级实体集即路径点（按序巡回）
+    // 5s 后应已在第二个路径点上折返（x≈0）；若被当作轴往返则 x≈20
+    const rig = makeEntity("rig");
+    const kidA = makeEntity("kidA", { x: 10 });
+    const kidB = makeEntity("kidB", { x: -10 });
+    rig.add(kidA);
+    rig.add(kidB);
+    const mover = makeEntity("mover");
+    const { handle } = boot(
+      doc(
+        [
+          nd("pr", "entity.proto", { entityId: "rig" }), nd("pm", "entity.proto", { entityId: "mover" }),
+          nd("ch", "op.children", { opType: "op.children" }),
+          nd("pt", "op.patrol", { params: { speed: 4, axis: "x", distance: 20 } }),
+        ],
+        [ed("a", "pr", "out", "ch", "in"), ed("b", "ch", "out", "pt", "path"), ed("c", "pm", "out", "pt", "in")],
+      ),
+      [rig, mover],
+    );
+    handle.update(1);
+    check(APPROX(mover.position.x, 4), `子级集作路径点：1s 朝第一个子级移动 4（实际 ${mover.position.x}）`);
+    for (let i = 0; i < 60 * 4; i++) handle.update(1 / 60);
+    check(mover.position.x < 6, `到点后继续走向下一个子级（5s 时 x=${mover.position.x.toFixed(1)}；轴往返会是 20）`);
+  }
+  {
+    // 接线矩阵 E2：路径点挂在偏移父级下（局部坐标 ≠ 世界坐标）——巡逻必须按世界坐标走
+    // rig 在世界 x=100，子级局部 ±10（世界 110 / 90）；移动者在原点（局部=世界）
+    const rig = makeEntity("rig", { x: 100 });
+    const kidA = makeEntity("kidA", { x: 10 });   // 世界 110
+    const kidB = makeEntity("kidB", { x: -10 });  // 世界 90
+    rig.add(kidA);
+    rig.add(kidB);
+    const mover = makeEntity("mover");
+    const { handle } = boot(
+      doc(
+        [
+          nd("pr", "entity.proto", { entityId: "rig" }), nd("pm", "entity.proto", { entityId: "mover" }),
+          nd("ch", "op.children", { opType: "op.children" }),
+          nd("pt", "op.patrol", { params: { speed: 4, axis: "x", distance: 20 } }),
+        ],
+        [ed("a", "pr", "out", "ch", "in"), ed("b", "ch", "out", "pt", "path"), ed("c", "pm", "out", "pt", "in")],
+      ),
+      [rig, mover],
+    );
+    handle.update(1);
+    check(APPROX(mover.position.x, 4), `局部/世界差异：1s 仍朝世界 110 前进 4（实际 ${mover.position.x}）`);
+    for (let i = 0; i < 60 * 27; i++) handle.update(1 / 60); // 28s：110/4≈27.5s 到达第一个点
+    check(mover.position.x > 100, `跨父级路径点按世界坐标巡回（28s 后 x=${mover.position.x.toFixed(1)}；按局部坐标会停在 10 附近）`);
+  }
+  {
+    // 接线矩阵 F：路径点误接 ForEach「当前」——遍历期引脚在帧驱动器求值时不在上下文。
+    // 修复前：loopItem 残留最后一个子级 → 单点退化，移动者永远停在最后一个子级位置；
+    // 修复后：解析为空 → 回退轴往返（并给出可定位告警）
+    const rig = makeEntity("rig");
+    const kidA = makeEntity("kidA", { x: 10 });
+    const kidB = makeEntity("kidB", { x: -10 });
+    rig.add(kidA);
+    rig.add(kidB);
+    const mover = makeEntity("mover");
+    const { handle } = boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"),
+          nd("pr", "entity.proto", { entityId: "rig" }), nd("pm", "entity.proto", { entityId: "mover" }),
+          nd("ch", "op.children", { opType: "op.children" }), nd("fe", "flow.forEach"),
+          nd("pt", "op.patrol", { params: { speed: 4, axis: "x", distance: 20 } }),
+        ],
+        [
+          ed("a", "pr", "out", "ch", "in"),
+          ed("b", "eb", "next", "fe", "exec"),
+          ed("c", "ch", "out", "fe", "array"),
+          ed("d", "fe", "item", "pt", "path"),
+          ed("e", "pm", "out", "pt", "in"),
+        ],
+      ),
+      [rig, mover],
+    );
+    for (let i = 0; i < 60; i++) handle.update(1 / 60);
+    check(mover.position.x > 3, `ForEach「当前」接路径点：不被残留的末元素锁死（1s 后 x=${mover.position.x.toFixed(1)}，修复前会停在 -10 附近）`);
+    for (let i = 0; i < 60 * 4; i++) handle.update(1 / 60);
+    check(mover.position.x <= 20.001, `回退轴往返后仍在 [起点, 起点+20]（x=${mover.position.x.toFixed(1)}）`);
+  }
 
   // ----- 追击 / 导航移动 -----
   {
@@ -570,20 +675,20 @@ console.log("③ 运行时真跑（kernel + core 模块 on mock 场景）");
     check(!crashed, "实体缺失：不 crash（原型缺失告警经控制台回传）");
   }
 
-  // ----- 点击射线（旧式 click op + onClick 事件链） -----
+  // ----- 点击射线（旧式 click op：点击触发的 FSM 事件） -----
   {
     const e1 = makeEntity("e1", { box: true });
+    fires.length = 0;
     const { dom, handle } = boot(
-      doc([nd("p", "entity.proto", { entityId: "e1" }), nd("tv", "op.toggleVisible")], [ed("a", "p", "out", "tv", "in")]),
+      doc([nd("p", "entity.proto", { entityId: "e1" }), nd("ff", "op.fireFsm", { params: { event: "clk" } })], [ed("a", "p", "out", "ff", "in")]),
       [e1],
     );
     dom.dispatch("pointerdown", { clientX: 50, clientY: 50 });
-    check(e1.visible === false, "指针射线命中 → toggleVisible 翻转");
-    dom.dispatch("pointerdown", { clientX: 50, clientY: 50 });
-    check(e1.visible === true, "再点翻转回");
+    check(fires.some((f) => f.id === "e1" && f.event === "clk"), "指针射线命中 → 点击触发操作执行（op.fireFsm）");
     handle.dispose();
+    const before = fires.length;
     dom.dispatch("pointerdown", { clientX: 50, clientY: 50 });
-    check(e1.visible === true, "dispose 后不再响应");
+    check(fires.length === before, "dispose 后不再响应");
   }
   {
     // onClick 事件链：命中 → 下游 op.fireFsm（显式命中项 + 链级联，与旧实现双路一致）
@@ -653,6 +758,262 @@ console.log("③ 运行时真跑（kernel + core 模块 on mock 场景）");
     check(fires.some((f) => f.event === "copied"), "var.set 写入 → var.get 回读（9 > 5 真分支）");
   }
 
+  // ----- 属性读取卡（entity.prop）：通用路径经数据流消费（度制/布尔/子级经卡换目标） -----
+  {
+    // 子级属性读取：路径不再下钻子级，先经「获取子级」换目标 → wheel.position.x=2 > 1.5 真分支
+    const e1 = makeEntity("e1", { x: 5 });
+    const wheel = makeEntity("wheel-1");
+    wheel.name = "wheel";
+    wheel.position.set(2, 0, 0);
+    e1.add(wheel);
+    fires.length = 0;
+    boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"), nd("p", "entity.proto", { entityId: "e1" }),
+          nd("ch", "op.children", { opType: "op.children" }),
+          nd("g", "entity.prop", { params: { property: "position.x" } }),
+          nd("vs", "var.set", { varId: "pv" }), nd("vg", "var.get", { varId: "pv" }),
+          nd("cmp", "flow.compare", { params: { operator: ">", b: 1.5 } }), nd("br", "flow.branch"),
+          nd("ff", "op.fireFsm", { params: { event: "child-read" } }),
+        ],
+        [
+          ed("0", "p", "out", "ch", "in"),
+          ed("1", "ch", "out", "g", "target"),
+          ed("2", "eb", "next", "vs", "exec"),
+          ed("3", "g", "value", "vs", "value"),
+          ed("4", "vs", "next", "br", "exec"),
+          ed("5", "vg", "value", "cmp", "a"),
+          ed("6", "cmp", "result", "br", "condition"),
+          ed("7", "br", "true", "ff", "exec"),
+          ed("8", "p", "out", "ff", "in"),
+        ],
+        [{ id: "pv", name: "pv", dataType: "number", value: 0 }],
+      ),
+      [e1],
+    );
+    check(fires.some((f) => f.event === "child-read"), "子级属性读取经「获取子级」换目标（首子级 position.x=2 → 真分支）");
+  }
+  {
+    // 布尔属性直连 branch 条件 + 度制读取（rotation 弧度存储 → 度输出）
+    const e1 = makeEntity("e1");
+    e1.rotation.y = Math.PI / 2; // 90°
+    fires.length = 0;
+    boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"), nd("p", "entity.proto", { entityId: "e1" }),
+          nd("g", "entity.prop", { params: { property: "rotation.y" } }),
+          nd("cmp", "flow.compare", { params: { operator: "==", b: 90 } }),
+          nd("br", "flow.branch"), nd("ff", "op.fireFsm", { params: { event: "deg" } }),
+        ],
+        [
+          ed("1", "p", "out", "g", "target"),
+          ed("2", "eb", "next", "br", "exec"),
+          ed("3", "g", "value", "cmp", "a"),
+          ed("4", "cmp", "result", "br", "condition"),
+          ed("5", "br", "true", "ff", "exec"),
+          ed("6", "p", "out", "ff", "in"),
+        ],
+      ),
+      [e1],
+    );
+    check(fires.some((f) => f.event === "deg"), "entity.prop 旋转度制对称（π/2 弧度 → 90）");
+  }
+  {
+    // op.set 通用写：visible（快路径缺口补上）/ 材质标量；子级分量不再经路径寻址
+    const e1 = makeEntity("e1", { box: true });
+    const wheel = makeEntity("wheel-2");
+    wheel.name = "wheel";
+    e1.add(wheel);
+    boot(
+      doc(
+        [
+          nd("p", "entity.proto", { entityId: "e1" }),
+          nd("s1", "op.set", { params: { property: "visible", value: 0 } }),
+          nd("s2", "op.set", { params: { property: "wheel.position.z", value: 3.5 } }),
+          nd("s3", "op.set", { params: { property: "material.opacity", value: 0.4 } }),
+        ],
+        [
+          ed("1", "p", "out", "s1", "in"),
+          ed("2", "p", "out", "s2", "in"),
+          ed("3", "p", "out", "s3", "in"),
+        ],
+      ),
+      [e1],
+    );
+    check(e1.visible === false, `op.set 写 visible（0 → false，实际 ${e1.visible}）`);
+    check(wheel.position.z === 0, `子级分量不再经路径寻址（wheel.position.z 保持 ${wheel.position.z}；要写子级先接「获取子级」）`);
+    const mat = (e1 as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    check(mat.opacity === 0.4, `op.set 写材质标量 material.opacity（实际 ${mat.opacity}）`);
+  }
+  {
+    // 不可写路径：不 crash + warnOnce 可定位（属性路径拼错的用户反馈）
+    const e1 = makeEntity("e1");
+    boot(
+      doc(
+        [nd("p", "entity.proto", { entityId: "e1" }), nd("s", "op.set", { params: { property: "nope.nope", value: 1 } })],
+        [ed("1", "p", "out", "s", "in")],
+      ),
+      [e1],
+    );
+    check(true, "op.set 畸形路径不 crash");
+  }
+
+  // ----- op.children 获取子级：实体集变换（子级集批量操作 / 属性读取取首个子级） -----
+  {
+    // 父 e1（x=1）→ 子级 c1/c2 → 「获取子级」→ op.set position.x=9 批量落子级，父与孙不动
+    const e1 = makeEntity("e1", { x: 1 });
+    const c1 = makeEntity("c1");
+    const c2 = makeEntity("c2");
+    const grand = makeEntity("g1");
+    c2.add(grand);
+    e1.add(c1);
+    e1.add(c2);
+    boot(
+      doc(
+        [
+          nd("p", "entity.proto", { entityId: "e1" }),
+          nd("ch", "op.children", { opType: "op.children" }),
+          nd("s", "op.set", { params: { property: "position.x", value: 9 } }),
+        ],
+        [ed("a", "p", "out", "ch", "in"), ed("b", "ch", "out", "s", "in")],
+      ),
+      [e1],
+    );
+    check(c1.position.x === 9 && c2.position.x === 9, "op.children：子级集批量 op.set（c1/c2 同动）");
+    check(e1.position.x === 1, "op.children：目标父实体不被操作");
+    check(grand.position.x === 0, "op.children：只取直属子级（孙不动，深层需再串一张卡）");
+  }
+  {
+    // entity.prop 的「实体」入引脚经 op.children 出引脚取数（entitySource 回退解析）
+    const e1 = makeEntity("e1", { x: 1 });
+    const c1 = makeEntity("c1");
+    e1.add(c1);
+    fires.length = 0;
+    boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"), nd("p", "entity.proto", { entityId: "e1" }),
+          nd("ch", "op.children", { opType: "op.children" }),
+          nd("s", "op.set", { params: { property: "position.x", value: 7 } }),
+          nd("g", "entity.prop", { params: { property: "position.x" } }),
+          nd("cmp", "flow.compare", { params: { operator: "==", b: 7 } }),
+          nd("br", "flow.branch"), nd("ff", "op.fireFsm", { params: { event: "kid" } }),
+        ],
+        [
+          ed("1", "p", "out", "ch", "in"),
+          ed("2", "eb", "next", "s", "exec"),
+          ed("3", "ch", "out", "s", "in"),
+          ed("4", "s", "next", "br", "exec"),
+          ed("5", "ch", "out", "g", "target"),
+          ed("6", "g", "value", "cmp", "a"),
+          ed("7", "cmp", "result", "br", "condition"),
+          ed("8", "br", "true", "ff", "exec"),
+          ed("9", "ch", "out", "ff", "in"),
+        ],
+      ),
+      [e1],
+    );
+    check(fires.some((f) => f.event === "kid"), "op.children out 可作属性读取/目标集的上游（拉模型解析子级首实体=7）");
+  }
+
+  // ----- 属性路径解析器（readPropPath/writePropPath）单元断言 -----
+  {
+    const root = new THREE.Object3D(); // 世界坐标参照偏移（worldPosition ≠ position）
+    root.position.set(5, 0, 0);
+    const parent = new THREE.Object3D();
+    parent.position.set(1, 2, 3);
+    parent.rotation.set(0, Math.PI / 4, 0);
+    parent.scale.set(2, 2, 2);
+    parent.userData = { nodeId: "pn", nodeKind: "meshNode", nodeTag: "t1", score: 42, label: "hello", ratio: 0.5 };
+    root.add(parent);
+    const child = new THREE.Object3D();
+    child.name = "wheel";
+    child.position.set(10, 0, 0);
+    child.userData = { nodeId: "wheel-1", nodeKind: "meshNode", nodeTag: "" };
+    parent.add(child);
+    const light = new THREE.PointLight(0x336699, 2.5, 12);
+    parent.add(light);
+    root.updateMatrixWorld(true);
+    const n: NodeObj = { obj: parent, id: "pn", kind: "meshNode", tag: "t1" };
+
+    check(readPropPath(n, "position.y") === 2, "read position.y");
+    const posVec = readPropPath(n, "position");
+    check(!!posVec && typeof posVec === "object" && !Array.isArray(posVec) && "x" in posVec && posVec.x === 1 && posVec.z === 3, "read 整段 position → vec3");
+    check(readPropPath(n, "rotation.y") === 45, `read rotation.y（弧度→度，实际 ${readPropPath(n, "rotation.y")}）`);
+    const wp = readPropPath(n, "worldPosition.x");
+    check(typeof wp === "number" && wp === 6, `read worldPosition.x（root 5 + parent 1：实际 ${wp}）`);
+    check(readPropPath(n, "visible") === true && readPropPath(n, "active") === true, "read visible/active");
+    check(readPropPath(n, "tag") === "t1" && readPropPath(n, "kind") === "meshNode" && readPropPath(n, "id") === "pn", "read 身份字段 tag/kind/id");
+    check(readPropPath(n, "userData.score") === 42 && readPropPath(n, "userData.label") === "hello" && readPropPath(n, "userData.ratio") === 0.5, "read userData 标量");
+    // 子级寻址已从属性路径移除（要读子级属性经「获取子级」/ForEach 换目标）
+    check(readPropPath(n, "wheel.position.x") === null, "read 子级路径不再解析 → null");
+    check(readPropPath(n, "wheel") === null, "read 停在子级名 → null（不再返回子级实体）");
+    check(readPropPath(n, "0.position.x") === null, "read 数字下标子级 → null");
+    check(readPropPath(n, "pn2") === null, "read 未知路径 → null");
+    check(readPropPath(n, "light.intensity") === 2.5 && readPropPath(n, "light.distance") === 12, "read 灯光分量");
+    // 光色读回经 Color.getHex 色域往返（与直接构造 Color 同路径，避免断言硬编码线性化值）
+    check(readPropPath(n, "light.color") === new THREE.Color(0x336699).getHex(), `read 灯光光色 hex（实际 ${readPropPath(n, "light.color")}）`);
+    check(readPropPath(n, "scale.x") === 2, "read scale.x");
+
+    check(writePropPath(n, "position.z", 9), "write position.z 返回成功");
+    check(parent.position.z === 9, "write position.z 落位");
+    check(writePropPath(n, "rotation.x", 180), "write 度制");
+    check(Math.abs(parent.rotation.x - Math.PI) < 1e-9, "write rotation.x=180° → π");
+    check(writePropPath(n, "visible", 0) && parent.visible === false, "write visible 数值→布尔");
+    check(!writePropPath(n, "wheel.position.y", 4) && child.position.y === 0, "write 子级路径不再可写（要写子级经「获取子级」换目标）");
+    check(writePropPath(n, "userData.score", 77) && parent.userData.score === 77, "write userData 既有标量键");
+    check(!writePropPath(n, "userData.fresh", 1), "write userData 新键拒绝（不凭空造字段）");
+    check(writePropPath(n, "light.intensity", 3) && light.intensity === 3, "write 灯光强度（通用路径与快路径同语义）");
+    check(!writePropPath(n, "nope.x", 1), "write 未知路径 → false");
+
+    // script: 命名空间（stub 访问器；未注入 scriptApi → 读 null / 写 false）
+    let scriptWrote: number | string | boolean | null = null;
+    const stub = {
+      getProp: (id: string, rel: string, key: string) => (id === "pn" && rel === "src/a.ts" && key === "speed" ? 4.5 : null),
+      setProp: (id: string, rel: string, key: string, v: number | boolean | string) => {
+        if (id === "pn" && rel === "src/a.ts" && key === "speed") { scriptWrote = v; return true; }
+        return false;
+      },
+    };
+    check(readPropPath(n, "script:src/a.ts:speed", stub) === 4.5, "read script: 路径（stub scriptApi）");
+    check(writePropPath(n, "script:src/a.ts:speed", 9, stub) && scriptWrote === 9, "write script: 路径（stub scriptApi）");
+    check(readPropPath(n, "script:src/a.ts:speed") === null && !writePropPath(n, "script:src/a.ts:speed", 1), "未注入 scriptApi → script: 不可用（不 crash）");
+  }
+
+  // ----- 实体距离：世界坐标语义（子实体带父级偏移时不是局部坐标差） -----
+  {
+    const parent = makeEntity("p1", { x: 10 });
+    const child = makeEntity("c1", { x: 4 }); // 局部 x=4 → 世界 x=14
+    parent.add(child);
+    fires.length = 0;
+    boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"),
+          nd("pp", "entity.proto", { entityId: "p1" }),
+          nd("pc", "entity.proto", { entityId: "c1" }),
+          nd("d", "sense.distance", {}),
+          nd("cmp", "flow.compare", { params: { operator: "==", b: 4 } }),
+          nd("br", "flow.branch"),
+          nd("ff", "op.fireFsm", { params: { event: "dist" } }),
+        ],
+        [
+          ed("0", "eb", "next", "br", "exec"),
+          ed("1", "pp", "out", "d", "from"),
+          ed("2", "pc", "out", "d", "to"),
+          ed("3", "d", "result", "cmp", "a"),
+          ed("4", "cmp", "result", "br", "condition"),
+          ed("5", "br", "true", "ff", "exec"),
+          ed("6", "pp", "out", "ff", "in"),
+        ],
+      ),
+      [parent],
+    );
+    check(fires.some((f) => f.event === "dist"), "实体距离按世界坐标（世界 14 − 10 = 4；按局部差则得 6 不成立）");
+  }
+
   // ----- flow.for 循环体 ×N -----
   {
     const e1 = makeEntity("e1");
@@ -680,6 +1041,34 @@ console.log("③ 运行时真跑（kernel + core 模块 on mock 场景）");
       [e1, e2],
     );
     check(fires.length === 1 && fires[0].id === "e1", `forEach 遍历匹配实体（tag=mob 命中 1，实际 ${fires.length}）`);
+  }
+
+  // ----- 获取子级 → ForEach「当前」按序索引子级（当前引脚参与操作目标通道） -----
+  {
+    const e1 = makeEntity("e1");
+    const k1 = makeEntity("k1");
+    const k2 = makeEntity("k2");
+    e1.add(k1);
+    e1.add(k2);
+    boot(
+      doc(
+        [
+          nd("eb", "event.onBegin"), nd("p", "entity.proto", { entityId: "e1" }),
+          nd("ch", "op.children", { opType: "op.children" }), nd("fe", "flow.forEach"),
+          nd("s", "op.set", { params: { property: "position.x", value: 6 } }),
+        ],
+        [
+          ed("a", "eb", "next", "fe", "exec"),
+          ed("b", "p", "out", "ch", "in"),
+          ed("c", "ch", "out", "fe", "array"),
+          ed("d", "fe", "loop", "s", "exec"),
+          ed("e", "fe", "item", "s", "in"),
+        ],
+      ),
+      [e1],
+    );
+    check(k1.position.x === 6 && k2.position.x === 6, `获取子级→ForEach 按序索引子级：每个子级被设 position.x=6（k1=${k1.position.x} k2=${k2.position.x}）`);
+    check(e1.position.x === 0, "父实体不受影响（作用对象已被换成子级）");
   }
 
   // ----- flow.while 条件即假 → completed 分支 -----
@@ -799,31 +1188,44 @@ console.log("③ 运行时真跑（kernel + core 模块 on mock 场景）");
     check(fires.length === 1 && fires[0].event === "entered", `fsm event 口切换到 run 执行归属子链（实际 fires=${fires.length}）`);
   }
   {
-    // 进入 initial idle → run 归属子链不执行；条件边首帧仅记基线不切换
+    // 条件口（布尔数据边）：比较结果上升沿 → 切换到比较卡「触发事件名」指定的状态。
+    // 首帧仅记基线；v1 被 tick 链改写为 9（> 5 真）后，次帧上升沿触发 run 归属子链。
     const e1 = makeEntity("e1");
     fires.length = 0;
     const { handle } = boot(
       doc(
         [
-          nd("eb", "event.onBegin"),
+          nd("et", "event.onTick"),
           nd("c", "fsm.container", { params: { states: "idle,run", initial: "idle" } }),
           nd("p", "entity.proto", { entityId: "e1" }),
           nd("child", "op.fireFsm", { containerId: "c", stateName: "run", params: { event: "entered" } }),
-          nd("cmp", "flow.compare", { params: { operator: ">", b: -1, event: "run" } }),
+          nd("vg1", "var.get", { varId: "v1" }),
+          nd("vg2", "var.get", { varId: "v2" }),
+          nd("vs", "var.set", { varId: "v1" }),
+          nd("cmp", "flow.compare", { params: { operator: ">", b: 5, event: "run" } }),
         ],
         [
-          ed("a", "eb", "next", "c", "exec"),
+          ed("a", "et", "next", "vs", "exec"),
+          ed("v", "vg2", "value", "vs", "value"),
           ed("b", "p", "out", "c", "in"),
           ed("d", "p", "out", "child", "in"),
-          ed("e", "cmp", "result", "c", "event"),
+          ed("e", "vg1", "value", "cmp", "a"),
+          ed("f", "cmp", "result", "c", "condition"),
+        ],
+        [
+          { id: "v1", name: "a", dataType: "number", value: 0 },
+          { id: "v2", name: "b", dataType: "number", value: 9 },
         ],
       ),
       [e1],
     );
-    check(fires.length === 0, "idle 状态：run 归属子链不执行");
     handle.update(0.016);
+    check(fires.length === 0, "条件口首帧仅记基线（0 > 5 假，不切换）");
     handle.update(0.016);
-    check(fires.length === 0, "条件恒真无上升沿：不切换（基线帧不触发）");
+    check(fires.some((f) => f.event === "entered"), "条件上升沿 → 切换到比较卡「触发事件名」状态并执行其归属子链");
+    const n = fires.length;
+    handle.update(0.016);
+    check(fires.length === n, "条件维持真值：无新上升沿不再重复切换");
   }
 
   // ----- bt 容器：按子节点顺序执行 -----

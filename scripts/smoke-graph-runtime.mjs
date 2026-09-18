@@ -148,7 +148,7 @@ console.log("[2] 目标口接线 → 每帧巡逻移动（玩家预览主用例�
   ok(crate.position.x > x0 && crate.position.x <= x0 + 20.001, `持续在 [起点, 起点+20] 内往返（当前 ${crate.position.x.toFixed(1)}）`);
   ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
   ok(
-    infoLines().some((l) => l.includes("脚本图行为已装配") && l.includes("帧驱动器 1")),
+    infoLines().some((l) => l.includes("场景图行为已装配") && l.includes("帧驱动器 1")),
     "装配摘要：帧驱动器 1（图已装载且驱动器入列）",
   );
   // 采样诊断：t=1s/2s 各一条，世界位置不同（内核确实在写位置）
@@ -287,6 +287,411 @@ console.log("[6] 静态批处理排除（图驱动实体不被烘焙）");
     ok(crate?.visible === true, "排除后 Crate 仍可见（未被烘焙）");
     ok(approx(crate.position.x, 3.1), `排除后巡逻位移可见生效（x=${crate.position.x.toFixed(2)}）`);
   }
+}
+
+console.log("[7] 通用属性路径（属性读取卡 entity.prop / 设置属性卡通用写：灯光·visible；子级路径已去寻址，经获取子级卡）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        {
+          id: "crate-1",
+          type: "meshNode",
+          name: "Crate",
+          source: "primitive",
+          geometry: "box",
+          size: { x: 1, y: 1, z: 1 },
+          transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 20, z: 0 } },
+          children: [
+            { id: "wheel-1", type: "meshNode", name: "Wheel", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 7, y: 0, z: 0 } } },
+            { id: "lamp-1", type: "pointLightNode", name: "Lamp", lightColor: 0xffffff, intensity: 2.5, distance: 8, transform: { position: { x: 0, y: 1, z: 0 } } },
+          ],
+        },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 },
+      { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 },
+      { id: "core-flow", version: 1 },
+    ],
+    nodes: [
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "crate-1" },
+      { id: "ch", type: "op.children", x: 0, y: 0, opType: "op.children", params: {} },
+      { id: "g1", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "c1", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5 } },
+      { id: "b1", type: "flow.branch", x: 0, y: 0, params: {} },
+      { id: "s1", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "position.y", value: 99 } },
+      { id: "g2", type: "entity.prop", x: 0, y: 0, params: { property: "light.intensity" } },
+      { id: "c2", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 2 } },
+      { id: "b2", type: "flow.branch", x: 0, y: 0, params: {} },
+      { id: "s2", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "visible", value: 0 } },
+      { id: "s3", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "Wheel.rotation.z", value: 45 } },
+    ],
+    edges: [
+      { id: "x0", srcNode: "p", srcPort: "out", dstNode: "ch", dstPort: "in" },
+      { id: "x1", srcNode: "ch", srcPort: "out", dstNode: "g1", dstPort: "target" },
+      { id: "x2", srcNode: "eb", srcPort: "next", dstNode: "b1", dstPort: "exec" },
+      { id: "x3", srcNode: "g1", srcPort: "value", dstNode: "c1", dstPort: "a" },
+      { id: "x4", srcNode: "c1", srcPort: "result", dstNode: "b1", dstPort: "condition" },
+      { id: "x5", srcNode: "b1", srcPort: "true", dstNode: "s1", dstPort: "exec" },
+      { id: "x6", srcNode: "p", srcPort: "out", dstNode: "s1", dstPort: "in" },
+      { id: "x7", srcNode: "p", srcPort: "out", dstNode: "g2", dstPort: "target" },
+      { id: "x8", srcNode: "eb", srcPort: "next", dstNode: "b2", dstPort: "exec" },
+      { id: "x9", srcNode: "g2", srcPort: "value", dstNode: "c2", dstPort: "a" },
+      { id: "x10", srcNode: "c2", srcPort: "result", dstNode: "b2", dstPort: "condition" },
+      { id: "x11", srcNode: "b2", srcPort: "true", dstNode: "s2", dstPort: "exec" },
+      { id: "x12", srcNode: "p", srcPort: "out", dstNode: "s2", dstPort: "in" },
+      { id: "x13", srcNode: "p", srcPort: "out", dstNode: "s3", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  advance(handle, 0.1);
+  const crate = scene.getObjectByProperty("name", "Crate");
+  const wheel = scene.getObjectByProperty("name", "Wheel");
+  ok(crate?.position.y === 99, `子级属性读取经「获取子级」换目标为真 → 分支执行 op.set（position.y=${crate?.position.y}）`);
+  ok(crate?.visible === false, `灯光分量读取为真 → 通用写 visible（visible=${crate?.visible}）`);
+  ok(!!wheel && wheel.rotation.z === 0, `子级路径不再经 op.set 寻址（Wheel.rotation.z 保持 ${(wheel?.rotation.z ?? -1)}；要写子级先接获取子级）`);
+  ok(
+    warnLines().some((w) => w.includes("设置属性") && w.includes("失败") && w.includes("Wheel.rotation.z")),
+    "子级路径写入失败有可定位告警（warnOnce）",
+  );
+  handle.dispose();
+}
+
+console.log("[8] 获取子级卡 op.children（目标集 → 直属子级实体集，批量操作）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        {
+          id: "crate-1",
+          type: "meshNode",
+          name: "Crate",
+          source: "primitive",
+          geometry: "box",
+          size: { x: 1, y: 1, z: 1 },
+          transform: { position: { x: 0, y: 0, z: 0 } },
+          children: [
+            { id: "kid-a", type: "meshNode", name: "KidA", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 1, y: 0, z: 0 } } },
+            { id: "kid-b", type: "meshNode", name: "KidB", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: -1, y: 0, z: 0 } } },
+          ],
+        },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-op", version: 1 }],
+    nodes: [
+      { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "crate-1" },
+      { id: "ch", type: "op.children", x: 0, y: 0, opType: "op.children", params: {} },
+      { id: "s", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "position.y", value: 4 } },
+    ],
+    edges: [
+      { id: "x1", srcNode: "p", srcPort: "out", dstNode: "ch", dstPort: "in" },
+      { id: "x2", srcNode: "ch", srcPort: "out", dstNode: "s", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const crate = scene.getObjectByProperty("name", "Crate");
+  const kidA = scene.getObjectByProperty("name", "KidA");
+  const kidB = scene.getObjectByProperty("name", "KidB");
+  ok(kidA?.position.y === 4 && kidB?.position.y === 4, `子级批量设置（KidA/KidB y=${kidA?.position.y}/${kidB?.position.y}）`);
+  ok(crate?.position.y === 0, "父实体不受影响（op.children 输出的是子级集）");
+  ok(warnLines().length === 0, "无诊断告警（子级解析正常，无空目标）");
+  handle.dispose();
+}
+
+console.log("[9] 获取子级 → ForEach「当前」按序索引子级（当前引脚参与操作目标通道）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        {
+          id: "rig-1",
+          type: "meshNode",
+          name: "Rig",
+          source: "primitive",
+          geometry: "box",
+          size: { x: 1, y: 1, z: 1 },
+          transform: { position: { x: 0, y: 0, z: 0 } },
+          children: [
+            { id: "w-a", type: "meshNode", name: "WheelA", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 1, y: 0, z: 0 } } },
+            { id: "w-b", type: "meshNode", name: "WheelB", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: -1, y: 0, z: 0 } } },
+          ],
+        },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-event", version: 1 }, { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }],
+    nodes: [
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "rig-1" },
+      { id: "ch", type: "op.children", x: 0, y: 0, opType: "op.children", params: {} },
+      { id: "fe", type: "flow.forEach", x: 0, y: 0, params: {} },
+      { id: "s", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "rotation.z", value: 45 } },
+    ],
+    edges: [
+      { id: "y1", srcNode: "p", srcPort: "out", dstNode: "ch", dstPort: "in" },
+      { id: "y2", srcNode: "ch", srcPort: "out", dstNode: "fe", dstPort: "array" },
+      { id: "y3", srcNode: "eb", srcPort: "next", dstNode: "fe", dstPort: "exec" },
+      { id: "y4", srcNode: "fe", srcPort: "loop", dstNode: "s", dstPort: "exec" },
+      { id: "y5", srcNode: "fe", srcPort: "item", dstNode: "s", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const rig = scene.getObjectByProperty("name", "Rig");
+  const wheelA = scene.getObjectByProperty("name", "WheelA");
+  const wheelB = scene.getObjectByProperty("name", "WheelB");
+  ok(Math.abs((wheelA?.rotation.z ?? 0) - Math.PI / 4) < 1e-6, `ForEach 按序索引子级 1/2：WheelA rotation.z=45°（实际 ${(wheelA?.rotation.z ?? -1).toFixed(3)} rad）`);
+  ok(Math.abs((wheelB?.rotation.z ?? 0) - Math.PI / 4) < 1e-6, `ForEach 按序索引子级 2/2：WheelB 同步生效（实际 ${(wheelB?.rotation.z ?? -1).toFixed(3)} rad）`);
+  ok(rig?.rotation.z === 0, "父实体不受影响（作用对象=ForEach 当前子级）");
+  ok(warnLines().length === 0, "无诊断告警");
+  handle.dispose();
+}
+
+console.log("[10] 卡片诊断与执行日志（无目标告警 / FSM 缺运行器 / 执行日志）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "crate-1", type: "meshNode", name: "Crate", source: "primitive", geometry: "box", size: { x: 1, y: 1, z: 1 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-op", version: 1 }],
+    nodes: [
+      { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "crate-1" },
+      // 目标缺失：只填参数不接「目标」口 → 必须告警（原先静默跳过）
+      { id: "s1", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "position.y", value: 3 } },
+      // 正常执行：接入目标 → 应有执行日志
+      { id: "s2", type: "op.set", x: 0, y: 0, opType: "op.set", params: { property: "position.y", value: 3 } },
+      // FSM 参数：目标无状态机运行器 → 必须告警（start 触发，装配即执行）
+      { id: "f1", type: "op.setFsmParam", x: 0, y: 0, opType: "op.setFsmParam", params: { param: "hp", value: 1 } },
+    ],
+    edges: [
+      { id: "x1", srcNode: "p", srcPort: "out", dstNode: "s2", dstPort: "in" },
+      { id: "x2", srcNode: "p", srcPort: "out", dstNode: "f1", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: {
+      fire() { throw new Error("no fsm runner"); },
+      setParam() { throw new Error("no fsm runner"); },
+    },
+    graph: doc,
+  });
+  const crate = scene.getObjectByProperty("name", "Crate");
+  ok(crate?.position.y === 3, `接线的设置属性执行生效（position.y=${crate?.position.y}）`);
+  ok(
+    warnLines().some((w) => w.includes("无目标实体") && w.includes("s1")),
+    "无目标操作给出可定位告警（含节点 id）",
+  );
+  ok(
+    warnLines().some((w) => w.includes("FSM 参数写入失败") && w.includes("crate-1")),
+    "FSM 操作无运行器：不再静默（告警含目标实体）",
+  );
+  ok(
+    infoLines().some((l) => l.includes("执行「设置属性」") && l.includes("s2")),
+    "操作执行日志（引擎日志通道可见：确认卡片真的在跑）",
+  );
+  handle.dispose();
+}
+
+console.log("[11] 路径点接线：获取子级输出直连（按序巡回）/ ForEach「当前」误接（可定位告警）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        {
+          id: "rig-1",
+          type: "meshNode",
+          name: "Rig",
+          source: "primitive",
+          geometry: "box",
+          size: { x: 1, y: 1, z: 1 },
+          transform: { position: { x: 0, y: 0, z: 0 } },
+          children: [
+            { id: "wa", type: "meshNode", name: "WA", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 10, y: 0, z: 0 } } },
+            { id: "wb", type: "meshNode", name: "WB", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: -10, y: 0, z: 0 } } },
+          ],
+        },
+        { id: "mover-1", type: "meshNode", name: "Mover", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "mover-2", type: "meshNode", name: "Mover2", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        {
+          id: "rig-2",
+          type: "meshNode",
+          name: "Rig2",
+          source: "primitive",
+          geometry: "box",
+          size: { x: 1, y: 1, z: 1 },
+          transform: { position: { x: 100, y: 0, z: 0 } },
+          children: [
+            { id: "ra", type: "meshNode", name: "RA", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 10, y: 0, z: 0 } } },
+            { id: "rb", type: "meshNode", name: "RB", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: -10, y: 0, z: 0 } } },
+          ],
+        },
+        { id: "mover-3", type: "meshNode", name: "Mover3", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-event", version: 1 }, { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }],
+    nodes: [
+      { id: "pRig", type: "entity.proto", x: 0, y: 0, entityId: "rig-1" },
+      { id: "pM1", type: "entity.proto", x: 0, y: 0, entityId: "mover-1" },
+      { id: "pM2", type: "entity.proto", x: 0, y: 0, entityId: "mover-2" },
+      { id: "ch", type: "op.children", x: 0, y: 0, opType: "op.children", params: {} },
+      { id: "pt1", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      { id: "fe", type: "flow.forEach", x: 0, y: 0, params: {} },
+      { id: "pt2", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+      // 跨父级：路径点挂在偏移父级下（世界 ±100±10）——必须按世界坐标巡回
+      { id: "pRig2", type: "entity.proto", x: 0, y: 0, entityId: "rig-2" },
+      { id: "pM3", type: "entity.proto", x: 0, y: 0, entityId: "mover-3" },
+      { id: "ch2", type: "op.children", x: 0, y: 0, opType: "op.children", params: {} },
+      { id: "pt3", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      { id: "a", srcNode: "pRig", srcPort: "out", dstNode: "ch", dstPort: "in" },
+      // 正例：子级集直连路径点
+      { id: "b", srcNode: "ch", srcPort: "out", dstNode: "pt1", dstPort: "path" },
+      { id: "c", srcNode: "pM1", srcPort: "out", dstNode: "pt1", dstPort: "in" },
+      // 误接线：ForEach「当前」→ 路径点（遍历期引脚，帧驱动器求值时不在上下文）
+      { id: "d", srcNode: "eb", srcPort: "next", dstNode: "fe", dstPort: "exec" },
+      { id: "e", srcNode: "ch", srcPort: "out", dstNode: "fe", dstPort: "array" },
+      { id: "f", srcNode: "fe", srcPort: "item", dstNode: "pt2", dstPort: "path" },
+      { id: "g", srcNode: "pM2", srcPort: "out", dstNode: "pt2", dstPort: "in" },
+      // 跨父级正例：路径点挂在偏移父级下
+      { id: "h", srcNode: "pRig2", srcPort: "out", dstNode: "ch2", dstPort: "in" },
+      { id: "i", srcNode: "ch2", srcPort: "out", dstNode: "pt3", dstPort: "path" },
+      { id: "j", srcNode: "pM3", srcPort: "out", dstNode: "pt3", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  advance(handle, 1);
+  const m1 = scene.getObjectByProperty("name", "Mover");
+  ok(approx(m1?.position.x, 4), `子级集直连路径点：1s 朝第一个子级移动 4（x=${m1?.position.x.toFixed(1)}）`);
+  advance(handle, 4);
+  ok(m1?.position.x <= 6, `按序巡回（5s 时 x=${m1?.position.x.toFixed(1)}；轴往返会是 20）`);
+  ok(
+    warnLines().some((w) => w.includes("路径点") && w.includes("解析不到实体")),
+    "ForEach「当前」接路径点：给出可定位告警（含正确接法提示）",
+  );
+  ok(
+    infoLines().some((l) => l.includes("ForEach 循环") && l.includes("遍历 2 个实体")),
+    "ForEach 遍历数量日志（引擎日志通道可见）",
+  );
+  // 跨父级：路径点世界坐标 ±100±10，移动者在原点——必须按世界坐标走（局部坐标会永远停在 10 附近）
+  advance(handle, 26);
+  const m3 = scene.getObjectByProperty("name", "Mover3");
+  ok(
+    (m3?.position.x ?? 0) > 90,
+    `跨父级路径点按世界坐标巡回（31s 后 x=${m3?.position.x.toFixed(1)}；局部坐标实现只会停在 10 附近）`,
+  );
+  handle.dispose();
 }
 
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);

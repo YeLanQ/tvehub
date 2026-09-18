@@ -4,8 +4,16 @@ function toNum(v) {
 }
 function toStr(v) {
   if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") return String(Math.round(v * 1e3) / 1e3);
   if (typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return `[${v.map((x) => x.id).join(", ")}]`;
+  if (v && typeof v === "object") {
+    if ("obj" in v) return v.id || v.obj.name || "(实体)";
+    if ("x" in v && "y" in v && "z" in v) {
+      const s = (n) => Math.round(n * 1e3) / 1e3;
+      return `(${s(v.x)}, ${s(v.y)}, ${s(v.z)})`;
+    }
+  }
   return "";
 }
 function unwrapEntity(v) {

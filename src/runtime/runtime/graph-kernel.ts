@@ -44,7 +44,7 @@ import type {
 const EMPTY_EVENT = "";
 
 export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeModule[]): GraphBehaviorsHandle {
-  const { scene, dom, camera, logicApi, graph, navApi } = ctx;
+  const { scene, dom, camera, logicApi, graph, navApi, scriptApi } = ctx;
 
   // ----- handler 表合并（后注册模块不覆盖先注册的同键语义） -----
   const ops: Record<string, OpExecutor> = {};
@@ -88,6 +88,19 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     if (warnedKeys.has(key)) return;
     warnedKeys.add(key);
     postLog("warn", msg);
+  }
+
+  /**
+   * 诊断日志限额（info 级）：同 key 最多输出 limit 次（缺省 1）。
+   * 逐帧语义（操作/事件/数据节点每帧求值）只在首次或有界次数内输出，
+   * 既让"卡片是否真的在跑"可见，又不刷屏。
+   */
+  const loggedCounts = new Map<string, number>();
+  function log(key: string, msg: string, limit = 1): void {
+    const used = loggedCounts.get(key) ?? 0;
+    if (used >= limit) return;
+    loggedCounts.set(key, used + 1);
+    postLog("info", msg);
   }
 
   // ----- 帧驱动采样（诊断状态；见 update 末尾） -----
@@ -323,13 +336,32 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
       return;
     }
     // op：一次性执行（容器内子节点仅在所属状态激活时执行）
-    const executor = ops[node.type];
-    if (executor && hasNodeTypeCapability(node.type, "op")) {
+    if (ops[node.type] && hasNodeTypeCapability(node.type, "op")) {
       if (!nodeActive(node)) return;
-      executor(kernel, node, resolveTargets(opId));
+      runOp(node, resolveTargets(opId));
       cascadeNext(node, ec);
       return;
     }
+  }
+
+  /**
+   * 一次性操作执行（exec 链 / 旧式 trigger / 点击命中三条路径共用）：
+   * 无目标 → 可定位告警（卡在图上但静默不动是最难排查的一类问题）；
+   * 有目标 → info 日志（限额 5 次，确认卡片确实在执行）。
+   */
+  function runOp(node: GNode, targets: NodeObj[]): void {
+    const ex = ops[node.type];
+    if (!ex) return;
+    const label = nodeTypeDef(node.type)?.label ?? node.type;
+    if (!targets.length) {
+      warnOnce(
+        `op-no-target:${node.id}`,
+        `[graph] 操作「${label}」(${node.id}) 无目标实体，已跳过——请检查「目标」口连线（原型/匹配/获取子级/容器作用域）`,
+      );
+      return;
+    }
+    log(`op-run:${node.id}`, `[graph] 执行「${label}」(${node.id}) → 目标 [${targets.map((t) => t.id).join(", ")}]`, 5);
+    ex(kernel, node, targets);
   }
 
   // ---------------------------------------------------------------------------
@@ -363,12 +395,15 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     clearLoopIndex: (id) => loopIndex.delete(id),
     loopItem: (id) => loopItem.get(id),
     setLoopItem: (id, item) => loopItem.set(id, item),
+    clearLoopItem: (id) => loopItem.delete(id),
     containerChildren,
     nodeActive,
     stepDriver,
     inFrameLoop: (nodeId) => frameOpsNodes.has(nodeId),
     warnOnce,
+    log,
     elapsed: () => elapsed,
+    scriptApi,
   };
 
   // ---------------------------------------------------------------------------
@@ -383,6 +418,25 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   const startEvents = eventNodes.filter((n) => triggerOf(n) === "start");
   const tickEvents = eventNodes.filter((n) => triggerOf(n) === "frame");
   const clickEvents = eventNodes.filter((n) => triggerOf(n) === "click");
+
+  // 事件入口未接执行链 = 卡在图上但永远不做事：装配期给出可定位告警
+  for (const ev of eventNodes) {
+    if (execNextOf(ev.id).length) continue;
+    const label = nodeTypeDef(ev.type)?.label ?? ev.type;
+    warnOnce(
+      `event-no-chain:${ev.id}`,
+      `[graph] 事件「${label}」(${ev.id}) 未接入执行链（「执行」出引脚无连线），触发时不会有任何行为`,
+    );
+  }
+  // 点击事件未接目标实体 = 指针射线无候选，点击永不命中
+  for (const ev of clickEvents) {
+    if (execNextOf(ev.id).length && !resolveTargets(ev.id).length) {
+      warnOnce(
+        `click-no-target:${ev.id}`,
+        `[graph] 事件「On Click」(${ev.id}) 未接入目标实体（「目标」入引脚），点击不会触发——接入原型/匹配卡片圈定可点击对象`,
+      );
+    }
+  }
 
   // ----- 旧式操作（有 op/driver 能力、无 exec 入边：按类型 trigger 独立执行） -----
   const legacyOps = graph.nodes.filter(
@@ -500,16 +554,19 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     if (!hitId) return;
 
     // 显式项：trigger=click 的 op 以命中实体为唯一目标执行（与旧实现一致）
+    const hit = byId.get(hitId);
     for (const entry of allClickOps) {
       if (!entry.targets.some((t) => t.id === hitId)) continue;
       if (triggerOf(entry.node) !== "click") continue;
-      const ex = ops[entry.node.type];
-      const hit = byId.get(hitId);
-      if (ex && hit) ex(kernel, entry.node, [hit]);
+      if (hit) runOp(entry.node, [hit]);
     }
-    // 事件驱动：onClick 命中后级联整条 exec 链
+    // 事件驱动：onClick 命中后级联整条 exec 链（命中实体日志：确认点到了谁）
     for (const oc of onClickCascades) {
       if (!oc.targets.some((t) => t.id === hitId)) continue;
+      postLog(
+        "info",
+        `[graph] 指针命中 ${hitId}（${hit?.obj.name ?? ""}）→ 级联事件链 ${execNextOf(oc.ev.id).length} 个下游`,
+      );
       for (const id of execNextOf(oc.ev.id)) cascadeExec(id);
     }
   }
@@ -549,14 +606,12 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   // 在 start 之后，保证 bob/patrol 基准位取属性落位后的位置
   for (const ev of startEvents) {
     const next = execNextOf(ev.id);
-    if (next) for (const id of next) cascadeExec(id);
+    if (next.length) {
+      log(`ev-start:${ev.id}`, `[graph] 事件「${nodeTypeDef(ev.type)?.label ?? ev.type}」(${ev.id}) 触发 → 级联 ${next.length} 个下游`);
+      for (const id of next) cascadeExec(id);
+    }
   }
-  for (const op of legacyStartOps) {
-    const ex = ops[op.type];
-    if (!ex) continue;
-    const targets = resolveTargets(op.id);
-    if (targets.length) ex(kernel, op, targets);
-  }
+  for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
   assembleFrameOps();
 
   // 装配摘要（预览控制台回传编辑器：用于确认"图是否被装载、装载了什么"）
@@ -581,9 +636,16 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
       }
       // 全部容器帧后聚合钩子（每个行为实例一次：跨容器状态 flush）
       for (const beh of framed) beh.frameEnd?.(kernel, dt);
-      // tick 链每帧级联（var.set/flow.* 等；驱动器由 frameOps 步进）
-      for (const entryId of tickChainEntries) {
-        cascadeExec(entryId);
+      // tick 链每帧级联（var.set/flow.* 等；驱动器由 frameOps 步进）。
+      // 日志仅首次输出（逐帧刷屏无意义；确认"每帧链确实在跑"一次足够）
+      if (tickChainEntries.length) {
+        log(
+          "tick-chain",
+          `[graph] 每帧执行链步进中（${tickChainEntries.length} 个入口，事件节点 ${tickEvents.length}）`,
+        );
+        for (const entryId of tickChainEntries) {
+          cascadeExec(entryId);
+        }
       }
       for (const behavior of frameOps) {
         // 容器内帧行为：所属状态未激活时暂停（激活恢复后从基准位继续）

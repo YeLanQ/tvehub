@@ -11,6 +11,7 @@ import { getGraphWindowStore } from "../graphStore";
 import {
   G_COMPARE_OPERATORS,
   G_OP_TRIGGER_LABEL,
+  G_PROPERTY_PATHS,
   GRAPH_COMMENT_COLORS,
   graphOpDef,
   isContainerType,
@@ -19,6 +20,8 @@ import {
   type GNode,
 } from "../../framework/graph";
 import type { SceneEntity } from "../lib/scene-index";
+import { ENTITY_BASE_PATHS, entityPropPaths, mergePropPaths } from "../lib/prop-paths";
+import ComboBox from "../../ui-kit/components/ComboBox.vue";
 
 const store = getGraphWindowStore();
 
@@ -36,7 +39,9 @@ watch(
 const def = computed(() =>
   g.value?.type.startsWith("op.")
     ? graphOpDef(g.value.opType ?? g.value.type) ?? nodeTypeDef(g.value.type)
-    : null,
+    : g.value?.type === "entity.prop"
+      ? nodeTypeDef(g.value.type)
+      : null,
 );
 const eventDef = computed(() => (g.value?.type.startsWith("event.") ? nodeTypeDef(g.value.type) : null));
 const varDef = computed(() => (g.value?.type.startsWith("var.") ? nodeTypeDef(g.value.type) : null));
@@ -72,10 +77,77 @@ const patternOptions = computed(() => {
 const vecText = (v: { x: number; y: number; z: number }): string =>
   `${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)}`;
 
+// ----- 属性路径候选（entity.prop / op.set 的「属性」输入） -----
+
+/** 实体的类型定义能力（op/driver/container 透传判定） */
+function passThroughSource(type: string): boolean {
+  const caps = nodeTypeDef(type)?.capabilities;
+  return caps?.op === true || caps?.driver === true || caps?.container === true;
+}
+
+/** 沿实体集通道上溯全部可能命中的场景实体（proto 精确 / match 命中 / op·driver·容器·forEach 透传 / 获取子级 = 子级集） */
+function upstreamEntities(nodeId: string): SceneEntity[] {
+  const doc = store.canvas?.serializeDoc();
+  if (!doc) return [];
+  const seenNodes = new Set<string>();
+  const collect = (nid: string): SceneEntity[] => {
+    if (seenNodes.has(nid)) return [];
+    seenNodes.add(nid);
+    const res: SceneEntity[] = [];
+    const has = new Set<string>();
+    const push = (e: SceneEntity): void => {
+      if (has.has(e.id)) return;
+      has.add(e.id);
+      res.push(e);
+    };
+    for (const e of doc.edges) {
+      if (e.dstNode !== nid) continue;
+      const src = doc.nodes.find((n) => n.id === e.srcNode);
+      if (!src || src.unresolved) continue;
+      if (src.type === "entity.proto") {
+        const ent = store.sceneEntities.find((x) => x.id === src.entityId);
+        if (ent) push(ent);
+      } else if (src.type === "entity.match") {
+        for (const x of store.sceneEntities) {
+          if (src.matchMode === "type" ? x.type === src.matchPattern : x.tag === src.matchPattern) push(x);
+        }
+      } else if (src.type === "op.children") {
+        for (const u of collect(src.id)) {
+          for (const c of store.sceneEntities) if (c.parentId === u.id) push(c);
+        }
+      } else if (passThroughSource(src.type) || src.type === "flow.forEach" || src.type === "entity.prop") {
+        for (const u of collect(src.id)) push(u);
+      }
+    }
+    return res;
+  };
+  return collect(nodeId);
+}
+
+/** 「属性」输入的路径候选：上游实体集可寻址属性并集（无上游时给基础分量） */
+const propCandidates = computed<string[]>(() => {
+  const t = g.value?.type;
+  if (t !== "entity.prop" && t !== "op.set") return [];
+  const ents = upstreamEntities(g.value?.id ?? "");
+  if (!ents.length) {
+    return t === "entity.prop" ? [...ENTITY_BASE_PATHS] : [...G_PROPERTY_PATHS];
+  }
+  return mergePropPaths(ents.map((e) => entityPropPaths(e))).slice(0, 400);
+});
+
+/** 上游候选对应实体名（下拉候选提示） */
+const upstreamNames = computed<string>(() => {
+  if (g.value?.type !== "entity.prop" && g.value?.type !== "op.set") return "";
+  return upstreamEntities(g.value?.id ?? "")
+    .slice(0, 4)
+    .map((e) => e.name || e.id)
+    .join(", ");
+});
+
 // ----- 操作参数提交 -----
 
 function commitParam(key: string, raw: string | boolean): void {
-  if (!g.value?.type.startsWith("op.")) return;
+  if (!g.value || (!g.value.type.startsWith("op.") && g.value.type !== "entity.prop")) return;
   const defV = def.value;
   if (!defV) return;
   const f = defV.fields?.find((x) => x.key === key);
@@ -247,7 +319,7 @@ function commitStateName(raw: string): void {
         </label>
       </div>
       <div class="ginsp-desc">{{ logicDef.desc }}。</div>
-      <div class="ginsp-hint">拖入节点到容器框内即归属（可嵌套）；容器内节点的「状态归属」在检查器顶部设置。行为在预览中执行。</div>
+      <div class="ginsp-hint">拖入节点到容器框内即归属（可嵌套）；容器内节点的「状态归属」在检查器顶部设置。行为在预览中执行，状态切换/进入均有引擎日志（预览控制台可查）。</div>
     </template>
 
     <!-- 原型：实体实时属性参照 -->
@@ -274,7 +346,8 @@ function commitStateName(raw: string): void {
         </template>
         <div class="ginsp-desc">
           以上为场景实时属性参照。把操作节点连到本卡片（目标引脚），即可定义预览运行时作用于该实体的行为；
-          「设置属性」可引用 position/rotation/scale 各分量与 visible。
+          「设置属性」与「属性读取」按点分路径寻址实体自身属性：变换各分量、visible、light/material 分量、
+          userData 与脚本 @property（script:脚本路径:属性）；子级属性需先用「获取子级」换作用对象（配 ForEach 按序索引）。
         </div>
       </template>
     </template>
@@ -295,18 +368,47 @@ function commitStateName(raw: string): void {
         </label>
         <label class="gfield">
           <span class="gfield-label">{{ g.matchMode === "type" ? "类型键" : "标签名" }}</span>
-          <input
-            :value="g.matchPattern"
-            :list="`dl-pattern`"
+          <ComboBox
+            :model-value="g.matchPattern ?? ''"
+            :options="patternOptions"
             placeholder="运行时批量匹配"
-            @change="commitMatch({ matchPattern: ($event.target as HTMLInputElement).value })"
+            @update:model-value="commitMatch({ matchPattern: String($event) })"
           />
-          <datalist id="dl-pattern">
-            <option v-for="o in patternOptions" :key="o" :value="o" />
-          </datalist>
         </label>
       </div>
       <div class="ginsp-hint">当前命中 {{ matched.length }} 个实体{{ matched.length ? `：${matched.slice(0, 4).map((m) => m.name).join(", ")}${matched.length > 4 ? " …" : ""}` : "" }}</div>
+    </template>
+
+    <!-- 属性读取（entity.prop）：属性路径 + 候选 -->
+    <template v-else-if="g?.type === 'entity.prop' && def">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: def.color }"></span>
+        <span class="ginsp-static">{{ def.label }}</span>
+      </div>
+      <div class="ginsp-fields">
+        <label v-for="f in def.fields" :key="f.key" class="gfield col">
+          <span class="gfield-label">{{ f.label }}</span>
+          <ComboBox
+            :model-value="String(g.params?.[f.key] ?? f.fallback)"
+            :options="propCandidates"
+            :placeholder="f.placeholder ?? ''"
+            @update:model-value="commitParam(f.key, String($event))"
+          />
+        </label>
+      </div>
+      <div class="ginsp-desc">{{ def.desc }}。变换分量（旋转为度制）、可见性、灯光/材质分量、userData 与脚本 @property（script:脚本路径:属性）均可读取——只寻址实体自身属性；要读子级属性，先经「获取子级」（配 ForEach 按序索引）把目标换成子级。</div>
+      <div v-if="upstreamNames" class="ginsp-hint">候选来自上游接入的实体：{{ upstreamNames }}…</div>
+      <div v-else class="ginsp-hint">纯数据节点：把原型/匹配（或 ForEach「当前」）连到「实体」入引脚，「值」引脚连到下游数据入引脚（分支条件/运算节点等），拉取时实时读取。</div>
+    </template>
+
+    <!-- 获取子级（op.children）：实体集变换卡（无参数） -->
+    <template v-else-if="g?.type === 'op.children' && def">
+      <div class="ginsp-head">
+        <span class="ginsp-dot" :style="{ background: def.color }"></span>
+        <span class="ginsp-static">{{ def.label }}</span>
+      </div>
+      <div class="ginsp-desc">{{ def.desc }}。内部子对象（网格烘焙/包装子树）不属于场景层级，不会出现在结果中。</div>
+      <div class="ginsp-hint">实体集变换卡（无执行引脚）：「目标」接原型/匹配/操作透传/ForEach「当前」，「输出」把子级实体集接任意操作「目标」、ForEach「集合」或属性读取「实体」引脚；深层子级再串一张本卡。</div>
     </template>
 
     <!-- 操作 -->
@@ -332,6 +434,13 @@ function commitStateName(raw: string): void {
             :checked="g.params?.[f.key] === true"
             @change="commitParam(f.key, ($event.target as HTMLInputElement).checked)"
           />
+          <ComboBox
+            v-else-if="f.key === 'property'"
+            :model-value="String(g.params?.[f.key] ?? '')"
+            :options="propCandidates"
+            :placeholder="f.placeholder ?? ''"
+            @update:model-value="commitParam(f.key, String($event))"
+          />
           <input
             v-else
             :value="String(g.params?.[f.key] ?? '')"
@@ -340,6 +449,7 @@ function commitStateName(raw: string): void {
           />
         </label>
       </div>
+      <div v-if="g.type === 'op.set' && upstreamNames" class="ginsp-hint">候选来自上游接入的实体：{{ upstreamNames }}…（脚本属性用「script:路径:属性」；子级先经「获取子级」/ForEach 换目标）</div>
       <div class="ginsp-desc">{{ def.desc }}。连接原型/匹配卡片到「目标」引脚决定作用对象；「执行」链可在应用时级联下游操作。行为在预览中执行。</div>
     </template>
 

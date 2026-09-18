@@ -34,6 +34,12 @@ const rotText = computed(() =>
     ? `${entity.value.rotation.x.toFixed(0)}°, ${entity.value.rotation.y.toFixed(0)}°, ${entity.value.rotation.z.toFixed(0)}°`
     : "",
 );
+/** 直接子级实体（经「获取子级」卡接入图；属性路径只寻址实体自身属性） */
+const childCount = computed(() => {
+  const id = entity.value?.id;
+  if (!id) return 0;
+  return store.sceneEntities.filter((e) => e.parentId === id).length;
+});
 
 // ----- 灯光卡 -----
 const LIGHT_KIND_LABEL: Record<string, string> = {
@@ -128,6 +134,9 @@ function typeName(type: string): string {
         <div class="grow" title="op.set 可寻址：visible">
           <span class="gk">状态</span>
           <span class="gv">{{ entity.visible ? "可见" : "隐藏" }}{{ entity.tag ? ` · ${entity.tag}` : "" }}</span>
+        </div>
+        <div v-if="childCount" class="grow" :title="`子级 ${childCount} 个：右键「添加操作 → 获取子级」把作用对象换成子级实体集（再配 ForEach 按序取每个子级）`">
+          <span class="gk">子级</span><span class="gv">{{ childCount }} 个（经获取子级卡）</span>
         </div>
       </div>
 
