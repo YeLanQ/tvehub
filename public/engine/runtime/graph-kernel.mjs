@@ -988,7 +988,7 @@ function createGraphKernel(ctx, modules) {
   assembleFrameOps();
   postLog(
     "info",
-    `[graph] 脚本图行为已装配：节点 ${graph.nodes.length}，tick 链 ${tickChainEntries.length}，帧驱动器 ${frameOps.length}，点击行为 ${allClickOps.length}，容器帧驱动 ${graph.nodes.filter((n) => containers[n.type]).length}`
+    `[graph] 场景图行为已装配：节点 ${graph.nodes.length}，tick 链 ${tickChainEntries.length}，帧驱动器 ${frameOps.length}，点击行为 ${allClickOps.length}，容器帧驱动 ${graph.nodes.filter((n) => containers[n.type]).length}`
   );
   return {
     update(dt) {
