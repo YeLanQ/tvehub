@@ -21,6 +21,8 @@ defineProps<{
   viewMode: "grid" | "list";
   /** 当前目录是否允许导入（未开项目 / src / 内置只读时禁用导入按钮） */
   canImport: boolean;
+  /** 类型筛选下拉（缺省显示；图窗口资产面板只呈现场景，不需要类型筛选） */
+  showTypeFilter?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -62,6 +64,7 @@ const emit = defineEmits<{
       @input="emit('update:query', ($event.target as HTMLInputElement).value)"
     />
     <select
+      v-if="showTypeFilter !== false"
       class="am-select"
       title="按类型筛选"
       :value="typeFilter"

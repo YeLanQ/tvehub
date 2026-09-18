@@ -62,11 +62,27 @@ export function createDockSystem<P extends string>(cfg: DockSystemConfig<P>): Do
       });
     }
     floating.forEach((f) => placed.add(f.panel));
+    // 新面板（保存布局早于该面板加入）：落其默认停靠区、按默认顺序插入——
+    // 与默认布局的相邻关系一致（如控制台与资产同处底部并排，而不是散落他区）
     for (const p of cfg.panels) {
-      if (!placed.has(p)) {
-        zones.left.push(p);
-        placed.add(p);
+      if (placed.has(p)) continue;
+      const dz = DOCK_ZONES.find((z) => d.zones[z].includes(p)) ?? "left";
+      const defaultOrder = d.zones[dz];
+      const defaultIdx = defaultOrder.indexOf(p);
+      let insertAt = zones[dz].length;
+      if (defaultIdx >= 0) {
+        // 插入到默认列表中前一个已落位面板之后（保持默认相邻顺序）
+        for (let i = defaultIdx - 1; i >= 0; i--) {
+          const prev = zones[dz].indexOf(defaultOrder[i]);
+          if (prev >= 0) {
+            insertAt = prev + 1;
+            break;
+          }
+        }
+        if (defaultIdx === 0) insertAt = 0;
       }
+      zones[dz].splice(insertAt, 0, p);
+      placed.add(p);
     }
     const active = { ...d.active };
     for (const z of DOCK_ZONES) {

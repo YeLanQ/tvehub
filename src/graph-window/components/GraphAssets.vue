@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * 底部停靠·「资产」（编辑器资产面板同构复刻）：
- * - 数据直接使用编辑器的 assets store（同一份扫描/刷新链路，数据完全一致）；
+ * 底部停靠·「场景」（编辑器资产面板同构复刻，仅呈现场景资产）：
+ * - 数据直接使用编辑器的 assets store（同一份扫描/刷新链路），但过滤为
+ *   场景文件 + 通往场景的目录——图与场景一一对应，图窗口只需切场景；
  * - 工具栏/条目单元格复用编辑器的 AssetToolbar / AssetEntryCell 真件，
- *   样式复用 assets-panel.scss（面包屑/搜索/类型筛选/排序/视图切换）；
+ *   样式复用 assets-panel.scss（面包屑/搜索/排序/视图切换；无类型筛选）；
  * - 文件夹树为只读复刻（无重命名/删除等编辑器动作，避免跨窗口操作场景会话）；
  * - 双击场景资产 = 打开该场景（切当前场景，层级/实体/场景图随之切换）。
  */
@@ -29,7 +30,8 @@ const currentDir = ref("");
 const backStack = ref<string[]>([]);
 const fwdStack = ref<string[]>([]);
 const query = ref("");
-const typeFilter = ref("all");
+/** 类型筛选固定为场景（本面板只呈现场景；工具栏类型下拉隐藏） */
+const typeFilter = ref("scene");
 const sortBy = ref("name");
 const viewMode = ref<"grid" | "list">("grid");
 const selectedPath = ref("");
@@ -40,10 +42,24 @@ interface DirNode {
   children: DirNode[];
 }
 
-/** 路径逐段装配目录树（与编辑器 AssetsPanel 的树构建完全一致） */
+/**
+ * 只呈现场景的资产视图：场景文件 + 其路径上的目录（无场景的目录整支隐藏）；
+ * 类型筛选固定为场景语义，故工具栏不再提供类型下拉。
+ */
+const sceneAssets = computed(() => {
+  const all = assetsStore.assets;
+  const scenes = all.filter((a) => a.kind === "scene" && !a.path.endsWith("/"));
+  const sceneDirs = all.filter(
+    (a) => a.kind === "dir" && scenes.some((s) => s.path.startsWith(`${a.path.replace(/\/$/, "")}/`)),
+  );
+  return [...sceneDirs, ...scenes];
+});
+
+/** 路径逐段装配目录树（只从场景资产路径构建；与编辑器 AssetsPanel 树构建同源） */
 const dirTree = computed<DirNode[]>(() => {
   const tree: DirNode[] = [];
-  for (const a of assetsStore.assets) {
+  for (const a of sceneAssets.value) {
+    if (a.kind === "dir") continue;
     const parts = a.path.split("/");
     let cursor = tree;
     let curPath = "";
@@ -87,7 +103,7 @@ const filterKey = computed(() => assetFilterStateKey(store.root ?? ""));
 function applyFilter(f: AssetFilterState | null): void {
   if (!f) return;
   if (typeof f.query === "string") query.value = f.query;
-  if (typeof f.typeFilter === "string") typeFilter.value = f.typeFilter;
+  // typeFilter 不同步：本面板钉死为场景（编辑器侧选"材质"等类型不应把场景过滤掉）
   if (typeof f.sortBy === "string") sortBy.value = f.sortBy;
   if (f.viewMode === "grid" || f.viewMode === "list") viewMode.value = f.viewMode;
 }
@@ -138,7 +154,7 @@ const crumbs = computed(() => {
 });
 
 const children = computed<ChildEntry[]>(() =>
-  listDirectoryChildren(assetsStore.assets, currentDir.value, query.value, typeFilter.value, sortBy.value),
+  listDirectoryChildren(sceneAssets.value, currentDir.value, query.value, typeFilter.value, sortBy.value),
 );
 
 function navigate(path: string): void {
@@ -205,6 +221,7 @@ onUnmounted(() => {
       :crumbs="crumbs"
       :query="query"
       :type-filter="typeFilter"
+      :show-type-filter="false"
       :sort-by="sortBy"
       :view-mode="viewMode"
       :can-import="false"
@@ -248,9 +265,9 @@ onUnmounted(() => {
           @click="onEntryClick(item)"
           @dblclick="onEntryDblclick(item)"
         />
-        <div v-if="!children.length" class="am-empty">当前目录没有资产</div>
+        <div v-if="!children.length" class="am-empty">当前目录没有场景</div>
       </div>
     </div>
-    <div class="gpanel-tip">双击场景资产打开（层级/实体/场景图随之切换）</div>
+    <div class="gpanel-tip">双击场景打开（层级/实体/场景图随之切换）</div>
   </div>
 </template>

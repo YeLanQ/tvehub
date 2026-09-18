@@ -22,6 +22,7 @@ import { graphDocks } from "./docks";
 import type { DockZoneId } from "../docks/types";
 import DockZone from "../docks/DockZone.vue";
 import DockLayer from "../docks/DockLayer.vue";
+import ConsolePanel from "../app/components/ConsolePanel.vue";
 import GraphAssets from "./components/GraphAssets.vue";
 import GraphBootMask from "./components/GraphBootMask.vue";
 import GraphCanvas from "./components/GraphCanvas.vue";
@@ -76,6 +77,8 @@ const PANEL_COMP: Record<string, Component> = {
   variables: GraphVariablePanel,
   customNodes: GraphCustomNodePanel,
   assets: GraphAssets,
+  // 控制台与编辑器同源（logStore）：预览引擎日志（postLog 转发）实时呈现
+  console: ConsolePanel,
 };
 
 function onKeydown(e: KeyboardEvent): void {
