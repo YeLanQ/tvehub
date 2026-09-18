@@ -72,6 +72,8 @@ const {
   findNode,
   getSelectedNodes,
   getSelectedEdges,
+  removeSelectedElements,
+  nodesSelectionActive,
   screenToFlowCoordinate,
   fitView,
   onConnect,
