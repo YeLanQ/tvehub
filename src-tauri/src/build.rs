@@ -351,10 +351,16 @@ fn apply_release(
     }
 
     // 重命名表（运行时代码与入口页除外；被内联兄弟不打包；模型目标扩展名 .bin）
+    // script-graph.json 按 config.scriptGraph 固定路径引用，不参与 uid 重命名
     let asset_rels: Vec<String> = files
         .keys()
         .chain(binaries.keys())
-        .filter(|rel| !is_runtime_code(rel) && !is_runtime_support_data(rel) && !inlined_sibs.contains(*rel))
+        .filter(|rel| {
+            !is_runtime_code(rel)
+                && !is_runtime_support_data(rel)
+                && !inlined_sibs.contains(*rel)
+                && rel.as_str() != "script-graph.json"
+        })
         .cloned()
         .collect();
     for rel in asset_rels {
@@ -1020,6 +1026,14 @@ fn build_export_impl(
         ),
     );
     cfg.insert("debug".to_string(), serde_json::Value::Bool(debug));
+    // 场景图注入：前端在 files 中放入 script-graph.json 时，config 标记启用
+    // （player 检测到 cfg.scriptGraph 即装配图行为解释器）
+    if files.contains_key("script-graph.json") {
+        cfg.insert(
+            "scriptGraph".to_string(),
+            serde_json::Value::String("./script-graph.json".to_string()),
+        );
+    }
     // gzip 资源地址（gzip 归档远程基址；空 = 本地 assets.gzip）
     if !gzip_base.is_empty() {
         cfg.insert("gzipBase".to_string(), serde_json::Value::String(gzip_base));

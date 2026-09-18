@@ -28,6 +28,7 @@ import {
   nextGraphVariableId,
   nextCustomNodeDefId,
   registerCustomNodeDefs,
+  graphSidecarRel,
   type GComment,
   type GCustomNodeDef,
   type GNode,
@@ -77,9 +78,7 @@ export interface GraphModalState {
 
   /** 场景 → 场景图文件相对路径（graph/ 目录，与 assets/src 同级；.graph 后缀） */
   function sidecarRel(sceneRel: string): string {
-    const name = sceneRel.split("/").pop() ?? sceneRel;
-    const base = name.replace(/\.scene$/i, "");
-    return `graph/${base}.graph`;
+    return graphSidecarRel(sceneRel);
   }
 
 interface GraphWindowStore {

@@ -721,10 +721,10 @@ async function main() {
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）
   window.addEventListener("pagehide", () => { scripts.dispose(); logicApi.dispose(); graphBehaviors.dispose(); nav.dispose(); }, { once: true, capture: true });
 
-  // 静态场景门控：无用户脚本/模型动画/关键帧剪辑/物理时，场景每帧不变 ——
+  // 静态场景门控：无用户脚本/脚本图/模型动画/关键帧剪辑/物理/导航时，场景每帧不变 ——
   // 世界矩阵停更（render 跳过全树遍历重算），阴影贴图只渲染一次
   // （每灯 shadow.needsUpdate 首帧消费后冻结，WebGL/WebGPU 同语义）。
-  // 脚本/动画/物理都可能移动任意节点，存在其一即保持逐帧更新。
+  // 脚本/脚本图/动画/物理/导航都可能移动任意节点，存在其一即保持逐帧更新。
   // 注意物理判据用配置的 physicsEnabled（createPhysics 未启用时也返回空转 API，非 null）。
   const physicsSettings =
     (cfg && cfg.physics) || (sceneData.settings && sceneData.settings.physics) || null;
@@ -740,6 +740,8 @@ async function main() {
   );
   // UI 画布存在时保持逐帧更新：画布根每帧贴合相机（矩阵覆写）不能被冻结
   const hasUICanvas = nodes.some(({ json }) => json.type === "uiCanvasNode");
+  // 脚本图存在时保持逐帧更新：图行为（巡逻/追击/旋转/浮动/设值等）每帧改位姿，世界矩阵须重算
+  const hasScriptGraph = !!cfg.scriptGraph;
   if (
     !hasScriptComponent &&
     !hasEntryScript &&
@@ -747,7 +749,8 @@ async function main() {
     !hasModelClip &&
     !physicsActive &&
     !hasUICanvas &&
-    !hasNavNodes
+    !hasNavNodes &&
+    !hasScriptGraph
   ) {
     scene.matrixWorldAutoUpdate = false;
     scene.traverse((o) => {

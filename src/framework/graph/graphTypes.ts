@@ -224,4 +224,11 @@ export function graphNodeLabel(
   return resolve?.typeLabel?.(node.type) || node.type;
 }
 
+/** 场景 → 场景图文件相对路径（graph/ 目录，与 assets/src 同级；.graph 后缀） */
+export function graphSidecarRel(sceneRel: string): string {
+  const name = sceneRel.split("/").pop() ?? sceneRel;
+  const base = name.replace(/\.scene$/i, "");
+  return `graph/${base}.graph`;
+}
+
 export { str as graphStr, num as graphNum };

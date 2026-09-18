@@ -24,6 +24,7 @@ import {
 } from "../lib/web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
 import { registerCommand } from "./registry";
+import { graphSidecarRel } from "../../framework/graph";
 
 /** 当前项目根；未打开项目时抛错（各域命令共用） */
 function requireRoot(): string {
@@ -51,6 +52,22 @@ async function buildPreviewFiles(): Promise<Record<string, string>> {
     includeBasisDecoder: configUsesTextureCompression(physicsConfigText),
   });
   files["config.json"] = physicsConfigText ?? "{}";
+  // 场景图注入：读取当前场景对应的图文件（graph/<scene>.graph），存在则注入产物 +
+  // config 标记（player 检测到即装配行为解释器；与图窗口预览同一链路）
+  const project = getProjectStore();
+  const sceneRel = project.sceneRel || DEFAULT_SCENE_REL;
+  try {
+    const graphText = await api.readText(root, graphSidecarRel(sceneRel));
+    if (graphText.trim()) {
+      files["script-graph.json"] = graphText;
+      let cfg: Record<string, unknown> = {};
+      try { cfg = JSON.parse(files["config.json"]) as Record<string, unknown>; } catch { cfg = {}; }
+      cfg.scriptGraph = "./script-graph.json";
+      files["config.json"] = JSON.stringify(cfg, null, 2);
+    }
+  } catch {
+    /* 无图文件按无图预览处理 */
+  }
   try {
     await getScriptsStore().saveAll();
   } catch {

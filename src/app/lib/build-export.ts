@@ -17,6 +17,7 @@ import {
   withHtmlTitle,
 } from "./web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "./script-compile";
+import { graphSidecarRel } from "../../framework/graph";
 
 /** 构建渠道（wechat 为 UI 占位，后端未实现——构建按钮禁用并提示） */
 export interface BuildChannel {
@@ -241,6 +242,14 @@ export async function runBuild(opts: {
     }
   } catch (e) {
     logStore.log("warn", `脚本编译跳过: ${e}`, "build");
+  }
+  // 场景图注入：读取主场景对应的图文件（graph/<scene>.graph），存在则注入产物
+  // （后端 build_export 检测到 script-graph.json 即在 config.json 标记 scriptGraph）
+  try {
+    const graphText = await api.readText(opts.root, graphSidecarRel(opts.mainScene));
+    if (graphText.trim()) runtime["script-graph.json"] = graphText;
+  } catch {
+    /* 无图文件按无图构建处理 */
   }
   // 页面骨架用所选导出模板（{{TITLE}} 换页面标题）；player/libs 代码仍取运行时。
   // 首个模板 → index.html，其余 → index-<模板目录>.html；形态必须一致（面板已守卫）

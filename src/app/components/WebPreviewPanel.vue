@@ -28,6 +28,7 @@ import {
 } from "../lib/web-preview-runtime";
 import { ensureEntryScript } from "../lib/script-compile";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
+import { graphSidecarRel } from "../../framework/graph";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
 const projectStore = getProjectStore();
@@ -235,6 +236,21 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     includeBasisDecoder: configUsesTextureCompression(configText),
   });
   files["config.json"] = configText;
+  // 场景图注入：读取当前场景对应的图文件（graph/<scene>.graph），存在则注入产物 +
+  // config 标记（player 检测到即装配行为解释器；与图窗口预览同一链路）
+  const sceneRel = projectStore.sceneRel || "assets/Main.scene";
+  try {
+    const graphText = await api.readText(root, graphSidecarRel(sceneRel));
+    if (graphText.trim()) {
+      files["script-graph.json"] = graphText;
+      let cfg: Record<string, unknown> = {};
+      try { cfg = JSON.parse(files["config.json"]) as Record<string, unknown>; } catch { cfg = {}; }
+      cfg.scriptGraph = "./script-graph.json";
+      files["config.json"] = JSON.stringify(cfg, null, 2);
+    }
+  } catch {
+    /* 无图文件按无图预览处理 */
+  }
   // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
   try {
     await ensureEntryScript(root);
