@@ -19,6 +19,13 @@ interface ClipEntry {
 interface OptimizeOptions {
   instancing?: boolean;
   batching?: boolean;
+  /**
+   * 排除节点 id（合并/实例化会把原网格置 visible=false，渲染的是副本）：
+   * 脚本图引用到的实体必须保持原对象可见且未被烘焙——图在运行期移动的是
+   * 树中的原对象，被批处理吞掉后位姿变化没有任何视觉表现。
+   * player 经 graphReferencedEntityIds(graphDoc, nodes) 预计算传入。
+   */
+  excludeNodeIds?: Iterable<string>;
 }
 
 /** 场景批处理优化入口 */
@@ -36,9 +43,11 @@ export function optimizeScene(
   const animatedNodeIds = new Set<string>();
   for (const c of clips) if (c.nodeId) animatedNodeIds.add(c.nodeId);
 
+  const excludeNodeIds = options?.excludeNodeIds ? new Set(options.excludeNodeIds) : undefined;
+
   const staticMeshes: THREE.Mesh[] = [];
   for (const { json, obj } of meshes) {
-    if (!isStaticMesh(json, obj, animatedNodeIds)) continue;
+    if (!isStaticMesh(json, obj, animatedNodeIds, excludeNodeIds)) continue;
     staticMeshes.push(obj as THREE.Mesh);
   }
   if (staticMeshes.length < 2) return;
@@ -63,11 +72,18 @@ export function optimizeScene(
 }
 
 /** 判断是否为可批处理的静态网格 */
-function isStaticMesh(json: any, obj: THREE.Object3D, animatedNodeIds: Set<string>): boolean {
+function isStaticMesh(
+  json: any,
+  obj: THREE.Object3D,
+  animatedNodeIds: Set<string>,
+  excludeNodeIds?: Set<string>,
+): boolean {
   if (json.source !== "primitive") return false;
   if (!(obj as any).isMesh) return false;
   const nodeId = obj.userData.nodeId;
   if (nodeId && animatedNodeIds.has(nodeId)) return false;
+  // 场景图引用实体：运行期位姿由脚本图驱动，不可烘焙（烘焙=原对象隐藏）
+  if (nodeId && excludeNodeIds?.has(nodeId)) return false;
   if (obj.children.length > 0) return false;
   const comps = Array.isArray(json.components) ? json.components : [];
   for (const c of comps) {

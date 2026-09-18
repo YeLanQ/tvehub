@@ -8,9 +8,10 @@ function optimizeScene(scene, meshes, clips, options) {
   };
   const animatedNodeIds = /* @__PURE__ */ new Set();
   for (const c of clips) if (c.nodeId) animatedNodeIds.add(c.nodeId);
+  const excludeNodeIds = (options == null ? void 0 : options.excludeNodeIds) ? new Set(options.excludeNodeIds) : void 0;
   const staticMeshes = [];
   for (const { json, obj } of meshes) {
-    if (!isStaticMesh(json, obj, animatedNodeIds)) continue;
+    if (!isStaticMesh(json, obj, animatedNodeIds, excludeNodeIds)) continue;
     staticMeshes.push(obj);
   }
   if (staticMeshes.length < 2) return;
@@ -29,11 +30,12 @@ function optimizeScene(scene, meshes, clips, options) {
     postLog("info", `[批处理] InstancedMesh ${instanced} 组，几何合并 ${merged} 组，优化 ${instanced + merged} 个 DrawCall`);
   }
 }
-function isStaticMesh(json, obj, animatedNodeIds) {
+function isStaticMesh(json, obj, animatedNodeIds, excludeNodeIds) {
   if (json.source !== "primitive") return false;
   if (!obj.isMesh) return false;
   const nodeId = obj.userData.nodeId;
   if (nodeId && animatedNodeIds.has(nodeId)) return false;
+  if (nodeId && (excludeNodeIds == null ? void 0 : excludeNodeIds.has(nodeId))) return false;
   if (obj.children.length > 0) return false;
   const comps = Array.isArray(json.components) ? json.components : [];
   for (const c of comps) {

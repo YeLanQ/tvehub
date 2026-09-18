@@ -43,7 +43,8 @@
     "smoke:script-hooks": "node scripts/smoke-script-hooks.mjs",
     "smoke:input-runtime": "node scripts/smoke-input-runtime.mjs",
     "smoke:runtime-modules": "node scripts/smoke-runtime-modules.mjs",
-    "gen:preview-files": "node scripts/gen-web-preview-files.mjs"
+    "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
+    "smoke:graph-runtime": "node scripts/smoke-graph-runtime.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

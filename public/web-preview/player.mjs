@@ -30,7 +30,7 @@ import { createClipAnimations } from "../engine/runtime/animclip.mjs";
 import { createUI } from "../engine/runtime/ui.mjs";
 import { createLogic } from "../engine/runtime/logic.mjs";
 import { createScripts } from "../engine/core/scripts.mjs";
-import { createGraphBehaviors } from "../engine/runtime/graph-behaviors.mjs";
+import { createGraphBehaviors, graphReferencedEntityIds } from "../engine/runtime/graph-behaviors.mjs";
 import { createNavRuntime } from "../engine/runtime/nav.mjs";
 import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs";
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
@@ -272,11 +272,24 @@ async function main() {
     particleMaterial: particleMaterialFactory,
   });
 
+  // 脚本图文档预载（先于批处理：图引用到的实体必须排除出静态烘焙——
+  // 批处理会把原网格置 visible=false 并渲染合并副本，而图在运行期移动的是
+  // 树中的原对象，被吞掉后位姿变化没有任何视觉表现）
+  let graphDoc = null;
+  if (cfg.scriptGraph) {
+    try {
+      graphDoc = await resourceLoader.loadJSON(String(cfg.scriptGraph));
+    } catch (e) {
+      postLog("error", `脚本图文档装载失败: ${e?.message ?? e}`);
+    }
+  }
+
   // 批处理优化：InstancedMesh + 静态几何合并（减少 DrawCall）
   const perfSettings = sceneData.settings && sceneData.settings.performance;
   optimizeScene(scene, meshes, clips, {
     instancing: perfSettings ? perfSettings.instancing !== false : true,
     batching: perfSettings ? perfSettings.batching !== false : true,
+    excludeNodeIds: graphDoc ? graphReferencedEntityIds(graphDoc, nodes) : undefined,
   });
 
   // 物理 Worker URL：多文件模式下用 import.meta.url 解析 Worker 路径，物理模拟
@@ -689,14 +702,28 @@ async function main() {
   }
   // 脚本图行为（图窗口编辑模式：导出注入 script-graph.json 时启用；
   // 解释原型/匹配/原子操作，与脚本同一运行语义，不修改场景数据）
+  // config.scriptGraphModules：注入式图运行时模块（GraphRuntimeModule 形态）URL
+  // 列表——按序传给 kernel，与内置 core 模块共用同一 handler 表（L1 扩展通道）
   let graphBehaviors = { update() {}, dispose() {} };
-  if (cfg.scriptGraph) {
+  if (graphDoc) {
     try {
-      const [{ createGraphBehaviors: create }, graphDoc] = await Promise.all([
-        import("../engine/runtime/graph-behaviors.mjs"),
-        resourceLoader.loadJSON(String(cfg.scriptGraph)),
-      ]);
-      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav });
+      const { createGraphBehaviors: create } = await import("../engine/runtime/graph-behaviors.mjs");
+      const extModules = [];
+      if (Array.isArray(cfg.scriptGraphModules)) {
+        const mods = await Promise.all(
+          cfg.scriptGraphModules.map(async (u) => {
+            try {
+              const m = await import(String(u));
+              return m && (m.default ?? m);
+            } catch (err) {
+              postLog("error", `脚本图模块装载失败 ${u}: ${err?.message ?? err}`);
+              return null;
+            }
+          }),
+        );
+        for (const m of mods) if (m && typeof m === "object" && typeof m.id === "string") extModules.push(m);
+      }
+      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav }, extModules);
     } catch (e) {
       postLog("error", `脚本图行为启动失败: ${e?.message ?? e}`);
     }
