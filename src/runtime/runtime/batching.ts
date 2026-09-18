@@ -40,6 +40,12 @@ export function optimizeScene(
     batching: options?.batching !== false,
   };
 
+  // 烘焙前先刷新整棵树的世界矩阵：副本按 matrixWorld 烘到场景根，而 player 在
+  // 批处理时尚未推进过矩阵（首帧渲染/configureShadows 都在其后），单节点
+  // updateMatrixWorld 只会拿父链上还是恒等的 matrixWorld 相乘，祖先变换全丢——
+  // 父节点带位移的网格会被烘到错误位置（原网格已隐藏 → 视觉上整组消失）。
+  scene.updateMatrixWorld(true);
+
   const animatedNodeIds = new Set<string>();
   for (const c of clips) if (c.nodeId) animatedNodeIds.add(c.nodeId);
 

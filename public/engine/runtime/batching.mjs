@@ -6,6 +6,7 @@ function optimizeScene(scene, meshes, clips, options) {
     instancing: (options == null ? void 0 : options.instancing) !== false,
     batching: (options == null ? void 0 : options.batching) !== false
   };
+  scene.updateMatrixWorld(true);
   const animatedNodeIds = /* @__PURE__ */ new Set();
   for (const c of clips) if (c.nodeId) animatedNodeIds.add(c.nodeId);
   const excludeNodeIds = (options == null ? void 0 : options.excludeNodeIds) ? new Set(options.excludeNodeIds) : void 0;
