@@ -184,7 +184,8 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
 }
 
 /// 递归重写 JSON 里 meshNode 的 material/model、skyboxNode 的 cubeMap、组件 animationClip 的 clip、
-/// 音源的 audio.source、粒子系统的 particles.texture、UI Widget（图片/按钮）的 image 资产引用
+/// 音源的 audio.source、粒子系统的 particles.texture、UI Widget（图片/按钮）的 image、
+/// 逻辑运行器（fsmRunnerNode/btRunnerNode）settings.asset 的 .fsm/.bt 资产引用
 fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, String>) {
     match v {
         serde_json::Value::Array(items) => {
@@ -236,6 +237,16 @@ fn rewrite_scene_refs(v: &mut serde_json::Value, renames: &HashMap<String, Strin
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                } else if k == "settings" {
+                    // 逻辑运行器节点（fsmRunnerNode/btRunnerNode）：settings.asset 为
+                    // .fsm/.bt 逻辑资产引用（其余设置非路径；未改名值查表自然不命中）
+                    if let Some(asset) = val.get_mut("asset") {
+                        if asset.is_string() {
+                            if let Some(new) = renames.get(asset.as_str().unwrap_or("")) {
+                                *asset = serde_json::Value::String(new.clone());
                             }
                         }
                     }
@@ -1445,6 +1456,10 @@ mod tests {
         fs::write(root.join("assets/models/rock.obj"), "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
         // 粒子系统节点引用的贴图（不经材质，直接在 particles.texture 上）
         fs::write(root.join("assets/textures/spark.png"), [5u8; 6]).unwrap();
+        // 逻辑运行器资产（.fsm/.bt 文本）：settings.asset 引用随发布重写
+        fs::create_dir_all(root.join("assets/logic")).unwrap();
+        fs::write(root.join("assets/logic/Patrol.fsm"), r#"{"states":[{"id":"s1","name":"巡逻"}]}"#).unwrap();
+        fs::write(root.join("assets/logic/Tree.bt"), r#"{"tree":{"type":"sequence"}}"#).unwrap();
 
         let scene = r#"{
   "type": "scene",
@@ -1455,7 +1470,9 @@ mod tests {
       { "type": "meshNode", "source": "model", "model": "assets/models/tree.gltf", "material": "assets/materials/M.mat" },
       { "type": "meshNode", "source": "model", "model": "assets/models/cube.glb" },
       { "type": "meshNode", "source": "model", "model": "assets/models/rock.obj" },
-      { "type": "particleSystemNode", "particles": { "emissionRate": 20, "texture": "assets/textures/spark.png" } }
+      { "type": "particleSystemNode", "particles": { "emissionRate": 20, "texture": "assets/textures/spark.png" } },
+      { "type": "fsmRunnerNode", "settings": { "asset": "assets/logic/Patrol.fsm", "autoStart": true } },
+      { "type": "btRunnerNode", "settings": { "asset": "assets/logic/Tree.bt", "autoStart": false } }
     ]
   }
 }"#;
@@ -1502,6 +1519,8 @@ mod tests {
         assert!(scene_text.contains('\n'), "未发布保留原格式");
         assert!(out.join("assets/textures/spark.png").is_file(), "粒子贴图随导出拷贝");
         assert!(scene_text.contains("assets/textures/spark.png"), "未发布粒子贴图引用保持原名");
+        assert!(out.join("assets/logic/Patrol.fsm").is_file(), "逻辑资产随导出拷贝");
+        assert!(scene_text.contains("assets/logic/Patrol.fsm"), "未发布逻辑资产引用保持原名");
 
         // 发布：uuid 文件名 + 引用重写 + JSON 紧凑
         let result = run(true);
@@ -1524,6 +1543,16 @@ mod tests {
         assert!(out.join(format!("assets/textures/{spark_uid}.png")).is_file(), "粒子贴图重命名为哈希 uid");
         assert!(scene_text.contains(&format!("assets/textures/{spark_uid}.png")), "particles.texture 引用已重写");
         assert!(!scene_text.contains("spark.png"), "场景内不残留粒子贴图原名");
+
+        // 逻辑资产（.fsm/.bt）：文件随发布打包并重命名，settings.asset 引用同步重写
+        // （缺重写时运行时按旧路径取不到 → 运行器空转，表现为状态机/行为树"被过滤"）
+        let fsm_uid = fallback_uid("assets/logic/Patrol.fsm");
+        let bt_uid = fallback_uid("assets/logic/Tree.bt");
+        assert!(out.join(format!("assets/logic/{fsm_uid}.fsm")).is_file(), "状态机资产随发布打包（uid 名）");
+        assert!(out.join(format!("assets/logic/{bt_uid}.bt")).is_file(), "行为树资产随发布打包（uid 名）");
+        assert!(scene_text.contains(&format!("assets/logic/{fsm_uid}.fsm")), "状态机 settings.asset 引用已重写");
+        assert!(scene_text.contains(&format!("assets/logic/{bt_uid}.bt")), "行为树 settings.asset 引用已重写");
+        assert!(!scene_text.contains("assets/logic/Patrol.fsm") && !scene_text.contains("assets/logic/Tree.bt"), "场景内不残留逻辑资产原名");
 
         // 脚本压缩：player/engine 脚本去注释压缩；*.min.* 跳过
         let player_min = fs::read_to_string(out.join("player.mjs")).unwrap();
