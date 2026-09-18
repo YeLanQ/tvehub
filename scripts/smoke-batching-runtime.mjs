@@ -7,7 +7,10 @@
 //   ② 同材质不同几何（合并路径）：合并几何的世界包围盒含父链变换；
 //   ③ 平铺场景（无父变换）实例矩阵不变；
 //   ④ 不同材质各自成组 <2 → 不批处理，原网格保持可见；
-//   ⑤ excludeNodeIds（脚本图引用实体）不烘焙、保持可见。
+//   ⑤ excludeNodeIds（脚本图引用实体）不烘焙；
+//   ⑥ 父链可动（祖先被图引用/带脚本/刚体组件/导航代理/动画绑定）→ 子网格
+//     不烘焙，父级被驱动移动后子网格同步跟随（回归：只查网格自身可动性，
+//     可动父节点下的同材质子网格被烘焙后留在原地不跟随）。
 // 运行：npm run smoke:batching-runtime
 // ---------------------------------------------------------------------------
 import { pathToFileURL } from "node:url";
@@ -80,7 +83,7 @@ console.log("[1] 实例化路径：变换过的父节点下同材质网格按世
     models: new Map(),
   });
   const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
-  optimizeScene(scene, meshes, [], {});
+  optimizeScene(scene, meshes, [], { nodes: built.nodes });
 
   const a = entryOf(built, "a").obj;
   const b = entryOf(built, "b").obj;
@@ -125,7 +128,7 @@ console.log("[2] 合并路径：同材质不同几何的世界包围盒含父链
     models: new Map(),
   });
   const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
-  optimizeScene(scene, meshes, [], {});
+  optimizeScene(scene, meshes, [], { nodes: built.nodes });
 
   const merged = scene.children.find((c) => c.name === "__batchedMerge");
   ok(!!merged, "同材质不同几何 → mergeGeometries 合并");
@@ -156,7 +159,7 @@ console.log("[3] 平铺场景（无父变换）实例矩阵不变");
     models: new Map(),
   });
   const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
-  optimizeScene(scene, meshes, [], {});
+  optimizeScene(scene, meshes, [], { nodes: built.nodes });
   const inst = scene.children.find((c) => c.name === "__batchedInstances");
   const m = new THREE.Matrix4();
   const ps = [];
@@ -186,7 +189,7 @@ console.log("[4] 不同材质各自成组 <2 → 不批处理");
     models: new Map(),
   });
   const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
-  optimizeScene(scene, meshes, [], {});
+  optimizeScene(scene, meshes, [], { nodes: built.nodes });
   const a = entryOf(built, "a").obj;
   const b = entryOf(built, "b").obj;
   ok(
@@ -208,11 +211,80 @@ console.log("[5] excludeNodeIds（脚本图引用实体）不烘焙");
     models: new Map(),
   });
   const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
-  optimizeScene(scene, meshes, [], { excludeNodeIds: ["a"] });
+  optimizeScene(scene, meshes, [], { excludeNodeIds: ["a"], nodes: built.nodes });
   const a = entryOf(built, "a").obj;
   ok(a.visible, "被引用实体不烘焙、保持可见");
   const baked = scene.children.find((c) => c.name === "__batchedInstances");
   ok(!!baked && baked.count === 2, "其余同材质网格照常实例化");
+}
+
+console.log("[6] 图引用父节点 → 子网格不烘焙，父级移动时同步跟随");
+{
+  const scene = new THREE.Scene();
+  const sceneJson = {
+    type: "node",
+    id: "root",
+    children: [
+      {
+        type: "node",
+        id: "carrier",
+        children: [meshJson("a"), meshJson("b"), meshJson("c")],
+      },
+    ],
+  };
+  const built = buildSceneTree(sceneJson, scene, {
+    materialParams: new Map([["mat-a", matOf(0xff0000)]]),
+    models: new Map(),
+  });
+  const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
+  optimizeScene(scene, meshes, [], {
+    excludeNodeIds: ["carrier"], // 父节点被脚本图引用（会被图驱动移动）
+    nodes: built.nodes,
+  });
+  const a = entryOf(built, "a").obj;
+  const b = entryOf(built, "b").obj;
+  ok(
+    a.visible && b.visible && !scene.children.some((c) => c.name.startsWith("__batched")),
+    "可动父节点下的子网格全部不烘焙、保持可见",
+  );
+  // 回归症状本体：父级被驱动移动后，子网格必须跟着走（留在原地 = 被烘焙了）
+  const carrier = entryOf(built, "carrier").obj;
+  carrier.position.set(50, 10, -20);
+  carrier.updateMatrixWorld(true);
+  const wp = worldPosOf(a);
+  ok(
+    wp.x === 50 && wp.y === 10 && wp.z === -20,
+    `父级移动后子网格世界位置跟随（got ${wp.toArray().map((v) => v.toFixed(0))}）`,
+  );
+}
+
+console.log("[7] 祖先带 script/rigidBody 组件或导航代理/动画绑定 → 子网格不烘焙");
+{
+  const mk = (extra) => ({
+    type: "node",
+    id: "root",
+    children: [{ type: "node", id: "carrier", ...extra, children: [meshJson("a"), meshJson("b")] }],
+  });
+  const cases = [
+    ["script 组件", mk({ components: [{ id: "s1", type: "script", enabled: true }] }), {}],
+    ["rigidBody 组件", mk({ components: [{ id: "r1", type: "rigidBody", enabled: true }] }), {}],
+    ["navAgentNode", mk({ type: "navAgentNode" }), {}],
+    ["动画绑定", mk({}), { clips: [{ nodeId: "carrier" }] }],
+  ];
+  for (const [label, sceneJson, extraOpts] of cases) {
+    const scene = new THREE.Scene();
+    const built = buildSceneTree(sceneJson, scene, {
+      materialParams: new Map([["mat-a", matOf(0xff0000)]]),
+      models: new Map(),
+    });
+    const meshes = built.nodes.filter((n) => n.json.type === "meshNode");
+    optimizeScene(scene, meshes, extraOpts.clips ?? [], { nodes: built.nodes });
+    const a = entryOf(built, "a").obj;
+    ok(
+      a.visible && !scene.children.some((c) => c.name.startsWith("__batched")),
+      `${label}祖先 → 子网格不烘焙`,
+    );
+  }
 }
 
 console.log(failed === 0 ? `\n全部 ${passed} 项通过` : `\n${failed} 项失败`);

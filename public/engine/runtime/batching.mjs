@@ -10,9 +10,32 @@ function optimizeScene(scene, meshes, clips, options) {
   const animatedNodeIds = /* @__PURE__ */ new Set();
   for (const c of clips) if (c.nodeId) animatedNodeIds.add(c.nodeId);
   const excludeNodeIds = (options == null ? void 0 : options.excludeNodeIds) ? new Set(options.excludeNodeIds) : void 0;
+  const movingIds = new Set(excludeNodeIds ?? []);
+  for (const c of clips) if (c.nodeId) movingIds.add(c.nodeId);
+  const jsonById = /* @__PURE__ */ new Map();
+  for (const { json } of (options == null ? void 0 : options.nodes) ?? []) {
+    if (json && typeof json.id === "string") jsonById.set(json.id, json);
+  }
+  const hasDynamicAncestor = (obj) => {
+    for (let p = obj.parent; p && p !== scene; p = p.parent) {
+      const id = typeof p.userData.nodeId === "string" ? p.userData.nodeId : "";
+      if (!id) continue;
+      if (movingIds.has(id)) return true;
+      const pj = jsonById.get(id);
+      if (!pj) continue;
+      if (pj.type === "navAgentNode") return true;
+      const comps = Array.isArray(pj.components) ? pj.components : [];
+      for (const c of comps) {
+        if (!c || c.enabled === false) continue;
+        if (c.type === "script" || c.type === "rigidBody") return true;
+      }
+    }
+    return false;
+  };
   const staticMeshes = [];
   for (const { json, obj } of meshes) {
     if (!isStaticMesh(json, obj, animatedNodeIds, excludeNodeIds)) continue;
+    if (hasDynamicAncestor(obj)) continue;
     staticMeshes.push(obj);
   }
   if (staticMeshes.length < 2) return;

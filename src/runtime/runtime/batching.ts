@@ -1,7 +1,10 @@
 // 场景批处理优化：InstancedMesh + 静态几何合并，减少 DrawCall。
 // - InstancedMesh：相同 (geometry, material, layer) 的静态网格 → 1 个 InstancedMesh
 // - 静态合并：同材质不同几何的静态网格 → mergeGeometries 合并为单个 Mesh
-// - 仅处理 source=primitive 且无动画/脚本/物理/描边/透明的静态网格
+// - 仅处理 source=primitive 且无动画/脚本/物理/描边/透明的静态网格；
+//   父链上任一「运行期可动」的节点（图/动画引用、脚本/刚体组件、导航代理）
+//   也会连带取消其子树的批处理资格——子网格运行期会跟随父级移动，烘焙副本
+//   则永远停留在烘焙时的世界位姿
 // - 原始网格 visible=false 保留在树中（脚本仍可寻址），优化网格挂场景根
 
 import * as THREE from "../core/three.module.min.js";
@@ -26,6 +29,12 @@ interface OptimizeOptions {
    * player 经 graphReferencedEntityIds(graphDoc, nodes) 预计算传入。
    */
   excludeNodeIds?: Iterable<string>;
+  /**
+   * 全量场景节点表（json + obj）：识别「父链可动」用——祖先节点带
+   * script/rigidBody 组件或为导航代理时，其子网格会跟随父级移动，
+   * 必须连同子树一起取消烘焙资格（只查网格自身的组件会漏掉这一层）。
+   */
+  nodes?: MeshEntry[];
 }
 
 /** 场景批处理优化入口 */
@@ -51,9 +60,35 @@ export function optimizeScene(
 
   const excludeNodeIds = options?.excludeNodeIds ? new Set(options.excludeNodeIds) : undefined;
 
+  // 父链可动检测的输入：图/动画引用 id 集合 + 全量节点表（查祖先组件用）
+  const movingIds = new Set<string>(excludeNodeIds ?? []);
+  for (const c of clips) if (c.nodeId) movingIds.add(c.nodeId);
+  const jsonById = new Map<string, any>();
+  for (const { json } of options?.nodes ?? []) {
+    if (json && typeof json.id === "string") jsonById.set(json.id, json);
+  }
+  /** 任一祖先「运行期可动」（被图/动画引用、带脚本/刚体组件、导航代理）→ 子树不可烘焙 */
+  const hasDynamicAncestor = (obj: THREE.Object3D): boolean => {
+    for (let p = obj.parent; p && p !== scene; p = p.parent) {
+      const id = typeof p.userData.nodeId === "string" ? p.userData.nodeId : "";
+      if (!id) continue;
+      if (movingIds.has(id)) return true;
+      const pj = jsonById.get(id);
+      if (!pj) continue;
+      if (pj.type === "navAgentNode") return true;
+      const comps = Array.isArray(pj.components) ? pj.components : [];
+      for (const c of comps) {
+        if (!c || c.enabled === false) continue;
+        if (c.type === "script" || c.type === "rigidBody") return true;
+      }
+    }
+    return false;
+  };
+
   const staticMeshes: THREE.Mesh[] = [];
   for (const { json, obj } of meshes) {
     if (!isStaticMesh(json, obj, animatedNodeIds, excludeNodeIds)) continue;
+    if (hasDynamicAncestor(obj)) continue;
     staticMeshes.push(obj as THREE.Mesh);
   }
   if (staticMeshes.length < 2) return;

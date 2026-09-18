@@ -284,12 +284,15 @@ async function main() {
     }
   }
 
-  // 批处理优化：InstancedMesh + 静态几何合并（减少 DrawCall）
+  // 批处理优化：InstancedMesh + 静态几何合并（减少 DrawCall）。
+  // nodes 全量传入：父链可动（祖先被图/动画引用、带脚本/刚体组件、导航代理）
+  // 时子网格会跟随父级移动，批处理需连同子树一起取消烘焙资格
   const perfSettings = sceneData.settings && sceneData.settings.performance;
   optimizeScene(scene, meshes, clips, {
     instancing: perfSettings ? perfSettings.instancing !== false : true,
     batching: perfSettings ? perfSettings.batching !== false : true,
     excludeNodeIds: graphDoc ? graphReferencedEntityIds(graphDoc, nodes) : undefined,
+    nodes,
   });
 
   // 物理 Worker URL：多文件模式下用 import.meta.url 解析 Worker 路径，物理模拟
