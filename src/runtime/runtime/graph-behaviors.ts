@@ -68,6 +68,8 @@ export interface GraphBehaviorsCtx {
     setParam(entity: { id: string }, key: string, value: number): void;
   };
   graph: ScriptGraphDoc;
+  /** 导航运行时（可选）：追击类驱动器借此暂停/恢复目标的导航巡回 */
+  navApi?: { setAgentPaused(id: string, paused: boolean): void };
 }
 
 export interface GraphBehaviorsHandle {
@@ -110,7 +112,7 @@ function setLightPath(obj: THREE.Object3D, path: string, value: number): boolean
 const DEG = Math.PI / 180;
 
 export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHandle {
-  const { scene, dom, camera, logicApi, graph } = ctx;
+  const { scene, dom, camera, logicApi, graph, navApi } = ctx;
 
   // ----- 收集场景节点对象（traverse 含子孙，去重） -----
   const byId = new Map<string, NodeObj>();
@@ -813,7 +815,10 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
   }
 
   /** 逻辑容器的逐帧驱动：条件边轮询（比较节点上升沿 → 事件切状态）+ 激活状态的巡逻/追击步进 */
+  let navPausedTargets = new Set<string>();
   function driveFsmContainers(dt: number): void {
+    // 追击步进中涉及的实体（本帧暂停其导航巡回，追击结束自动恢复）
+    const chaseTargetsNow = new Set<string>();
     for (const c of graph.nodes) {
       if (c.type !== "fsm.container") continue;
       // 条件边轮询：源为 flow.compare 的 event 入边，条件上升沿触发状态切换
@@ -829,7 +834,7 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
           enterFsmContainer(c, new Set(), strP(src, "event", ""), "event");
         }
       }
-      // 激活状态的巡逻/追击逐帧步进
+      // 激活状态的巡逻/追击步进
       const cur = fsmCurrent.get(c.id);
       if (cur === undefined) continue;
       for (const child of containerChildren(c.id)) {
@@ -839,9 +844,20 @@ export function createGraphBehaviors(ctx: GraphBehaviorsCtx): GraphBehaviorsHand
         const targets = resolveTargets(child.id);
         if (!targets.length) continue;
         if (t === "op.patrol") stepPatrol(child, targets, dt);
-        else stepChase(child, targets, dt);
+        else {
+          stepChase(child, targets, dt);
+          for (const tt of targets) chaseTargetsNow.add(tt.id);
+        }
       }
     }
+    // 追击目标 → 暂停导航巡回；脱离追击 → 恢复
+    for (const id of chaseTargetsNow) {
+      if (!navPausedTargets.has(id)) navApi?.setAgentPaused(id, true);
+    }
+    for (const id of navPausedTargets) {
+      if (!chaseTargetsNow.has(id)) navApi?.setAgentPaused(id, false);
+    }
+    navPausedTargets = chaseTargetsNow;
   }
   const fsmCondState = new Map<string, boolean>();
 

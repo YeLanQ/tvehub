@@ -691,6 +691,19 @@ async function main() {
   } catch (e) {
     postLog("error", `脚本宿主启动失败: ${e?.message ?? e}`);
   }
+  // 导航运行时（场景含 navAreaNode / navAgentNode 时启用）：烘焙可行走区域 +
+  // 代理沿路径巡回移动（与编辑器视口同一套 framework/navigation 实现）。
+  // 先于图行为创建：op.chase 追击时经 navApi 暂停目标的导航巡回。
+  let nav = { update() {}, dispose() {}, setAgentPaused() {} };
+  const hasNavNodes = nodes.some(({ json }) => json.type === "navAreaNode" || json.type === "navAgentNode");
+  if (hasNavNodes) {
+    try {
+      const { createNavRuntime } = await import("../engine/runtime/nav.mjs");
+      nav = createNavRuntime({ scene, nodes });
+    } catch (e) {
+      postLog("error", `导航运行时启动失败: ${e?.message ?? e}`);
+    }
+  }
   // 脚本图行为（图窗口编辑模式：导出注入 script-graph.json 时启用；
   // 解释原型/匹配/原子操作，与脚本同一运行语义，不修改场景数据）
   let graphBehaviors = { update() {}, dispose() {} };
@@ -700,21 +713,9 @@ async function main() {
         import("../engine/runtime/graph-behaviors.mjs"),
         resourceLoader.loadJSON(String(cfg.scriptGraph)),
       ]);
-      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc });
+      graphBehaviors = create({ scene, dom: renderer.domElement, camera: cam, logicApi, graph: graphDoc, navApi: nav });
     } catch (e) {
       postLog("error", `脚本图行为启动失败: ${e?.message ?? e}`);
-    }
-  }
-  // 导航运行时（场景含 navAreaNode / navAgentNode 时启用）：烘焙可行走区域 +
-  // 代理沿路径巡回移动（与编辑器视口同一套 framework/navigation 实现）
-  let nav = { update() {}, dispose() {} };
-  const hasNavNodes = nodes.some(({ json }) => json.type === "navAreaNode" || json.type === "navAgentNode");
-  if (hasNavNodes) {
-    try {
-      const { createNavRuntime } = await import("../engine/runtime/nav.mjs");
-      nav = createNavRuntime({ scene, nodes });
-    } catch (e) {
-      postLog("error", `导航运行时启动失败: ${e?.message ?? e}`);
     }
   }
   // 页面卸载/预览重载：脚本 onDisable → onDestroy（清理定时器/事件等外部资源）

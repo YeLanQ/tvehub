@@ -224,12 +224,26 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
     }
   }
 
+  /** 被图追击驱动器暂停的代理（暂停 = 清路径停移动；恢复 = 重新寻路巡回） */
+  const pausedAgents = new Set<string>();
+
   return {
     /** 每帧推进：刷新世界矩阵后沿路径移动代理 */
     update(dt: number) {
       if (dt <= 0) return;
       ctx.scene.updateMatrixWorld(true);
       nav.update(dt);
+    },
+    /** 暂停/恢复代理巡回（图追击驱动器用；仅在状态变化时触达 NavSystem） */
+    setAgentPaused(nodeId: string, paused: boolean): void {
+      const was = pausedAgents.has(nodeId);
+      if (paused && !was) {
+        pausedAgents.add(nodeId);
+        nav.clearPath(nodeId);
+      } else if (!paused && was) {
+        pausedAgents.delete(nodeId);
+        nav.startAgent(nodeId);
+      }
     },
     dispose() {
       nav.unbindAll();

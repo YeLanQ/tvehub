@@ -66,7 +66,7 @@ function setLightPath(obj, path, value) {
 const DEG = Math.PI / 180;
 function createGraphBehaviors(ctx) {
   var _a;
-  const { scene, dom, camera, logicApi, graph } = ctx;
+  const { scene, dom, camera, logicApi, graph, navApi } = ctx;
   const byId = /* @__PURE__ */ new Map();
   const all = [];
   scene.traverse((o) => {
@@ -670,7 +670,9 @@ function createGraphBehaviors(ctx) {
       t.obj.rotation.y = agent.obj.rotation.y;
     }
   }
+  let navPausedTargets = /* @__PURE__ */ new Set();
   function driveFsmContainers(dt) {
+    const chaseTargetsNow = /* @__PURE__ */ new Set();
     for (const c of graph.nodes) {
       if (c.type !== "fsm.container") continue;
       for (const e of graph.edges) {
@@ -694,9 +696,19 @@ function createGraphBehaviors(ctx) {
         const targets = resolveTargets(child.id);
         if (!targets.length) continue;
         if (t === "op.patrol") stepPatrol(child, targets, dt);
-        else stepChase(child, targets, dt);
+        else {
+          stepChase(child, targets, dt);
+          for (const tt of targets) chaseTargetsNow.add(tt.id);
+        }
       }
     }
+    for (const id of chaseTargetsNow) {
+      if (!navPausedTargets.has(id)) navApi == null ? void 0 : navApi.setAgentPaused(id, true);
+    }
+    for (const id of navPausedTargets) {
+      if (!chaseTargetsNow.has(id)) navApi == null ? void 0 : navApi.setAgentPaused(id, false);
+    }
+    navPausedTargets = chaseTargetsNow;
   }
   const fsmCondState = /* @__PURE__ */ new Map();
   return {

@@ -1151,12 +1151,24 @@ function createNavRuntime(ctx) {
       }
     }
   }
+  const pausedAgents = /* @__PURE__ */ new Set();
   return {
     /** 每帧推进：刷新世界矩阵后沿路径移动代理 */
     update(dt) {
       if (dt <= 0) return;
       ctx.scene.updateMatrixWorld(true);
       nav.update(dt);
+    },
+    /** 暂停/恢复代理巡回（图追击驱动器用；仅在状态变化时触达 NavSystem） */
+    setAgentPaused(nodeId, paused) {
+      const was = pausedAgents.has(nodeId);
+      if (paused && !was) {
+        pausedAgents.add(nodeId);
+        nav.clearPath(nodeId);
+      } else if (!paused && was) {
+        pausedAgents.delete(nodeId);
+        nav.startAgent(nodeId);
+      }
     },
     dispose() {
       nav.unbindAll();
