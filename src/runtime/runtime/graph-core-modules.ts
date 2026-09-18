@@ -1031,9 +1031,18 @@ export function createCoreContainersModule(): GraphRuntimeModule {
     k.log(`bt-enter:${node.id}`, `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`, 3);
   }
 
-  /** 进入 BT 容器：按模式执行归属节点链，完成级联 next 下游；激活后帧钩子接管持续行为 */
+  /** 进入 BT 容器：按模式执行归属节点链，完成级联 next 下游；激活后帧钩子接管持续行为。
+   *  「退出」口（dstPort exit）：停摆——帧驱动停止、成员驱动器冻结在当前位姿，再「进入」恢复 */
   const bt: ContainerBehavior = {
-    enter(k, node, _ec) {
+    enter(k, node, ec) {
+      if (ec.viaDstPort === "exit") {
+        const was = btActive.delete(node.id);
+        btTimer.delete(node.id);
+        if (was) {
+          k.log(`bt-exit:${node.id}`, `[graph] 行为树容器 (${node.id}) 退出：帧驱动停摆（成员驱动器冻结，再「进入」恢复）`, 3);
+        }
+        return;
+      }
       btActive.add(node.id);
       btTimer.set(node.id, 0);
       btRun(k, node);

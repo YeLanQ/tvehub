@@ -218,11 +218,12 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   // exec 链邻接：node.id → portId → 下游 exec 目标（含目标入端口类型）
   // 支持多 exec 出端口（next/true/false/loop/completed）；容器的 event 入端口
   // （dstPort === "event"）也纳入邻接：进入容器时以「源端口名 / 源 params.event」
-  // 作为事件名做状态切换；中断开关的 on/off 控制口同理纳入（级达即翻转锁存）
+  // 作为事件名做状态切换；中断开关的 on/off 控制口与行为树容器的 exit 退出口
+  // 同理纳入（级达即翻转/停摆）
   // ---------------------------------------------------------------------------
   const execOut = new Map<string, Map<string, { id: string; dstPort: string }[]>>();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off") continue;
+    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off" && e.dstPort !== "exit") continue;
     const portMap = execOut.get(e.srcNode) ?? new Map<string, { id: string; dstPort: string }[]>();
     const list = portMap.get(e.srcPort) ?? [];
     list.push({ id: e.dstNode, dstPort: e.dstPort });

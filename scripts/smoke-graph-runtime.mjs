@@ -1341,5 +1341,81 @@ console.log("[18] 嵌套容器随父级调度：状态机内的行为树容器�
   handle.dispose();
 }
 
+console.log("[18b] 行为树容器「退出」口：exec 链显式停摆（不依赖嵌套归属）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "host-4", type: "meshNode", name: "Host4", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "mover-7", type: "meshNode", name: "Mover7", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 }, { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }, { id: "core-containers", version: 1 },
+    ],
+    nodes: [
+      { id: "eb", type: "event.onBegin" },
+      { id: "et", type: "event.onTick" },
+      // 独立行为树容器（不在任何状态机里）：On Begin 进入后持续旋转
+      { id: "bt4", type: "bt.container", x: 0, y: 0, params: { mode: "sequence", interval: 0 } },
+      { id: "pH4", type: "entity.proto", entityId: "host-4" },
+      { id: "sp4", type: "op.spin", containerId: "bt4", params: { speedX: 0, speedY: 0, speedZ: 90 } },
+      // 退出线：mover-7 越过 5（t≈2.5s）→ 比较 → 分支真 → bt4「退出」
+      { id: "pM7", type: "entity.proto", entityId: "mover-7" },
+      { id: "prop7", type: "entity.prop", params: { property: "position.x" } },
+      { id: "cmp7", type: "flow.compare", params: { operator: ">", b: 5 } },
+      { id: "br7", type: "flow.branch", params: {} },
+      { id: "pt7", type: "op.patrol", opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      { id: "e0", srcNode: "eb", srcPort: "next", dstNode: "bt4", dstPort: "exec" },
+      { id: "h1", srcNode: "pH4", srcPort: "out", dstNode: "sp4", dstPort: "in" },
+      { id: "w1", srcNode: "pM7", srcPort: "out", dstNode: "prop7", dstPort: "target" },
+      { id: "w2", srcNode: "pM7", srcPort: "out", dstNode: "pt7", dstPort: "in" },
+      { id: "d1", srcNode: "prop7", srcPort: "value", dstNode: "cmp7", dstPort: "a" },
+      { id: "t1", srcNode: "et", srcPort: "next", dstNode: "br7", dstPort: "exec" },
+      { id: "t2", srcNode: "cmp7", srcPort: "result", dstNode: "br7", dstPort: "condition" },
+      { id: "t3", srcNode: "br7", srcPort: "true", dstNode: "bt4", dstPort: "exit" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const host = scene.getObjectByProperty("name", "Host4");
+
+  advance(handle, 2); // 仍在旋转（退出条件未到）
+  const zBefore = host.rotation.z;
+  ok(zBefore > 0.5, `退出前持续旋转（z=${zBefore.toFixed(2)}rad）`);
+  advance(handle, 1); // t≈3s：cmp7 上升沿 → 分支真 → bt4 退出
+  const zAtExit = host.rotation.z;
+  ok(zAtExit > zBefore, `条件到达帧已切出（z=${zAtExit.toFixed(2)}rad）`);
+  advance(handle, 2);
+  ok(approx(host.rotation.z, zAtExit, 1e-6), `退出后停摆、旋转冻结（2s 位移 ${Math.abs(host.rotation.z - zAtExit).toExponential(1)}rad）`);
+  ok(infoLines().some((l) => l.includes("(bt4)") && l.includes("退出") && l.includes("停摆")), "退出有可定位日志");
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

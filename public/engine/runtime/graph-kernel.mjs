@@ -579,10 +579,12 @@ const LOGIC_TYPES = [
     type: "bt.container",
     category: "logic",
     label: "行为树容器",
-    desc: "行为树容器：把携带 .bt 的原型卡连到「作用域」读取树构成（模式取树根类型）；成员卡不参与全局事件驱动，由容器调度——顺序（sequence）：进入时按纵向顺序全部执行；选择（selector）：条件口布尔源与成员按纵向顺序配对，只执行第一个为真条件所配对的成员；并行（parallel）：进入时全部执行，激活期间每帧重跑成员链。「重跑间隔」> 0 时按秒周期性重跑（0 = 仅进入时一次）；进入过一次即激活，激活期间框内帧驱动器（巡逻/追击/旋转等）每帧步进；支持嵌套",
+    desc: "行为树容器：把携带 .bt 的原型卡连到「作用域」读取树构成（模式取树根类型）；成员卡不参与全局事件驱动，由容器调度——顺序（sequence）：进入时按纵向顺序全部执行；选择（selector）：条件口布尔源与成员按纵向顺序配对，只执行第一个为真条件所配对的成员；并行（parallel）：进入时全部执行，激活期间每帧重跑成员链。「重跑间隔」> 0 时按秒周期性重跑（0 = 仅进入时一次）；进入过一次即激活，激活期间框内帧驱动器（巡逻/追击/旋转等）每帧步进；「退出」口触发后停摆（驱动器冻结在当前位姿，再「进入」恢复）；嵌套在状态机里时打「所属状态」随父级自动启停；支持嵌套",
     color: "#4ec9b0",
     inputs: [
       P_EXEC_IN,
+      { id: "exit", label: "退出", direction: "in", dataType: "exec", multi: true },
+      // 停摆：帧驱动停止、成员驱动器冻结（再「进入」恢复）
       { id: "condition", label: "条件", direction: "in", dataType: "boolean", multi: true },
       // selector 模式：与成员纵向配对
       { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true }
@@ -768,7 +770,7 @@ function createGraphKernel(ctx, modules) {
   }
   const execOut = /* @__PURE__ */ new Map();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off") continue;
+    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off" && e.dstPort !== "exit") continue;
     const portMap = execOut.get(e.srcNode) ?? /* @__PURE__ */ new Map();
     const list = portMap.get(e.srcPort) ?? [];
     list.push({ id: e.dstNode, dstPort: e.dstPort });

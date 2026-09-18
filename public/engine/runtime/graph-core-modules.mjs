@@ -887,7 +887,15 @@ function createCoreContainersModule() {
     k.log(`bt-enter:${node.id}`, `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`, 3);
   }
   const bt = {
-    enter(k, node, _ec) {
+    enter(k, node, ec) {
+      if (ec.viaDstPort === "exit") {
+        const was = btActive.delete(node.id);
+        btTimer.delete(node.id);
+        if (was) {
+          k.log(`bt-exit:${node.id}`, `[graph] 行为树容器 (${node.id}) 退出：帧驱动停摆（成员驱动器冻结，再「进入」恢复）`, 3);
+        }
+        return;
+      }
       btActive.add(node.id);
       btTimer.set(node.id, 0);
       btRun(k, node);

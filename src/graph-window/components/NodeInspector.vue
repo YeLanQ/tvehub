@@ -267,7 +267,8 @@ function commitContainerSize(key: "w" | "h", raw: string): void {
 // ----- 容器内子节点的状态归属（所属容器为 FSM 时显示） -----
 
 const childStateInfo = computed<{ states: string[] } | null>(() => {
-  if (!g.value?.containerId || isContainerType(g.value.type)) return null;
+  // 嵌套容器也可打状态归属：容器随父级调度（所属状态非当前 → 帧驱动整体停摆）
+  if (!g.value?.containerId) return null;
   const parent = store.canvas?.serializeDoc()?.nodes.find((n) => n.id === g.value?.containerId);
   if (!parent || parent.type !== "fsm.container") return null;
   const states = (parent.params?.states ?? "")
