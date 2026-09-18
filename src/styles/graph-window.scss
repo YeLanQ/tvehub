@@ -16,7 +16,7 @@
   user-select: none;
 
   .gflex { flex: 1; }
-  .gsep { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+  .gsep { flex: none; width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
 
   // ----- 降级空态（浏览器直开 graph.html） -----
   .gboot {
@@ -82,7 +82,11 @@
       background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
 
+      // 中文可逐字断行：不禁用收缩时按钮 min-content 只有一字宽，
+      // 右侧提示文字一挤就竖排换行——按钮不缩、文本不换行，提示省略号收尾
       button {
+        flex: none;
+        white-space: nowrap;
         padding: 3px 10px;
         font-size: 12px;
 
@@ -93,7 +97,15 @@
         }
       }
 
-      .gcanvas-hint { margin-left: auto; color: var(--text-dim); font-size: 11px; }
+      .gcanvas-hint {
+        margin-left: auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--text-dim);
+        font-size: 11px;
+      }
     }
 
     .gcenter-stage {
