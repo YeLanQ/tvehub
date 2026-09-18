@@ -5,7 +5,7 @@
 // ../engine/runtime（场景回放系统），此处只做装配。
 import * as THREE from "../engine/core/three.module.min.js";
 import { fail, postLog, setLogForwarding } from "../engine/core/log.mjs";
-import { matColor, mixHexColor } from "../engine/core/utils.mjs";
+import { matColor } from "../engine/core/utils.mjs";
 import {
   SKY_DEFAULTS,
   findSkyNode,
@@ -258,21 +258,8 @@ async function main() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(bgColor);
 
-  // 场景环境光（settings.rendering.ambientIntensity/ambientColor）：与背景色同属
-  // 场景渲染设置（场景文档必带，缺省 0.3 白）。无灯光/天空的场景靠它保底照明，
-  // 否则材质全黑叠黑背景，预览/导出画面一片漆黑（编辑器视口有网格/线框参照）。
-  // intensity 缺失或 ≤0 时不注入（旧行为）。
-  const ambientIntensity = Number(renderSettings?.ambientIntensity);
-  if (Number.isFinite(ambientIntensity) && ambientIntensity > 0) {
-    const ambientColor =
-      typeof renderSettings?.ambientColor === "number"
-        ? renderSettings.ambientColor & 0xffffff
-        : 0xffffff;
-    const ambient = new THREE.AmbientLight(ambientColor, ambientIntensity);
-    // 引擎注入的照明覆盖全部渲染层（three 新建灯光默认只算层 0）
-    ambient.layers.enableAll();
-    scene.add(ambient);
-  }
+  // 不注入默认环境光：预览/构建只渲染场景文档里的灯光，无灯光场景由
+  // 用户自行添加灯光或环境光节点（默认光叠加用户光会导致亮度过高）
 
   // 资产预取：材质参数表（.mat）+ 模型（glb/gltf/fbx/obj，已随导出拷贝到同相对路径）
   const [materialParams, models] = await Promise.all([
@@ -380,11 +367,7 @@ async function main() {
               azimuth: sky.sunAzimuth,
               elevation: sky.sunElevation,
             });
-      // 天空作为环境光照参与网格材质（与编辑器注入的半球环境光一致）；
-      // 照明全部层（three 新建灯光默认只算层 0）
-      const env = new THREE.HemisphereLight(mixHexColor(top, horizon, 0.5), ground, 0.55);
-      env.layers.enableAll();
-      scene.add(env);
+      // 不注入默认半球光：天空盒只作背景，不参与照明
     }
   }
   scene.updateMatrixWorld(true);
