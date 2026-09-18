@@ -585,11 +585,21 @@ function checkConnection(conn: Connection): boolean {
 onConnect((params) => {
   if (!params.source || !params.target) return;
   requestSnapshot();
-  // 入端口唯一：替换已有入线（拖到已占用的入引脚 = 重新连接）
+  // 入端口唯一（非 multi 口）：替换已有入线（拖到已占用的入引脚 = 重新连接）；
+  // multi 口（目标/路径点等多入汇聚）追加连线，仅同源同引脚的重复连线按重连处理
   const occupied = edges.value.filter(
     (e) => e.target === params.target && e.targetHandle === params.targetHandle,
   );
-  if (occupied.length) removeEdges(occupied);
+  const dg = findNode(params.target)?.data?.g as GNode | undefined;
+  const dp = dg ? graphPort(dg, params.targetHandle ?? "", "in") : null;
+  if (dp?.multi) {
+    const dup = occupied.filter(
+      (e) => e.source === params.source && e.sourceHandle === params.sourceHandle,
+    );
+    if (dup.length) removeEdges(dup);
+  } else if (occupied.length) {
+    removeEdges(occupied);
+  }
   addEdges([makeEdge(params.source, params.sourceHandle ?? "", params.target, params.targetHandle ?? "", uniqueEdgeId())]);
   store.markGraphDirty();
   // 状态机卡片接入状态机容器：容器自动读取该卡片绑定的 .fsm 资产状态

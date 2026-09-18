@@ -671,7 +671,7 @@ export function isGraphDoc(v: unknown): boolean {
  * - 未知 type 剔除；id 去重补齐；坐标钳制；
  * - proto.entityId / match 模式串收敛；
  * - op 参数按注册表字段钳制；
- * - 连线端口存在/数据类型兼容/自环剔除/入端口唯一（保首条）；
+ * - 连线端口存在/数据类型兼容/自环剔除/入端口唯一（multi 口多入汇聚，同源保首条）；
  * - 注释框尺寸与文本钳制。
  */
 export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
@@ -837,8 +837,15 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
     const dp = graphPort(dst, dstPort, "in");
     if (!sp || !dp || !canConnectDataTypes(sp.dataType, dp.dataType)) continue;
     const key = `${dstNode}\u0000${dstPort}`;
-    if (wired.has(key)) continue;
-    wired.add(key);
+    if (dp.multi) {
+      // multi 口多入汇聚（目标/路径点等）：不同源的多条连线保留，同源同引脚重复保首条
+      const dup = `${key}\u0000${srcNode}\u0000${srcPort}`;
+      if (wired.has(dup)) continue;
+      wired.add(dup);
+    } else {
+      if (wired.has(key)) continue;
+      wired.add(key);
+    }
     let id = str(r.id);
     if (!id || usedEdgeIds.has(id)) {
       let i = usedEdgeIds.size + 1;

@@ -85,6 +85,30 @@ console.log("① 会话模型");
   );
   check(doc.edges.length === 1, `通道不符/自环剔除后剩 1 条（实际 ${doc.edges.length}）`);
   check(doc.edges[0].dstPort === "in", "保留实体集通道连线");
+
+  // multi 口多入汇聚：目标/路径点（multi: true）不同源多条连线保留，同源重复保首条
+  // （路径巡逻等多路径点巡回依赖此语义；单线口仍入端口唯一保首条）
+  const multiDoc = normalizeGraphDoc({
+    nodes: [
+      { id: "mv", type: "entity.proto", x: 0, y: 0, entityId: "mover" },
+      { id: "w1", type: "entity.proto", x: 0, y: 0, entityId: "w1" },
+      { id: "w2", type: "entity.proto", x: 0, y: 0, entityId: "w2" },
+      { id: "pt", type: "op.patrol", x: 0, y: 0, params: {} },
+    ],
+    edges: [
+      { id: "m1", srcNode: "mv", srcPort: "out", dstNode: "pt", dstPort: "path" },
+      { id: "m2", srcNode: "w1", srcPort: "out", dstNode: "pt", dstPort: "path" },
+      { id: "m3", srcNode: "w2", srcPort: "out", dstNode: "pt", dstPort: "path" },
+      { id: "m4", srcNode: "w1", srcPort: "out", dstNode: "pt", dstPort: "path" },
+    ],
+    comments: [],
+  });
+  check(multiDoc.edges.length === 3, `multi 口多入保留 3 条（实际 ${multiDoc.edges.length}）`);
+  check(
+    multiDoc.edges.some((e) => e.srcNode === "w1" && e.srcPort === "out" && e.dstPort === "path") &&
+      multiDoc.edges.some((e) => e.srcNode === "w2" && e.srcPort === "out" && e.dstPort === "path"),
+    "multi 口不同源连线都在（路径点巡回）",
+  );
   check(doc.comments[0].w === 80 && doc.comments[0].h === 2000, "注释框尺寸钳制");
   check(doc.comments[0].color === "#dcdcaa", "非法颜色回退缺省");
 
@@ -470,6 +494,10 @@ console.log("⑤ 工作台与无图资产契约");
     "画布：层级拖入生成原型",
   );
   check(canvas.includes("is-valid-connection") && canvas.includes("requestSnapshot"), "画布：连线校验/会话快照");
+  check(
+    canvas.includes("dp?.multi"),
+    "画布：multi 入端口追加连线（目标/路径点多入汇聚；非 multi 口仍替换）",
+  );
   check(canvas.includes("addVarNode") && canvas.includes("var.get") && canvas.includes("var.set"), "画布：变量节点创建（addVarNode）");
   check(canvas.includes("addFlowNode") && canvas.includes("flow.branch") && canvas.includes("flow.compare") && canvas.includes("flow.for"), "画布：控制流节点创建（addFlowNode）");
   check(canvas.includes("#node-gflow"), "画布：控制流卡片插槽");
