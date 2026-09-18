@@ -19,6 +19,9 @@ use uuid::Uuid;
 pub type TaskId = String;
 
 /// 任务优先级（数值越大越优先；当前仅用于 UI 展示排序，调度均为 FIFO）
+// Low/High 暂无生产注册方传入（当前仅 build_export 传 Normal），作为跨端 API
+// 预留：前端 TaskPriority 同为 low/normal/high 三档（src/lib/api.ts），测试覆盖全部档位
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum Priority {

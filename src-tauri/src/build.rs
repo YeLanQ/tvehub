@@ -29,7 +29,6 @@ use base64::Engine as _;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde::Serialize;
-use tauri::Emitter;
 
 /// 当前支持的构建渠道（wechat 为 UI 占位，未实现）
 const SUPPORTED_CHANNELS: [&str; 1] = ["web"];
@@ -572,11 +571,10 @@ pub async fn build_export(
     // 注册到任务管理器：支持取消 + 进度广播 + 多项目隔离
     let handle = state.register(&app, "export", Some(&root), crate::task::Priority::Normal);
     let cancel_id = handle.id.clone();
-    let cancel_token = handle.cancel.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let cancel_check = || cancel_token.is_cancelled();
-        build_export_impl(
+        let cancel_check = || handle.is_cancelled();
+        let result = build_export_impl(
             root,
             channel,
             scenes,
@@ -592,28 +590,18 @@ pub async fn build_export(
             files,
             Some(&cancel_check),
             Some(&|p, m| handle.report_progress(p, m)),
-        )
+        );
+        // 完成/失败事件统一经 TaskHandle 广播（与 task:progress 同一封装）
+        match &result {
+            Ok(r) => handle.report_completed(true, &format!("导出完成: {}", r.output_dir)),
+            Err(e) => handle.report_completed(false, e),
+        }
+        result
     })
     .await
     .map_err(|e| e.to_string())?;
 
     state.deregister(&cancel_id);
-    match &result {
-        Ok(r) => {
-            let _ = app.emit("task:completed", crate::task::TaskCompletedEvent {
-                id: cancel_id,
-                success: true,
-                message: format!("导出完成: {}", r.output_dir),
-            });
-        }
-        Err(e) => {
-            let _ = app.emit("task:completed", crate::task::TaskCompletedEvent {
-                id: cancel_id,
-                success: false,
-                message: e.clone(),
-            });
-        }
-    }
     result
 }
 
