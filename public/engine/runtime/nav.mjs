@@ -544,6 +544,22 @@ class NavSystem {
   firstAreaId() {
     return this.areas.keys().next().value ?? "";
   }
+  /**
+   * 任意两点寻路（图追击驱动器用）：选「覆盖起点的已烘焙区域」（否则覆盖终点，
+   * 再退第一个已烘焙区域）跑 A* + 视线拉直，返回平滑路径点（世界系，贴地高度）。
+   * 无已烘焙区域 / 找不到可达路线 → null（调用方回退直线移动）。
+   */
+  pathBetween(from, to, agentRadius = 0.5) {
+    const bakes = [...this.areas.values()].filter((a) => a.bake);
+    if (!bakes.length) return null;
+    const covering = (x, z) => bakes.find((a) => {
+      const b = a.bake.bounds;
+      return x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
+    });
+    const area = covering(from.x, from.z) ?? covering(to.x, to.z) ?? bakes[0];
+    const res = findNavPath(area.bake, from.x, from.z, to.x, to.z, agentRadius);
+    return res.found ? res.points : null;
+  }
   /** 签名不一致（或强制）→ 重新烘焙并写 userData + 上报刷新 */
   rebakeIfNeeded(binding, force = false) {
     var _a;
@@ -1169,6 +1185,10 @@ function createNavRuntime(ctx) {
         pausedAgents.delete(nodeId);
         nav.startAgent(nodeId);
       }
+    },
+    /** 图追击驱动器寻路：任意两点的烘焙网格 A* 平滑路径（无可达路线/未烘焙 → null，驱动器回退直线） */
+    pathBetween(from, to) {
+      return nav.pathBetween(from, to);
     },
     dispose() {
       nav.unbindAll();

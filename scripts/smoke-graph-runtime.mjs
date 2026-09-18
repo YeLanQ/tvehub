@@ -929,5 +929,101 @@ console.log("[14] 朝向移动方向：巡逻/追击按位移写 yaw（+Z 前向
   handle.dispose();
 }
 
+console.log("[15] 追击寻路：有导航区域 → 沿烘焙网格 A* 绕行障碍（无导航回退直线）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+
+  // 地形：20×20 平地（高度场缓存在 mesh userData，与编辑器同一通道）
+  const gridN = 33;
+  const terrain = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  terrain.userData.terrainHeights = new Float32Array(gridN * gridN);
+  terrain.userData.terrainGridSize = gridN;
+  terrain.userData.terrainSize = 20;
+  scene.add(terrain);
+
+  // 障碍墙：x=4、z∈[-2.5,2.5]（带碰撞体、非动态刚体 → 计入烘焙障碍）
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 5));
+  wall.position.set(4, 1, 0);
+  scene.add(wall);
+
+  const areaObj = new THREE.Group();
+  scene.add(areaObj);
+
+  // 追击者/目标（图驱动实体；目标在墙后——直线必然穿墙）
+  const chaser = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5));
+  chaser.position.set(0, 0, 0);
+  chaser.userData.nodeId = "chaser-1";
+  scene.add(chaser);
+  const prey = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5));
+  prey.position.set(8, 0, 0);
+  prey.userData.nodeId = "prey-1";
+  scene.add(prey);
+
+  const { createNavRuntime } = await import(engine("runtime/nav.mjs"));
+  const logs = [];
+  const navApi = createNavRuntime({
+    scene,
+    nodes: [
+      { json: { id: "terrain-1", type: "terrainNode", active: true, visible: true }, obj: terrain },
+      { json: { id: "wall-1", type: "meshNode", active: true, visible: true, components: [{ id: "c1", type: "collider", enabled: true }] }, obj: wall },
+      { json: { id: "area-1", type: "navAreaNode", active: true, visible: true, settings: {} }, obj: areaObj },
+    ],
+    onLog: (m) => logs.push(m),
+  });
+  ok(logs.some((l) => l.includes("区域 area-1 烘焙") && !l.includes("失败")), `导航区域烘焙成功（${logs.find((l) => l.includes("烘焙")) ?? "无日志"}）`);
+  const path = navApi.pathBetween({ x: 0, z: 0 }, { x: 8, z: 0 });
+  ok(!!path && path.length >= 3, `pathBetween 返回绕行折线（${path?.length ?? 0} 个路径点）`);
+
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-driver", version: 1 }],
+    nodes: [
+      { id: "pC", type: "entity.proto", x: 0, y: 0, entityId: "chaser-1" },
+      { id: "pP", type: "entity.proto", x: 0, y: 0, entityId: "prey-1" },
+      { id: "chs", type: "op.chase", x: 0, y: 0, opType: "op.chase", params: { speed: 4 } },
+    ],
+    edges: [
+      { id: "a", srcNode: "pC", srcPort: "out", dstNode: "chs", dstPort: "in" },
+      { id: "b", srcNode: "pP", srcPort: "out", dstNode: "chs", dstPort: "prey" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+    navApi,
+  });
+
+  // 逐帧推进追击：全程不得进入墙 AABB（外扩净空），且必须出现 z 向绕行
+  let penetrated = false;
+  let detoured = false;
+  let reached = false;
+  for (let i = 0; i < 600; i++) {
+    handle.update(1 / 60);
+    const cx = chaser.position.x;
+    const cz = chaser.position.z;
+    if (cx > 3.1 && cx < 4.9 && Math.abs(cz) < 2.9) penetrated = true;
+    if (cx > 2.5 && cx < 5.5 && Math.abs(cz) > 1.5) detoured = true;
+    if (Math.hypot(cx - 8, cz) < 0.6) {
+      reached = true;
+      break;
+    }
+  }
+  ok(!penetrated, "全程未穿透障碍墙");
+  ok(detoured, "出现 z 向绕行（直线轨迹不会有的特征）");
+  ok(reached, `绕行后抵达目标（末帧 (${chaser.position.x.toFixed(2)}, ${chaser.position.z.toFixed(2)})，目标 (8, 0)）`);
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  navApi.dispose();
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

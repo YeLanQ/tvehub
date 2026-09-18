@@ -413,7 +413,7 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
     type: "op.chase",
     category: "driver",
     label: "追击目标",
-    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；移动时朝向移动方向（+Z 前向，同导航代理；可关）；常与 sense.distance + 分支组合成追击/放弃",
+    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；场景有导航区域时按烘焙网格自动寻路绕行障碍（定期重寻路，不可达回退直线）；移动时朝向移动方向（+Z 前向，同导航代理；可关）；常与 sense.distance + 分支组合成追击/放弃",
     color: "#dcdcaa",
     trigger: "frame",
     inputs: [

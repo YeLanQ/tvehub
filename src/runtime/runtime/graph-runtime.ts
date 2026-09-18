@@ -193,7 +193,14 @@ export interface GraphBehaviorsCtx {
   };
   graph: ScriptGraphDoc;
   /** 导航运行时（可选）：追击类驱动器借此暂停/恢复目标的导航巡回 */
-  navApi?: { setAgentPaused(id: string, paused: boolean): void };
+  navApi?: {
+    setAgentPaused(id: string, paused: boolean): void;
+    /** 任意两点寻路（op.chase 用）：烘焙网格 A* 平滑路径点（世界系）；无可达路线/无区域 → null */
+    pathBetween?(
+      from: { x: number; z: number },
+      to: { x: number; z: number },
+    ): { x: number; y: number; z: number }[] | null;
+  };
   /** 脚本组件属性访问（可选）：属性路径的 script: 命名空间 */
   scriptApi?: GraphScriptApi;
 }

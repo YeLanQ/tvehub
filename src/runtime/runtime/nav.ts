@@ -245,6 +245,10 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
         nav.startAgent(nodeId);
       }
     },
+    /** 图追击驱动器寻路：任意两点的烘焙网格 A* 平滑路径（无可达路线/未烘焙 → null，驱动器回退直线） */
+    pathBetween(from: { x: number; z: number }, to: { x: number; z: number }) {
+      return nav.pathBetween(from, to);
+    },
     dispose() {
       nav.unbindAll();
     },

@@ -256,6 +256,12 @@ export function createCoreOpsModule(): GraphRuntimeModule {
 const WAYPOINT_ARRIVE = 0.3;
 /** 追击停止距离（米） */
 const CHASE_STOP = 0.05;
+/** 追击重寻路间隔（秒；目标移动超过 CHASE_REPATH_DIST 提前触发） */
+const CHASE_REPATH = 0.4;
+/** 触发提前重寻路的目标位移（米） */
+const CHASE_REPATH_DIST = 1;
+/** 追击路径点到达距离（米；路径已按代理半径拉直，点距较疏） */
+const CHASE_PATH_ARRIVE = 0.35;
 
 /**
  * 朝向移动方向：按本帧位移（移动者父空间水平分量）写 yaw。
@@ -402,40 +408,94 @@ export function createCoreDriversModule(): GraphRuntimeModule {
           },
         };
       },
-      // 追击目标：每帧朝 prey 引脚实体匀速移动
-      "op.chase": (k, node) => ({
-        step(dt, targets) {
-          const prey = unwrapEntity(k.evalInput(node.id, "prey"));
-          if (!prey) {
-            k.warnOnce(
-              `chase-noprey:${node.id}`,
-              `[graph] 追击目标 (${node.id}) 的「追击目标」口未接入实体（不移动）——接入原型/匹配/获取子级`,
-            );
-            return;
-          }
-          const speed = k.numP(node, "speed", 3);
-          const face = k.boolP(node, "faceMove", true);
-          for (const t of targets) {
-            // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
-            if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
-            const moverWorld = worldPos(t.obj);
-            const preyWorld = worldPos(prey.obj);
-            const worldDist = Math.hypot(moverWorld.x - preyWorld.x, moverWorld.y - preyWorld.y, moverWorld.z - preyWorld.z);
-            if (worldDist < CHASE_STOP) continue;
-            const target = t.obj.position.clone();
-            prey.obj.getWorldPosition(target);
-            t.obj.parent?.worldToLocal(target);
-            const dx = target.x - t.obj.position.x;
-            const dy = target.y - t.obj.position.y;
-            const dz = target.z - t.obj.position.z;
-            const step = (speed * dt) / worldDist;
-            t.obj.position.x += dx * step;
-            t.obj.position.y += dy * step;
-            t.obj.position.z += dz * step;
-            faceMoveDir(face, t.obj, dx, dz);
-          }
-        },
-      }),
+      // 追击目标：每帧朝 prey 引脚实体移动。场景有导航区域 → 按烘焙网格 A*
+      // 寻路沿平滑路径绕行障碍（定期重寻路跟随机动目标）；无导航运行时/区域
+      // 不可达 → 回退直线移动（原行为）
+      "op.chase": (k, node) => {
+        /** 每目标寻路状态（pts=null 表示当前不可达，倒计时后重试） */
+        const navPaths = new Map<
+          string,
+          { pts: { x: number; y: number; z: number }[] | null; seg: number; preyX: number; preyZ: number; t: number } | undefined
+        >();
+        return {
+          step(dt, targets) {
+            const prey = unwrapEntity(k.evalInput(node.id, "prey"));
+            if (!prey) {
+              k.warnOnce(
+                `chase-noprey:${node.id}`,
+                `[graph] 追击目标 (${node.id}) 的「追击目标」口未接入实体（不移动）——接入原型/匹配/获取子级`,
+              );
+              return;
+            }
+            const speed = k.numP(node, "speed", 3);
+            const face = k.boolP(node, "faceMove", true);
+            const pathBetween = k.navApi?.pathBetween?.bind(k.navApi);
+            for (const t of targets) {
+              // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
+              if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
+              const moverWorld = worldPos(t.obj);
+              const preyWorld = worldPos(prey.obj);
+              const worldDist = Math.hypot(moverWorld.x - preyWorld.x, moverWorld.y - preyWorld.y, moverWorld.z - preyWorld.z);
+              if (worldDist < CHASE_STOP) continue;
+
+              // 寻路跟随：按间隔（或目标位移超限）重寻路；路径点贴地，绕行障碍
+              let moved = false;
+              if (pathBetween) {
+                let st = navPaths.get(t.id);
+                if (
+                  !st ||
+                  (st.t -= dt) <= 0 ||
+                  Math.hypot(preyWorld.x - st.preyX, preyWorld.z - st.preyZ) > CHASE_REPATH_DIST
+                ) {
+                  const pts = pathBetween({ x: moverWorld.x, z: moverWorld.z }, { x: preyWorld.x, z: preyWorld.z });
+                  st = { pts: pts && pts.length > 1 ? pts : null, seg: 1, preyX: preyWorld.x, preyZ: preyWorld.z, t: CHASE_REPATH };
+                  navPaths.set(t.id, st);
+                }
+                const pts = st.pts;
+                const wp = pts?.[st.seg];
+                if (wp) {
+                  if (
+                    Math.hypot(moverWorld.x - wp.x, moverWorld.z - wp.z) < CHASE_PATH_ARRIVE &&
+                    st.seg < pts!.length - 1
+                  ) {
+                    st.seg++;
+                  }
+                  const cur = pts![st.seg];
+                  const target = t.obj.position.clone(); // 借位 Vector3 实例（不引入 THREE 值导入）
+                  target.set(cur.x, cur.y, cur.z);
+                  t.obj.parent?.worldToLocal(target);
+                  const dx = target.x - t.obj.position.x;
+                  const dy = target.y - t.obj.position.y;
+                  const dz = target.z - t.obj.position.z;
+                  const wpDist = Math.hypot(moverWorld.x - cur.x, moverWorld.y - cur.y, moverWorld.z - cur.z);
+                  if (wpDist > 1e-6) {
+                    const step = (speed * dt) / wpDist;
+                    t.obj.position.x += dx * step;
+                    t.obj.position.y += dy * step;
+                    t.obj.position.z += dz * step;
+                    faceMoveDir(face, t.obj, dx, dz);
+                    moved = true;
+                  }
+                }
+              }
+              if (!moved) {
+                // 回退：直线移动（无导航运行时 / 不可达 / 无路径点）
+                const target = t.obj.position.clone();
+                prey.obj.getWorldPosition(target);
+                t.obj.parent?.worldToLocal(target);
+                const dx = target.x - t.obj.position.x;
+                const dy = target.y - t.obj.position.y;
+                const dz = target.z - t.obj.position.z;
+                const step = (speed * dt) / worldDist;
+                t.obj.position.x += dx * step;
+                t.obj.position.y += dy * step;
+                t.obj.position.z += dz * step;
+                faceMoveDir(face, t.obj, dx, dz);
+              }
+            }
+          },
+        };
+      },
       // 导航移动：每帧贴合导航代理位姿（位置 + 朝向 + 高度偏移）
       "op.navMove": (k, node) => ({
         step(_dt, targets) {
