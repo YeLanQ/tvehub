@@ -1365,6 +1365,13 @@ console.log("④ 窗口契约");
   check(lib.includes("async fn show_window_with_project") && lib.includes("show_window_with_project,"), "lib.rs show_window_with_project 统一命令与注册");
   check(lib.includes('WebviewUrl::App("graph.html".into())') && lib.includes(".visible(false)") && lib.includes("graph-"), "lib.rs graph-N 动态建窗（隐藏，前端揭幕）");
   check(lib.includes("WINDOW_LIFECYCLE"), "lib.rs 声明式窗口生命周期表");
+  // 层级→画布拖入依赖页面内 HTML5 DnD：图窗口必须禁用 Tauri 原生拖放拦截
+  // （拦截缺省开启并吞掉 dragover/drop）；编辑器窗口保留（系统文件拖放导入）
+  check(lib.includes("disable_drag_drop_handler"), "lib.rs 图窗口禁用原生拖放拦截（层级拖入画布可落点）");
+  check(
+    lib.includes('let _w = if label.starts_with("graph-") {') && lib.includes("builder.disable_drag_drop_handler().build()"),
+    "lib.rs 拖放拦截按窗口标签条件分流（graph 显式禁用，editor 缺省保留）",
+  );
 
   const sceneMod = read("src-tauri/src/scene/mod.rs");
   check(

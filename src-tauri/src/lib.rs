@@ -460,7 +460,11 @@ async fn show_window_with_project(
                 600.0,
             )
         };
-        let _w = tauri::WebviewWindowBuilder::new(&app, &label, url)
+        // Tauri 原生拖放拦截（缺省开启）会吞掉页面内 HTML5 drag/drop 事件——
+        // 图窗口的「层级拖入画布」依赖页面内 DnD，必须禁用拦截；
+        // 编辑器窗口保留：外部系统文件拖放导入走 onDragDropEvent
+        // （useAssetTransfer），关掉会丢文件路径。
+        let builder = tauri::WebviewWindowBuilder::new(&app, &label, url)
             .title(title)
             .inner_size(1300.0, 860.0)
             .min_inner_size(min_w, min_h)
@@ -471,9 +475,13 @@ async fn show_window_with_project(
             // （核显驱动屏幕 + 独显渲染）下该参数强制 Chromium 在独显渲染，
             // 呈现面跨适配器交给核显合成，resize 与独显启停时会瞬间丢帧——
             // 表现为整个窗口/视口黑闪或透明。让 WebView2 自选 GPU 即可稳定。
-            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection")
-            .build()
-            .map_err(|e| e.to_string())?;
+            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+        let _w = if label.starts_with("graph-") {
+            builder.disable_drag_drop_handler().build()
+        } else {
+            builder.build()
+        }
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
