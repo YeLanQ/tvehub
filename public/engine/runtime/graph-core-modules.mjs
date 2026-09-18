@@ -900,7 +900,7 @@ function createCoreContainersModule() {
       const mode = k.strP(node, "mode", "sequence") || "sequence";
       const children = k.containerChildren(node.id);
       for (const child of children) {
-        if (k.inFrameLoop(child.id)) continue;
+        if (k.inFrameLoop(child.id) || !k.nodeActive(child)) continue;
         const targets = k.resolveTargets(child.id);
         if (!targets.length) continue;
         k.stepDriver(child, dt, targets);

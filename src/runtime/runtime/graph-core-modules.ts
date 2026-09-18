@@ -1045,9 +1045,10 @@ export function createCoreContainersModule(): GraphRuntimeModule {
       if (!btActive.has(node.id)) return;
       const mode = k.strP(node, "mode", "sequence") || "sequence";
       const children = k.containerChildren(node.id);
-      // 激活后步进框内驱动器（与状态机容器同款；已被全局帧循环步进的跳过）
+      // 激活后步进框内驱动器（与状态机容器同款；已被全局帧循环步进的跳过；
+      // 成员在父链上不激活（如嵌套在状态机的非当前状态）不步进）
       for (const child of children) {
-        if (k.inFrameLoop(child.id)) continue;
+        if (k.inFrameLoop(child.id) || !k.nodeActive(child)) continue;
         const targets = k.resolveTargets(child.id);
         if (!targets.length) continue;
         k.stepDriver(child, dt, targets);

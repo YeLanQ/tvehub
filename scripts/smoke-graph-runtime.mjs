@@ -1256,5 +1256,90 @@ console.log("[17] 行为树容器：sequence 驱动器步进 / selector 条件�
   handle.dispose();
 }
 
+console.log("[18] 嵌套容器随父级调度：状态机内的行为树容器随状态启停");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "host-3", type: "meshNode", name: "Host3", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // 条件源：mover-6 speed 2 → t≈2.5s 越过 5（上升沿切 b），t≈17.5s 落回 5 下（切回 a）
+        { id: "mover-6", type: "meshNode", name: "Mover6", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 }, { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }, { id: "core-containers", version: 1 },
+    ],
+    nodes: [
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      // 状态机：a（无行为）/ b（行为树容器：持续旋转 host-3）
+      { id: "fsm", type: "fsm.container", x: 0, y: 0, params: { states: "a,b", initial: "a" } },
+      // 行为树容器打「所属状态 = b」：只在 b 态被父级调度
+      { id: "bt", type: "bt.container", x: 0, y: 0, containerId: "fsm", stateName: "b", params: { mode: "sequence", interval: 0 } },
+      { id: "pH", type: "entity.proto", x: 0, y: 0, entityId: "host-3" },
+      { id: "sp", type: "op.spin", x: 0, y: 0, containerId: "bt", opType: "op.spin", params: { speedX: 0, speedY: 0, speedZ: 90 } },
+      { id: "pM", type: "entity.proto", x: 0, y: 0, entityId: "mover-6" },
+      { id: "prop", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "cmp", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5, event: "b" } },
+      { id: "cmpBack", type: "flow.compare", x: 0, y: 120, params: { operator: "<", b: 5, event: "a" } },
+      { id: "pt", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      { id: "e0", srcNode: "eb", srcPort: "next", dstNode: "fsm", dstPort: "exec" },
+      { id: "h1", srcNode: "pH", srcPort: "out", dstNode: "sp", dstPort: "in" },
+      { id: "w1", srcNode: "pM", srcPort: "out", dstNode: "prop", dstPort: "target" },
+      { id: "w2", srcNode: "pM", srcPort: "out", dstNode: "pt", dstPort: "in" },
+      { id: "d1", srcNode: "prop", srcPort: "value", dstNode: "cmp", dstPort: "a" },
+      { id: "x1", srcNode: "cmp", srcPort: "result", dstNode: "fsm", dstPort: "condition" },
+      { id: "d2", srcNode: "prop", srcPort: "value", dstNode: "cmpBack", dstPort: "a" },
+      { id: "x2", srcNode: "cmpBack", srcPort: "result", dstNode: "fsm", dstPort: "condition" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const host = scene.getObjectByProperty("name", "Host3");
+
+  // a 态：行为树容器（b 态归属）帧钩子停摆 → 不旋转
+  advance(handle, 1);
+  ok(approx(host.rotation.z, 0, 1e-6), `a 态：嵌套行为树不调度（z=${host.rotation.z.toFixed(3)}rad）`);
+  // t≈2.5s 切 b：容器被父级调度，进入跑成员，spin 开始步进
+  advance(handle, 2);
+  const zAtEnter = host.rotation.z;
+  ok(zAtEnter > 0.5, `切 b 后行为树启动（z=${zAtEnter.toFixed(2)}rad，≈90°/s 步进中）`);
+  // b 态持续旋转 1s
+  advance(handle, 1);
+  const zInB = host.rotation.z;
+  ok(zInB - zAtEnter > (Math.PI / 2) * 0.9, `b 态持续旋转（+${((zInB - zAtEnter) * 180 / Math.PI).toFixed(0)}°/1s）`);
+  // t≈17.5s mover-6 回落穿过 5 → cmpBack（<5, 事件 a）上升沿切回 a：
+  // 行为树容器随父级停摆 → 旋转冻结（不恢复也不继续）
+  advance(handle, 16);
+  const zBackA = host.rotation.z;
+  advance(handle, 1.5);
+  ok(approx(host.rotation.z, zBackA, 1e-6), `切回 a 后行为树停摆、旋转冻结（1.5s 位移 ${Math.abs(host.rotation.z - zBackA).toExponential(1)}rad）`);
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

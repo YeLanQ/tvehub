@@ -744,12 +744,15 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
       sampleTimer += dt;
       // 接入口值变化检测与交付（onGraphInput 边沿语义；轮询读 this.graphInput）
       deliverGraphInputs();
-      // 容器每帧驱动（状态轮询、激活态子驱动步进等，语义在容器行为模块内）
+      // 容器每帧驱动（状态轮询、激活态子驱动步进等，语义在容器行为模块内）。
+      // 嵌套容器随父级调度：容器自身在父链上不激活（如状态机内打了所属状态的
+      // 行为树容器，切走状态后）→ 帧钩子整体停摆，成员驱动器随之停止
       const framed = new Set<ContainerBehavior>();
       for (const n of graph.nodes) {
         if (n.unresolved) continue;
         const beh = containers[n.type];
         if (beh?.frame && hasNodeTypeCapability(n.type, "container")) {
+          if (!nodeActive(n)) continue;
           beh.frame(kernel, n, dt);
           framed.add(beh);
         }

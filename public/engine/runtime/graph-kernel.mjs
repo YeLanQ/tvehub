@@ -1175,6 +1175,7 @@ function createGraphKernel(ctx, modules) {
         if (n.unresolved) continue;
         const beh = containers[n.type];
         if ((beh == null ? void 0 : beh.frame) && hasNodeTypeCapability(n.type, "container")) {
+          if (!nodeActive(n)) continue;
           beh.frame(kernel, n, dt);
           framed.add(beh);
         }
