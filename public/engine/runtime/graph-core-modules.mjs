@@ -768,6 +768,31 @@ function createCoreContainersModule() {
       target = states.includes(initial) ? initial : states[0];
     }
     const prev = fsmCurrent.get(node.id);
+    if (prev === target && !k.boolP(node, "reentry")) {
+      k.log(
+        `fsm-same:${node.id}:${target}`,
+        `[graph] 状态机容器 (${node.id}) 已处于状态「${target}」，忽略重复切换（勾选「重复进入」可重入）`,
+        3
+      );
+      return;
+    }
+    if (prev !== void 0 && (viaDstPort === "event" || viaDstPort === "condition")) {
+      for (const rule of k.strP(node, "guards").split(/[，,]/)) {
+        const gt = rule.indexOf(">");
+        if (gt <= 0) continue;
+        const from = rule.slice(0, gt).trim();
+        const to = rule.slice(gt + 1).trim();
+        if (!to) continue;
+        if (to === target && from !== prev) {
+          k.log(
+            `fsm-guard:${node.id}:${from}>${to}`,
+            `[graph] 状态机容器 (${node.id}) 迁移守卫 ${from}>${to}：当前状态「${prev}」不允许切到「${target}」，触发已忽略`,
+            3
+          );
+          return;
+        }
+      }
+    }
     fsmCurrent.set(node.id, target);
     k.log(
       `fsm-switch:${node.id}:${target}`,

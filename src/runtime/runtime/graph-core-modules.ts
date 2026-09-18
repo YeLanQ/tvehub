@@ -858,6 +858,10 @@ export function createCoreContainersModule(): GraphRuntimeModule {
    * FSM 进入/事件切换：exec 入「进入」激活 initial；「event」入端口按事件名切换。
    * 激活状态 = 执行 containerId 归属且 stateName 匹配（无标签则任意状态）的
    * 直接子节点链，随后级联容器 next 下游。
+   * 迁移守卫（guards，from>to 列表）：列出的迁移只允许从 from 出发，未列出的
+   * 迁移不受限；尚未激活时无当前状态可比，放行（守卫约束「迁移」而非初次进入）。
+   * 同状态去重：已在目标状态且未勾选「重复进入」→ 忽略（入口链与下游不重跑）；
+   * 去重先于守卫——同状态短路是无条件的，守卫只裁决真正的状态变更。
    */
   function fsmSwitch(k: GraphKernel, node: GNode, seen: Set<string>, evName: string, viaDstPort: string): void {
     const states = k.strP(node, "states").split(",").map((s) => s.trim()).filter(Boolean);
@@ -884,6 +888,31 @@ export function createCoreContainersModule(): GraphRuntimeModule {
       target = states.includes(initial) ? initial : states[0];
     }
     const prev = fsmCurrent.get(node.id);
+    if (prev === target && !k.boolP(node, "reentry")) {
+      k.log(
+        `fsm-same:${node.id}:${target}`,
+        `[graph] 状态机容器 (${node.id}) 已处于状态「${target}」，忽略重复切换（勾选「重复进入」可重入）`,
+        3,
+      );
+      return;
+    }
+    if (prev !== undefined && (viaDstPort === "event" || viaDstPort === "condition")) {
+      for (const rule of k.strP(node, "guards").split(/[，,]/)) {
+        const gt = rule.indexOf(">");
+        if (gt <= 0) continue;
+        const from = rule.slice(0, gt).trim();
+        const to = rule.slice(gt + 1).trim();
+        if (!to) continue;
+        if (to === target && from !== prev) {
+          k.log(
+            `fsm-guard:${node.id}:${from}>${to}`,
+            `[graph] 状态机容器 (${node.id}) 迁移守卫 ${from}>${to}：当前状态「${prev}」不允许切到「${target}」，触发已忽略`,
+            3,
+          );
+          return;
+        }
+      }
+    }
     fsmCurrent.set(node.id, target);
     k.log(
       `fsm-switch:${node.id}:${target}`,

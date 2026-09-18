@@ -1025,5 +1025,122 @@ console.log("[15] 追击寻路：有导航区域 → 沿烘焙网格 A* 绕行�
   handle.dispose();
 }
 
+console.log("[16] 状态机容器：迁移守卫（from>to）+ 同状态去重/可重入（多状态切换）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        // host / host2：position.x 编码当前状态（100=a 200=b 300=c / 111 222）
+        { id: "host-1", type: "meshNode", name: "Host", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "host-2", type: "meshNode", name: "Host2", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // 巡逻 movers：位置越过 5 → 比较卡上升沿（触发对应状态）
+        // mover-1：speed 2 → x=2t，t≈2.5s 越过 5（事件 b）
+        { id: "mover-1", type: "meshNode", name: "Mover1", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // mover-2：speed 4、distance 20（周期 10s）→ t≈1.25s↑、8.75s↓、11.25s↑ 越过 5（事件 c）
+        { id: "mover-2", type: "meshNode", name: "Mover2", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 }, { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }, { id: "core-containers", version: 1 },
+    ],
+    nodes: [
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      // 容器 fsm1：states a/b/c，initial a，守卫 b>c（c 只允许从 b 进入）
+      { id: "fsm1", type: "fsm.container", x: 0, y: 0, params: { states: "a,b,c", initial: "a", guards: "b>c" } },
+      { id: "pH", type: "entity.proto", x: 0, y: 0, entityId: "host-1" },
+      { id: "setA", type: "op.set", x: 0, y: 0, containerId: "fsm1", stateName: "a", opType: "op.set", params: { property: "position.x", value: 100 } },
+      { id: "setB", type: "op.set", x: 0, y: 0, containerId: "fsm1", stateName: "b", opType: "op.set", params: { property: "position.x", value: 200 } },
+      { id: "setC", type: "op.set", x: 0, y: 0, containerId: "fsm1", stateName: "c", opType: "op.set", params: { property: "position.x", value: 300 } },
+      // 容器 fsm2：initial b + 重复进入；同一比较(cmp1)再触发同状态 → 允许重入
+      { id: "fsm2", type: "fsm.container", x: 0, y: 0, params: { states: "a,b", initial: "b", reentry: true } },
+      { id: "pH2", type: "entity.proto", x: 0, y: 0, entityId: "host-2" },
+      { id: "set2B", type: "op.set", x: 0, y: 0, containerId: "fsm2", stateName: "b", opType: "op.set", params: { property: "position.y", value: 222 } },
+      // 条件源：mover 位置 > 5
+      { id: "pM1", type: "entity.proto", x: 0, y: 0, entityId: "mover-1" },
+      { id: "pM2", type: "entity.proto", x: 0, y: 0, entityId: "mover-2" },
+      { id: "prop1", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "prop2", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "cmp1", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5, event: "b" } },
+      { id: "cmp2", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5, event: "c" } },
+      // 两条巡逻腿（容器外，legacy 帧驱动）
+      { id: "pt1", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+      { id: "pt2", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      { id: "e0", srcNode: "eb", srcPort: "next", dstNode: "fsm1", dstPort: "exec" },
+      { id: "e0b", srcNode: "eb", srcPort: "next", dstNode: "fsm2", dstPort: "exec" },
+      { id: "h1", srcNode: "pH", srcPort: "out", dstNode: "setA", dstPort: "in" },
+      { id: "h2", srcNode: "pH", srcPort: "out", dstNode: "setB", dstPort: "in" },
+      { id: "h3", srcNode: "pH", srcPort: "out", dstNode: "setC", dstPort: "in" },
+      { id: "h4", srcNode: "pH2", srcPort: "out", dstNode: "set2B", dstPort: "in" },
+      { id: "c1", srcNode: "pM1", srcPort: "out", dstNode: "prop1", dstPort: "target" },
+      { id: "c2", srcNode: "pM2", srcPort: "out", dstNode: "prop2", dstPort: "target" },
+      { id: "c3", srcNode: "pM1", srcPort: "out", dstNode: "pt1", dstPort: "in" },
+      { id: "c4", srcNode: "pM2", srcPort: "out", dstNode: "pt2", dstPort: "in" },
+      { id: "d1", srcNode: "prop1", srcPort: "value", dstNode: "cmp1", dstPort: "a" },
+      { id: "d2", srcNode: "prop2", srcPort: "value", dstNode: "cmp2", dstPort: "a" },
+      { id: "x1", srcNode: "cmp1", srcPort: "result", dstNode: "fsm1", dstPort: "condition" },
+      { id: "x2", srcNode: "cmp2", srcPort: "result", dstNode: "fsm1", dstPort: "condition" },
+      { id: "x3", srcNode: "cmp1", srcPort: "result", dstNode: "fsm2", dstPort: "condition" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const host = scene.getObjectByProperty("name", "Host");
+  const host2 = scene.getObjectByProperty("name", "Host2");
+
+  // 初始进入：fsm1→a (x=100)；fsm2→b (y=222)
+  handle.update(1 / 60);
+  ok(approx(host.position.x, 100), `进入激活初始状态 a（x=${host.position.x}）`);
+  ok(approx(host2.position.y, 222), `fsm2 初始状态 b（y=${host2.position.y}）`);
+
+  // t≈1.25s mover-2 越过 5 → 事件 c，但守卫 b>c 且当前 a → 阻断
+  advance(handle, 2);
+  ok(approx(host.position.x, 100), `守卫阻断 a→c（t=2s x=${host.position.x}，无守卫会是 300）`);
+  ok(infoLines().some((l) => l.includes("迁移守卫 b>c") && l.includes("当前状态「a」")), "阻断有可定位日志");
+
+  // t≈2.5s mover-1 越过 5 → 事件 b（无守卫限制）→ 切到 b；同一上升沿打到
+  // fsm2（当前 b + 重复进入）→ 重入
+  advance(handle, 1);
+  ok(approx(host.position.x, 200), `t=3s 切到 b（x=${host.position.x}）`);
+  const fsm2SwitchB = infoLines().filter((l) => l.includes("状态机容器 (fsm2)") && l.includes("状态「b」") && !l.includes("忽略")).length;
+  ok(fsm2SwitchB >= 2, `fsm2 重复进入：b 重入 ≥2 次（进入 + 同状态再触发，实际 ${fsm2SwitchB}）`);
+
+  // t≈11.25s mover-2 第二次上升沿 → 当前 b，守卫放行 b→c
+  advance(handle, 8.5);
+  ok(approx(host.position.x, 300), `t=11.5s 守卫放行 b→c（x=${host.position.x}）`);
+
+  // t≈21.25s mover-2 第三次上升沿 → 目标 c = 当前 c → 去重（入口链不重跑）
+  advance(handle, 10.5);
+  ok(approx(host.position.x, 300), `同状态重复触发被忽略（t=22s x=${host.position.x}）`);
+  const fsm1SwitchC = infoLines().filter((l) => l.includes("状态机容器 (fsm1)") && l.includes("状态「c」") && !l.includes("忽略")).length;
+  ok(fsm1SwitchC === 1, `fsm1 同状态去重：c 只切换 1 次（实际 ${fsm1SwitchC}）`);
+  ok(infoLines().some((l) => l.includes("(fsm1)") && l.includes("已处于状态「c」")), "去重有可定位日志");
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);
