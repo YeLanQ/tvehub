@@ -63,7 +63,7 @@ export interface GraphKernel {
   /** 参数读取（缺省回退：解析容错） */
   numP(node: GNode, key: string, fb?: number): number;
   strP(node: GNode, key: string, fb?: string): string;
-  boolP(node: GNode, key: string): boolean;
+  boolP(node: GNode, key: string, fb?: boolean): boolean;
   /** 实体集通道：源节点（proto/match/容器 out）/ 操作目标集（上游递归 + op 透传） */
   resolveSet(refId: string): NodeObj[];
   resolveTargets(opId: string): NodeObj[];

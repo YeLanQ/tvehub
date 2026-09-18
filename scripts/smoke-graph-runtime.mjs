@@ -858,5 +858,76 @@ console.log("[13] 中断开关 flow.gate：执行链与帧驱动器通断（状�
   handle.dispose();
 }
 
+console.log("[14] 朝向移动方向：巡逻/追击按位移写 yaw（+Z 前向；可关）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "chaser-1", type: "meshNode", name: "Chaser", source: "primitive", geometry: "box", size: { x: 1, y: 1, z: 1 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "ball-1", type: "meshNode", name: "Ball", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 8, y: 0, z: 0 } } },
+        { id: "mover-1", type: "meshNode", name: "Mover", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "wp-1", type: "meshNode", name: "WP", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 6, y: 0, z: 0 } } },
+        { id: "mover-2", type: "meshNode", name: "Mover2", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-event", version: 1 }, { id: "core-op", version: 1 }],
+    nodes: [
+      // 追击：参数表不带 faceMove（旧场景回退路径）→ 缺省视为开
+      { id: "pCh", type: "entity.proto", x: 0, y: 0, entityId: "chaser-1" },
+      { id: "pBall", type: "entity.proto", x: 0, y: 0, entityId: "ball-1" },
+      { id: "chs", type: "op.chase", x: 0, y: 0, opType: "op.chase", params: { speed: 4 } },
+      // 巡逻路径点模式：同样缺省 faceMove
+      { id: "pM1", type: "entity.proto", x: 0, y: 0, entityId: "mover-1" },
+      { id: "pWp", type: "entity.proto", x: 0, y: 0, entityId: "wp-1" },
+      { id: "pt1", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4 } },
+      // 关闭朝向的对照巡逻
+      { id: "pM2", type: "entity.proto", x: 0, y: 0, entityId: "mover-2" },
+      { id: "pt2", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, faceMove: false } },
+    ],
+    edges: [
+      { id: "a", srcNode: "pCh", srcPort: "out", dstNode: "chs", dstPort: "in" },
+      { id: "b", srcNode: "pBall", srcPort: "out", dstNode: "chs", dstPort: "prey" },
+      { id: "c", srcNode: "pM1", srcPort: "out", dstNode: "pt1", dstPort: "in" },
+      { id: "d", srcNode: "pWp", srcPort: "out", dstNode: "pt1", dstPort: "path" },
+      { id: "e", srcNode: "pM2", srcPort: "out", dstNode: "pt2", dstPort: "in" },
+      { id: "f", srcNode: "pWp", srcPort: "out", dstNode: "pt2", dstPort: "path" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const chaser = scene.getObjectByProperty("name", "Chaser");
+  const mover = scene.getObjectByProperty("name", "Mover");
+  const mover2 = scene.getObjectByProperty("name", "Mover2");
+  advance(handle, 0.5);
+  // 都朝 +x 移动 → yaw = atan2(1,0) = π/2（+Z 前向约定，与导航代理一致）
+  ok(chaser.position.x > 1, `追击朝目标位移（0.5s x=${chaser.position.x.toFixed(2)}）`);
+  ok(approx(chaser.rotation.y, Math.PI / 2), `追击朝向移动方向（yaw=${chaser.rotation.y.toFixed(3)} ≈ π/2）`);
+  ok(mover.position.x > 1, `巡逻朝路径点位移（0.5s x=${mover.position.x.toFixed(2)}）`);
+  ok(approx(mover.rotation.y, Math.PI / 2), `巡逻朝向移动方向（yaw=${mover.rotation.y.toFixed(3)} ≈ π/2）`);
+  ok(approx(mover2.position.x, mover.position.x, 0.05) && approx(mover2.rotation.y, 0), `faceMove=false 同样移动但不改朝向（yaw=${mover2.rotation.y.toFixed(3)}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

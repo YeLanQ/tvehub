@@ -131,7 +131,8 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     const v = n.params?.[key];
     return typeof v === "string" ? v : fb;
   };
-  const boolP = (n: GNode, key: string): boolean => n.params?.[key] === true;
+  const boolP = (n: GNode, key: string, fb = false): boolean =>
+    n.params?.[key] === undefined ? fb : n.params?.[key] === true;
 
   // ---------------------------------------------------------------------------
   // 实体集通道（目标解析，独立于 exec 链）

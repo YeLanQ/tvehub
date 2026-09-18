@@ -218,6 +218,10 @@ function createCoreOpsModule() {
 }
 const WAYPOINT_ARRIVE = 0.3;
 const CHASE_STOP = 0.05;
+function faceMoveDir(face, obj, dx, dz) {
+  if (!face) return;
+  if (Math.hypot(dx, dz) > 1e-6) obj.rotation.y = Math.atan2(dx, dz);
+}
 function createCoreDriversModule() {
   return {
     id: "core-drivers",
@@ -279,6 +283,7 @@ function createCoreDriversModule() {
             }
             if (waypoints.length) {
               const speed2 = k.numP(node, "speed", 2);
+              const face = k.boolP(node, "faceMove", true);
               for (const t of targets) {
                 const idx = wpIdx.get(t.id) ?? 0;
                 const wp = waypoints[idx % waypoints.length];
@@ -309,6 +314,7 @@ function createCoreDriversModule() {
                 t.obj.position.x += dx * step;
                 t.obj.position.y += dy * step;
                 t.obj.position.z += dz * step;
+                faceMoveDir(face, t.obj, dx, dz);
               }
               return;
             }
@@ -317,6 +323,7 @@ function createCoreDriversModule() {
             const axis = k.strP(node, "axis", "x");
             const period = speed > 0 && dist > 0 ? 2 * dist / speed : 0;
             if (period <= 0) return;
+            const faceAxis = k.boolP(node, "faceMove", true);
             for (const t of targets) {
               let b = base.get(t.id);
               if (!b) {
@@ -328,9 +335,12 @@ function createCoreDriversModule() {
               phase.set(t.id, ph);
               const half = period / 2;
               const off = (ph < half ? ph : period - ph) * speed;
+              const prevX = t.obj.position.x;
+              const prevZ = t.obj.position.z;
               if (axis === "z") t.obj.position.z = b.z + off;
               else if (axis === "y") t.obj.position.y = b.y + off;
               else t.obj.position.x = b.x + off;
+              faceMoveDir(faceAxis, t.obj, t.obj.position.x - prevX, t.obj.position.z - prevZ);
             }
           }
         };
@@ -348,6 +358,7 @@ function createCoreDriversModule() {
             return;
           }
           const speed = k.numP(node, "speed", 3);
+          const face = k.boolP(node, "faceMove", true);
           for (const t of targets) {
             if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
             const moverWorld = worldPos(t.obj);
@@ -364,6 +375,7 @@ function createCoreDriversModule() {
             t.obj.position.x += dx * step;
             t.obj.position.y += dy * step;
             t.obj.position.z += dz * step;
+            faceMoveDir(face, t.obj, dx, dz);
           }
         }
       }),

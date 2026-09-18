@@ -104,13 +104,14 @@ export const GRAPH_OP_DEFS: GOpDef[] = [
   {
     type: "op.patrol",
     label: "路径巡逻",
-    desc: "帧驱动移动：路径口接入路径点实体（空节点等）→ 依次巡回；未接路径 → 沿轴在起点与起点+距离间往返。起点为首次执行位置",
+    desc: "帧驱动移动：路径口接入路径点实体（空节点等）→ 依次巡回；未接路径 → 沿轴在起点与起点+距离间往返。起点为首次执行位置；移动时朝向移动方向（+Z 前向，同导航代理；可关）",
     trigger: "frame",
     color: "#dcdcaa",
     fields: [
       F_N("distance", "巡逻距离", 6, 0.5),
       F_N("speed", "速度", 2, 0.1),
       { key: "axis", label: "轴", kind: "string", fallback: "x", placeholder: "x / z / y" },
+      { key: "faceMove", label: "朝向移动方向", kind: "boolean", fallback: true },
     ],
   },
   {
@@ -155,7 +156,7 @@ export function graphOpSummary(type: string, params: Record<string, unknown> | u
   for (const f of def.fields) {
     const v = params?.[f.key];
     if (v === undefined || v === "" || v === f.fallback) continue;
-    parts.push(f.kind === "boolean" ? `${f.label}` : `${f.label} ${String(v)}`);
+    parts.push(f.kind === "boolean" ? (v ? `${f.label}` : `${f.label}：关`) : `${f.label} ${String(v)}`);
   }
   return parts.join(" · ");
 }

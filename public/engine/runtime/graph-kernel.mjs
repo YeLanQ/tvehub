@@ -46,13 +46,14 @@ const GRAPH_OP_DEFS = [
   {
     type: "op.patrol",
     label: "路径巡逻",
-    desc: "帧驱动移动：路径口接入路径点实体（空节点等）→ 依次巡回；未接路径 → 沿轴在起点与起点+距离间往返。起点为首次执行位置",
+    desc: "帧驱动移动：路径口接入路径点实体（空节点等）→ 依次巡回；未接路径 → 沿轴在起点与起点+距离间往返。起点为首次执行位置；移动时朝向移动方向（+Z 前向，同导航代理；可关）",
     trigger: "frame",
     color: "#dcdcaa",
     fields: [
       F_N("distance", "巡逻距离", 6, 0.5),
       F_N("speed", "速度", 2, 0.1),
-      { key: "axis", label: "轴", kind: "string", fallback: "x", placeholder: "x / z / y" }
+      { key: "axis", label: "轴", kind: "string", fallback: "x", placeholder: "x / z / y" },
+      { key: "faceMove", label: "朝向移动方向", kind: "boolean", fallback: true }
     ]
   },
   {
@@ -248,7 +249,7 @@ const DRIVER_TYPES = [
     type: "op.chase",
     category: "driver",
     label: "追击目标",
-    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；常与 sense.distance + 分支组合成追击/放弃",
+    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；移动时朝向移动方向（+Z 前向，同导航代理；可关）；常与 sense.distance + 分支组合成追击/放弃",
     color: "#dcdcaa",
     trigger: "frame",
     inputs: [
@@ -257,7 +258,10 @@ const DRIVER_TYPES = [
       { id: "prey", label: "追击目标", direction: "in", dataType: "entity" }
     ],
     outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
-    fields: [{ key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 }],
+    fields: [
+      { key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 },
+      { key: "faceMove", label: "朝向移动方向", kind: "boolean", fallback: true }
+    ],
     capabilities: { op: true, driver: true }
   }
 ];
@@ -691,9 +695,9 @@ function createGraphKernel(ctx, modules) {
     const v = (_a2 = n.params) == null ? void 0 : _a2[key];
     return typeof v === "string" ? v : fb;
   };
-  const boolP = (n, key) => {
-    var _a2;
-    return ((_a2 = n.params) == null ? void 0 : _a2[key]) === true;
+  const boolP = (n, key, fb = false) => {
+    var _a2, _b2;
+    return ((_a2 = n.params) == null ? void 0 : _a2[key]) === void 0 ? fb : ((_b2 = n.params) == null ? void 0 : _b2[key]) === true;
   };
   function resolveSet(refId, seen = /* @__PURE__ */ new Set()) {
     if (seen.has(refId)) return [];

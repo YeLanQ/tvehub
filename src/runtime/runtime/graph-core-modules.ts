@@ -257,6 +257,16 @@ const WAYPOINT_ARRIVE = 0.3;
 /** 追击停止距离（米） */
 const CHASE_STOP = 0.05;
 
+/**
+ * 朝向移动方向：按本帧位移（移动者父空间水平分量）写 yaw。
+ * 与导航代理同一约定（+Z 前向、atan2(dx,dz)、只写 rotation.y 不清 x/z，
+ * 避免破坏与其它驱动器组合的姿态）；位移没有水平分量（垂直移动/未动）不改朝向。
+ */
+function faceMoveDir(face: boolean, obj: NodeObj, dx: number, dz: number): void {
+  if (!face) return;
+  if (Math.hypot(dx, dz) > 1e-6) obj.rotation.y = Math.atan2(dx, dz);
+}
+
 export function createCoreDriversModule(): GraphRuntimeModule {
   return {
     id: "core-drivers",
@@ -325,6 +335,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             }
             if (waypoints.length) {
               const speed = k.numP(node, "speed", 2);
+              const face = k.boolP(node, "faceMove", true);
               for (const t of targets) {
                 const idx = wpIdx.get(t.id) ?? 0;
                 const wp = waypoints[idx % waypoints.length];
@@ -358,6 +369,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
                 t.obj.position.x += dx * step;
                 t.obj.position.y += dy * step;
                 t.obj.position.z += dz * step;
+                faceMoveDir(face, t.obj, dx, dz);
               }
               return;
             }
@@ -367,6 +379,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             const axis = k.strP(node, "axis", "x");
             const period = speed > 0 && dist > 0 ? (2 * dist) / speed : 0;
             if (period <= 0) return;
+            const faceAxis = k.boolP(node, "faceMove", true);
             for (const t of targets) {
               let b = base.get(t.id);
               if (!b) {
@@ -378,9 +391,13 @@ export function createCoreDriversModule(): GraphRuntimeModule {
               phase.set(t.id, ph);
               const half = period / 2;
               const off = (ph < half ? ph : period - ph) * speed;
+              const prevX = t.obj.position.x;
+              const prevZ = t.obj.position.z;
               if (axis === "z") t.obj.position.z = b.z + off;
               else if (axis === "y") t.obj.position.y = b.y + off;
               else t.obj.position.x = b.x + off;
+              // 往返折返点处位移自然反号，朝向随移动方向翻转
+              faceMoveDir(faceAxis, t.obj, t.obj.position.x - prevX, t.obj.position.z - prevZ);
             }
           },
         };
@@ -397,6 +414,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             return;
           }
           const speed = k.numP(node, "speed", 3);
+          const face = k.boolP(node, "faceMove", true);
           for (const t of targets) {
             // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
             if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
@@ -414,6 +432,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             t.obj.position.x += dx * step;
             t.obj.position.y += dy * step;
             t.obj.position.z += dz * step;
+            faceMoveDir(face, t.obj, dx, dz);
           }
         },
       }),

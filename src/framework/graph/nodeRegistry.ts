@@ -413,7 +413,7 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
     type: "op.chase",
     category: "driver",
     label: "追击目标",
-    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；常与 sense.distance + 分支组合成追击/放弃",
+    desc: "每帧朝 prey 引脚接入的实体移动（速度 units/s）；移动时朝向移动方向（+Z 前向，同导航代理；可关）；常与 sense.distance + 分支组合成追击/放弃",
     color: "#dcdcaa",
     trigger: "frame",
     inputs: [
@@ -422,7 +422,10 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
       { id: "prey", label: "追击目标", direction: "in", dataType: "entity" },
     ],
     outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
-    fields: [{ key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 }],
+    fields: [
+      { key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 },
+      { key: "faceMove", label: "朝向移动方向", kind: "boolean", fallback: true },
+    ],
     capabilities: { op: true, driver: true },
   },
 ];

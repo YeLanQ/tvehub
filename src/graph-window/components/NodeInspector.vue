@@ -440,7 +440,7 @@ function commitStateName(raw: string): void {
           <input
             v-else-if="f.kind === 'boolean'"
             type="checkbox"
-            :checked="g.params?.[f.key] === true"
+            :checked="Boolean(g.params?.[f.key] ?? f.fallback)"
             @change="commitParam(f.key, ($event.target as HTMLInputElement).checked)"
           />
           <ComboBox
