@@ -95,6 +95,12 @@ export interface GraphKernel {
   stepDriver(node: GNode, dt: number, targets?: NodeObj[]): void;
   /** 该节点是否已被全局 frame 循环步进（容器 frame 钩子给状态内驱动步进前去重） */
   inFrameLoop(nodeId: string): boolean;
+  /** 中断开关（gate 能力节点）当前是否导通（未登记 = 导通） */
+  gateOpen(nodeId: string): boolean;
+  /** 翻转中断开关锁存状态（「开/关」控制口触发；断开即中断下游执行链与帧驱动器） */
+  setGateOpen(nodeId: string, open: boolean): void;
+  /** 节点上游主执行链上是否存在断开的中断开关（帧驱动器步进门控） */
+  driverGated(nodeId: string): boolean;
   /** 诊断告警（同 key 只提示一次；预览控制台实时回传编辑器，静默失败可定位） */
   warnOnce(key: string, msg: string): void;
   /** 诊断日志（info 级；同 key 最多输出 limit 次，缺省 1 次——逐帧语义不刷屏） */

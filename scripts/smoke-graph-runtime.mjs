@@ -763,5 +763,100 @@ console.log("[12] 原型卡「接入」口：实体集/数据交付给实体上�
   h2.dispose();
 }
 
+console.log("[13] 中断开关 flow.gate：执行链与帧驱动器通断（状态机切换中断巡逻的实现路径）");
+{
+  // 场景：crate-1 = 巡逻者 B（运行中被「关」口中断）/ crate-2 = 巡逻者 A（初始断开）/ ball-1 = 距离参照
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "crate-1", type: "meshNode", name: "Crate", source: "primitive", geometry: "box", size: { x: 1, y: 1, z: 1 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "crate-2", type: "meshNode", name: "Crate2", source: "primitive", geometry: "box", size: { x: 1, y: 1, z: 1 }, transform: { position: { x: 0, y: 0, z: 10 } } },
+        { id: "ball-1", type: "meshNode", name: "Ball", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 6, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-event", version: 1 }, { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }],
+    nodes: [
+      { id: "et", type: "event.onTick", x: 0, y: 0 },
+      { id: "eb", type: "event.onBegin", x: 0, y: 160 },
+      { id: "p1", type: "entity.proto", x: 0, y: 320, entityId: "crate-1" },
+      { id: "p2", type: "entity.proto", x: 0, y: 480, entityId: "crate-2" },
+      { id: "pBall", type: "entity.proto", x: 0, y: 640, entityId: "ball-1" },
+      { id: "dist", type: "sense.distance", x: 200, y: 640, params: {} },
+      { id: "cmp", type: "flow.compare", x: 400, y: 640, params: { operator: "<", b: 5 } },
+      { id: "br", type: "flow.branch", x: 600, y: 640, params: {} },
+      { id: "gA", type: "flow.gate", x: 200, y: 0, params: {} },
+      { id: "gB", type: "flow.gate", x: 400, y: 0, params: { initialOpen: true } },
+      { id: "gC", type: "flow.gate", x: 200, y: 160, params: { initialOpen: true } },
+      { id: "pt", type: "op.patrol", x: 600, y: 0, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+      { id: "pt2", type: "op.patrol", x: 400, y: 160, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      // B 链：On Tick → 开关A（导通）→ 开关B（初始断开，On Begin「开」口闭合）→ 巡逻
+      { id: "n1", srcNode: "et", srcPort: "next", dstNode: "gA", dstPort: "exec" },
+      { id: "n2", srcNode: "gA", srcPort: "next", dstNode: "gB", dstPort: "exec" },
+      { id: "n3", srcNode: "gB", srcPort: "next", dstNode: "pt", dstPort: "exec" },
+      { id: "n4", srcNode: "p1", srcPort: "out", dstNode: "pt", dstPort: "in" },
+      { id: "n5", srcNode: "eb", srcPort: "next", dstNode: "gB", dstPort: "on" },
+      // 中断触发：距离 < 5 → 分支真 → 开关A「关」口（等价状态机追击态子链触发）
+      { id: "n6", srcNode: "p1", srcPort: "out", dstNode: "dist", dstPort: "from" },
+      { id: "n7", srcNode: "pBall", srcPort: "out", dstNode: "dist", dstPort: "to" },
+      { id: "n8", srcNode: "dist", srcPort: "result", dstNode: "cmp", dstPort: "a" },
+      { id: "n9", srcNode: "cmp", srcPort: "result", dstNode: "br", dstPort: "condition" },
+      { id: "n10", srcNode: "et", srcPort: "next", dstNode: "br", dstPort: "exec" },
+      { id: "n11", srcNode: "br", srcPort: "true", dstNode: "gA", dstPort: "off" },
+      // A 链：On Tick → 开关C（初始断开，无「开」触发）→ 巡逻：永不步进
+      { id: "n12", srcNode: "et", srcPort: "next", dstNode: "gC", dstPort: "exec" },
+      { id: "n13", srcNode: "gC", srcPort: "next", dstNode: "pt2", dstPort: "exec" },
+      { id: "n14", srcNode: "p2", srcPort: "out", dstNode: "pt2", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const crate = scene.getObjectByProperty("name", "Crate");
+  const crate2 = scene.getObjectByProperty("name", "Crate2");
+  // A：初始断开且无「开」触发 → 下游巡逻驱动器永不步进
+  advance(handle, 1);
+  ok(approx(crate2.position.x, 0, 1e-9), `初始断开：下游巡逻 1s 零位移（x=${crate2.position.x.toFixed(3)}）`);
+  ok(
+    infoLines().some((l) => l.includes("中断开关") && l.includes("断开中")),
+    "断开期间执行链被拦截有日志（可定位）",
+  );
+  // B：初始断开的开关B被 On Begin「开」口闭合 → 巡逻起步
+  ok(crate.position.x > 0.5, `「开」口闭合后巡逻起步（0.5s x=${crate.position.x.toFixed(3)}；开口翻转失效会是 0）`);
+  // B：距离 < 5 触发「关」口 → 巡逻冻结（等价状态机切入追击态）
+  advance(handle, 0.5);
+  const x1 = crate.position.x;
+  ok(x1 > 1.0 && x1 < 1.1, `接近参照物后中断（1s x=${x1.toFixed(3)}，落在首个触达帧）`);
+  advance(handle, 2);
+  ok(approx(crate.position.x, x1, 1e-9), `中断后 2s 零位移（x=${crate.position.x.toFixed(3)}；门控失效会继续走到 ~5）`);
+  ok(
+    infoLines().some((l) => l.includes("中断开关") && l.includes("断开 → 下游中断")),
+    "「关」口触发日志（确认翻转来自控制口）",
+  );
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

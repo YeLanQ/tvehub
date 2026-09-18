@@ -206,7 +206,7 @@ console.log("① 会话模型与模块注册表");
   // ----- 端口通道表 -----
   const proto: GNode = { id: "p", type: "entity.proto", x: 0, y: 0, entityId: "e" };
   const op: GNode = { id: "o", type: "op.spin", x: 0, y: 0, opType: "op.spin", params: {} };
-  check(graphNodePorts(proto).length === 1 && graphNodePorts(proto)[0].dataType === "entities", "原型仅实体集源端口");
+  check(graphNodePorts(proto).length === 2 && graphNodePorts(proto).some((p) => p.id === "out" && p.dataType === "entities"), "原型端口 = 接入(any) + 实体集输出");
   check(graphNodePorts(op).length === 4, "操作节点四端口");
   check(graphPort(op, "in", "in")?.dataType === "entities", "op.in = 实体集入");
   check(graphPort(op, "exec", "in")?.dataType === "exec", "op.exec = 执行链入");
@@ -256,7 +256,7 @@ console.log("① 会话模型与模块注册表");
 
   const vGroups = nodeMenuGroups();
   check(vGroups.some((g) => g.category === "variable" && g.items.length === 2), "右键菜单含变量分组");
-  check(vGroups.some((g) => g.category === "flow" && g.items.length === 5), "右键菜单含控制流分组（5 个节点）");
+  check(vGroups.some((g) => g.category === "flow" && g.items.length === 6), "右键菜单含控制流分组（6 个节点，含中断开关）");
   check(vGroups.some((g) => g.category === "logic" && g.items.length === 2), "右键菜单含逻辑容器分组");
   check(vGroups.some((g) => g.category === "driver" && g.items.some((i) => i.type === "op.patrol")), "右键菜单含驱动器分组（op.patrol 类别归 driver）");
   const feNode: GNode = { id: "fe", type: "flow.forEach", x: 0, y: 0 };

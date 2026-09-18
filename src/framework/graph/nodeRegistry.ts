@@ -112,6 +112,11 @@ export interface GNodeCapabilities {
   container?: boolean;
   /** 表达式数据节点（自定义节点：输出引脚由 JS 表达式求值） */
   expression?: boolean;
+  /**
+   * 中断开关（控制流通断）：锁存通断状态；断开时下游执行链不级联、
+   * 下游帧驱动器暂停步进（「开/关」执行口翻转，恢复后继续）
+   */
+  gate?: boolean;
 }
 
 /** 节点类型定义（注册表条目） */
@@ -528,6 +533,21 @@ const FLOW_TYPES: GNodeTypeDef[] = [
       { id: "loop", label: "循环", direction: "out", dataType: "exec" },
       { id: "completed", label: "完成", direction: "out", dataType: "exec" },
     ],
+  },
+  {
+    type: "flow.gate",
+    category: "flow",
+    label: "中断开关",
+    desc: "电路开关式通断控制：串入执行链，「关」口触发后中断下游——执行链不再级联、下游帧驱动器（导航移动/路径巡逻/追击等）暂停步进，「开」口触发恢复；都不触发时按「初始断开」放行。常与状态机组合：进入追击状态关断巡逻/导航链，回到巡逻状态闭合",
+    color: "#c586c0",
+    inputs: [
+      P_EXEC_IN,
+      { id: "on", label: "开", direction: "in", dataType: "exec", multi: true },
+      { id: "off", label: "关", direction: "in", dataType: "exec", multi: true },
+    ],
+    outputs: [P_EXEC_OUT],
+    fields: [{ key: "initialOpen", label: "初始断开", kind: "boolean", fallback: false }],
+    capabilities: { gate: true },
   },
 ];
 

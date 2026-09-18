@@ -364,6 +364,21 @@ const FLOW_TYPES = [
       { id: "loop", label: "循环", direction: "out", dataType: "exec" },
       { id: "completed", label: "完成", direction: "out", dataType: "exec" }
     ]
+  },
+  {
+    type: "flow.gate",
+    category: "flow",
+    label: "中断开关",
+    desc: "电路开关式通断控制：串入执行链，「关」口触发后中断下游——执行链不再级联、下游帧驱动器（导航移动/路径巡逻/追击等）暂停步进，「开」口触发恢复；都不触发时按「初始断开」放行。常与状态机组合：进入追击状态关断巡逻/导航链，回到巡逻状态闭合",
+    color: "#c586c0",
+    inputs: [
+      P_EXEC_IN,
+      { id: "on", label: "开", direction: "in", dataType: "exec", multi: true },
+      { id: "off", label: "关", direction: "in", dataType: "exec", multi: true }
+    ],
+    outputs: [P_EXEC_OUT],
+    fields: [{ key: "initialOpen", label: "初始断开", kind: "boolean", fallback: false }],
+    capabilities: { gate: true }
   }
 ];
 const P_N_IN = (id, label) => ({ id, label, direction: "in", dataType: "number" });
@@ -744,7 +759,7 @@ function createGraphKernel(ctx, modules) {
   }
   const execOut = /* @__PURE__ */ new Map();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec" && e.dstPort !== "event") continue;
+    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off") continue;
     const portMap = execOut.get(e.srcNode) ?? /* @__PURE__ */ new Map();
     const list = portMap.get(e.srcPort) ?? [];
     list.push({ id: e.dstNode, dstPort: e.dstPort });
@@ -793,12 +808,42 @@ function createGraphKernel(ctx, modules) {
   }
   function stepDriver(node, dt, targets) {
     var _a2;
+    if (driverGated(node.id)) return;
     const inst = driverInst(node);
     if (!inst) return;
     const ts = targets ?? resolveTargets(node.id);
     if (!ts.length) return;
     (_a2 = inst.boot) == null ? void 0 : _a2.call(inst, ts);
     inst.step(dt, ts);
+  }
+  const gateStates = /* @__PURE__ */ new Map();
+  const gateAncestors = /* @__PURE__ */ new Map();
+  function gateAncestorsOf(nodeId) {
+    let hit = gateAncestors.get(nodeId);
+    if (hit) return hit;
+    hit = [];
+    const seen = /* @__PURE__ */ new Set([nodeId]);
+    const stack = [nodeId];
+    while (stack.length) {
+      const cur = stack.pop();
+      for (const e of graph.edges) {
+        if (e.dstNode !== cur || e.dstPort !== "exec") continue;
+        if (seen.has(e.srcNode)) continue;
+        seen.add(e.srcNode);
+        const src = nodeOf(e.srcNode);
+        if (!src || src.unresolved) continue;
+        if (hasNodeTypeCapability(src.type, "gate")) hit.push(src.id);
+        if (!hasNodeTypeCapability(src.type, "container")) stack.push(e.srcNode);
+      }
+    }
+    gateAncestors.set(nodeId, hit);
+    return hit;
+  }
+  function driverGated(nodeId) {
+    for (const g of gateAncestorsOf(nodeId)) {
+      if (gateStates.get(g) === false) return true;
+    }
+    return false;
   }
   function cascadeNext(node, ec, port = "next", eventName) {
     for (const t of execTargetsOf(node.id, port)) {
@@ -879,6 +924,9 @@ function createGraphKernel(ctx, modules) {
     nodeActive,
     stepDriver,
     inFrameLoop: (nodeId) => frameOpsNodes.has(nodeId),
+    gateOpen: (nodeId) => gateStates.get(nodeId) !== false,
+    setGateOpen: (nodeId, open) => gateStates.set(nodeId, open),
+    driverGated,
     warnOnce,
     log,
     elapsed: () => elapsed,
@@ -919,10 +967,9 @@ function createGraphKernel(ctx, modules) {
   const tickChainEntries = [];
   const tickChainDrivers = [];
   for (const ev of tickEvents) {
-    const next = execNextOf(ev.id);
-    for (const id of next) {
-      tickChainEntries.push(id);
-      collectFrameOps(id, /* @__PURE__ */ new Set());
+    for (const t of execTargetsOf(ev.id)) {
+      tickChainEntries.push(t);
+      collectFrameOps(t.id, /* @__PURE__ */ new Set());
     }
   }
   function collectFrameOps(opId, seen) {
@@ -1015,7 +1062,7 @@ function createGraphKernel(ctx, modules) {
         "info",
         `[graph] 指针命中 ${hitId}（${(hit == null ? void 0 : hit.obj.name) ?? ""}）→ 级联事件链 ${execNextOf(oc.ev.id).length} 个下游`
       );
-      for (const id of execNextOf(oc.ev.id)) cascadeExec(id);
+      for (const t of execTargetsOf(oc.ev.id)) cascadeExec(t.id, /* @__PURE__ */ new Set(), "next", t.dstPort);
     }
   }
   if (allClickOps.length || onClickCascades.length) dom.addEventListener("pointerdown", onPointerDown);
@@ -1089,11 +1136,16 @@ function createGraphKernel(ctx, modules) {
       }
     }
   }
+  for (const n of graph.nodes) {
+    if (!n.unresolved && hasNodeTypeCapability(n.type, "gate") && boolP(n, "initialOpen")) {
+      gateStates.set(n.id, false);
+    }
+  }
   for (const ev of startEvents) {
-    const next = execNextOf(ev.id);
+    const next = execTargetsOf(ev.id);
     if (next.length) {
       log(`ev-start:${ev.id}`, `[graph] 事件「${((_b = nodeTypeDef(ev.type)) == null ? void 0 : _b.label) ?? ev.type}」(${ev.id}) 触发 → 级联 ${next.length} 个下游`);
-      for (const id of next) cascadeExec(id);
+      for (const t of next) cascadeExec(t.id, /* @__PURE__ */ new Set(), "next", t.dstPort);
     }
   }
   for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
@@ -1124,12 +1176,13 @@ function createGraphKernel(ctx, modules) {
           "tick-chain",
           `[graph] 每帧执行链步进中（${tickChainEntries.length} 个入口，事件节点 ${tickEvents.length}）`
         );
-        for (const entryId of tickChainEntries) {
-          cascadeExec(entryId);
+        for (const t of tickChainEntries) {
+          cascadeExec(t.id, /* @__PURE__ */ new Set(), "next", t.dstPort);
         }
       }
       for (const behavior of frameOps) {
         if (!nodeActive(behavior.node)) continue;
+        if (driverGated(behavior.node.id)) continue;
         const inst = driverInst(behavior.node);
         inst == null ? void 0 : inst.step(dt, behavior.targets);
       }

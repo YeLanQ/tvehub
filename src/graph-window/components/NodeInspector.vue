@@ -196,6 +196,15 @@ function commitFlowParam(key: string, raw: string): void {
   store.markGraphDirty();
 }
 
+/** 控制流布尔参数（中断开关「初始断开」等） */
+function commitFlowBool(key: string, checked: boolean): void {
+  if (!g.value?.type.startsWith("flow.")) return;
+  store.canvas?.requestSnapshot();
+  if (!g.value.params) g.value.params = {};
+  g.value.params[key] = checked === true;
+  store.markGraphDirty();
+}
+
 // ----- 自定义节点参数提交 -----
 
 function commitCustomParam(key: string, raw: string | boolean): void {
@@ -520,6 +529,11 @@ function commitStateName(raw: string): void {
             <input type="number" step="1" :value="Number(g.params?.step ?? 1)" @change="commitFlowParam('step', ($event.target as HTMLInputElement).value)" />
           </label>
         </template>
+        <!-- Gate: 初始断开 -->
+        <label v-if="g.type === 'flow.gate'" class="gfield">
+          <span class="gfield-label">初始断开</span>
+          <input type="checkbox" :checked="g.params?.initialOpen === true" @change="commitFlowBool('initialOpen', ($event.target as HTMLInputElement).checked)" />
+        </label>
       </div>
       <div class="ginsp-desc">{{ flowDef.desc }}</div>
       <div v-if="g.type === 'flow.compare'" class="ginsp-hint">纯数据节点：比较 A 与 B，结果从「结果」引脚输出。连到 Branch 的「条件」引脚做条件分支。</div>
@@ -527,6 +541,7 @@ function commitStateName(raw: string): void {
       <div v-else-if="g.type === 'flow.for'" class="ginsp-hint">从起始到结束步进，每次触发「循环」分支。「索引」引脚输出当前迭代值。结束后走「完成」分支。</div>
       <div v-else-if="g.type === 'flow.forEach'" class="ginsp-hint">遍历实体集，每次触发「循环」分支。「当前」引脚输出当前实体。结束后走「完成」分支。</div>
       <div v-else-if="g.type === 'flow.while'" class="ginsp-hint">条件为真时循环触发「循环」分支。条件为假或达到上限（10000）后走「完成」分支。</div>
+      <div v-else-if="g.type === 'flow.gate'" class="ginsp-hint">「关」口触发后中断下游（执行链不级联、下游帧驱动器暂停），「开」口恢复；状态机状态子链触发开/关即可随状态中断巡逻/导航。</div>
     </template>
 
     <!-- 数学/工具节点 -->

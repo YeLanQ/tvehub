@@ -11,7 +11,8 @@
 // - core-ops        一次性原子操作（op.set / op.setFsmParam / op.fireFsm）
 // - core-drivers    驱动器（op.spin / op.bob / op.patrol / op.chase / op.navMove）
 // - core-data       拉模型数据求值（var / flow.compare / loop 上下文 / math / sense / custom 表达式）
-// - core-exec       执行链路由（var.set / flow.branch / flow.for / flow.forEach / flow.while）
+// - core-exec       执行链路由（var.set / flow.branch / flow.for / flow.forEach /
+//                   flow.while / flow.gate 中断开关）
 // - core-containers 容器行为（fsm.container 状态机 / bt.container 行为树）
 // ---------------------------------------------------------------------------
 
@@ -728,6 +729,30 @@ export function createCoreExecModule(): GraphRuntimeModule {
           for (const t of loop) k.cascade(t.id, { seen: new Set(), viaSrcPort: "loop", viaDstPort: t.dstPort, eventName: ec.fireEv });
         }
         for (const t of completed) k.cascade(t.id, { seen: ec.seen, viaSrcPort: "completed", viaDstPort: t.dstPort, eventName: ec.fireEv });
+      },
+      // 中断开关：电路开关式通断——「开/关」控制口触发翻转锁存（侧链，不透传
+      // 级联）；主链路级联仅在导通时放行。断开时下游执行链不级联、下游帧驱动器
+      // 暂停步进（kernel driverGated 门控），「开」恢复后从当前状态继续
+      "flow.gate": (k, node, ec) => {
+        if (ec.viaDstPort === "on" || ec.viaDstPort === "off") {
+          const open = ec.viaDstPort === "on";
+          k.setGateOpen(node.id, open);
+          k.log(
+            `gate-flip:${node.id}:${open ? "on" : "off"}`,
+            `[graph] 中断开关 (${node.id}) ${open ? "闭合 → 下游恢复" : "断开 → 下游中断（执行链不级联、帧驱动器暂停步进）"}`,
+            3,
+          );
+          return;
+        }
+        if (!k.gateOpen(node.id)) {
+          k.log(
+            `gate-block:${node.id}`,
+            `[graph] 中断开关 (${node.id}) 断开中，下游执行链与帧驱动器已中断——触发「开」口恢复`,
+            3,
+          );
+          return;
+        }
+        k.cascadeNext(node, ec);
       },
     },
   };

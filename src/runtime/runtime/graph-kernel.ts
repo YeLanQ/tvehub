@@ -217,11 +217,11 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   // exec 链邻接：node.id → portId → 下游 exec 目标（含目标入端口类型）
   // 支持多 exec 出端口（next/true/false/loop/completed）；容器的 event 入端口
   // （dstPort === "event"）也纳入邻接：进入容器时以「源端口名 / 源 params.event」
-  // 作为事件名做状态切换
+  // 作为事件名做状态切换；中断开关的 on/off 控制口同理纳入（级达即翻转锁存）
   // ---------------------------------------------------------------------------
   const execOut = new Map<string, Map<string, { id: string; dstPort: string }[]>>();
   for (const e of graph.edges) {
-    if (e.dstPort !== "exec" && e.dstPort !== "event") continue;
+    if (e.dstPort !== "exec" && e.dstPort !== "event" && e.dstPort !== "on" && e.dstPort !== "off") continue;
     const portMap = execOut.get(e.srcNode) ?? new Map<string, { id: string; dstPort: string }[]>();
     const list = portMap.get(e.srcPort) ?? [];
     list.push({ id: e.dstNode, dstPort: e.dstPort });
@@ -283,12 +283,54 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     return inst;
   }
   function stepDriver(node: GNode, dt: number, targets?: NodeObj[]): void {
+    if (driverGated(node.id)) return; // 上游中断开关断开 → 步进中断
     const inst = driverInst(node);
     if (!inst) return;
     const ts = targets ?? resolveTargets(node.id);
     if (!ts.length) return;
     inst.boot?.(ts);
     inst.step(dt, ts);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 中断开关（gate 能力节点）：锁存通断 + 下游帧驱动器门控。
+  // 断开 = 执行链级联到此截断（执行器语义在 core 模块）+ 主执行链下游的
+  // 帧驱动器暂停步进；「开」恢复后从当前状态继续（与容器内状态暂停同语义）。
+  // ---------------------------------------------------------------------------
+
+  /** 开关锁存状态（nodeId → 是否导通；未登记 = 导通） */
+  const gateStates = new Map<string, boolean>();
+  /** 驱动器上游开关缓存（逆主执行链收集；容器为调度边界不穿越） */
+  const gateAncestors = new Map<string, string[]>();
+  function gateAncestorsOf(nodeId: string): string[] {
+    let hit = gateAncestors.get(nodeId);
+    if (hit) return hit;
+    hit = [];
+    // 只沿主执行链（dstPort exec）上溯：「开/关」控制口是侧链触发源，
+    // 穿越它们会把别的链上的开关错误算进本驱动器的上游
+    const seen = new Set<string>([nodeId]);
+    const stack = [nodeId];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      for (const e of graph.edges) {
+        if (e.dstNode !== cur || e.dstPort !== "exec") continue;
+        if (seen.has(e.srcNode)) continue;
+        seen.add(e.srcNode);
+        const src = nodeOf(e.srcNode);
+        if (!src || src.unresolved) continue;
+        if (hasNodeTypeCapability(src.type, "gate")) hit.push(src.id);
+        // 容器按归属/状态调度子节点，是门控边界：开关对容器内驱动器不起作用
+        if (!hasNodeTypeCapability(src.type, "container")) stack.push(e.srcNode);
+      }
+    }
+    gateAncestors.set(nodeId, hit);
+    return hit;
+  }
+  function driverGated(nodeId: string): boolean {
+    for (const g of gateAncestorsOf(nodeId)) {
+      if (gateStates.get(g) === false) return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -400,6 +442,9 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
     nodeActive,
     stepDriver,
     inFrameLoop: (nodeId) => frameOpsNodes.has(nodeId),
+    gateOpen: (nodeId) => gateStates.get(nodeId) !== false,
+    setGateOpen: (nodeId, open) => gateStates.set(nodeId, open),
+    driverGated,
     warnOnce,
     log,
     elapsed: () => elapsed,
@@ -451,13 +496,14 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   const legacyClickOps = legacyOps.filter((n) => triggerOf(n) === "click");
 
   // ----- tick 链：每帧级联入口 + 驱动器发现 -----
-  const tickChainEntries: string[] = [];
+  // 入口带命中入端口（exec/event/on/off）：开关控制口、容器事件口的直连边
+  // 与后续跳转同样按 viaDstPort 分发
+  const tickChainEntries: { id: string; dstPort: string }[] = [];
   const tickChainDrivers: GNode[] = [];
   for (const ev of tickEvents) {
-    const next = execNextOf(ev.id);
-    for (const id of next) {
-      tickChainEntries.push(id);
-      collectFrameOps(id, new Set());
+    for (const t of execTargetsOf(ev.id)) {
+      tickChainEntries.push(t);
+      collectFrameOps(t.id, new Set());
     }
   }
   function collectFrameOps(opId: string, seen: Set<string>): void {
@@ -567,7 +613,7 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
         "info",
         `[graph] 指针命中 ${hitId}（${hit?.obj.name ?? ""}）→ 级联事件链 ${execNextOf(oc.ev.id).length} 个下游`,
       );
-      for (const id of execNextOf(oc.ev.id)) cascadeExec(id);
+      for (const t of execTargetsOf(oc.ev.id)) cascadeExec(t.id, new Set(), "next", t.dstPort);
     }
   }
   if (allClickOps.length || onClickCascades.length) dom.addEventListener("pointerdown", onPointerDown);
@@ -666,11 +712,18 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   // ----- start：装配即执行一次（事件链 + 旧式 trigger=start）-----
   // 时序：kernel 服务面就绪后执行；驱动器基准捕获（assembleFrameOps）
   // 在 start 之后，保证 bob/patrol 基准位取属性落位后的位置
+  // 中断开关初始通断（「初始断开」字段）先于 start 链落位：start 链的「开/关」
+  // 触发可再翻转
+  for (const n of graph.nodes) {
+    if (!n.unresolved && hasNodeTypeCapability(n.type, "gate") && boolP(n, "initialOpen")) {
+      gateStates.set(n.id, false);
+    }
+  }
   for (const ev of startEvents) {
-    const next = execNextOf(ev.id);
+    const next = execTargetsOf(ev.id);
     if (next.length) {
       log(`ev-start:${ev.id}`, `[graph] 事件「${nodeTypeDef(ev.type)?.label ?? ev.type}」(${ev.id}) 触发 → 级联 ${next.length} 个下游`);
-      for (const id of next) cascadeExec(id);
+      for (const t of next) cascadeExec(t.id, new Set(), "next", t.dstPort);
     }
   }
   for (const op of legacyStartOps) runOp(op, resolveTargets(op.id));
@@ -709,13 +762,15 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
           "tick-chain",
           `[graph] 每帧执行链步进中（${tickChainEntries.length} 个入口，事件节点 ${tickEvents.length}）`,
         );
-        for (const entryId of tickChainEntries) {
-          cascadeExec(entryId);
+        for (const t of tickChainEntries) {
+          cascadeExec(t.id, new Set(), "next", t.dstPort);
         }
       }
       for (const behavior of frameOps) {
         // 容器内帧行为：所属状态未激活时暂停（激活恢复后从基准位继续）
         if (!nodeActive(behavior.node)) continue;
+        // 上游中断开关断开 → 本帧步进中断（执行链级联同样被开关截断）
+        if (driverGated(behavior.node.id)) continue;
         const inst = driverInst(behavior.node);
         inst?.step(dt, behavior.targets);
       }
