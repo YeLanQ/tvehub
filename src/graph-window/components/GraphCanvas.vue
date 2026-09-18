@@ -102,7 +102,17 @@ function toFlowNode(n: GNode): Node {
 }
 
 function toFlowComment(c: GComment): Node {
-  return { id: c.id, type: "gcomment", position: { x: c.x, y: c.y }, data: { c } };
+  // 初始尺寸走 Node 的 width/height 字段（与 Uixder 同套路）：wrapper 尺寸
+  // 完全由库管理——拖动缩放时 resizer 把最终尺寸写进 node.style（优先级高于
+  // 字段），内容卡片 100% 填充 wrapper，业务数据不参与逐帧同步
+  return {
+    id: c.id,
+    type: "gcomment",
+    position: { x: c.x, y: c.y },
+    data: { c },
+    width: Math.max(120, c.w),
+    height: Math.max(72, c.h),
+  };
 }
 
 /** 通道 → 连线样式：执行链白线+箭头；实体集绿色细线；数据引脚青色细线 */

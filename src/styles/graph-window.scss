@@ -511,22 +511,39 @@
 // 注释框（gcomment）
 // ---------------------------------------------------------------------------
 
+// 内容 100% 填充节点 wrapper（尺寸由库管理：初始 Node.width/height 字段，
+// 拖动缩放 resizer 写 node.style）——业务数据不做逐帧同步，无两层盒子竞态。
+// NodeResizer 控件按 Uixder 方案视觉隐藏：边线/边中点手柄 display:none，
+// 四角手柄 opacity:0 保留拖拽热区（选中反馈 = .gcomment 自身边框）。
 .gcomment {
-  width: 240px;
-  height: 140px;
+  width: 100%;
+  height: 100%;
   border: 1px dashed;
   border-radius: 6px;
   display: flex;
 
   &.selected { border-style: solid; }
-  .gcomment-bar { width: 4px; border-radius: 6px 0 0 6px; flex: none; }
+  .gcomment-bar { width: 4px; border-radius: 6px 0 0 6px; flex: none; align-self: stretch; }
   .gcomment-text {
+    flex: 1;
+    min-width: 0;
     padding: 8px;
     color: var(--text);
     font-size: 12px;
+    line-height: 1.55;
     white-space: pre-wrap;
+    word-break: break-word;
     overflow: hidden;
   }
+
+  .vue-flow__resize-control.line,
+  .vue-flow__resize-control.handle.left:not(.top):not(.bottom),
+  .vue-flow__resize-control.handle.right:not(.top):not(.bottom),
+  .vue-flow__resize-control.handle.top:not(.left):not(.right),
+  .vue-flow__resize-control.handle.bottom:not(.left):not(.right) {
+    display: none;
+  }
+  .vue-flow__resize-control.handle { opacity: 0; }
 }
 
 // ---------------------------------------------------------------------------
