@@ -645,10 +645,11 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
     type: "bt.container",
     category: "logic",
     label: "行为树容器",
-    desc: "行为树容器：把携带 .bt 的原型卡连到「作用域」即读取树构成（模式取树根类型）；进入时按子节点纵向顺序依次执行归属节点链，完成后触发退出；支持嵌套",
+    desc: "行为树容器：把携带 .bt 的原型卡连到「作用域」读取树构成（模式取树根类型）；成员卡不参与全局事件驱动，由容器调度——顺序（sequence）：进入时按纵向顺序全部执行；选择（selector）：条件口布尔源与成员按纵向顺序配对，只执行第一个为真条件所配对的成员；并行（parallel）：进入时全部执行，激活期间每帧重跑成员链。「重跑间隔」> 0 时按秒周期性重跑（0 = 仅进入时一次）；进入过一次即激活，激活期间框内帧驱动器（巡逻/追击/旋转等）每帧步进；支持嵌套",
     color: "#4ec9b0",
     inputs: [
       P_EXEC_IN,
+      { id: "condition", label: "条件", direction: "in", dataType: "boolean", multi: true }, // selector 模式：与成员纵向配对
       { id: "in", label: "作用域", direction: "in", dataType: "entities", multi: true },
     ],
     outputs: [
@@ -656,7 +657,8 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
       { id: "out", label: "输出", direction: "out", dataType: "entities" },
     ],
     fields: [
-      { key: "mode", label: "模式", kind: "string", fallback: "sequence" },
+      { key: "mode", label: "模式", kind: "string", fallback: "sequence", placeholder: "sequence / selector / parallel" },
+      { key: "interval", label: "重跑间隔（秒）", kind: "number", fallback: 0, step: 0.1 },
     ],
     capabilities: { container: true },
   },

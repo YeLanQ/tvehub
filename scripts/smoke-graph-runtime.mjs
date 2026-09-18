@@ -1142,5 +1142,119 @@ console.log("[16] 状态机容器：迁移守卫（from>to）+ 同状态去重/�
   handle.dispose();
 }
 
+console.log("[17] 行为树容器：sequence 驱动器步进 / selector 条件配对 / parallel 每帧重跑");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        { id: "host-1", type: "meshNode", name: "Host1", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "host-2", type: "meshNode", name: "Host2", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // mover-5：Y 轴巡逻（并行容器的成员把它的 X 钉在 5 → 每帧重跑可观测）
+        { id: "mover-5", type: "meshNode", name: "Mover5", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // selector 条件源：mover-3（speed 2，t≈2.5s 越过 5）/ mover-4（speed 4，t≈1.25s 越过 5）
+        { id: "mover-3", type: "meshNode", name: "Mover3", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "mover-4", type: "meshNode", name: "Mover4", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 }, { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }, { id: "core-containers", version: 1 },
+    ],
+    nodes: [
+      { id: "eb", type: "event.onBegin", x: 0, y: 0 },
+      // bt1 sequence：进入跑全部成员；成员 2 是持续旋转驱动器（激活期间应被容器步进）
+      { id: "bt1", type: "bt.container", x: 0, y: 0, params: { mode: "sequence", interval: 0 } },
+      { id: "pH1", type: "entity.proto", x: 0, y: 0, entityId: "host-1" },
+      { id: "s1", type: "op.set", x: 0, y: 0, containerId: "bt1", opType: "op.set", params: { property: "position.y", value: 50 } },
+      { id: "sp1", type: "op.spin", x: 0, y: 0, containerId: "bt1", opType: "op.spin", params: { speedX: 0, speedY: 0, speedZ: 90 } },
+      // bt2 selector：条件源与成员纵向配对——cmp1(y=0)↔m1(y=0)、cmp2(y=100)↔m2(y=100)
+      // interval=1 每秒重新选择；命中「最上面的为真条件」所配对的成员
+      { id: "bt2", type: "bt.container", x: 0, y: 0, params: { mode: "selector", interval: 1 } },
+      { id: "pH2", type: "entity.proto", x: 0, y: 0, entityId: "host-2" },
+      { id: "m1", type: "op.set", x: 0, y: 0, containerId: "bt2", opType: "op.set", params: { property: "position.x", value: 111 } },
+      { id: "m2", type: "op.set", x: 0, y: 0, containerId: "bt2", opType: "op.set", params: { property: "position.x", value: 222 } },
+      { id: "pM3", type: "entity.proto", x: 0, y: 0, entityId: "mover-3" },
+      { id: "pM4", type: "entity.proto", x: 0, y: 0, entityId: "mover-4" },
+      { id: "prop1", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "prop2", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "cmp1", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5 } },
+      { id: "cmp2", type: "flow.compare", x: 100, y: 100, params: { operator: ">", b: 5 } },
+      // 条件源巡逻腿（容器外 legacy 帧驱动）：mover-3 speed 2 / mover-4 speed 4
+      { id: "pt3", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+      { id: "pt4", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+      // bt3 parallel：成员把 mover-5 的 X 钉在 5；mover-5 自带 Y 轴巡逻（容器外 legacy）
+      { id: "bt3", type: "bt.container", x: 0, y: 0, params: { mode: "parallel", interval: 0 } },
+      { id: "pM5", type: "entity.proto", x: 0, y: 0, entityId: "mover-5" },
+      { id: "pin", type: "op.set", x: 0, y: 0, containerId: "bt3", opType: "op.set", params: { property: "position.x", value: 5 } },
+      { id: "pt5", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 2, axis: "y", distance: 20 } },
+    ],
+    edges: [
+      { id: "e0", srcNode: "eb", srcPort: "next", dstNode: "bt1", dstPort: "exec" },
+      { id: "e0b", srcNode: "eb", srcPort: "next", dstNode: "bt2", dstPort: "exec" },
+      { id: "e0c", srcNode: "eb", srcPort: "next", dstNode: "bt3", dstPort: "exec" },
+      { id: "h1", srcNode: "pH1", srcPort: "out", dstNode: "s1", dstPort: "in" },
+      { id: "h2", srcNode: "pH1", srcPort: "out", dstNode: "sp1", dstPort: "in" },
+      { id: "h3", srcNode: "pH2", srcPort: "out", dstNode: "m1", dstPort: "in" },
+      { id: "h4", srcNode: "pH2", srcPort: "out", dstNode: "m2", dstPort: "in" },
+      { id: "h5", srcNode: "pM5", srcPort: "out", dstNode: "pin", dstPort: "in" },
+      { id: "w1", srcNode: "pM3", srcPort: "out", dstNode: "prop1", dstPort: "target" },
+      { id: "w2", srcNode: "pM4", srcPort: "out", dstNode: "prop2", dstPort: "target" },
+      { id: "w3", srcNode: "pM5", srcPort: "out", dstNode: "pt5", dstPort: "in" },
+      { id: "w4", srcNode: "pM3", srcPort: "out", dstNode: "pt3", dstPort: "in" },
+      { id: "w5", srcNode: "pM4", srcPort: "out", dstNode: "pt4", dstPort: "in" },
+      { id: "d1", srcNode: "prop1", srcPort: "value", dstNode: "cmp1", dstPort: "a" },
+      { id: "d2", srcNode: "prop2", srcPort: "value", dstNode: "cmp2", dstPort: "a" },
+      { id: "x1", srcNode: "cmp1", srcPort: "result", dstNode: "bt2", dstPort: "condition" },
+      { id: "x2", srcNode: "cmp2", srcPort: "result", dstNode: "bt2", dstPort: "condition" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const host1 = scene.getObjectByProperty("name", "Host1");
+  const host2 = scene.getObjectByProperty("name", "Host2");
+  const mover5 = scene.getObjectByProperty("name", "Mover5");
+
+  // 进入即执行：sequence 全部成员（y=50），激活后框内驱动器（spin）被容器步进
+  handle.update(1 / 60);
+  ok(approx(host1.position.y, 50), `sequence：进入执行全部成员（y=${host1.position.y}）`);
+  advance(handle, 1);
+  ok(host1.rotation.z > Math.PI / 2, `激活后容器步进框内驱动器（1s 旋转 z=${host1.rotation.z.toFixed(2)}rad ≈ 90°/s，此前驱动器在行为树容器内不会动）`);
+  ok(approx(host2.position.x, 0), `selector：进入时无条件源为真 → 不执行成员（x=${host2.position.x}）`);
+  // t≈2s：interval=1 重选——mover-4 已越过 5（cmp2 真）→ 命中第 2 个成员
+  advance(handle, 1.5);
+  ok(approx(host2.position.x, 222), `selector：cmp2 真 → 配对成员 2（x=${host2.position.x}）`);
+  // t≈3s：mover-3 也越过 5 → 最上面的为真条件（cmp1）优先 → 成员 1
+  advance(handle, 1.5);
+  ok(approx(host2.position.x, 111), `selector：cmp1 优先（更靠上）→ 配对成员 1（x=${host2.position.x}）`);
+  // parallel：mover-5 的 X 被成员每帧钉在 5，Y 被自己的巡逻推动
+  const y5 = mover5.position.y;
+  ok(approx(mover5.position.x, 5) && mover5.position.y > 1, `parallel：成员每帧重跑（x=${mover5.position.x} 被钉住，y=${mover5.position.y.toFixed(1)} 巡逻推进）`);
+  advance(handle, 1);
+  ok(approx(mover5.position.x, 5) && mover5.position.y > y5 + 1, `parallel：持续每帧钉 X（y 继续推进到 ${mover5.position.y.toFixed(1)}）`);
+  ok(warnLines().length === 0, `无诊断告警（warns=${warnLines().length}）`);
+  handle.dispose();
+}
+
 rawOut(passed === 0 && failed === 0 ? "无断言" : `\n场景图运行时冒烟：${passed} 通过，${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);

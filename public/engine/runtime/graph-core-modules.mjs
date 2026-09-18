@@ -852,27 +852,76 @@ function createCoreContainersModule() {
       chaseTargetsNow = /* @__PURE__ */ new Set();
     }
   };
-  const bt = {
-    enter(k, node, ec) {
-      const children = k.containerChildren(node.id);
-      if (!children.length) {
-        k.warnOnce(
-          `bt-no-children:${node.id}`,
-          `[graph] 行为树容器 (${node.id}) 内没有归属子节点，进入后不执行任何行为——把行为节点拖入容器框内即归属`
-        );
+  const btActive = /* @__PURE__ */ new Set();
+  const btTimer = /* @__PURE__ */ new Map();
+  function btRun(k, node) {
+    const children = k.containerChildren(node.id);
+    if (!children.length) {
+      k.warnOnce(
+        `bt-no-children:${node.id}`,
+        `[graph] 行为树容器 (${node.id}) 内没有归属子节点，进入后不执行任何行为——把行为节点拖入容器框内即归属`
+      );
+    }
+    const mode = k.strP(node, "mode", "sequence") || "sequence";
+    if (mode === "selector") {
+      const conds = k.graph.edges.filter((e) => e.dstNode === node.id && e.dstPort === "condition").map((e) => k.nodeOf(e.srcNode)).filter((s) => s && !s.unresolved).sort((a, b) => a.y - b.y || a.x - b.x);
+      let picked = -1;
+      for (let i = 0; i < conds.length && i < children.length; i++) {
+        if (k.evalOutput(conds[i].id, "result") === true) {
+          picked = i;
+          break;
+        }
       }
-      const mode = k.strP(node, "mode", "sequence") || "sequence";
+      if (children[picked]) k.cascade(children[picked].id, { seen: /* @__PURE__ */ new Set(), viaSrcPort: "next", viaDstPort: "exec" });
       k.log(
         `bt-enter:${node.id}`,
-        `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`,
+        `[graph] 行为树容器 (${node.id}) 进入（选择）：${conds.length} 个条件源，命中第 ${picked + 1} 个成员`,
         3
       );
-      for (const child of children) {
-        if (!k.nodeActive(child)) continue;
-        k.cascade(child.id, { seen: /* @__PURE__ */ new Set(), viaSrcPort: "next", viaDstPort: "exec" });
-      }
+      return;
+    }
+    for (const child of children) {
+      if (!k.nodeActive(child)) continue;
+      k.cascade(child.id, { seen: /* @__PURE__ */ new Set(), viaSrcPort: "next", viaDstPort: "exec" });
+    }
+    k.log(`bt-enter:${node.id}`, `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`, 3);
+  }
+  const bt = {
+    enter(k, node, _ec) {
+      btActive.add(node.id);
+      btTimer.set(node.id, 0);
+      btRun(k, node);
       for (const t of k.execTargetsOf(node.id, "next")) {
-        k.cascade(t.id, { seen: ec.seen, viaSrcPort: "next", viaDstPort: t.dstPort, eventName: "" });
+        k.cascade(t.id, { seen: /* @__PURE__ */ new Set(), viaSrcPort: "next", viaDstPort: t.dstPort, eventName: "" });
+      }
+    },
+    frame(k, node, dt) {
+      if (!btActive.has(node.id)) return;
+      const mode = k.strP(node, "mode", "sequence") || "sequence";
+      const children = k.containerChildren(node.id);
+      for (const child of children) {
+        if (k.inFrameLoop(child.id)) continue;
+        const targets = k.resolveTargets(child.id);
+        if (!targets.length) continue;
+        k.stepDriver(child, dt, targets);
+        if (child.type === CHASE_TYPE) for (const tt of targets) chaseTargetsNow.add(tt.id);
+      }
+      if (mode === "parallel") {
+        for (const child of children) {
+          if (!k.nodeActive(child)) continue;
+          k.cascade(child.id, { seen: /* @__PURE__ */ new Set(), viaSrcPort: "next", viaDstPort: "exec" });
+        }
+        return;
+      }
+      const interval = k.numP(node, "interval", 0);
+      if (interval > 0) {
+        const t = (btTimer.get(node.id) ?? 0) + dt;
+        if (t >= interval) {
+          btTimer.set(node.id, t - interval);
+          btRun(k, node);
+        } else {
+          btTimer.set(node.id, t);
+        }
       }
     }
   };

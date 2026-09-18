@@ -981,28 +981,96 @@ export function createCoreContainersModule(): GraphRuntimeModule {
     },
   };
 
-  /** 进入 BT 容器：按子节点纵向排序依次执行归属节点链，完成级联 next 下游 */
-  const bt: ContainerBehavior = {
-    enter(k, node, ec) {
-      const children = k.containerChildren(node.id);
-      if (!children.length) {
-        k.warnOnce(
-          `bt-no-children:${node.id}`,
-          `[graph] 行为树容器 (${node.id}) 内没有归属子节点，进入后不执行任何行为——把行为节点拖入容器框内即归属`,
-        );
+  /** BT 容器激活态（containerId → 已进入过；激活后帧钩子才开始工作） */
+  const btActive = new Set<string>();
+  /** BT 容器重跑计时（containerId → 秒；interval > 0 时周期性重跑成员） */
+  const btTimer = new Map<string, number>();
+
+  /**
+   * 按模式执行成员：
+   * - sequence（顺序，默认）：按纵向顺序全部执行一遍；
+   * - selector（选择）：条件口布尔源与成员按纵向顺序一一配对，执行第一个
+   *   为真的条件所配对的成员（全假/无条件源不执行）；
+   * - parallel（并行）：全部成员执行一遍，且激活期间每帧重跑全部成员链
+   *   （驱动器由帧钩子步进，成员链放轻量卡片）。
+   */
+  function btRun(k: GraphKernel, node: GNode): void {
+    const children = k.containerChildren(node.id);
+    if (!children.length) {
+      k.warnOnce(
+        `bt-no-children:${node.id}`,
+        `[graph] 行为树容器 (${node.id}) 内没有归属子节点，进入后不执行任何行为——把行为节点拖入容器框内即归属`,
+      );
+    }
+    const mode = k.strP(node, "mode", "sequence") || "sequence";
+    if (mode === "selector") {
+      const conds = k.graph.edges
+        .filter((e) => e.dstNode === node.id && e.dstPort === "condition")
+        .map((e) => k.nodeOf(e.srcNode))
+        .filter((s) => s && !s.unresolved)
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+      let picked = -1;
+      for (let i = 0; i < conds.length && i < children.length; i++) {
+        if (k.evalOutput(conds[i].id, "result") === true) {
+          picked = i;
+          break;
+        }
       }
-      const mode = k.strP(node, "mode", "sequence") || "sequence";
+      if (children[picked]) k.cascade(children[picked].id, { seen: new Set(), viaSrcPort: "next", viaDstPort: "exec" });
       k.log(
         `bt-enter:${node.id}`,
-        `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`,
+        `[graph] 行为树容器 (${node.id}) 进入（选择）：${conds.length} 个条件源，命中第 ${picked + 1} 个成员`,
         3,
       );
-      for (const child of children) {
-        if (!k.nodeActive(child)) continue;
-        k.cascade(child.id, { seen: new Set(), viaSrcPort: "next", viaDstPort: "exec" });
-      }
+      return;
+    }
+    for (const child of children) {
+      if (!k.nodeActive(child)) continue;
+      k.cascade(child.id, { seen: new Set(), viaSrcPort: "next", viaDstPort: "exec" });
+    }
+    k.log(`bt-enter:${node.id}`, `[graph] 行为树容器 (${node.id}) 进入：模式 ${mode}，按纵向顺序执行 ${children.length} 个归属节点`, 3);
+  }
+
+  /** 进入 BT 容器：按模式执行归属节点链，完成级联 next 下游；激活后帧钩子接管持续行为 */
+  const bt: ContainerBehavior = {
+    enter(k, node, _ec) {
+      btActive.add(node.id);
+      btTimer.set(node.id, 0);
+      btRun(k, node);
       for (const t of k.execTargetsOf(node.id, "next")) {
-        k.cascade(t.id, { seen: ec.seen, viaSrcPort: "next", viaDstPort: t.dstPort, eventName: "" });
+        k.cascade(t.id, { seen: new Set(), viaSrcPort: "next", viaDstPort: t.dstPort, eventName: "" });
+      }
+    },
+    frame(k, node, dt) {
+      if (!btActive.has(node.id)) return;
+      const mode = k.strP(node, "mode", "sequence") || "sequence";
+      const children = k.containerChildren(node.id);
+      // 激活后步进框内驱动器（与状态机容器同款；已被全局帧循环步进的跳过）
+      for (const child of children) {
+        if (k.inFrameLoop(child.id)) continue;
+        const targets = k.resolveTargets(child.id);
+        if (!targets.length) continue;
+        k.stepDriver(child, dt, targets);
+        if (child.type === CHASE_TYPE) for (const tt of targets) chaseTargetsNow.add(tt.id);
+      }
+      // parallel：每帧重跑全部成员链（激活期间的持续 tick 语义）
+      if (mode === "parallel") {
+        for (const child of children) {
+          if (!k.nodeActive(child)) continue;
+          k.cascade(child.id, { seen: new Set(), viaSrcPort: "next", viaDstPort: "exec" });
+        }
+        return;
+      }
+      // sequence / selector：按「重跑间隔」周期性重跑（0 = 仅进入时一次）
+      const interval = k.numP(node, "interval", 0);
+      if (interval > 0) {
+        const t = (btTimer.get(node.id) ?? 0) + dt;
+        if (t >= interval) {
+          btTimer.set(node.id, t - interval);
+          btRun(k, node);
+        } else {
+          btTimer.set(node.id, t);
+        }
       }
     },
   };
