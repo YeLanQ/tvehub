@@ -5,10 +5,11 @@
  * 编译产物 → exportWebPreviewFromScene（scene.json/材质/贴图由后端直读磁盘）
  * → 本地静态服务 + iframe。无设备仿真（编辑器内已有完整版）。
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../../lib/api";
 import { sceneApi } from "../../lib/scene-api";
+import { logStore } from "../../app/stores/log";
 import { getGraphWindowStore } from "../graphStore";
 import {
   configPhysicsBackend,
@@ -53,10 +54,10 @@ async function buildExportFiles(): Promise<Record<string, string>> {
     includeDracoDecoder: configUsesDracoCompression(configText),
     includeBasisDecoder: configUsesTextureCompression(configText),
   });
-  // 场景图注入：图会话文档 + config 标记（player 检测到即装配行为解释器）
-  const graphDoc = store.canvas?.serializeDoc();
-  if (graphDoc) {
-    files["script-graph.json"] = JSON.stringify(graphDoc);
+  // 场景图注入：带格式版本/模块指纹的会话文档 + config 标记（与侧车同源，
+  // player 检测到即装配行为解释器）
+  if (store.canvas) {
+    files["script-graph.json"] = JSON.stringify(store.stampedExportDoc());
     let cfg: Record<string, unknown> = {};
     try {
       cfg = JSON.parse(configText) as Record<string, unknown>;
@@ -148,8 +149,21 @@ async function openInBrowser(): Promise<void> {
   }
 }
 
+/** 预览页引擎日志（player 经 postMessage 转发的 postLog）→ 控制台面板 */
+function onPreviewLog(e: MessageEvent): void {
+  const d = e.data as { __editorPreviewLog?: boolean; level?: string; text?: string } | null;
+  if (!d || d.__editorPreviewLog !== true) return;
+  const level = d.level === "warn" || d.level === "error" ? d.level : "info";
+  logStore.log(level, `[预览] ${d.text ?? ""}`, "preview");
+}
+
 onMounted(() => {
   void start();
+  window.addEventListener("message", onPreviewLog);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("message", onPreviewLog);
 });
 </script>
 

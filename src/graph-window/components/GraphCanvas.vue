@@ -1,8 +1,11 @@
 <script setup lang="ts">
 /**
  * 场景图画布（Vue Flow 集成；会话工作板，编辑态以 Vue Flow 数组为权威）：
- * - 三类卡片：原型（层级拖入生成，实体集源）/ 匹配（标签|类型筛选，实体集源）/
- *   操作（原子行为，预览运行时由 graph-behaviors 解释执行）+ 注释框；
+ * - 卡片插槽经 lib/card-registry 三级路由（类型键 → 类别 → 通用卡）：
+ *   内置类别沿用专属卡（原型/匹配/容器/操作/事件/变量/控制流/数学/自定义），
+ *   注入模块的新类别与模块未装载（unresolved）节点自动落通用卡；
+ * - 建卡统一入口 addNode(type)：端口/默认参数/容器尺寸全部由节点类型注册表
+ *   驱动（registerModule 注入的模块自动可建、自动进右键菜单）；
  * - 双通道连线：实体集（原型/匹配 out → 操作 in，决定作用对象，操作 out 可透传
  *   串联共用目标集）与执行链（op next → op exec，单入）；连线按通道配色；
  * - 层级面板行可直接拖入画布生成原型（dragstart/drop，同实体去重）；
@@ -36,10 +39,10 @@ import { api } from "../../lib/api";
 import { openContextMenu, type CtxMenuItem } from "../../lib/editor/context-menu";
 import {
   canConnectPorts,
+  CONTAINER_DEFAULT_SIZE,
   graphNodeLabel,
   graphPort,
   GRAPH_DEFAULT_COMMENT_COLOR,
-  GRAPH_OP_DEFS,
   G_OP_TRIGGER_LABEL,
   nodeDefaults,
   nodeMenuGroups,
@@ -52,6 +55,8 @@ import {
   type ScriptGraphDoc,
 } from "../../framework/graph";
 import GraphContainerCard from "./GraphContainerCard.vue";
+import GraphGenericCard from "./GraphGenericCard.vue";
+import { cardSlotFor } from "../lib/card-registry";
 
 const store = getGraphWindowStore();
 
@@ -85,22 +90,8 @@ let lastMouse: { x: number; y: number } | null = null;
 // 模型 ↔ 画布互转
 // ---------------------------------------------------------------------------
 
-/** GNode.type → Vue Flow 节点类型 */
-function flowNodeType(type: string): string {
-  if (type === "entity.proto") return "gproto";
-  if (type === "entity.match") return "gmatch";
-  if (isContainerType(type)) return "glogic";
-  if (type.startsWith("op.")) return "gop";
-  if (type.startsWith("event.")) return "gevent";
-  if (type.startsWith("var.")) return "gvar";
-  if (type.startsWith("flow.")) return "gflow";
-  if (type.startsWith("math.")) return "gmath";
-  if (type.startsWith("custom.")) return "gcustom";
-  return "gcomment";
-}
-
 function toFlowNode(n: GNode): Node {
-  const base: Node = { id: n.id, type: flowNodeType(n.type), position: { x: n.x, y: n.y }, data: { g: n } };
+  const base: Node = { id: n.id, type: cardSlotFor(n), position: { x: n.x, y: n.y }, data: { g: n } };
   // 容器卡：显式尺寸（组件按 g.w/g.h 渲染，先声明避免首帧测量抖动）；
   // 容器压低 z 序，归属子卡片保持在上层可点/可连
   if (n.w && n.h) {
@@ -269,7 +260,7 @@ function putNode(n: GNode): void {
 /** 层级拖入/双击加入：按实体生成原型（同实体已有原型则不重复） */
 function addProto(entityId: string, at?: { x: number; y: number }): void {
   if (!entityId) return;
-  if (nodes.value.some((n) => n.type === "gproto" && (n.data?.g as GNode)?.entityId === entityId)) {
+  if (nodes.value.some((n) => (n.data?.g as GNode | undefined)?.entityId === entityId)) {
     store.showToast("该实体已在图中");
     return;
   }
@@ -295,78 +286,32 @@ function addMatch(mode: "tag" | "type", at?: { x: number; y: number }): void {
   putNode(n);
 }
 
-function addOp(opType: string, at?: { x: number; y: number }): void {
-  // 注册表驱动：通用操作（GRAPH_OP_DEFS）与驱动器（op.navMove/chase/patrol）都可建
-  if (!nodeTypeDef(opType)) return;
+/**
+ * 注册表驱动的通用建卡入口（事件/操作/驱动器/变量/控制流/数学/容器/自定义
+ * 与注入模块类型共用一条路径）：参数取注册表 fields 缺省；容器能力类型附
+ * 默认大框尺寸（子节点以 containerId 归属，可嵌套）。
+ */
+function addNode(type: string, at?: { x: number; y: number }): void {
+  if (!nodeTypeDef(type)) return;
   requestSnapshot();
   const pos = at ?? mouseFlow();
-  const n: GNode = {
-    id: uniqueNodeId(),
-    type: opType,
-    x: Math.round(pos.x),
-    y: Math.round(pos.y),
-    opType,
-    params: nodeDefaults(opType),
-  };
-  assignContainer(n, pos);
-  putNode(n);
-}
-
-/** 添加事件节点（执行链入口） */
-function addEvent(eventType: string, at?: { x: number; y: number }): void {
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), type: eventType, x: Math.round(pos.x), y: Math.round(pos.y) };
-  assignContainer(n, pos);
-  putNode(n);
-}
-
-/** 添加变量节点（var.get / var.set） */
-function addVarNode(varType: string, at?: { x: number; y: number }): void {
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), type: varType, x: Math.round(pos.x), y: Math.round(pos.y) };
-  assignContainer(n, pos);
-  putNode(n);
-}
-
-/** 添加控制流节点（flow.branch/compare/for/forEach/while） */
-function addFlowNode(flowType: string, at?: { x: number; y: number }): void {
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), type: flowType, x: Math.round(pos.x), y: Math.round(pos.y) };
-  if (flowType === "flow.compare") n.params = { operator: ">" };
-  if (flowType === "flow.for") n.params = { start: 0, end: 10, step: 1 };
-  assignContainer(n, pos);
-  putNode(n);
-}
-
-/** 添加数学/工具节点（math.add/sub/.../vec3Make/...） */
-function addMathNode(mathType: string, at?: { x: number; y: number }): void {
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), type: mathType, x: Math.round(pos.x), y: Math.round(pos.y) };
-  assignContainer(n, pos);
-  putNode(n);
-}
-
-/** 添加逻辑容器（fsm.container / bt.container；大框卡，子节点以 containerId 归属，可嵌套） */
-function addLogicContainer(logicType: string, at?: { x: number; y: number }): void {
-  if (!isContainerType(logicType)) return;
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = {
-    id: uniqueNodeId(),
-    type: logicType,
-    x: Math.round(pos.x),
-    y: Math.round(pos.y),
-    w: 560,
-    h: 340,
-    params: nodeDefaults(logicType),
-  };
+  const n: GNode = { id: uniqueNodeId(), type, x: Math.round(pos.x), y: Math.round(pos.y) };
+  // 保留旧 opType 字段（向后兼容运行时）
+  if (type.startsWith("op.")) n.opType = type;
+  const defaults = nodeDefaults(type);
+  if (Object.keys(defaults).length) n.params = defaults;
+  if (isContainerType(type)) {
+    n.w = CONTAINER_DEFAULT_SIZE.w;
+    n.h = CONTAINER_DEFAULT_SIZE.h;
+  }
   // 容器可嵌套：创建位置落在其他容器内时归属该容器
   assignContainer(n, pos);
   putNode(n);
+}
+
+/** 桥接契约名（store canvas bridge）：操作/驱动器建卡 = 通用入口 */
+function addOp(opType: string, at?: { x: number; y: number }): void {
+  addNode(opType, at);
 }
 
 // ---------------------------------------------------------------------------
@@ -452,14 +397,6 @@ function onNodeDragProcess(node: Node, isStop: boolean): void {
   }
 }
 
-/** 添加自定义节点（custom.xxx） */
-function addCustomNode(customType: string, at?: { x: number; y: number }): void {
-  requestSnapshot();
-  const pos = at ?? mouseFlow();
-  const n: GNode = { id: uniqueNodeId(), type: customType, x: Math.round(pos.x), y: Math.round(pos.y) };
-  assignContainer(n, pos);
-  putNode(n);
-}
 
 function addComment(at?: { x: number; y: number }): void {
   requestSnapshot();
@@ -723,64 +660,53 @@ function onDrop(e: DragEvent): void {
 /** 右键落点的画布坐标（菜单触发时记录，添加节点用它定位） */
 let ctxFlowPos = { x: 0, y: 0 };
 
+/**
+ * 右键菜单分组 = nodeMenuGroups() 注册表全量驱动：内置类别与注入模块的类别
+ * （registerCategory/registerModule）自动成组，op/driver/event 类别的触发时机
+ * 作为后缀徽标展示；entity.proto 不在组内（从层级拖入，留提示项）。
+ */
+function buildAddGroups(): CtxMenuItem[] {
+  const groups = nodeMenuGroups().filter((g) => g.items.length);
+  const out: CtxMenuItem[] = [];
+  for (const grp of groups) {
+    // 实体类：匹配节点带 tag/type 双模式入口（原型走层级拖入，组内已排除）
+    if (grp.category === "entity") {
+      const hasMatch = grp.items.some((d) => d.type === "entity.match");
+      out.push({
+        label: `添加${grp.label}`,
+        children: [
+          ...(hasMatch
+            ? [
+                { label: "匹配（按标签）", onClick: () => addMatch("tag", ctxFlowPos) },
+                { label: "匹配（按类型）", onClick: () => addMatch("type", ctxFlowPos) },
+              ]
+            : []),
+          ...grp.items.filter((d) => d.type !== "entity.match").map((d) => ({
+            label: d.trigger ? `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）` : d.label,
+            onClick: () => addNode(d.type, ctxFlowPos),
+          })),
+        ],
+      });
+      continue;
+    }
+    out.push({
+      label: `添加${grp.label}`,
+      children: grp.items.map((d) => ({
+        label: d.trigger ? `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）` : d.label,
+        onClick: () => addNode(d.type, ctxFlowPos),
+      })),
+    });
+  }
+  return out;
+}
+
 onPaneContextMenu((event) => {
   ctxFlowPos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
-  const eventItems: CtxMenuItem[] = [
-    { label: "On Begin（启动时）", onClick: () => addEvent("event.onBegin", ctxFlowPos) },
-    { label: "On Tick（每帧）", onClick: () => addEvent("event.onTick", ctxFlowPos) },
-    { label: "On Click（点击时）", onClick: () => addEvent("event.onClick", ctxFlowPos) },
-  ];
-  const varItems: CtxMenuItem[] = [
-    { label: "Get 变量（读取）", onClick: () => addVarNode("var.get", ctxFlowPos) },
-    { label: "Set 变量（写入）", onClick: () => addVarNode("var.set", ctxFlowPos) },
-  ];
-  const flowItems: CtxMenuItem[] = [
-    { label: "分支（Branch）", onClick: () => addFlowNode("flow.branch", ctxFlowPos) },
-    { label: "比较（Compare）", onClick: () => addFlowNode("flow.compare", ctxFlowPos) },
-    { label: "For 循环", onClick: () => addFlowNode("flow.for", ctxFlowPos) },
-    { label: "ForEach 循环", onClick: () => addFlowNode("flow.forEach", ctxFlowPos) },
-    { label: "While 循环", onClick: () => addFlowNode("flow.while", ctxFlowPos) },
-  ];
-  const mathGroup = nodeMenuGroups().find((g) => g.category === "math");
-  const mathItems: CtxMenuItem[] = (mathGroup?.items ?? []).map((d) => ({
-    label: d.label,
-    onClick: () => addMathNode(d.type, ctxFlowPos),
-  }));
-  const customGroup = nodeMenuGroups().find((g) => g.category === "custom");
-  const customItems: CtxMenuItem[] = (customGroup?.items ?? []).map((d) => ({
-    label: d.label,
-    onClick: () => addCustomNode(d.type, ctxFlowPos),
-  }));
-  // 驱动器（帧驱动的移动类操作）与其余原子操作分组展示
-  const DRIVER_OP_TYPES = new Set(["op.patrol", "op.chase", "op.navMove"]);
-  const opItems: CtxMenuItem[] = GRAPH_OP_DEFS.filter((d) => !DRIVER_OP_TYPES.has(d.type)).map((d) => ({
-    label: `${d.label}（${G_OP_TRIGGER_LABEL[d.trigger]}）`,
-    onClick: () => addOp(d.type, ctxFlowPos),
-  }));
-  const driverItems: CtxMenuItem[] = [
-    { label: "导航移动（跟随 Nav Agent）", onClick: () => addOp("op.navMove", ctxFlowPos) },
-    { label: "追击目标", onClick: () => addOp("op.chase", ctxFlowPos) },
-    { label: "路径巡逻", onClick: () => addOp("op.patrol", ctxFlowPos) },
-  ];
-  const logicItems: CtxMenuItem[] = (nodeMenuGroups().find((g) => g.category === "logic")?.items ?? []).map((d) => ({
-    label: d.label,
-    onClick: () => addLogicContainer(d.type, ctxFlowPos),
-  }));
   const items: CtxMenuItem[] = [
-    { label: "添加事件", children: eventItems },
-    { label: "添加逻辑容器", children: logicItems },
-    { label: "添加驱动器", children: driverItems },
-    { label: "添加变量节点", children: varItems },
-    { label: "添加控制流", children: flowItems },
-    { label: "添加数学/工具", children: mathItems },
-    ...(customItems.length ? [{ label: "添加自定义节点", children: customItems }] : []),
+    ...buildAddGroups(),
     { separator: true },
     { label: "添加原型", disabled: true },
     { label: "从左侧层级拖入实体生成原型", disabled: true },
-    { separator: true },
-    { label: "添加匹配（按标签）", onClick: () => addMatch("tag", ctxFlowPos) },
-    { label: "添加匹配（按类型）", onClick: () => addMatch("type", ctxFlowPos) },
-    { label: "添加操作", children: opItems },
     { separator: true },
     { label: "添加注释框", onClick: () => addComment(ctxFlowPos) },
     { label: "粘贴", disabled: !clip, onClick: () => paste(ctxFlowPos) },
@@ -906,6 +832,9 @@ onBeforeUnmount(() => {
       </template>
       <template #node-gcustom="p">
         <GraphCustomCard :id="p.id" :data="p.data" :selected="p.selected" />
+      </template>
+      <template #node-gcard="p">
+        <GraphGenericCard :id="p.id" :data="p.data" :selected="p.selected" />
       </template>
       <template #node-gcomment="p">
         <GraphCommentBox :id="p.id" :data="p.data" :selected="p.selected" />

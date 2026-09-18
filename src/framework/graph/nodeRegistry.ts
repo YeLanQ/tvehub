@@ -1,18 +1,39 @@
 // ---------------------------------------------------------------------------
-// 场景图节点类型注册表（通用节点类型系统）：
-// 每种节点类型定义其端口（输入/输出 + 数据类型）与可编辑字段，
-// 取代 graphTypes.ts 中按 kind 硬编码端口的旧模式。
+// 场景图节点类型注册表（通用节点类型系统 + 模块注入）：
+// 每种节点类型定义其端口（输入/输出 + 数据类型）、可编辑字段与能力位
+// （capability），端口与能力驱动连线校验/运行时调度/画布渲染。
+//
+// 注册表为「模块注入」架构：一切类型经 registerModule(manifest) 进入注册表，
+// 内置类型同样经此路径注册（core-* 模块自食狗粮），自定义节点定义归并为
+// "custom" 模块。注入模块（L1 脚本图模块等）与内置模块共用同一注册/查询/
+// 菜单/校验管线；运行时侧的语义 handler 按类型键在 graph-kernel 注册表中
+// 绑定（runtime/graph-runtime.ts），双端共享同一份 manifest。
 //
 // 内置类型分五大类：
 // - entity：原型（拖入实体）/ 匹配（标签|类型筛选）—— 实体集源
 // - event：OnBegin / OnTick / OnClick —— 执行链入口（触发时机）
 // - op：原子操作（设置/旋转/浮动/FSM…）—— 有 exec 入端口 + next 出端口
-// - flow：控制流（Branch/Switch/比较/循环…）—— 阶段3
-// - math：数学/工具（加减乘除/sin/cos/lerp…）—— 阶段4
+// - flow：控制流（Branch/Switch/比较/循环…）
+// - math：数学/工具（加减乘除/sin/cos/lerp…）
 // ---------------------------------------------------------------------------
 
 import { GRAPH_OP_DEFS, G_OP_TRIGGER_LABEL, type GOpDef, type GOpFieldDef } from "./opRegistry";
-import type { GCustomNodeDef, GCustomPort, GCustomField } from "./graphTypes";
+import {
+  GRAPH_DEFAULT_COMMENT_COLOR,
+  GRAPH_FORMAT_VERSION,
+  graphStr as str,
+  graphNum as num,
+  type GComment,
+  type GCustomField,
+  type GCustomNodeDef,
+  type GCustomPort,
+  type GEdge,
+  type GModuleRef,
+  type GNode,
+  type GVariable,
+  type GVarDataType,
+  type ScriptGraphDoc,
+} from "./graphTypes";
 
 // ---------------------------------------------------------------------------
 // 数据类型
@@ -63,8 +84,28 @@ export type GFieldDef = GOpFieldDef;
 // 节点类型定义
 // ---------------------------------------------------------------------------
 
-/** 节点类别（右键菜单分组 + 颜色基调） */
+/** 节点类别（右键菜单分组 + 颜色基调；registerCategory 可扩展） */
 export type GNodeCategory = "entity" | "event" | "op" | "flow" | "math" | "variable" | "custom" | "logic" | "driver";
+
+/**
+ * 节点能力位：取代一切按类型键字符串的特判
+ * （容器判定/实体集源/执行链入口/帧驱动实例态等）。
+ * 运行时 kernel 与画布均按能力位分发，注入模块声明能力即获得对应待遇。
+ */
+export interface GNodeCapabilities {
+  /** 实体集源（proto/match）：out 引脚求值 = 自身解析出的实体集 */
+  entitySource?: boolean;
+  /** 执行链入口（事件节点）：按 trigger 在运行时绑定（start/frame/click） */
+  eventEntry?: boolean;
+  /** 原子操作（一次性语义，有 executor） */
+  op?: boolean;
+  /** 驱动器（帧驱动 + 实例态；kernel 维护跨帧状态并每帧步进） */
+  driver?: boolean;
+  /** 逻辑容器（大框渲染 + containerId 归属 + 运行时状态化执行，可嵌套） */
+  container?: boolean;
+  /** 表达式数据节点（自定义节点：输出引脚由 JS 表达式求值） */
+  expression?: boolean;
+}
 
 /** 节点类型定义（注册表条目） */
 export interface GNodeTypeDef {
@@ -77,8 +118,124 @@ export interface GNodeTypeDef {
   inputs: GPortDef[];
   outputs: GPortDef[];
   fields?: GFieldDef[];
-  /** 事件节点触发时机（仅 category="event"） */
+  /** 事件/操作节点触发时机（category event/op/driver 用；旧图无 exec 入边时按此独立执行） */
   trigger?: "start" | "frame" | "click";
+  /** 能力位（kernel/UI 按能力分发，不按类型键特判） */
+  capabilities?: GNodeCapabilities;
+}
+
+// ---------------------------------------------------------------------------
+// 类别元信息（右键菜单分组标签与顺序；可扩展）
+// ---------------------------------------------------------------------------
+
+export interface GCategoryDef {
+  id: GNodeCategory;
+  label: string;
+  /** 菜单展示顺序（越小越前；缺省类别表外的新类别追加于后） */
+  order: number;
+}
+
+const CATEGORY_MAP = new Map<GNodeCategory, GCategoryDef>();
+
+/** 注册/更新类别元信息（注入模块可新增分组） */
+export function registerCategory(def: GCategoryDef): void {
+  if (!def || !def.id) return;
+  CATEGORY_MAP.set(def.id, def);
+}
+
+/** 全部类别（按 order 升序） */
+export function categoryDefs(): GCategoryDef[] {
+  return [...CATEGORY_MAP.values()].sort((a, b) => a.order - b.order);
+}
+
+// ---------------------------------------------------------------------------
+// 模块注册表（注入的单一入口）
+// ---------------------------------------------------------------------------
+
+/** 图模块清单（编辑器与运行时共用的单一事实源；manifest 描述目录，语义 handler 在 runtime 侧按类型键绑定） */
+export interface GraphModuleManifest {
+  /** 模块 id（唯一；重复注册视为整体替换） */
+  id: string;
+  version: number;
+  nodeTypes: GNodeTypeDef[];
+}
+
+const MODULE_MAP = new Map<string, GraphModuleManifest>();
+/** 类型键 → 类型定义 */
+const TYPE_MAP = new Map<string, GNodeTypeDef>();
+/** 类型键 → 归属模块 id（冲突检测） */
+const TYPE_OWNER = new Map<string, string>();
+
+/** 模块注册前的浅校验（畸形条目剔除，返回可注册的类型表） */
+function sanitizeModuleTypes(manifest: GraphModuleManifest): GNodeTypeDef[] {
+  const out: GNodeTypeDef[] = [];
+  for (const def of Array.isArray(manifest.nodeTypes) ? manifest.nodeTypes : []) {
+    if (!def || typeof def.type !== "string" || !def.type) continue;
+    if (!Array.isArray(def.inputs) || !Array.isArray(def.outputs)) continue;
+    out.push(def);
+  }
+  return out;
+}
+
+/**
+ * 注册图模块（同 id 重注册 = 整体替换旧类型）。
+ * 类型键与已注册模块冲突时整模块拒绝并告警（返回 false），
+ * 防止注入模块悄悄覆盖内置语义。
+ */
+export function registerModule(manifest: GraphModuleManifest): boolean {
+  if (!manifest || typeof manifest.id !== "string" || !manifest.id) return false;
+  const types = sanitizeModuleTypes(manifest);
+  for (const def of types) {
+    const owner = TYPE_OWNER.get(def.type);
+    if (owner && owner !== manifest.id) {
+      console.warn(`[graph] 模块 "${manifest.id}" 的类型 "${def.type}" 与模块 "${owner}" 冲突，整模块未注册`);
+      return false;
+    }
+  }
+  // 替换语义：先摘除本模块旧类型
+  const prev = MODULE_MAP.get(manifest.id);
+  if (prev) {
+    for (const d of prev.nodeTypes) {
+      if (TYPE_OWNER.get(d.type) === manifest.id) {
+        TYPE_MAP.delete(d.type);
+        TYPE_OWNER.delete(d.type);
+      }
+    }
+  }
+  for (const def of types) {
+    TYPE_MAP.set(def.type, def);
+    TYPE_OWNER.set(def.type, manifest.id);
+  }
+  MODULE_MAP.set(manifest.id, { ...manifest, nodeTypes: types });
+  return true;
+}
+
+/** 注销模块及其全部类型 */
+export function unregisterModule(id: string): void {
+  const prev = MODULE_MAP.get(id);
+  if (!prev) return;
+  for (const d of prev.nodeTypes) {
+    if (TYPE_OWNER.get(d.type) === id) {
+      TYPE_MAP.delete(d.type);
+      TYPE_OWNER.delete(d.type);
+    }
+  }
+  MODULE_MAP.delete(id);
+}
+
+/** 已注册模块清单（图文档 modules 指纹快照用） */
+export function listGraphModules(): GraphModuleManifest[] {
+  return [...MODULE_MAP.values()];
+}
+
+/** 类型键 → 归属模块 id（未知 null） */
+export function moduleOfNodeType(type: string): string | null {
+  return TYPE_OWNER.get(type) ?? null;
+}
+
+/** 全部类型定义（注册表视图；右键菜单/检查遍历用） */
+export function allNodeTypeDefs(): GNodeTypeDef[] {
+  return [...TYPE_MAP.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +248,7 @@ const P_ENTITIES_IN: GPortDef = { id: "in", label: "目标", direction: "in", da
 const P_ENTITIES_OUT: GPortDef = { id: "out", label: "输出", direction: "out", dataType: "entities" };
 
 // ---------------------------------------------------------------------------
-// 内置节点类型注册
+// 内置类型注册（与注入模块同路径：打包为 core-* manifest → registerModule）
 // ---------------------------------------------------------------------------
 
 /** 实体类节点 */
@@ -104,6 +261,7 @@ const ENTITY_TYPES: GNodeTypeDef[] = [
     color: "#4ec9b0",
     inputs: [],
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
+    capabilities: { entitySource: true },
   },
   {
     type: "entity.match",
@@ -113,6 +271,7 @@ const ENTITY_TYPES: GNodeTypeDef[] = [
     color: "#4ec9b0",
     inputs: [],
     outputs: [{ id: "out", label: "输出", direction: "out", dataType: "entities" }],
+    capabilities: { entitySource: true },
   },
 ];
 
@@ -127,6 +286,7 @@ const EVENT_TYPES: GNodeTypeDef[] = [
     inputs: [],
     outputs: [P_EXEC_OUT],
     trigger: "start",
+    capabilities: { eventEntry: true },
   },
   {
     type: "event.onTick",
@@ -137,6 +297,7 @@ const EVENT_TYPES: GNodeTypeDef[] = [
     inputs: [],
     outputs: [P_EXEC_OUT],
     trigger: "frame",
+    capabilities: { eventEntry: true },
   },
   {
     type: "event.onClick",
@@ -147,10 +308,11 @@ const EVENT_TYPES: GNodeTypeDef[] = [
     inputs: [P_ENTITIES_IN],
     outputs: [P_EXEC_OUT],
     trigger: "click",
+    capabilities: { eventEntry: true },
   },
 ];
 
-/** 操作类节点（从 opRegistry 的 GRAPH_OP_DEFS 转换） */
+/** 操作类节点（从 opRegistry 的 GRAPH_OP_DEFS 转换；frame 触发 = 驱动器语义） */
 const OP_TYPES: GNodeTypeDef[] = GRAPH_OP_DEFS.map((op: GOpDef): GNodeTypeDef => ({
   type: op.type,
   category: "op",
@@ -161,6 +323,7 @@ const OP_TYPES: GNodeTypeDef[] = GRAPH_OP_DEFS.map((op: GOpDef): GNodeTypeDef =>
   outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
   fields: op.fields,
   trigger: op.trigger,
+  capabilities: { op: true, ...(op.trigger === "frame" ? { driver: true } : {}) },
 }));
 
 // op.patrol：追加「路径点」引脚（路径口接入路径点实体 → 依次巡回），并归入驱动器分组
@@ -191,6 +354,7 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
     ],
     outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
     fields: [{ key: "yOffset", label: "高度偏移", kind: "number", fallback: 0, step: 0.1 }],
+    capabilities: { op: true, driver: true },
   },
   {
     type: "op.chase",
@@ -206,6 +370,7 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
     ],
     outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
     fields: [{ key: "speed", label: "速度", kind: "number", fallback: 3, step: 0.1 }],
+    capabilities: { op: true, driver: true },
   },
 ];
 
@@ -400,6 +565,7 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
       { key: "states", label: "状态列表", kind: "string", fallback: "idle,run", placeholder: "逗号分隔，如 idle,run,attack" },
       { key: "initial", label: "初始状态", kind: "string", fallback: "idle" },
     ],
+    capabilities: { container: true },
   },
   {
     type: "bt.container",
@@ -418,18 +584,56 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
     fields: [
       { key: "mode", label: "模式", kind: "string", fallback: "sequence" },
     ],
+    capabilities: { container: true },
   },
 ];
 
-/** 全部内置节点类型 */
-const BUILTIN_TYPES: GNodeTypeDef[] = [...ENTITY_TYPES, ...EVENT_TYPES, ...OP_TYPES, ...DRIVER_TYPES, ...VARIABLE_TYPES, ...FLOW_TYPES, ...MATH_TYPES, ...LOGIC_TYPES];
+// ---------------------------------------------------------------------------
+// 内置 manifest 注册（与注入模块同一路径；类别元信息同步注册）
+// ---------------------------------------------------------------------------
 
-/** 容器类型键集合（大框渲染 + 子节点归属 + 运行时状态化执行） */
+const BUILTIN_CATEGORY_DEFS: GCategoryDef[] = [
+  { id: "event", label: "事件", order: 0 },
+  { id: "entity", label: "实体", order: 1 },
+  { id: "logic", label: "逻辑容器", order: 2 },
+  { id: "driver", label: "驱动器", order: 3 },
+  { id: "op", label: "操作", order: 4 },
+  { id: "flow", label: "控制流", order: 5 },
+  { id: "math", label: "数学", order: 6 },
+  { id: "variable", label: "变量", order: 7 },
+  { id: "custom", label: "自定义", order: 8 },
+];
+for (const c of BUILTIN_CATEGORY_DEFS) CATEGORY_MAP.set(c.id, c);
+
+/** 内置 core 模块（一个类别一个模块；与 L1 注入模块共用 registerModule 通道） */
+const CORE_MODULE_DEFS: GraphModuleManifest[] = [
+  { id: "core-entity", version: 1, nodeTypes: ENTITY_TYPES },
+  { id: "core-event", version: 1, nodeTypes: EVENT_TYPES },
+  { id: "core-op", version: 1, nodeTypes: OP_TYPES },
+  { id: "core-driver", version: 1, nodeTypes: DRIVER_TYPES },
+  { id: "core-variable", version: 1, nodeTypes: VARIABLE_TYPES },
+  { id: "core-flow", version: 1, nodeTypes: FLOW_TYPES },
+  { id: "core-math", version: 1, nodeTypes: MATH_TYPES },
+  { id: "core-container", version: 1, nodeTypes: LOGIC_TYPES },
+];
+for (const m of CORE_MODULE_DEFS) registerModule(m);
+
+/** 旧静态容器键（外部契约保留；能力位是新判定路径） */
 export const CONTAINER_TYPES: ReadonlySet<string> = new Set(["fsm.container", "bt.container"]);
 
-/** 是否容器节点 */
+/** 是否容器节点（能力位判定；注入模块声明 container 能力即可扩展） */
 export function isContainerType(type: string): boolean {
-  return CONTAINER_TYPES.has(type);
+  return TYPE_MAP.get(type)?.capabilities?.container === true;
+}
+
+/** 按能力位查类型是否具备某能力 */
+export function hasNodeTypeCapability(type: string, cap: keyof GNodeCapabilities): boolean {
+  return TYPE_MAP.get(type)?.capabilities?.[cap] === true;
+}
+
+/** 全部容器类型键（动态视图） */
+export function containerTypes(): string[] {
+  return allNodeTypeDefs().filter((d) => d.capabilities?.container).map((d) => d.type);
 }
 
 /** 容器默认尺寸 */
@@ -437,10 +641,8 @@ export const CONTAINER_DEFAULT_SIZE = { w: 560, h: 340 };
 /** 容器尺寸钳制范围 */
 export const CONTAINER_SIZE_LIMITS = { w: { min: 320, max: 2400 }, h: { min: 200, max: 2000 } };
 
-const TYPE_MAP = new Map(BUILTIN_TYPES.map((d) => [d.type, d]));
-
 // ---------------------------------------------------------------------------
-// 自定义节点动态注册（用户可扩展节点类型）
+// 自定义节点动态注册（用户可扩展节点类型；归并为 "custom" 模块注入）
 // ---------------------------------------------------------------------------
 
 const VALID_DATA_TYPES = new Set<GDataType>(["exec", "entity", "entities", "number", "boolean", "string", "vec3", "any"]);
@@ -472,29 +674,28 @@ function customDefToTypeDef(d: GCustomNodeDef): GNodeTypeDef | null {
     inputs,
     outputs,
     fields: fields.length ? fields : undefined,
+    capabilities: { expression: true },
   };
 }
 
-/** 动态注册的自定义节点类型（每次图文档变更时刷新） */
-const CUSTOM_TYPE_MAP = new Map<string, GNodeTypeDef>();
-
-/** 注册自定义节点定义（替换全部；normalize 后调用） */
+/** 注册自定义节点定义（替换全部；经 registerModule("custom") 注入通道） */
 export function registerCustomNodeDefs(defs: GCustomNodeDef[]): void {
-  CUSTOM_TYPE_MAP.clear();
+  const types: GNodeTypeDef[] = [];
   for (const d of defs) {
     const def = customDefToTypeDef(d);
-    if (def) CUSTOM_TYPE_MAP.set(def.type, def);
+    if (def) types.push(def);
   }
-}
-
-/** 统一类型查找（内置 + 自定义） */
-function lookupTypeDef(type: string): GNodeTypeDef | null {
-  return TYPE_MAP.get(type) ?? CUSTOM_TYPE_MAP.get(type) ?? null;
+  registerModule({ id: "custom", version: 1, nodeTypes: types });
 }
 
 // ---------------------------------------------------------------------------
 // 查询 API
 // ---------------------------------------------------------------------------
+
+/** 统一类型查找（内置 + 注入 + 自定义，同一张注册表） */
+function lookupTypeDef(type: string): GNodeTypeDef | null {
+  return TYPE_MAP.get(type) ?? null;
+}
 
 /** 按类型键查节点类型定义（未知 null） */
 export function nodeTypeDef(type: string): GNodeTypeDef | null {
@@ -553,7 +754,6 @@ export function canConnectPortsByType(
   return canConnectDataTypes(sp.dataType, dp.dataType);
 }
 
-
 // ---------------------------------------------------------------------------
 // 旧 kind → 新 type 迁移
 // ---------------------------------------------------------------------------
@@ -567,7 +767,7 @@ export function migrateKindToType(kind: string, opType?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 右键菜单分组（按类别组织）
+// 右键菜单分组（注册表驱动：类别元信息排序，注入模块自动成组）
 // ---------------------------------------------------------------------------
 
 export interface GNodeMenuGroup {
@@ -578,51 +778,32 @@ export interface GNodeMenuGroup {
 
 /** 右键菜单可添加节点分组（排除 entity.proto —— 从层级拖入） */
 export function nodeMenuGroups(): GNodeMenuGroup[] {
-  const groups: GNodeMenuGroup[] = [];
   const byCat = new Map<GNodeCategory, GNodeTypeDef[]>();
-  const allTypes = [...BUILTIN_TYPES, ...CUSTOM_TYPE_MAP.values()];
-  for (const def of allTypes) {
+  for (const def of allNodeTypeDefs()) {
     if (def.type === "entity.proto") continue;
     const list = byCat.get(def.category) ?? [];
     list.push(def);
     byCat.set(def.category, list);
   }
-  const order: GNodeCategory[] = ["event", "entity", "logic", "driver", "op", "flow", "math", "variable", "custom"];
-  const labels: Record<GNodeCategory, string> = {
-    event: "事件",
-    entity: "实体",
-    logic: "逻辑容器",
-    driver: "驱动器",
-    op: "操作",
-    flow: "控制流",
-    math: "数学",
-    variable: "变量",
-    custom: "自定义",
-  };
-  for (const cat of order) {
+  // 已知类别按 order；注册表里新出现的未知类别按出现顺序附尾
+  const ordered = [...categoryDefs().map((c) => c.id)];
+  for (const cat of byCat.keys()) if (!ordered.includes(cat)) ordered.push(cat);
+  const groups: GNodeMenuGroup[] = [];
+  for (const cat of ordered) {
     const items = byCat.get(cat);
-    if (items?.length) groups.push({ category: cat, label: labels[cat], items });
+    if (items?.length) {
+      groups.push({ category: cat, label: CATEGORY_MAP.get(cat)?.label ?? cat, items });
+    }
   }
   return groups;
 }
 
 // re-export trigger labels for convenience
 export { G_OP_TRIGGER_LABEL };
+
 // ---------------------------------------------------------------------------
 // 端口查询（注册表驱动；兼容旧 GPortInfo 接口）
 // ---------------------------------------------------------------------------
-
-import {
-  GRAPH_DEFAULT_COMMENT_COLOR,
-  graphStr as str,
-  graphNum as num,
-  type GComment,
-  type GEdge,
-  type GNode,
-  type GVariable,
-  type GVarDataType,
-  type ScriptGraphDoc,
-} from "./graphTypes";
 
 /** 端口信息（运行时/连线校验用；dataType 取代旧 channel） */
 export interface GPortInfo {
@@ -668,11 +849,14 @@ export function isGraphDoc(v: unknown): boolean {
 /**
  * 任意来源 → 收敛的场景图：
  * - 旧格式 kind/opType 自动迁移为 type；
- * - 未知 type 剔除；id 去重补齐；坐标钳制；
+ * - 显式 type 在注册表查无（模块未装载）→ 保留节点并标记 unresolved
+ *   （编辑器灰卡呈现；迁移而来的未知 kind 仍剔除）；
+ * - id 去重补齐；坐标钳制；
  * - proto.entityId / match 模式串收敛；
  * - op 参数按注册表字段钳制；
  * - 连线端口存在/数据类型兼容/自环剔除/入端口唯一（multi 口多入汇聚，同源保首条）；
- * - 注释框尺寸与文本钳制。
+ * - 注释框尺寸与文本钳制；
+ * - formatVersion/modules 文档元信息透传。
  */
 export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
@@ -756,9 +940,33 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
     if (!rn || typeof rn !== "object") continue;
     const r = rn as Record<string, unknown>;
     // type 迁移：优先用 type 字段；缺省从旧 kind/opType 推导
-    let type = str(r.type);
+    const rawType = str(r.type);
+    let type = rawType;
     if (!type) type = migrateKindToType(str(r.kind), str(r.opType));
-    if (!type || !nodeTypeDef(type)) continue;
+    if (!type) continue;
+    // 显式 type 查无注册表 = 模块未装载：保留节点并标记 unresolved（不静默剔除）；
+    // 已知数据字段全部留存，模块装载后重新收敛即可恢复连线语义；
+    // 旧 kind 迁移而来的未知类型仍按脏数据剔除
+    if (!nodeTypeDef(type)) {
+      if (!rawType) continue;
+      const kept: GNode = { id: takeId(r.id, "n"), type, x: clamp(r.x), y: clamp(r.y), unresolved: true };
+      const keepEntityId = str(r.entityId);
+      if (keepEntityId) kept.entityId = keepEntityId;
+      if (r.matchMode === "type" || r.matchMode === "tag") kept.matchMode = r.matchMode;
+      const keepPattern = str(r.matchPattern).slice(0, 64);
+      if (keepPattern) kept.matchPattern = keepPattern;
+      const keepVarId = str(r.varId);
+      if (keepVarId) kept.varId = keepVarId;
+      if (r.params && typeof r.params === "object") kept.params = r.params as Record<string, number | boolean | string>;
+      const keepState = str(r.stateName).trim().slice(0, 48);
+      if (keepState) kept.stateName = keepState;
+      const keepCid = str(r.containerId);
+      if (keepCid) kept.containerId = keepCid;
+      const keepTitle = str(r.title).trim().slice(0, 64);
+      if (keepTitle) kept.title = keepTitle;
+      nodes.push(kept);
+      continue;
+    }
     const node: GNode = { id: takeId(r.id, "n"), type, x: clamp(r.x), y: clamp(r.y) };
     if (type === "entity.proto") node.entityId = str(r.entityId);
     if (type === "entity.match") {
@@ -899,10 +1107,30 @@ export function normalizeGraphDoc(v: unknown): ScriptGraphDoc {
     variables.push({ id, name: str(r.name).slice(0, 64) || `var${variables.length + 1}`, dataType, value });
   }
 
-  return { nodes, edges, comments, variables, customNodes };
+  // ----- 文档元信息透传 -----
+  const doc: ScriptGraphDoc = { nodes, edges, comments, variables, customNodes };
+  const fv = num(o.formatVersion, 0);
+  if (fv > 0) doc.formatVersion = fv;
+  if (Array.isArray(o.modules)) {
+    const refs: GModuleRef[] = [];
+    for (const rm of o.modules) {
+      if (!rm || typeof rm !== "object") continue;
+      const m = rm as Record<string, unknown>;
+      const id = str(m.id);
+      if (!id) continue;
+      refs.push({ id, version: Math.max(0, Math.floor(num(m.version, 0))) });
+    }
+    if (refs.length) doc.modules = refs;
+  }
+  return doc;
+}
+
+/** 模块指纹快照（当前注册表全模块 → doc.modules） */
+export function graphModuleRefs(): GModuleRef[] {
+  return listGraphModules().map((m) => ({ id: m.id, version: m.version }));
 }
 
 /** 空白场景图（新场景/装载失败回退） */
 export function emptyGraphDoc(): ScriptGraphDoc {
-  return { nodes: [], edges: [], comments: [], variables: [], customNodes: [] };
+  return { formatVersion: GRAPH_FORMAT_VERSION, nodes: [], edges: [], comments: [], variables: [], customNodes: [] };
 }

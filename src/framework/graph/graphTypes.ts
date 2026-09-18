@@ -102,6 +102,12 @@ export interface GNode {
   stateName?: string;
   /** 旧格式 kind（迁移用，normalizeGraphDoc 后统一为 type） */
   kind?: string;
+  /**
+   * 模块未装载标记（显式 type 在注册表中查无归属模块）：
+   * normalizeGraphDoc 保留节点并置 true（编辑器灰卡呈现、运行时跳过并告警），
+   * 不再静默剔除——注入类型缺模块时图内容不可逆丢失是不可接受的。
+   */
+  unresolved?: boolean;
 }
 
 /**
@@ -129,8 +135,18 @@ export interface GComment {
   color: string;
 }
 
+/** 文档引用过的模块指纹（注册表注入路径的模块 id 与版本；装载时校验可用性） */
+export interface GModuleRef {
+  id: string;
+  version: number;
+}
+
 /** 场景图完整文档（随场景 sidecar 自动持久化 + 预览导出注入） */
 export interface ScriptGraphDoc {
+  /** 文档格式版本（当前 2：module 注入 + unresolved 保留；缺省视为 1） */
+  formatVersion?: number;
+  /** 图节点引用的模块清单（自动保存时由注册表快照写入） */
+  modules?: GModuleRef[];
   nodes: GNode[];
   edges: GEdge[];
   comments: GComment[];
@@ -139,6 +155,9 @@ export interface ScriptGraphDoc {
   /** 自定义节点定义（用户可扩展节点类型） */
   customNodes?: GCustomNodeDef[];
 }
+
+/** 当前文档格式版本（2：模块注入 + unresolved 保留 + formatVersion/modules 元信息） */
+export const GRAPH_FORMAT_VERSION = 2;
 
 /** 注释框可选主题色 */
 export const GRAPH_COMMENT_COLORS = ["#dcdcaa", "#4ec9b0", "#c586c0", "#569cd6", "#ce9178"] as const;

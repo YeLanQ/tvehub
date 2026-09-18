@@ -24,13 +24,17 @@ import { parseScriptClassMeta, type ScriptPropDef } from "../app/lib/script-comp
 import {
   emptyGraphDoc,
   isGraphDoc,
+  listGraphModules,
+  moduleOfNodeType,
   normalizeGraphDoc,
   nextGraphVariableId,
   nextCustomNodeDefId,
   registerCustomNodeDefs,
   graphSidecarRel,
+  GRAPH_FORMAT_VERSION,
   type GComment,
   type GCustomNodeDef,
+  type GModuleRef,
   type GNode,
   type GVariable,
   type GVarDataType,
@@ -124,6 +128,8 @@ interface GraphWindowStore {
   showToast(text: string): void;
   /** 卸载前冲刷未落盘的图会话 */
   flushGraph(): Promise<void>;
+  /** 当前会话 → 带 formatVersion/模块指纹的完整导出文档（预览导出与侧车同源） */
+  stampedExportDoc(): ScriptGraphDoc;
   /** 添加图变量 */
   addVariable(): void;
   /** 重命名图变量 */
@@ -198,15 +204,35 @@ export function getGraphWindowStore(): GraphWindowStore {
     }, 4000);
   }
 
+  /** 图节点引用的模块指纹（注册表归属快照；装载方据此校验模块可用性） */
+  function docModuleRefs(doc: ScriptGraphDoc): GModuleRef[] {
+    const versions = new Map(listGraphModules().map((m) => [m.id, m.version]));
+    const used = new Set<string>();
+    for (const n of doc.nodes) {
+      const m = moduleOfNodeType(n.type);
+      if (m) used.add(m);
+    }
+    return [...used].sort().map((id) => ({ id, version: versions.get(id) ?? 1 }));
+  }
+
+  /** 当前会话 → 带格式版本/模块指纹的完整导出文档（侧车落盘与预览导出共用） */
+  function stampedExportDoc(): ScriptGraphDoc {
+    const canvasDoc = store.canvas?.serializeDoc() ?? graphDoc;
+    graphDoc = { ...canvasDoc, variables: state.graphVariables, customNodes: state.graphCustomNodes };
+    return {
+      ...graphDoc,
+      formatVersion: GRAPH_FORMAT_VERSION,
+      modules: docModuleRefs(graphDoc),
+    };
+  }
+
   /** 会话图落盘（graph/ 目录；与 assets/src 同级） */
   async function writeSidecar(): Promise<void> {
     const root = state.root;
     if (!root) return;
     try {
-      // 从画布序列化当前状态 + 合并变量表
-      const canvasDoc = store.canvas?.serializeDoc() ?? graphDoc;
-      graphDoc = { ...canvasDoc, variables: state.graphVariables, customNodes: state.graphCustomNodes };
-      await api.writeText(root, sidecarRel(state.sceneRel), JSON.stringify(graphDoc, null, 2));
+      const out = stampedExportDoc();
+      await api.writeText(root, sidecarRel(state.sceneRel), JSON.stringify(out, null, 2));
       state.graphDirty = false;
       state.lastSavedAt = new Date().toLocaleTimeString();
     } catch (e) {
@@ -520,6 +546,10 @@ export function getGraphWindowStore(): GraphWindowStore {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = null;
       if (state.graphDirty) await writeSidecar();
+    },
+
+    stampedExportDoc() {
+      return stampedExportDoc();
     },
 
     addVariable() {
