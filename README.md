@@ -43,7 +43,7 @@
 - 静态批处理：烘焙前刷新场景世界矩阵（修复同材质网格烘到错误位置而消失）；批处理排除沿父链传播（可动父节点下的子网格不再被烘焙）；脚本图引用实体自动排除出批处理；
 - 预览/构建不再默认注入环境光与天空盒半球光（场景说了算，避免亮度叠加）。
 
-## 已知缺陷与边界（实话实说）
+## 已知缺陷与边界
 
 - **场景图只在预览/构建运行时执行**：编辑器视口不跑图逻辑，行为验证依赖网页预览（控制台实时回传辅助定位）；
 - **图内行为树容器是「卡片编排」而非完整行为树**：selector 模式的条件源与成员按纵向顺序一一配对（无具名绑定，重排会改配对）；parallel 模式每帧重跑成员链，要求卡片幂等；`.bt` 资产里的装饰器（重复/重试/超时/反转）与等待等节点语义在**实体侧 BT 运行器**，图容器不执行它们；
@@ -179,6 +179,17 @@ pnpm check:layers           # 分层守卫检查
 
 - **编辑器**：[总览](public/docs/editor/overview.md) · [项目管理](public/docs/editor/projects.md) · [场景编辑](public/docs/editor/scene.md) · [**场景图**](public/docs/editor/graph.md) · [UI 系统](public/docs/editor/ui.md) · [检查器与组件](public/docs/editor/inspector.md) · [资产系统](public/docs/editor/assets.md) · [着色器](public/docs/editor/shaders.md) · [动画编辑器](public/docs/editor/animation.md) · [脚本工作台](public/docs/editor/scripting.md) · [预览与构建](public/docs/editor/preview-build.md)
 - **SDK（脚本 API）**：[总览](public/docs/sdk/overview.md) · [装饰器](public/docs/sdk/decorators.md) · [实体与查询](public/docs/sdk/entity.md) · [engine 入口](public/docs/sdk/engine.md) · [UI](public/docs/sdk/ui.md) · [内置组件门面](public/docs/sdk/components.md) · [math](public/docs/sdk/math.md) · [tween](public/docs/sdk/tween.md) · [utils](public/docs/sdk/utils.md)
+
+## 支持我们
+
+TvE Hub 由独立开发者利用业余时间持续打磨——从场景编辑到场景图，每一个功能都源自「让创作少一步折腾」的执念。项目完全开源免费，但我们也很现实：开发、测试设备与运行成本都在真实发生。
+
+如果这个项目对你有帮助，或者你认同「可视化创作工具不该有高学习成本」这件事：
+
+- ⭐ **给项目点一个 Star** —— 这是对独立开发者最直接的支持。Star 不花一分钱，却能让更多创作者搜到这里，也是我们坚持更新最有效的强心剂；
+- 💰 **考虑赞助我们** —— 每一份支持都会直接投入在开发与运行成本上。赞助渠道：[爱发电](#)(即将上线，不妨先点个star)。
+
+哪怕只是提一个 Issue、纠正一段文档，都是实实在在的帮助。感谢每一个愿意停下来看一眼的你。
 
 ## 许可
 
