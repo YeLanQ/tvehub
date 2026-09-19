@@ -28,7 +28,7 @@ function switchGuard(panel: DockPanelId): boolean {
 export const docks = createDockSystem<DockPanelId>({
   panels: ALL_PANELS,
   labels: DOCK_PANEL_LABEL,
-  storageKey: "three-visual-editor:dock-layout:v3",
+  storageKey: "tve:editor:dock-layout:v3",
   defaults: () => ({
     zones: { left: ["hierarchy"], right: ["inspector"], bottom: ["console", "animation", "assets"] },
     active: { left: "hierarchy", right: "inspector", bottom: "console" },

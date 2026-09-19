@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // UI 状态 KV 存储（后端权威，彻底替代 localStorage）：
-// 停靠布局/面板折叠/过滤状态等界面持久化统一落盘到 app_config_dir/ui-state/
-//（一个键一个文件，键名 %XX 转义；临时文件 + 改名原子写）。WebView2 的
+// 停靠布局/面板折叠/过滤状态等界面持久化统一落盘到 配置根目录/ui-state/
+//（便携模式 = exe 旁 data/，否则 app_config_dir；见 appdirs.rs；一个键一个
+// 文件，键名 %XX 转义；临时文件 + 改名原子写）。WebView2 的
 // localStorage 在便携场景不可靠且跨窗口同步无保证，后端存储 + "ui-state:changed"
 // 事件广播让多窗口（编辑器/场景图）对同一份界面状态保持一致。
 // 值为一 JSON 字符串，后端不解释内容；前端经 lib/ui-state.ts 读写与订阅。
@@ -9,14 +10,10 @@
 
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 fn storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join("ui-state");
+    let dir = crate::appdirs::config_root(app).join("ui-state");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
@@ -72,5 +69,20 @@ pub fn ui_state_remove(app: AppHandle, key: String) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 一次性键名迁移（setup 调用）：旧键文件存在且新键文件不存在时直接改名，
+/// 值原样保留。用于改掉历史键里的旧应用名前缀（编辑器 dock 布局
+/// "three-visual-editor:dock-layout:v3" → "tve:editor:dock-layout:v3"，
+/// 与图窗口 "tve:graph:dock-layout:v2" 的命名对齐；文件名仍随目录便携）。
+pub fn migrate_key(app: &AppHandle, from: &str, to: &str) {
+    let dir = match storage_dir(app) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let (from_path, to_path) = (dir.join(key_to_filename(from)), dir.join(key_to_filename(to)));
+    if from_path.exists() && !to_path.exists() {
+        let _ = fs::rename(&from_path, &to_path);
     }
 }

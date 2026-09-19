@@ -2,6 +2,7 @@
 // （serde_json::json! 构建大对象（材质参数超集）需要更高的宏递归上限）
 #![recursion_limit = "512"]
 
+mod appdirs;
 mod asset_protocol;
 mod build;
 mod devtools;
@@ -320,11 +321,11 @@ async fn write_asset_binary(root: String, rel: String, content_b64: String) -> R
     store::write_binary(&PathBuf::from(&root), &rel, &bytes)
 }
 
-/// 追加一行调试日志到应用配置目录（排查 WebView 内错误用）
+/// 追加一行调试日志到应用配置根目录（便携模式 exe 旁 data/；排查 WebView 内错误用）
 #[tauri::command]
 async fn append_debug_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
     use std::io::Write;
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = appdirs::config_root(&app);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = dir.join("debug.log");
     let mut f = std::fs::OpenOptions::new()
@@ -354,21 +355,25 @@ async fn open_devtools(window: tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
-/// 开发者服务：返回应用相关目录路径（名称有序，前端展示 + openPath 打开）
+/// 开发者服务：返回应用相关目录路径（名称有序，前端展示 + openPath 打开）。
+/// 展示当前实际生效的目录：便携模式为 exe 旁 data/（配置）与 data/webview/
+/// （WebView2 浏览器数据）；回退模式为系统目录（WebView 数据取
+/// app_local_data_dir —— Windows 上即 WebView2 默认的 %LOCALAPPDATA%\TvE.Hub）。
 #[tauri::command]
 async fn dev_app_dirs(app: tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
     let path = app.path();
-    let dirs: [(&str, Result<std::path::PathBuf, tauri::Error>); 4] = [
-        ("配置目录", path.app_config_dir()),
-        ("数据目录", path.app_data_dir()),
-        ("日志目录", path.app_log_dir()),
-        ("程序目录", path.executable_dir()),
+    let webview_dir = appdirs::webview_data_dir().unwrap_or_else(|| {
+        path.app_local_data_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+    });
+    let dirs: [(&str, std::path::PathBuf); 3] = [
+        ("程序目录", appdirs::exe_dir()),
+        ("配置目录", appdirs::config_root(&app)),
+        ("WebView 数据", webview_dir),
     ];
     Ok(dirs
         .into_iter()
-        .filter_map(|(name, p)| {
-            p.ok().map(|p| (name.to_string(), p.display().to_string()))
-        })
+        .map(|(name, p)| (name.to_string(), p.display().to_string()))
         .collect())
 }
 
@@ -476,6 +481,12 @@ async fn show_window_with_project(
             // 呈现面跨适配器交给核显合成，resize 与独显启停时会瞬间丢帧——
             // 表现为整个窗口/视口黑闪或透明。让 WebView2 自选 GPU 即可稳定。
             .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+        // 便携式 WebView 数据目录：与首页窗口同一目录（同一 WebContext，
+        // 浏览器缓存/origin 存储随 exe 走）；回退模式为 None 走系统默认。
+        let builder = match appdirs::webview_data_dir() {
+            Some(dir) => builder.data_directory(dir),
+            None => builder,
+        };
         let _w = if label.starts_with("graph-") {
             builder.disable_drag_drop_handler().build()
         } else {
@@ -587,19 +598,12 @@ pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 // 生产读 build.rs 打包、启动时释放到 exe 同级 public/<kind>（见 build.rs 的 kind 列表）。
 // ---------------------------------------------------------------------------
 
-fn exe_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
 /// 内置资源根目录：开发为仓库 public/<kind>；生产为 exe 同级 public/<kind>。
 fn builtin_root(kind: &str) -> PathBuf {
     if cfg!(debug_assertions) {
         return Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../public/{kind}"));
     }
-    exe_dir().join("public").join(kind)
+    appdirs::exe_dir().join("public").join(kind)
 }
 
 /// 内置资源根目录（internal）
@@ -667,7 +671,7 @@ fn extract_builtin_archive(exe_dir: &Path) -> Result<(), String> {
 pub fn run() {
     // 生产（release）启动时把内置资源释放到 exe 同级 public/（开发直接读仓库目录）
     if !cfg!(debug_assertions) {
-        if let Err(e) = extract_builtin_archive(&exe_dir()) {
+        if let Err(e) = extract_builtin_archive(&appdirs::exe_dir()) {
             eprintln!("[internal] 内置资源释放失败: {e}");
         }
     }
@@ -684,7 +688,34 @@ pub fn run() {
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
         // 首页「开发者服务」页签可停用/改端口。
         .setup(|app| {
+            // 先一次性迁移旧系统目录数据（若有），再迁移旧键名，最后启动依赖配置根的服务
+            appdirs::migrate_legacy_config(app.handle());
+            ui_state::migrate_key(
+                app.handle(),
+                "three-visual-editor:dock-layout:v3",
+                "tve:editor:dock-layout:v3",
+            );
             devtools::autostart(app.handle());
+            // 首页窗口改为代码创建（tauri.conf.json 不再声明窗口）：便携式需要
+            // 在创建时指定 WebView 数据目录，而 config 的 data_directory 相对路径
+            // 会被 Tauri 解析到 %LOCALAPPDATA%\<label>，无法表达 exe 同级目录。
+            let mut home = tauri::WebviewWindowBuilder::new(
+                app,
+                "home",
+                tauri::WebviewUrl::App("home.html".into()),
+            )
+            .title("TvE Hub")
+            .inner_size(1300.0, 860.0)
+            .min_inner_size(1300.0, 860.0)
+            .visible(false)
+            .decorations(false)
+            .background_color(tauri::window::Color(0, 0, 0, 255))
+            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+            if let Some(dir) = appdirs::webview_data_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                home = home.data_directory(dir);
+            }
+            home.build().map_err(|e| e.to_string())?;
             Ok(())
         })
         // asset:// 协议：模型/贴图等二进制资产由 WebView 直读 Rust（替代 base64 过 IPC）

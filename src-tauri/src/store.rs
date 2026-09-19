@@ -5,21 +5,15 @@
 use serde_json::Map;
 use std::path::PathBuf;
 
+use crate::appdirs;
 use tauri::AppHandle;
-use tauri::Manager;
 
 fn recent_file_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .map(|d| d.join("recent_projects.json"))
-        .unwrap_or_else(|_| PathBuf::from("recent_projects.json"))
+    appdirs::config_root(app).join("recent_projects.json")
 }
 
 fn app_prefs_file_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .map(|d| d.join("prefs.json"))
-        .unwrap_or_else(|_| PathBuf::from("prefs.json"))
+    appdirs::config_root(app).join("prefs.json")
 }
 
 /// 规范化最近项目路径的写法：分隔符统一为反斜杠、去掉结尾分隔符

@@ -96,7 +96,7 @@ impl DevToolsRuntime {
 }
 
 // ---------------------------------------------------------------------------
-// 工具权限：Rust 权威存储（app_config_dir/devtools_perms.json）。
+// 工具权限：Rust 权威存储（配置根目录/devtools_perms.json；便携模式 exe 旁 data/）。
 // 首页/编辑器窗口经 devtools_tools / devtools_set_tool 读写，Rust 直答与前端执行
 // 都按同一份权限门控（前端另有 localStorage 镜像，仅用于 UI 即时性）。
 // ---------------------------------------------------------------------------
@@ -161,10 +161,7 @@ fn tool_name(id: &str) -> Option<String> {
 }
 
 fn perms_file_path(app: &AppHandle) -> std::path::PathBuf {
-    app.path()
-        .app_config_dir()
-        .map(|d| d.join("devtools_perms.json"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("devtools_perms.json"))
+    crate::appdirs::config_root(app).join("devtools_perms.json")
 }
 
 /// 当前工具启用状态（默认全部启用；磁盘存档覆盖之）。缓存进 DevToolsState，首次读取时加载。
