@@ -4,6 +4,11 @@
 // global.scss（变量/基础/工具类）与 components/toolbar.scss（标题栏复用）。
 // ---------------------------------------------------------------------------
 
+// 白板窗口标题栏加高（双行信息 + 尺寸下拉更从容；仅作用于白板窗口）
+.svg-app .toolbar {
+  height: 42px;
+}
+
 .svg-app {
   display: flex;
   flex-direction: column;

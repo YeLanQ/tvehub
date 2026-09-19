@@ -1,5 +1,5 @@
 .title-bar {
-  height: 32px;
+  height: 34px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -19,7 +19,7 @@
 }
 
 .title-bar-title {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
   pointer-events: none;
   white-space: nowrap;

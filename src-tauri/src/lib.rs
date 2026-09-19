@@ -649,6 +649,14 @@ async fn whiteboard_write(
         .map_err(|e| format!("写入白板 {safe} 失败: {e}"))
 }
 
+/// 删除全局白板文件
+#[tauri::command]
+async fn whiteboard_delete(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let safe = sanitize_whiteboard_name(&name)?;
+    let path = whiteboard_dir(&app).join(&safe);
+    std::fs::remove_file(&path).map_err(|e| format!("删除白板 {safe} 失败: {e}"))
+}
+
 /// 窗口关闭行为（声明式生命周期配置）
 enum CloseAction {
     /// 退出应用
@@ -938,6 +946,7 @@ pub fn run() {
             whiteboard_list_files,
             whiteboard_read,
             whiteboard_write,
+            whiteboard_delete,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,

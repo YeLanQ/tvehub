@@ -306,6 +306,8 @@ export const api = {
   /** 写入全局白板文件（自动建目录） */
   whiteboardWrite: (name: string, content: string) =>
     invoke<void>("whiteboard_write", { name, content }),
+  /** 删除全局白板文件 */
+  whiteboardDelete: (name: string) => invoke<void>("whiteboard_delete", { name }),
   /** 追加一行调试日志到应用配置目录 debug.log */
   appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
   /** 打开 WebView 开发者工具（发行构建会返回错误提示） */

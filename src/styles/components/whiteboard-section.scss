@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// 首页「白板」分区（WhiteboardSection）：页头 + 空态大画布 / 全局白板文件画廊。
-// 版式跟随 home-view.scss 的 .page/.page-head 约定。
+// 首页「白板」分区：筛选（搜索 + 标签）、时间轴（按日期分组）、白板卡片
+// （预览/悬停操作/标签/归档）与紧凑新建卡片。版式跟随 home-view.scss 的
+// .page/.page-head 约定。
 // ---------------------------------------------------------------------------
 
 .wb-page {
@@ -16,6 +17,81 @@
   background: rgba(217, 161, 59, 0.08);
   border: 1px solid rgba(217, 161, 59, 0.35);
   border-radius: 4px;
+}
+
+.wb-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+// ---------------------------------------------------------------------------
+// 筛选（搜索 + 标签 chips）
+// ---------------------------------------------------------------------------
+.wb-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.wb-search-head {
+  width: 240px;
+  margin-right: auto;
+}
+
+.wb-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--text-dim);
+  }
+}
+
+.wb-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-chip {
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.is-on {
+    color: var(--text);
+    border-color: var(--text-dim);
+    background: var(--bg-active);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
 }
 
 .wb-error {
@@ -37,79 +113,263 @@
   }
 }
 
-/* 白板文件画廊 */
-.wb-grid {
+// ---------------------------------------------------------------------------
+// 时间轴（左侧竖线 + 日期节点，组内卡片网格）
+// ---------------------------------------------------------------------------
+.wb-timeline {
+  position: relative;
+  margin-top: 4px;
+}
+
+.wb-timeline::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+}
+
+.wb-tl-group {
+  position: relative;
+  padding-left: 26px;
+  margin-bottom: 22px;
+}
+
+.wb-tl-date {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-panel);
+    border: 2px solid var(--text-dim);
+  }
+}
+
+.wb-tl-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.wb-tl-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, 168px);
   gap: 12px;
 }
 
+// ---------------------------------------------------------------------------
+// 空态引导
+// ---------------------------------------------------------------------------
+.wb-empty-hint {
+  display: block;
+  padding: 10px 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+// ---------------------------------------------------------------------------
+// 白板卡片（预览 + 悬停操作 + 信息 + 标签 + 行内编辑）
+// ---------------------------------------------------------------------------
 .wb-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  text-align: left;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s;
+  overflow: hidden;
+  transition: border-color 0.15s;
 
   &:hover {
     border-color: var(--text-dim);
-    transform: translateY(-2px);
   }
 
-  .wb-card-preview {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 110px;
-    border-radius: 6px;
-    background:
-      linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%),
-      linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%);
-    background-size: 16px 16px;
-    background-position: 0 0, 8px 8px;
-    overflow: hidden;
+  &.archived {
+    opacity: 0.62;
+  }
+}
 
-    img {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      user-select: none;
-    }
+.wb-thumb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  background:
+    linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%),
+    linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 7px 7px;
+  overflow: hidden;
+  cursor: pointer;
+
+  img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    user-select: none;
   }
 
-  .wb-card-name {
-    font-size: 12px;
-    font-weight: 600;
+  .wb-thumb-empty {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+}
+
+.wb-hover {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+
+  .wb-thumb:hover & {
+    opacity: 1;
+  }
+}
+
+.wb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-panel-2, var(--bg-panel));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--text-dim);
+  }
+
+  &.wb-danger:hover {
+    color: var(--err);
+    border-color: var(--err);
+  }
+}
+
+.wb-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px 8px;
+}
+
+.wb-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.wb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.wb-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: var(--err);
+    border-color: var(--err);
+  }
+}
+
+.wb-tag-add {
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+
+  &:hover {
     color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    border-color: var(--text-dim);
   }
+}
 
-  &.wb-card-new {
-    align-items: center;
-    justify-content: center;
-    min-height: 160px;
-    border-style: dashed;
+.wb-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
 
-    .wb-card-new-plus {
-      font-size: 34px;
-      line-height: 1;
-      color: var(--text-dim);
+  input {
+    width: 100%;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--text-dim);
+    }
+  }
+}
+
+.wb-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+
+  button {
+    padding: 3px 10px;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--btn);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--btn-hover);
     }
 
-    .wb-card-name {
-      color: var(--text-dim);
-    }
-
-    &:hover .wb-card-new-plus,
-    &:hover .wb-card-name {
-      color: var(--text);
+    &.primary {
+      background: var(--bg-active);
     }
   }
 }

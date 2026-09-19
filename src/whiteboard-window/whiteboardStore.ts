@@ -13,6 +13,7 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../lib/api";
 import { isTauri } from "../lib/tauri-env";
+import { bumpWhiteboardMeta } from "./whiteboard-meta";
 import {
   buildAnimCss,
   moveElBy,
@@ -405,6 +406,8 @@ export function getWhiteboardStore(): WhiteboardStore {
         state.currentFile = name;
         state.saveName = name;
         state.dirty = false;
+        // 元数据时间戳（首页时间轴排序依据）
+        await bumpWhiteboardMeta(name).catch(() => {});
         void emit("tve:whiteboard-saved", { name }).catch(() => {});
         showNotice(`已保存 ${name}`);
       } catch (e) {
