@@ -28,3 +28,5 @@ dist-ssr
 # smoke test build output
 .tmp-smoke
 .tmp*
+# docs 独立仓库（同步至 gitcode TvEHub-Docs）
+public/docs/
