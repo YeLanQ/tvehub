@@ -17,6 +17,8 @@ export interface GeometryProvider {
   key: GeometryKind;
   /** UI 显示名（几何下拉 / 新建默认命名） */
   label: string;
+  /** 创建节点时的默认尺寸（缺省 = MeshNode 默认 1×1×1）；地面类基元给场景尺度出生尺寸 */
+  defaultSize?: Vec3;
   /** 工厂：按尺寸参数构建几何 */
   build(size: Vec3): THREE.BufferGeometry;
 }
@@ -61,6 +63,8 @@ export function createDefaultGeometryRegistry(): GeometryRegistry {
   registry.register({
     key: "plane",
     label: "Plane",
+    // 地面尺度出生（与 1×1 的 quad 一眼可辨；细分 10×10 恰好 1 格 1 单位）
+    defaultSize: { x: 10, y: 1, z: 10 },
     // 地面语义：size = {x: 宽, y: 1, z: 深}，几何平躺 XZ、法线 +Y；
     // 细分段供 Vertex 着色器钩子做顶点位移（波浪/起伏），不加段则只有 4 顶点可动
     build: (s) => new THREE.PlaneGeometry(dim(s.x), dim(s.z), 10, 10).rotateX(-Math.PI / 2),

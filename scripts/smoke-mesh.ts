@@ -117,6 +117,10 @@ const modelNode = factory.createModel("assets/models/Hero.glb");
 ok(modelNode.source === "model" && modelNode.name === "Hero", "createModel：来源/默认命名");
 const primNode = factory.createMesh("cone");
 ok(primNode.geometry === "cone" && primNode.name === "Cone", "createMesh：注册表默认命名");
+const planeSpawn = factory.createMesh("plane");
+ok(planeSpawn.size.x === 10 && planeSpawn.size.y === 1 && planeSpawn.size.z === 10, "createMesh：plane 默认地面尺度 10×10（scale=1 与 quad 可辨）");
+const quadSpawn = factory.createMesh("quad");
+ok(quadSpawn.size.x === 1 && quadSpawn.size.y === 1 && quadSpawn.size.z === 1, "createMesh：quad 默认 1×1");
 
 // —— 4. 动画图解析 ——
 console.log("[4] parseAnimGraph");

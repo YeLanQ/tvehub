@@ -101,6 +101,7 @@ export class NodeFactory {
     const def = geometryRegistry.getOrDefault(geometry);
     node.source = "primitive";
     node.geometry = def.key;
+    if (def.defaultSize) node.size = { ...def.defaultSize };
     node.name = opts.name ?? def.label;
     this.decorate(node, { ...opts, name: undefined });
     return node;
