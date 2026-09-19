@@ -180,13 +180,14 @@ export default defineConfig(async () => ({
   },
 
   // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"），
-  // graph.html = 脚本图窗口（label "graph"）
+  // graph.html = 脚本图窗口（label "graph"），whiteboard.html = 白板窗口（全局单例 label "whiteboard"）
   build: {
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
         home: path.resolve(__dirname, "home.html"),
         graph: path.resolve(__dirname, "graph.html"),
+        whiteboard: path.resolve(__dirname, "whiteboard.html"),
       },
     },
   },

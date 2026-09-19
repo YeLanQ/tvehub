@@ -293,6 +293,19 @@ export const api = {
     invoke<{ root: string; name: string; rel: string | null } | null>("take_pending_project"),
   /** 显示首页窗口并隐藏编辑器（编辑器关闭项目后调用） */
   showHomeWindow: () => invoke<void>("show_home_window"),
+  /** 显示白板窗口（全局单例，不绑定项目；name 非空 = 待打开文件，冷启动拉取兜底） */
+  showWhiteboardWindow: (name: string | null) =>
+    invoke<void>("show_whiteboard_window", { name }),
+  /** 白板窗口启动时拉取待打开文件名（取走即清空） */
+  takePendingWhiteboardFile: () =>
+    invoke<string | null>("take_pending_whiteboard_file"),
+  /** 列出全局白板目录下的 .svg 文件名（按名称排序） */
+  whiteboardListFiles: () => invoke<string[]>("whiteboard_list_files"),
+  /** 读取全局白板文件内容 */
+  whiteboardRead: (name: string) => invoke<string>("whiteboard_read", { name }),
+  /** 写入全局白板文件（自动建目录） */
+  whiteboardWrite: (name: string, content: string) =>
+    invoke<void>("whiteboard_write", { name, content }),
   /** 追加一行调试日志到应用配置目录 debug.log */
   appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
   /** 打开 WebView 开发者工具（发行构建会返回错误提示） */

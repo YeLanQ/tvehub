@@ -18,16 +18,18 @@ withDefaults(
   },
 );
 
-const win = getCurrentWindow();
-const maximized = ref(false);
+// 浏览器直开（无 __TAURI_INTERNALS__）时 getCurrentWindow 会抛错：
+// 先判环境再取窗口句柄，动作方法已有 inTauri 守卫（win 仅在 Tauri 下非空）
 const inTauri = isTauri();
+const win = inTauri ? getCurrentWindow() : null;
+const maximized = ref(false);
 
 let unlistenMax: UnlistenFn | null = null;
 
 async function syncMaximized(): Promise<void> {
   if (!inTauri) return;
   try {
-    maximized.value = await win.isMaximized();
+    maximized.value = (await win?.isMaximized()) ?? false;
   } catch {
     /* ignore */
   }
@@ -36,7 +38,7 @@ async function syncMaximized(): Promise<void> {
 async function onMinimize(): Promise<void> {
   if (!inTauri) return;
   try {
-    await win.minimize();
+    await win?.minimize();
   } catch {
     /* ignore */
   }
@@ -45,7 +47,7 @@ async function onMinimize(): Promise<void> {
 async function onToggleMaximize(): Promise<void> {
   if (!inTauri) return;
   try {
-    await win.toggleMaximize();
+    await win?.toggleMaximize();
     await syncMaximized();
   } catch {
     /* ignore */
@@ -55,7 +57,7 @@ async function onToggleMaximize(): Promise<void> {
 async function onClose(): Promise<void> {
   if (!inTauri) return;
   try {
-    await win.close();
+    await win?.close();
   } catch {
     /* ignore */
   }

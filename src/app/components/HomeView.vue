@@ -22,6 +22,7 @@ import TemplatesSection from "./home/TemplatesSection.vue";
 import PreferencesSection from "./home/PreferencesSection.vue";
 import WorkshopSection from "./home/WorkshopSection.vue";
 import DevServiceSection from "./home/DevServiceSection.vue";
+import WhiteboardSection from "./home/WhiteboardSection.vue";
 import "../../styles/components/home-view.scss";
 import { isTauri } from "../../lib/tauri-env";
 import { handoffToWindow } from "../lib/window-handoff";
@@ -30,7 +31,7 @@ import { syncPermsFromBackend } from "../lib/devtools/state";
 
 const projectStore = getProjectStore();
 
-type Section = "projects" | "templates" | "workshop" | "prefs" | "dev";
+type Section = "projects" | "templates" | "workshop" | "prefs" | "dev" | "whiteboard";
 const section = ref<Section>("projects");
 
 /** 最近项目卡片的「⋯」菜单：当前展开项的项目路径（null = 全部收起；
@@ -195,6 +196,22 @@ watch(showNewProject, (val) => {
           </svg>
           <span>开发者服务</span>
         </button>
+
+        <!-- 全局工具（不随项目）：导航底部独立分区 -->
+        <div class="nav-gap"></div>
+        <button
+          class="nav-global"
+          :class="{ active: section === 'whiteboard' }"
+          title="白板：让想法不用在工具间来回切换"
+          @click="section = 'whiteboard'"
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+            <path d="M4 9l2.6-3 2 2.2L10.5 6l1.5 2" />
+            <path d="M8 11.5v2M5.5 13.5h5" />
+          </svg>
+          <span>白板</span>
+        </button>
       </nav>
 
       <!-- 主区域 -->
@@ -222,6 +239,9 @@ watch(showNewProject, (val) => {
           @open-docs="openDocsViewer"
           @copied="showCopiedTip"
         />
+
+        <!-- ========== 白板（全局单例窗口的入口画廊） ========== -->
+        <WhiteboardSection v-if="section === 'whiteboard'" />
       </main>
     </div>
 

@@ -523,6 +523,132 @@ async fn show_home_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 白板：全局单例窗口（label "whiteboard"，与 home 同级的全局工具窗口，不绑定
+// 项目）。文档为标准 .svg 文件，落全局白板目录（便携 release = exe 同级
+// data/whiteboard/；dev / 回退 = %APPDATA%/TvE.Hub/whiteboard/）。
+// 打开指定文件的双通道与项目交接一致：待打开状态（窗口冷启动拉取兜底）+
+// tve:whiteboard-open 事件（窗口已就绪时直达）。
+// ---------------------------------------------------------------------------
+
+/// 白板窗口待打开文件名（首页「白板」分区点击卡片时写入；None = 仅显示/新建）
+#[derive(Default)]
+pub(crate) struct PendingWhiteboardFile(std::sync::Mutex<Option<String>>);
+
+/// 白板文件目录（全局，不随项目走）
+fn whiteboard_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
+    appdirs::config_root(app).join("whiteboard")
+}
+
+/// 文件名合法性：仅字母数字/汉字/空格/._-（拒绝路径分隔与 ..），缺 .svg 后缀补齐
+fn sanitize_whiteboard_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("文件名为空".into());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        return Err(format!("非法文件名: {trimmed}"));
+    }
+    let ok = trimmed
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '_' | '-'));
+    if !ok {
+        return Err(format!("文件名含非法字符: {trimmed}"));
+    }
+    let lower = trimmed.to_lowercase();
+    Ok(if lower.ends_with(".svg") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}.svg")
+    })
+}
+
+/// 显示白板窗口（全局单例：不存在则创建，存在则聚焦）。name 非空时写入待打开
+/// 文件（窗口冷启动时经 take_pending_whiteboard_file 拉取；热路径由前端再广播
+/// tve:whiteboard-open 事件直达）。None 覆盖清空：避免陈旧文件在新窗口意外加载。
+#[tauri::command]
+async fn show_whiteboard_window(
+    app: tauri::AppHandle,
+    pending: tauri::State<'_, PendingWhiteboardFile>,
+    name: Option<String>,
+) -> Result<(), String> {
+    *pending.0.lock().unwrap() = name;
+    if let Some(w) = app.get_webview_window("whiteboard") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    // 窗口保持隐藏，前端首帧呈现后主动 show()，避免空白闪现（与编辑器一致）
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        "whiteboard",
+        tauri::WebviewUrl::App("whiteboard.html".into()),
+    )
+    .title("TvE 白板")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(1024.0, 640.0)
+    .visible(false)
+    .decorations(false)
+    .background_color(tauri::window::Color(20, 20, 20, 255))
+    .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    builder = match appdirs::webview_data_dir() {
+        Some(dir) => builder.data_directory(dir),
+        None => builder,
+    };
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 白板窗口启动时拉取待打开文件名（取走即清空；热路径走事件，不留陈旧状态）
+#[tauri::command]
+async fn take_pending_whiteboard_file(
+    state: tauri::State<'_, PendingWhiteboardFile>,
+) -> Result<Option<String>, String> {
+    Ok(state.0.lock().unwrap().take())
+}
+
+/// 列出全局白板目录下的 .svg 文件名（按名称排序；目录不存在视为空）
+#[tauri::command]
+async fn whiteboard_list_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let dir = whiteboard_dir(&app);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.to_lowercase().ends_with(".svg").then_some(name)
+        })
+        .collect();
+    names.sort_by_key(|a| a.to_lowercase());
+    Ok(names)
+}
+
+/// 读取全局白板文件内容
+#[tauri::command]
+async fn whiteboard_read(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    let safe = sanitize_whiteboard_name(&name)?;
+    let path = whiteboard_dir(&app).join(&safe);
+    std::fs::read_to_string(&path).map_err(|e| format!("读取白板 {safe} 失败: {e}"))
+}
+
+/// 写入全局白板文件（自动建目录）
+#[tauri::command]
+async fn whiteboard_write(
+    app: tauri::AppHandle,
+    name: String,
+    content: String,
+) -> Result<(), String> {
+    let safe = sanitize_whiteboard_name(&name)?;
+    let dir = whiteboard_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(&safe), content)
+        .map_err(|e| format!("写入白板 {safe} 失败: {e}"))
+}
+
 /// 窗口关闭行为（声明式生命周期配置）
 enum CloseAction {
     /// 退出应用
@@ -532,6 +658,7 @@ enum CloseAction {
 /// 窗口生命周期配置表：新增可重开窗口只需在此加一行，不再改 on_window_event match。
 /// 动态编辑器/图窗口（label "editor-*" / "graph-*"）不在表中 → 走默认销毁
 /// （关闭即释放 Webview + 引擎资源，多会话：每次打开创建新窗口）。
+/// 白板窗口（label "whiteboard"）同样默认销毁：全局单例，关闭后再次打开重建。
 const WINDOW_LIFECYCLE: &[(&str, CloseAction)] = &[("home", CloseAction::Exit)];
 
 // ---------------------------------------------------------------------------
@@ -682,6 +809,7 @@ pub fn run() {
         .manage(watcher::WatcherState::default())
         .manage(scene::SceneSession::default())
         .manage(PendingProjects::default())
+        .manage(PendingWhiteboardFile::default())
         .manage(ActiveEditorWindow::default())
         .manage(task::TaskManager::default())
         .manage(devtools::DevToolsState::default())
@@ -805,6 +933,11 @@ pub fn run() {
             show_window_with_project,
             take_pending_project,
             show_home_window,
+            show_whiteboard_window,
+            take_pending_whiteboard_file,
+            whiteboard_list_files,
+            whiteboard_read,
+            whiteboard_write,
             write_asset_binary,
             asset_protocol::set_current_project_root,
             scene::scene_open,

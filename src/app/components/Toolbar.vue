@@ -11,8 +11,9 @@ import "../../styles/components/toolbar.scss";
 const store = getEditorStore();
 const projectStore = getProjectStore();
 const { state } = store;
-const win = getCurrentWindow();
+// 浏览器直开（无 __TAURI_INTERNALS__）时 getCurrentWindow 会抛错：先判环境再取句柄
 const inTauri = isTauri();
+const win = inTauri ? getCurrentWindow() : null;
 
 const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
   { key: "scene", label: "场景", title: "场景编辑" },
@@ -42,7 +43,7 @@ function onDragDown(e: MouseEvent): void {
   if (!inTauri || e.button !== 0) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, .project-info, .tool-switch")) return;
-  void win.startDragging();
+  void win?.startDragging();
 }
 
 /** 双击工具栏空白区域切换最大化 */
@@ -50,7 +51,7 @@ function onDragDblClick(e: MouseEvent): void {
   if (!inTauri) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, .project-info, .tool-switch")) return;
-  void win.toggleMaximize();
+  void win?.toggleMaximize();
 }
 </script>
 

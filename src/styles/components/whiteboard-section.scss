@@ -1,0 +1,115 @@
+// ---------------------------------------------------------------------------
+// 首页「白板」分区（WhiteboardSection）：页头 + 空态大画布 / 全局白板文件画廊。
+// 版式跟随 home-view.scss 的 .page/.page-head 约定。
+// ---------------------------------------------------------------------------
+
+.wb-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-notice {
+  margin: -8px 0 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--warn);
+  background: rgba(217, 161, 59, 0.08);
+  border: 1px solid rgba(217, 161, 59, 0.35);
+  border-radius: 4px;
+}
+
+.wb-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px;
+  color: var(--err);
+
+  pre {
+    max-width: 560px;
+    max-height: 160px;
+    overflow: auto;
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+  }
+}
+
+/* 白板文件画廊 */
+.wb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 12px;
+}
+
+.wb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  text-align: left;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+
+  &:hover {
+    border-color: var(--text-dim);
+    transform: translateY(-2px);
+  }
+
+  .wb-card-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 110px;
+    border-radius: 6px;
+    background:
+      linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%),
+      linear-gradient(45deg, var(--bg-hover) 25%, transparent 25%, transparent 75%, var(--bg-hover) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
+    overflow: hidden;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      user-select: none;
+    }
+  }
+
+  .wb-card-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &.wb-card-new {
+    align-items: center;
+    justify-content: center;
+    min-height: 160px;
+    border-style: dashed;
+
+    .wb-card-new-plus {
+      font-size: 34px;
+      line-height: 1;
+      color: var(--text-dim);
+    }
+
+    .wb-card-name {
+      color: var(--text-dim);
+    }
+
+    &:hover .wb-card-new-plus,
+    &:hover .wb-card-name {
+      color: var(--text);
+    }
+  }
+}

@@ -62,6 +62,14 @@
   background: var(--accent);
 }
 
+/* 全局工具入口（白板）：分隔线 + 推至导航底部 */
+.nav-gap {
+  flex: 1;
+  min-height: 12px;
+  margin: 6px 12px 4px;
+  border-top: 1px solid var(--border);
+}
+
 .home-nav svg {
   flex-shrink: 0;
 }
