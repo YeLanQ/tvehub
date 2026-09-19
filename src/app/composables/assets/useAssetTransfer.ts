@@ -104,7 +104,7 @@ export function useAssetTransfer(deps: UseAssetTransferDeps) {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
     const zone = el?.closest<HTMLElement>("[data-asset-dispatch]");
     const key = zone?.getAttribute("data-asset-dispatch");
-    if (key) dispatchAssetDrop(key, paths);
+    if (key) dispatchAssetDrop(key, paths, { x, y });
   }
 
   /** 拖拽结束后的短窗口内忽略普通点击（避免拖完误触发选择/进入目录） */

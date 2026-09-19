@@ -37,7 +37,7 @@ import {
   type SkyboxKind,
   type UIScaleMode,
 } from "../prototype/derived/Primitives";
-import { degToRad, radToDeg, type JsonRecord } from "../prototype/types";
+import { degToRad, radToDeg, type JsonRecord, type Vec3 } from "../prototype/types";
 import { clampCameraParam } from "../camera";
 import { parseCullingMask } from "../layers";
 import { cloneTerrainSettings, type TerrainSettings } from "../terrain";
@@ -811,10 +811,11 @@ export class EditorEngine {
   /**
    * 添加模型网格（source=model）：模型资产经 ModelManager 异步解析，
    * 入图先渲染占位体，加载完成后自动刷新为实例并绑定动画。
+   * position：出生位置（拖放落位）；缺省原点。
    */
-  addModel(rel: string, parentId?: string): MeshNode {
+  addModel(rel: string, parentId?: string, position?: Vec3): MeshNode {
     const parent = this.resolveParent(parentId);
-    const node = this.factory.createModel(rel, { parentId: parent?.id ?? null });
+    const node = this.factory.createModel(rel, { parentId: parent?.id ?? null, position });
     this.graph.add(node);
     this.select(node.id);
     // 预取触发 models.onChanged → refreshModelNodes 自动刷新（含广播）
@@ -1324,6 +1325,8 @@ export class EditorEngine {
     prefabRel: string,
     parentId?: string,
     label?: string,
+    /** 实例根节点出生位置（拖放落位）；缺省保持预制体文档变换 */
+    position?: Vec3,
   ): Node | null {
     const parent = this.resolveParent(parentId);
     if (!parent && this.graph.root) {
@@ -1333,6 +1336,7 @@ export class EditorEngine {
     const { root, nodes } = instantiatePrefabTree(doc, this.factory);
     root.prefab = prefabRel;
     root.name = root.name || "Prefab";
+    if (position) root.transform.setPosition(position.x, position.y, position.z);
     this.graph.addTree(
       root,
       nodes,
@@ -2992,6 +2996,36 @@ export class EditorEngine {
     window.removeEventListener("pointermove", this.onLayoutPointerMove);
     window.removeEventListener("pointerup", this.onLayoutPointerUp);
     dom.removeEventListener("contextmenu", this.onLayoutContextMenu);
+  }
+
+  /**
+   * 视口屏幕坐标（client 像素）→ 场景落点：优先取光标下场景几何的最近命中点
+   * （沿父链不可见的对象跳过，与点选同规则），未命中任何几何时回退视线与
+   * 地面（y=0 平面，与编辑器网格同高）的交点。资产拖放落位等使用。
+   * 引擎已销毁或无交点（视线平行朝上）返回 null。
+   */
+  screenToWorldPoint(clientX: number, clientY: number): Vec3 | null {
+    if (this.isDisposed()) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.mouse, this.renderer.camera);
+    const objectMap = this.synchronizer.getObjectMap();
+    const intersects = this.raycaster.intersectObjects(Array.from(objectMap.values()), true);
+    // 可见性链过滤：three 的 Raycaster 不看 visible，隐藏对象不该吸附落点
+    const hit = intersects.find((i) => {
+      let o: THREE.Object3D | null = i.object;
+      while (o) {
+        if (!o.visible) return false;
+        o = o.parent;
+      }
+      return true;
+    });
+    if (hit) return { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+    const out = new THREE.Vector3();
+    const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    return this.raycaster.ray.intersectPlane(ground, out) ? { x: out.x, y: out.y, z: out.z } : null;
   }
 
   private onViewportMouseDown(e: MouseEvent): void {

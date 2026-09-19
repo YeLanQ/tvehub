@@ -10,7 +10,7 @@
 
 import { api } from "../../lib/api";
 import type { Node } from "../../framework/prototype/Node";
-import type { JsonRecord } from "../../framework/prototype/types";
+import type { JsonRecord, Vec3 } from "../../framework/prototype/types";
 import { dispatchCommand } from "../commands";
 import { logStore } from "../stores/log";
 import { getProjectStore } from "../stores/project";
@@ -95,8 +95,9 @@ export async function updatePrefabFromNode(nodeId: string): Promise<boolean> {
   }
 }
 
-/** 实例化预制体资产到场景（挂到当前选中节点/根下；一次撤销） */
-export async function instantiatePrefabAsset(rel: string): Promise<boolean> {
+/** 实例化预制体资产到场景（挂到当前选中节点/根下；一次撤销）。
+ * position：实例根节点出生位置（视口拖放落位）；缺省保持预制体文档变换 */
+export async function instantiatePrefabAsset(rel: string, position?: Vec3): Promise<boolean> {
   const engine = getEditorStore().engine;
   const projectStore = getProjectStore();
   const root = projectStore.currentPath;
@@ -124,7 +125,7 @@ export async function instantiatePrefabAsset(rel: string): Promise<boolean> {
   }
   let instance: Node | null;
   try {
-    instance = engine.instantiateTree(doc, rel);
+    instance = engine.instantiateTree(doc, rel, undefined, undefined, position);
   } catch (e) {
     logStore.log("error", `预制体实例化失败 ${rel}: ${e instanceof Error ? e.message : String(e)}`);
     return false;

@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { disposeEditor, mountEditor } from "../services/editorService";
 import { dispatchCommand } from "../commands";
-import { registerAssetDropTarget } from "../lib/asset-drop";
+import { registerAssetDropTarget, type AssetDropPoint } from "../lib/asset-drop";
 import { instantiatePrefabAsset } from "../lib/prefabs";
 import { isModelAssetRel } from "../../framework/mesh";
 import { logStore } from "../stores/log";
@@ -113,16 +113,18 @@ interface AssetItem {
 }
 
 /** 资产面板拖入视口：模型资产 → 新建模型网格；预制体 → 实例化到场景；
- * 其余类型（材质/脚本/场景等有自己的工作流）提示不支持。仅场景/布局编辑模式响应 */
-async function receiveAssetDrop(paths: string[]): Promise<void> {
+ * 其余类型（材质/脚本/场景等有自己的工作流）提示不支持。仅场景/布局编辑模式响应。
+ * 落位：松开点经引擎拾取换算场景坐标（光标下几何命中点，空处回退地面 y=0） */
+async function receiveAssetDrop(paths: string[], at: AssetDropPoint): Promise<void> {
   if (!isEditMode()) return;
+  const point = engine.screenToWorldPoint(at.x, at.y);
   let handled = 0;
   for (const rel of paths) {
     if (isModelAssetRel(rel)) {
-      void dispatchCommand("node.add", { kind: "model", path: rel });
+      void dispatchCommand("node.add", { kind: "model", path: rel, position: point ?? undefined });
       handled++;
     } else if (rel.toLowerCase().endsWith(".prefab")) {
-      await instantiatePrefabAsset(rel);
+      await instantiatePrefabAsset(rel, point ?? undefined);
       handled++;
     }
   }

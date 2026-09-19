@@ -6,8 +6,14 @@
 // 查表分派。双向不感知对方（面板不 import 视口，视口不 import 面板）。
 // ---------------------------------------------------------------------------
 
-/** 落点接收回调：paths = 被拖资产的 rel 列表（保持拖拽选择顺序） */
-export type AssetDropReceive = (paths: string[]) => void | Promise<void>;
+/** 松开鼠标时的窗口客户区坐标（落点侧换算场景位置用） */
+export interface AssetDropPoint {
+  x: number;
+  y: number;
+}
+
+/** 落点接收回调：paths = 被拖资产的 rel 列表（保持拖拽选择顺序），at = 松开坐标 */
+export type AssetDropReceive = (paths: string[], at: AssetDropPoint) => void | Promise<void>;
 
 const receivers = new Map<string, AssetDropReceive>();
 
@@ -20,9 +26,9 @@ export function registerAssetDropTarget(key: string, receive: AssetDropReceive):
 }
 
 /** 按落点 key 分派；key 无注册者或列表为空返回 false（调用方按未命中处理） */
-export function dispatchAssetDrop(key: string, paths: string[]): boolean {
+export function dispatchAssetDrop(key: string, paths: string[], at: AssetDropPoint): boolean {
   const receive = receivers.get(key);
   if (!receive || paths.length === 0) return false;
-  void receive(paths);
+  void receive(paths, at);
   return true;
 }

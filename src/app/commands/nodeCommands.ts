@@ -10,7 +10,7 @@ import { api } from "../../lib/api";
 import { registerCommand } from "./registry";
 import { isEditingText } from "./context";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
-import type { JsonRecord } from "../../framework/prototype/types";
+import type { JsonRecord, Vec3 } from "../../framework/prototype/types";
 
 import type { GeometryKind } from "../../framework/mesh/geometry";
 import type { LightKind } from "../../framework/prototype/nodes/LightNode";
@@ -39,6 +39,16 @@ function graph() {
 /** 解析节点新增参数（未知类型回退安全默认，与历史 UI/devtools 语义一致） */
 function asSubtype<T extends string>(list: readonly T[], v: unknown, fallback: T): T {
   return list.includes(v as T) ? (v as T) : fallback;
+}
+
+/** node.add 可选 position（{x,y,z}，拖放落位）；非法/缺省回退引擎默认出生 */
+function asPosition(v: unknown): Vec3 | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const p = v as Record<string, unknown>;
+  const x = Number(p.x);
+  const y = Number(p.y);
+  const z = Number(p.z);
+  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? { x, y, z } : undefined;
 }
 
 registerCommand({
@@ -202,7 +212,7 @@ registerCommand({
       case "model": {
         const rel = args?.path;
         if (!rel) throw new Error("模型节点缺少 path（模型资产相对路径）");
-        node = engine().addModel(String(rel), parentId);
+        node = engine().addModel(String(rel), parentId, asPosition(args?.position));
         break;
       }
       default:
