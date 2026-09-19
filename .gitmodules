@@ -1,0 +1,3 @@
+[submodule "public/docs"]
+	path = public/docs
+	url = https://gitcode.com/YeLanQ/TvEHub-Docs.git
