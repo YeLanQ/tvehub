@@ -561,10 +561,13 @@ function openLogicEditor(): void {
     <!-- 音频：原生播放器预览（mp3/wav/ogg/m4a/aac/flac） -->
     <AudioPreview v-if="isAudioAssetRel(rel)" :rel="rel" />
 
-    <!-- hdr / TextureCube / 材质 / 模型：3D 预览 -->
+    <!-- hdr / TextureCube / 材质 / 模型：3D 预览。
+         key 只保留 texcubeRev（同资产文档变更才重挂）：换资产走组件内 rebuild
+         就地重建——key 拼上 rel/kind 会让每次选择都销毁重建 WebGLRenderer
+         （上下文创建 + PMREM + 着色器重编译全在主线程），表现为选择资产卡一帧 -->
     <AssetPreview3D
       v-if="previewKind"
-      :key="previewRel + ':' + previewKind + ':' + texcubeRev"
+      :key="texcubeRev"
       :kind="previewKind"
       :rel="previewRel"
       :params="previewKind === 'material' && matReady ? previewParams : null"

@@ -504,6 +504,7 @@ async function buildModelPreview(): Promise<void> {
   // 地面网格 + 投影承接面（仅模型模式：判断比例/朝向/接触关系）
   grid = new THREE.GridHelper(radius * 6, 24, 0x4a4a52, 0x33333a);
   grid.position.y = -size.y / 2;
+  grid.visible = showGrid.value; // 就地换资产重建：可见性随工具条状态恢复
   scene.add(grid);
   setupGroundAndShadow(radius, -size.y / 2);
   applyWireframe();
@@ -722,14 +723,6 @@ watch(clipIndex, (v) => {
 watch(playing, (v) => {
   for (const a of actions) a.paused = !v;
 });
-// 显隐状态在重建后失效：网格可见性随工具条状态恢复
-watch(
-  () => grid,
-  (g) => {
-    if (g) g.visible = showGrid.value;
-  },
-  { flush: "post" },
-);
 </script>
 
 <template>
