@@ -628,6 +628,7 @@ watch(search, () => scheduleRowRefresh());
         :style="{ paddingLeft: 8 + depth * 14 + 'px' }"
         @mousedown="onRowMouseDown($event, node.id)"
         @click="onRowClick(node.id, $event)"
+        @dblclick="dispatchCommand('editor.focusSelected', { id: node.id })"
         @contextmenu.prevent="onNodeContext($event, node.id)"
       >
         <span

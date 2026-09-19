@@ -3028,6 +3028,34 @@ export class EditorEngine {
     return this.raycaster.ray.intersectPlane(ground, out) ? { x: out.x, y: out.y, z: out.z } : null;
   }
 
+  /**
+   * 视口相机快速聚焦到节点（层级双击 / 快捷键 F）：
+   * 取节点世界包围球，相机沿当前视线方向退到完整取景距离，轨道目标对准包围球
+   * 中心。无几何子级的空节点退化为以节点世界位置为心、1 单位半径取景。
+   * 预览渲染（用场景相机节点取景）与未知节点不介入。返回是否成功。
+   */
+  focusOnNode(id: string): boolean {
+    const obj = this.synchronizer.getObjectMap().get(id);
+    if (!obj || this.previewMode || this.isDisposed()) return false;
+    const box = new THREE.Box3().setFromObject(obj);
+    const sphere = box.isEmpty()
+      ? new THREE.Sphere(obj.getWorldPosition(new THREE.Vector3()), 1)
+      : box.getBoundingSphere(new THREE.Sphere());
+    const radius = Math.max(sphere.radius, 0.05);
+    const controls = this.renderer.orbitControls;
+    const camera = this.renderer.camera;
+    // 沿当前视线方向后退（目标与相机重合等退化情形取默认斜视方向）
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-8) dir.set(0.6, 0.7, 1);
+    dir.normalize();
+    // 完整取景距离：包围球对垂直视场角的投影（留 10% 余量；并保底不小于半径×1.5）
+    const dist = Math.max((radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.1, radius * 1.5);
+    controls.target.copy(sphere.center);
+    camera.position.copy(sphere.center).addScaledVector(dir, dist);
+    controls.update();
+    return true;
+  }
+
   private onViewportMouseDown(e: MouseEvent): void {
     // Only handle left-click (button 0) and only when not dragging in orbit/gizmo
     if (e.button !== 0) return;

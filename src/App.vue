@@ -90,12 +90,17 @@ function onWindowKeyDown(e: KeyboardEvent): void {
     }
     return;
   }
-  // W/E/R：切换视口变换工具（移动/旋转/缩放）。任一修饰键按下或文本焦点（输入框/Monaco）
-  // 时让位；场景视图与 gizmo 拖拽守卫在 editor.gizmoMode 命令内（脚本/预览页签静默不响应）
+  // W/E/R：切换视口变换工具（移动/旋转/缩放）；F：快速聚焦选中对象（层级双击同款）。
+  // 任一修饰键按下或文本焦点（输入框/Monaco）时让位；场景视图与 gizmo 拖拽守卫在
+  // editor.gizmoMode / editor.focusSelected 命令内（脚本/预览页签静默不响应）
   if (
     !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !isEditingText() &&
-    (key === "w" || key === "e" || key === "r")
+    (key === "w" || key === "e" || key === "r" || key === "f")
   ) {
+    if (key === "f") {
+      void dispatchCommand("editor.focusSelected");
+      return;
+    }
     const mode = key === "w" ? "translate" : key === "e" ? "rotate" : "scale";
     void dispatchCommand("editor.gizmoMode", { mode });
     return;

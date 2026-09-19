@@ -72,6 +72,28 @@ registerCommand({
 });
 
 registerCommand({
+  id: "editor.focusSelected",
+  label: "聚焦选中对象",
+  group: "编辑器",
+  canRun: (ctx) => ctx.view === "editor",
+  description:
+    "视口相机快速聚焦对象（取世界包围球完整取景，沿当前视线退到全览距离；id 缺省 = 当前选中节点。层级双击 / 快捷键 F）",
+  run: (_ctx, args: any) => {
+    const store = getEditorStore();
+    // 静默守卫：脚本/预览工作台不劫持键位（与 editor.gizmoMode 同口径）
+    if (
+      store.state.viewMode !== "scene" &&
+      store.state.viewMode !== "layout"
+    ) {
+      return { focused: false };
+    }
+    const id = args?.id ? String(args.id) : store.state.selectedId;
+    if (!id || !store.state.mounted) return { focused: false };
+    return { focused: store.engine.focusOnNode(id) };
+  },
+});
+
+registerCommand({
   id: "editor.terrainPaint",
   label: "地形绘制",
   group: "编辑器",
