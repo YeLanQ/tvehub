@@ -3,6 +3,10 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getEditorStore } from "../stores/editor";
 import { disposeEditor, mountEditor } from "../services/editorService";
 import { dispatchCommand } from "../commands";
+import { registerAssetDropTarget } from "../lib/asset-drop";
+import { instantiatePrefabAsset } from "../lib/prefabs";
+import { isModelAssetRel } from "../../framework/mesh";
+import { logStore } from "../stores/log";
 import { Slider } from "../../ui-kit";
 import DebugStatsPanel from "./DebugStatsPanel.vue";
 import "../../styles/components/viewport.scss";
@@ -108,12 +112,35 @@ interface AssetItem {
   icon: string;
 }
 
+/** 资产面板拖入视口：模型资产 → 新建模型网格；预制体 → 实例化到场景；
+ * 其余类型（材质/脚本/场景等有自己的工作流）提示不支持。仅场景/布局编辑模式响应 */
+async function receiveAssetDrop(paths: string[]): Promise<void> {
+  if (!isEditMode()) return;
+  let handled = 0;
+  for (const rel of paths) {
+    if (isModelAssetRel(rel)) {
+      void dispatchCommand("node.add", { kind: "model", path: rel });
+      handled++;
+    } else if (rel.toLowerCase().endsWith(".prefab")) {
+      await instantiatePrefabAsset(rel);
+      handled++;
+    }
+  }
+  if (handled === 0) logStore.log("warn", "该资产类型不支持拖入视口（支持模型/预制体）");
+}
+
+/** 注销面板外落点注册（组件卸载时调用） */
+let unregisterAssetDrop: (() => void) | null = null;
+
 onMounted(() => {
   if (host.value) mountEditor(host.value);
+  unregisterAssetDrop = registerAssetDropTarget("viewport", receiveAssetDrop);
 });
 
 onBeforeUnmount(() => {
   disposeEditor();
+  unregisterAssetDrop?.();
+  unregisterAssetDrop = null;
 });
 </script>
 
@@ -122,6 +149,7 @@ onBeforeUnmount(() => {
     <div
       ref="host"
       class="viewport-canvas"
+      data-asset-dispatch="viewport"
       @dragover.prevent="onDragOver"
       @drop="onDrop"
     ></div>

@@ -7,6 +7,7 @@ import { onMounted, onUnmounted, ref, type Ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logStore } from "../../stores/log";
 import { isProtectedAsset } from "../../lib/asset-guards";
+import { dispatchAssetDrop } from "../../lib/asset-drop";
 import type { ChildEntry } from "../../lib/asset-browser";
 
 interface DragStart {
@@ -94,7 +95,16 @@ export function useAssetTransfer(deps: UseAssetTransferDeps) {
     if (s) {
       const target = findDropTarget(e.clientX, e.clientY, s.paths);
       if (target && !s.paths.includes(target)) void moveAssetsToDir(s.paths, target);
+      else dispatchDropOutside(e.clientX, e.clientY, s.paths);
     }
+  }
+
+  /** 面板内目录落点未命中：查面板外落点（视口等经 data-asset-dispatch 标注的元素） */
+  function dispatchDropOutside(x: number, y: number, paths: string[]): void {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    const zone = el?.closest<HTMLElement>("[data-asset-dispatch]");
+    const key = zone?.getAttribute("data-asset-dispatch");
+    if (key) dispatchAssetDrop(key, paths);
   }
 
   /** 拖拽结束后的短窗口内忽略普通点击（避免拖完误触发选择/进入目录） */
