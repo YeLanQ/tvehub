@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { CameraNode, LightNode, MeshNode, NavAreaNode, NavAgentNode, FsmRunnerNode, BtRunnerNode, SkyboxNode, AudioNode, ParticleSystemNode, TerrainNode, FogNode, UIButtonNode, UICanvasNode, UIImageNode, UILayoutNode, UITextNode, UIWidgetNode } from "../../framework/prototype/derived/Primitives";
 import {
   isAnimationClipComponent,
@@ -178,10 +178,16 @@ const modelHasClips = computed(() => (modelMeta.value?.clips.length ?? 0) > 0);
 /** 模型是否携带内嵌材质（决定 Material 卡片显示内嵌清单） */
 const modelHasMaterials = computed(() => (modelMeta.value?.materials.length ?? 0) > 0);
 
-/** 进入编辑器/切换项目后同步一次资产列表（材质下拉需要 assets/materials 内容） */
-onMounted(() => {
-  if (projectStore.currentPath) void assetsStore.load(projectStore.currentPath);
-});
+/** 同步资产列表（材质/着色器/脚本下拉都派生自 assets 平铺表）：
+ * 编辑器窗口先挂 UI 后交接项目，挂载时 currentPath 可能尚未就绪——
+ * watch 兜住「路径晚于面板就绪」与「切换项目」两种时序，immediate 兜住「先有路径后挂载」 */
+watch(
+  () => projectStore.currentPath,
+  (path) => {
+    if (path) void assetsStore.load(path);
+  },
+  { immediate: true },
+);
 
 // 面板卸载：把未落盘的材质修改（防抖窗口内的最后一次编辑）写入源文件
 onBeforeUnmount(flushMaterialPersist);
