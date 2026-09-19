@@ -43,6 +43,22 @@ for (const def of geometryRegistry.list()) {
   ok(!!g.getAttribute("position"), `build(${def.key}) 产出几何`);
 }
 ok(buildGeometry("unknown-kind", { x: 1, y: 1, z: 1 }).type === "BoxGeometry", "未注册类型回退 box");
+// plane 基元 = 水平地面而非竖直 quad：平躺 XZ、法线 +Y、按 size.x×size.z 占地，细分供 Vertex 钩子位移
+const plane = buildGeometry("plane", { x: 4, y: 2, z: 3 });
+plane.computeBoundingBox();
+const bb = plane.boundingBox!;
+ok(
+  Math.abs(bb.max.x - bb.min.x - 4) < 1e-4 &&
+    Math.abs(bb.max.z - bb.min.z - 3) < 1e-4 &&
+    Math.abs(bb.max.y) < 1e-4 && Math.abs(bb.min.y) < 1e-4,
+  "plane 平躺 XZ（占地 size.x×size.z、无厚度）",
+);
+const planeNormal = plane.getAttribute("normal");
+ok(
+  Math.abs(planeNormal.getX(0)) < 1e-4 && Math.abs(planeNormal.getY(0) - 1) < 1e-4 && Math.abs(planeNormal.getZ(0)) < 1e-4,
+  "plane 法线 +Y（朝上可见）",
+);
+ok(plane.getAttribute("position").count === 121, "plane 10×10 细分");
 
 // —— 2. MeshNode 序列化（新字段 + 旧场景兼容）——
 console.log("[2] MeshNode 序列化");
