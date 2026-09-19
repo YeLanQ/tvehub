@@ -60,6 +60,7 @@ function createLODGeometry(kind: string, size: any): THREE.BufferGeometry {
   const z = Math.max(0.01, num(sz.z, 1));
   if (kind === "sphere") return new THREE.SphereGeometry(x / 2, 16, 12);
   if (kind === "plane") return new THREE.PlaneGeometry(x, z, 5, 5).rotateX(-Math.PI / 2);
+  if (kind === "quad") return new THREE.PlaneGeometry(x, y);
   if (kind === "cylinder") return new THREE.CylinderGeometry(x / 2, x / 2, y, 12);
   if (kind === "cone") return new THREE.ConeGeometry(x / 2, y, 12);
   if (kind === "torus") return new THREE.TorusGeometry(x / 2, y / 2, 8, 24);

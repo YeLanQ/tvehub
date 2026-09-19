@@ -29,7 +29,7 @@ UI 节点没有 3D Transform 卡，换成 **2D Transform + 锚点卡**（见 [UI
 
 | 卡片 | 内容 |
 | --- | --- |
-| Mesh | 基元网格：几何类型下拉（box/sphere/plane/cylinder/cone/torus/capsule）；模型网格：模型资产下拉（内置模型/项目模型两组，支持导入 glb/gltf/fbx/obj） |
+| Mesh | 基元网格：几何类型下拉（box/sphere/plane/quad/cylinder/cone/torus/capsule）；模型网格：模型资产下拉（内置模型/项目模型两组，支持导入 glb/gltf/fbx/obj） |
 | Material | 材质资产选择 + 着色器切换（PBR/Unlit/卡通）+ 参数编辑（内置材质只读，可复制为项目材质后编辑）；着色器的 Properties 参数一并呈现（详见[材质参数](assets.md)） |
 
 ## 灯光节点

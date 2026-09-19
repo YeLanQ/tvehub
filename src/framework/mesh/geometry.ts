@@ -9,7 +9,7 @@ import * as THREE from "three";
 import type { Vec3 } from "../prototype/types";
 
 /** 基元几何类型 key（写入 MeshNode.geometry 字段） */
-export type GeometryKind = "box" | "sphere" | "plane" | "cylinder" | "cone" | "torus" | "capsule";
+export type GeometryKind = "box" | "sphere" | "plane" | "quad" | "cylinder" | "cone" | "torus" | "capsule";
 
 /** 单个基元几何的类型定义（工厂产物 = three BufferGeometry） */
 export interface GeometryProvider {
@@ -64,6 +64,13 @@ export function createDefaultGeometryRegistry(): GeometryRegistry {
     // 地面语义：size = {x: 宽, y: 1, z: 深}，几何平躺 XZ、法线 +Y；
     // 细分段供 Vertex 着色器钩子做顶点位移（波浪/起伏），不加段则只有 4 顶点可动
     build: (s) => new THREE.PlaneGeometry(dim(s.x), dim(s.z), 10, 10).rotateX(-Math.PI / 2),
+  });
+  registry.register({
+    key: "quad",
+    label: "Quad",
+    // 竖直片语义：size = {x: 宽, y: 高, z: 1}，几何立 XY、法线 +Z、1×1 段；
+    // 面向默认视口相机的公告牌/贴片用
+    build: (s) => new THREE.PlaneGeometry(dim(s.x), dim(s.y)),
   });
   registry.register({
     key: "cylinder",

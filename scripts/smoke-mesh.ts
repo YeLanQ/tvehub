@@ -37,7 +37,7 @@ async function main(): Promise<void> {
 
 // —— 1. 几何工厂 ——
 console.log("[1] geometryRegistry");
-ok(geometryRegistry.list().length === 7, "注册 7 种基元");
+ok(geometryRegistry.list().length === 8, "注册 8 种基元");
 for (const def of geometryRegistry.list()) {
   const g = buildGeometry(def.key, { x: 1, y: 2, z: 3 });
   ok(!!g.getAttribute("position"), `build(${def.key}) 产出几何`);
@@ -59,6 +59,22 @@ ok(
   "plane 法线 +Y（朝上可见）",
 );
 ok(plane.getAttribute("position").count === 121, "plane 10×10 细分");
+// quad 基元 = 竖直公告牌片：立 XY、法线 +Z、按 size.x×size.y 尺寸、1×1 段
+const quad = buildGeometry("quad", { x: 4, y: 2, z: 3 });
+quad.computeBoundingBox();
+const qb = quad.boundingBox!;
+ok(
+  Math.abs(qb.max.x - qb.min.x - 4) < 1e-4 &&
+    Math.abs(qb.max.y - qb.min.y - 2) < 1e-4 &&
+    Math.abs(qb.max.z) < 1e-4 && Math.abs(qb.min.z) < 1e-4,
+  "quad 立 XY（尺寸 size.x×size.y、无厚度）",
+);
+const quadNormal = quad.getAttribute("normal");
+ok(
+  Math.abs(quadNormal.getX(0)) < 1e-4 && Math.abs(quadNormal.getY(0)) < 1e-4 && Math.abs(quadNormal.getZ(0) - 1) < 1e-4,
+  "quad 法线 +Z（面向默认视口相机）",
+);
+ok(quad.getAttribute("position").count === 4, "quad 1×1 段（4 顶点 2 三角形）");
 
 // —— 2. MeshNode 序列化（新字段 + 旧场景兼容）——
 console.log("[2] MeshNode 序列化");

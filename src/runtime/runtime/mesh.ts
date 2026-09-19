@@ -69,6 +69,7 @@ function getPrimitiveGeometry(kind, x, y, z) {
   if (geom === undefined) {
     if (kind === "sphere") geom = new THREE.SphereGeometry(x / 2, 32, 24);
     else if (kind === "plane") geom = new THREE.PlaneGeometry(x, z, 10, 10).rotateX(-Math.PI / 2);
+    else if (kind === "quad") geom = new THREE.PlaneGeometry(x, y);
     else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
     else if (kind === "cone") geom = new THREE.ConeGeometry(x / 2, y, 24);
     else if (kind === "torus") geom = new THREE.TorusGeometry(x / 2, y / 2, 16, 48);

@@ -19,7 +19,7 @@ import { FOG_KINDS } from "../../framework/fog/types";
 import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
 
 const GEOMETRY_KINDS: GeometryKind[] = [
-  "box", "sphere", "plane", "cylinder", "cone", "torus", "capsule",
+  "box", "sphere", "plane", "quad", "cylinder", "cone", "torus", "capsule",
 ];
 const LIGHT_KINDS: LightKind[] = ["point", "directional", "ambient", "spot"];
 const SKYBOX_KINDS: SkyboxKind[] = ["cube", "procedural"];

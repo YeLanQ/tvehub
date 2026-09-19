@@ -55,7 +55,7 @@
 
 | 分组 | 类型 |
 | --- | --- |
-| 网格 | Box / Sphere / Plane / Cylinder / Cone / Torus / Capsule（基元由几何注册表驱动） |
+| 网格 | Box / Sphere / Plane / Quad / Cylinder / Cone / Torus / Capsule（基元由几何注册表驱动） |
 | 灯光 | Point Light / Directional Light / Spot Light / Ambient |
 | 相机 | Camera |
 | 空组 | Group |
