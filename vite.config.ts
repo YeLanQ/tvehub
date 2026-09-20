@@ -131,6 +131,43 @@ function templateIndexPlugin(): Plugin {
   };
 }
 
+/** 运行时资产缺失守卫（dev）：/engine/** 与 /web-preview/** 是运行时资产（全为构建
+ *  产物）。文件缺失时 Vite 的 SPA 兜底会返回 index.html（状态 200），调用方会把 HTML
+ *  当 JS/JSON 处理——典型症状：three 的 DRACOLoader/KTX2Loader 把「解码器文本」拼进
+ *  Worker Blob，于是抛无从定位的 `SyntaxError: Unexpected token '<'`（HTML 第 2 行）。
+ *  这里在内部中间件之前拦截这两个前缀：文件不存在直接 404，与生产静态服务、
+ *  Rust 预览服务器（src-tauri/src/preview.rs 返回 404）行为一致。 */
+const RUNTIME_ASSET_PREFIXES = ["/engine/", "/web-preview/"];
+
+function runtimeAssetGuardPlugin(): Plugin {
+  return {
+    name: "three-visual-editor-runtime-asset-guard",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const method = req.method ?? "GET";
+        if (method !== "GET" && method !== "HEAD") return next();
+        const pathOnly = (req.url ?? "").split("?")[0].split("#")[0];
+        if (!RUNTIME_ASSET_PREFIXES.some((p) => pathOnly.startsWith(p))) return next();
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(pathOnly);
+        } catch {
+          return next();
+        }
+        const abs = path.join(server.config.publicDir, decoded.replace(/^\/+/, ""));
+        if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return next();
+        res.statusCode = 404;
+        res.setHeader("content-type", "text/plain; charset=utf-8");
+        res.end(
+          `404 Not Found: ${pathOnly}\n` +
+            "（运行时资产缺失：public/engine 为构建产物，请确认构建完成——node scripts/build-runtime.mjs）\n",
+        );
+      });
+    },
+  };
+}
+
 // 运行时自动编译插件（dev）：public/engine 为纯构建产物目录（不入库；源 =
 // src/runtime/** 编译 + src/runtime/extra/** 外部资产 + node_modules/three vendor），
 // 开发服务器启动时由 buildRuntime() 一次全量再生，并监听源目录变化防抖重建。
@@ -175,7 +212,7 @@ function runtimeBuildPlugin(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), runtimeBuildPlugin(), templateIndexPlugin()],
+  plugins: [vue(), runtimeAssetGuardPlugin(), runtimeBuildPlugin(), templateIndexPlugin()],
 
   // 应用显示版本（编译期常量，见 appDisplayVersion）
   define: {

@@ -7,7 +7,11 @@ import { buildStarterSceneDoc } from "../../framework/engine/starterScene";
 import { DEFAULT_MATERIAL_REL } from "../../framework/material";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { assetUrl, fetchAssetBinary } from "../../lib/asset-url";
-import { setupCompressedGltfSupport, collectModelMaterialOverrideRels } from "../../framework/mesh";
+import {
+  setupCompressedGltfSupport,
+  probeDecoderAssets,
+  collectModelMaterialOverrideRels,
+} from "../../framework/mesh";
 import { initModelDecodeWorker } from "../../framework/mesh/model-decode-worker-bridge";
 import { AUDIO_EXTS } from "../../framework/audio/types";
 import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
@@ -209,11 +213,27 @@ export function mountEditor(container: HTMLElement): Promise<void> {
         // （public/engine/runtime/loaders/{draco,basis}），编辑器经相对 HTTP 路径
         // 按需拉取（dev 由 Vite 静态服务、prod 随前端 dist 打包）；
         // KTX2 按实际渲染器探测压缩纹理格式（WebGL/WebGPU 能力面不同）
-        setupCompressedGltfSupport({
+        const decoderUnavailable = await probeDecoderAssets({
           dracoBase: "engine/runtime/loaders/draco/",
           basisBase: "engine/runtime/loaders/basis/",
-          renderer: engine.renderer.raw,
         });
+        if (decoderUnavailable.length) {
+          // 预检失败即不挂解码器：否则 three 会把兜底 HTML 拼进 Worker Blob，
+          // 抛无从定位的 SyntaxError: Unexpected token '<'（见 compressed-gltf.ts）
+          logStore.log(
+            "error",
+            `压缩模型解码器不可用（压缩模型将无法解析）：${decoderUnavailable
+              .map((u) => `${u.name} — ${u.reason}`)
+              .join("；")}。public/engine 为构建产物，请确认构建完成（node scripts/build-runtime.mjs）`,
+            "gltf",
+          );
+        } else {
+          setupCompressedGltfSupport({
+            dracoBase: "engine/runtime/loaders/draco/",
+            basisBase: "engine/runtime/loaders/basis/",
+            renderer: engine.renderer.raw,
+          });
+        }
         // 模型解码 Worker：glTF 解析移入独立线程，避免大模型加载卡主线程
         initModelDecodeWorker(
           "engine/runtime/loaders/draco/",

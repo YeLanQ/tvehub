@@ -41,6 +41,52 @@ let dracoLoader: DRACOLoader | null = null;
 let ktx2Loader: KTX2Loader | null = null;
 let lastRenderer: unknown;
 
+/** 解码器资产预检（文件名与 three 加载器实际拉取的一致：
+ *  DRACOLoader → draco_wasm_wrapper.js + draco_decoder.wasm（js 形态只有 draco_decoder.js）；
+ *  KTX2Loader → basis_transcoder.js + basis_transcoder.wasm）。
+ *  返回不可用清单：文件缺失、或响应不是脚本（缺路径被服务端兜底成 HTML 页面）即为不可用。
+ *  没有这道预检，three 会把兜底 HTML 拼进 Worker Blob，抛出无从定位的
+ *  `SyntaxError: Unexpected token '<'`（见 vite.config.ts 资产守卫注释）。 */
+export async function probeDecoderAssets(setup: {
+  dracoBase: string;
+  basisBase: string;
+  decoderType?: "js" | "wasm";
+}): Promise<Array<{ name: string; url: string; reason: string }>> {
+  const targets = [
+    ...(setup.decoderType === "js"
+      ? [{ name: "draco_decoder.js", url: setup.dracoBase + "draco_decoder.js" }]
+      : [
+          { name: "draco_wasm_wrapper.js", url: setup.dracoBase + "draco_wasm_wrapper.js" },
+          { name: "draco_decoder.wasm", url: setup.dracoBase + "draco_decoder.wasm" },
+        ]),
+    { name: "basis_transcoder.js", url: setup.basisBase + "basis_transcoder.js" },
+    { name: "basis_transcoder.wasm", url: setup.basisBase + "basis_transcoder.wasm" },
+  ];
+
+  const unavailable: Array<{ name: string; url: string; reason: string }> = [];
+  await Promise.all(
+    targets.map(async ({ name, url }) => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          unavailable.push({ name, url, reason: `HTTP ${res.status}` });
+          return;
+        }
+        const type = res.headers.get("content-type") ?? "";
+        const chunk = await res.body?.getReader().read().catch(() => undefined);
+        void res.body?.cancel().catch(() => {});
+        const head = chunk?.value ? new TextDecoder().decode(chunk.value.slice(0, 64)) : "";
+        if (type.includes("text/html") || /^\s*</.test(head)) {
+          unavailable.push({ name, url, reason: "响应为 HTML 页面（资源缺失被服务端兜底）" });
+        }
+      } catch (e) {
+        unavailable.push({ name, url, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }),
+  );
+  return unavailable;
+}
+
 /** 注入解码器基路径并探测 KTX2 支持（编辑器挂载后调用；重复调用幂等） */
 export function setupCompressedGltfSupport(setup: CompressedGltfSetup): void {
   if (!dracoLoader) {

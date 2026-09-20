@@ -28,6 +28,7 @@ export { ModelManager } from "./ModelManager";
 export type { ModelFileAccess, ModelChangeListener } from "./ModelManager";
 export {
   setupCompressedGltfSupport,
+  probeDecoderAssets,
   compressedGltfSupport,
 } from "./compressed-gltf";
 export type { CompressedGltfSetup, CompressedGltfSupport } from "./compressed-gltf";
