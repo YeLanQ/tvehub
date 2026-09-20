@@ -2,7 +2,9 @@
 /**
  * 通用可编辑下拉（单选 + 边输边过滤）：输入框 + Teleport 浮层候选列表。
  * 原生 <input list> datalist 的 ui-kit 统一替代（系统风格弹层与面板视觉不符）。
- * - 触发 = 聚焦输入框（展示全量候选）或点右侧 ▾ 切换；输入时按包含匹配过滤；
+ * - 触发 = 聚焦输入框（展示全量候选）或点右侧 ▾ 切换；输入时按包含匹配过滤
+ *   （过滤只看「本次打开后手打的草稿」：打开时不按既有值过滤，否则当前值不在
+ *   候选里时弹层会是空的，与「展示全量候选」的预期相悖）；
  * - 提交时机与原生 input @change 一致：点候选行 / Enter / 失焦（内容有变化）
  *   → emit update:modelValue；编辑过程不外溢（宿主按提交压快照）；
  * - 候选之外仍可手填任意值（候选只覆盖常用项，高级取值手输）；
@@ -32,6 +34,8 @@ const inputEl = ref<HTMLInputElement | null>(null);
 const panelEl = ref<HTMLElement | null>(null);
 const open = ref(false);
 const text = ref(props.modelValue ?? "");
+/** 本次打开后是否已手打过滤（false = 展示全量候选） */
+const typing = ref(false);
 /** 键盘活动行（-1 = 无） */
 const activeIdx = ref(-1);
 
@@ -43,8 +47,9 @@ watch(
   },
 );
 
-/** 过滤后的候选（空输入 = 全量） */
+/** 过滤后的候选（未手打 = 全量） */
 const filtered = computed<string[]>(() => {
+  if (!typing.value) return props.options;
   const q = text.value.trim().toLowerCase();
   if (!q) return props.options;
   return props.options.filter((o) => o.toLowerCase().includes(q));
@@ -73,6 +78,7 @@ async function openMenu(): Promise<void> {
   const x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
   menuPos.value = { x, y: r.bottom + 4, w };
   activeIdx.value = -1;
+  typing.value = false; // 打开即全量候选，输入后才过滤
   open.value = true;
   await nextTick();
   const ph = panelEl.value?.offsetHeight ?? 0;
@@ -84,6 +90,7 @@ async function openMenu(): Promise<void> {
 function closeMenu(): void {
   open.value = false;
   activeIdx.value = -1;
+  typing.value = false;
 }
 
 function toggleMenu(): void {
@@ -169,7 +176,9 @@ function onKeydown(e: KeyboardEvent): void {
 function onInput(e: Event): void {
   text.value = (e.target as HTMLInputElement).value;
   activeIdx.value = -1;
+  // openMenu 会重置输入态：先打开再置位，避免首次键入的过滤被冲掉
   if (!open.value) void openMenu();
+  typing.value = true;
 }
 
 function onPick(v: string): void {
