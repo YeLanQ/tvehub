@@ -1,12 +1,15 @@
 [package]
-name = "three-visual-editor"
-version = "0.1.0"
-description = "A Tauri App"
+# crate 名与应用名（tauri.conf.json 的 productName/mainBinaryName = "TvE Hub"）对齐：
+# cargo 构建日志、产物名（tve-hub.exe，tauri build 再改名为 TvE Hub.exe）由此而来
+name = "tve-hub"
+# 与 tauri.conf.json 的 version 保持一致（产品版本以 tauri.conf.json 为准）
+version = "0.1.2+2"
+description = "TvE Hub —— 三维可视化编辑器与创意工坊"
 authors = ["Tve Team"]
 license = "Apache-2.0"
 edition = "2021"
 # 新增 mcp 独立二进制后需显式指定默认运行目标（tauri dev/build 用）
-default-run = "three-visual-editor"
+default-run = "tve-hub"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,7 +17,7 @@ default-run = "three-visual-editor"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "three_visual_editor_lib"
+name = "tve_hub_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

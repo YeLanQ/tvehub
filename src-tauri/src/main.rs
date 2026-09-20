@@ -8,8 +8,8 @@ fn main() {
     if args.len() >= 4 && args[1] == "--preview-server" {
         let port: u16 = args[2].parse().unwrap_or(39110);
         let root = std::path::PathBuf::from(&args[3]);
-        three_visual_editor_lib::preview::run_preview_server_mode(port, root);
+        tve_hub_lib::preview::run_preview_server_mode(port, root);
         return;
     }
-    three_visual_editor_lib::run()
+    tve_hub_lib::run()
 }
