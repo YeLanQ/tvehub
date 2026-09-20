@@ -58,6 +58,8 @@ export interface SvgStyle {
   dash: number; // 虚线段长，0 = 实线
   fontSize: number; // text 专用
   textAlign: SvgTextAlign; // text 专用：左/中/右对齐
+  /** text 专用：字形（CSS font-family 值，可填字体名或带回退的字体栈） */
+  fontFamily: string;
 }
 
 export interface SvgPt {
@@ -93,9 +95,8 @@ export interface SvgEl {
   curve?: SvgCurveHandles[];
   /** path 是否闭合 */
   closed: boolean;
+  /** 文本内容（含富文本语法标签，渲染时解析为样式运行段） */
   text: string;
-  /** 富文本样式段（undefined = 全部继承元素默认样式） */
-  rich?: SvgRichSpan[];
   style: SvgStyle;
   anims: SvgAnim[];
 }
@@ -126,17 +127,20 @@ export function genId(prefix = "e"): string {
 
 export const DEFAULT_FILL = "#4a9eff";
 export const DEFAULT_STROKE = "#1c1c1c";
+/** 文本默认字形（跟随系统的无衬线栈，与白板界面一致） */
+export const DEFAULT_FONT = "system-ui, 'Segoe UI', sans-serif";
 
-/** 默认元素样式（铅笔/钢笔默认只描边，其余默认填充） */
+/** 默认元素样式（铅笔/钢笔默认只描边，其余默认填充；文本默认无描边） */
 export function newStyle(kind: SvgElKind): SvgStyle {
   return {
     fill: kind === "pencil" ? "none" : DEFAULT_FILL,
-    stroke: kind === "rect" || kind === "ellipse" ? "none" : DEFAULT_STROKE,
+    stroke: kind === "rect" || kind === "ellipse" || kind === "text" ? "none" : DEFAULT_STROKE,
     strokeWidth: 2,
     opacity: 1,
     dash: 0,
     fontSize: 24,
     textAlign: "left",
+    fontFamily: DEFAULT_FONT,
   };
 }
 
@@ -180,7 +184,8 @@ export function elBBox(el: SvgEl): { x: number; y: number; w: number; h: number 
     case "ellipse":
       return { x: el.x, y: el.y, w: el.w, h: el.h };
     case "text": {
-      const lines = el.text.split("\n");
+      // 宽度按可见文本估算（语法标签不占版面），仅在选择框显示时用
+      const lines = plainText(el.text).split("\n");
       const w = Math.max(8, ...lines.map((l) => l.length * el.style.fontSize * 0.62));
       return {
         x: el.x,
@@ -262,206 +267,227 @@ export function buildPathD(el: Pick<SvgEl, "points" | "curve" | "closed">): stri
 }
 
 // ---------------------------------------------------------------------------
-// 富文本：样式段按字符区间作用于 el.text；渲染/导出统一经 buildTextInner 生成
-// 嵌套 tspan（行定位 tspan → 样式运行 tspan），导入时从嵌套 tspan 还原区间。
+// 文本富文本：内容本身即语法源——在 el.text 里写 [b]/[i]/[u]/[color=#rrggbb]
+// 标签（\[ 转义字面量中括号），解析为样式运行段后经 buildTextInner 渲染/导出为
+// 嵌套 tspan（行定位 tspan → 样式运行 tspan）；导入时从嵌套 tspan 反推语法源。
 // ---------------------------------------------------------------------------
 
-/** 单字符生效样式（分组归一化的中间表示） */
-export interface SvgRichStyle {
-  bold?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-  color?: string;
-  fontSize?: number;
-}
-
-/** 富文本样式段：对 el.text 的字符区间 [start, end) 生效；未设置属性继承元素默认 */
-export interface SvgRichSpan {
-  start: number;
-  end: number;
+/** 样式运行段（同一段内样式一致；text 可含换行） */
+export interface SvgTextRun {
+  text: string;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
   /** 文字颜色（覆盖元素 fill） */
   color?: string;
-  /** 覆盖字号（px） */
-  fontSize?: number;
 }
 
-/** 展开为逐字符样式（区间按顺序叠加，后者覆盖前者） */
-export function richCharStyles(text: string, rich: SvgRichSpan[] | undefined): SvgRichStyle[] {
-  const out: SvgRichStyle[] = Array.from({ length: text.length }, () => ({}));
-  for (const sp of rich ?? []) {
-    for (let i = Math.max(0, sp.start); i < Math.min(text.length, sp.end); i++) {
-      if (sp.bold !== undefined) out[i].bold = sp.bold;
-      if (sp.italic !== undefined) out[i].italic = sp.italic;
-      if (sp.underline !== undefined) out[i].underline = sp.underline;
-      if (sp.color !== undefined) out[i].color = sp.color;
-      if (sp.fontSize !== undefined) out[i].fontSize = sp.fontSize;
-    }
+/** 旧版区间式富文本字段（已废弃）：仅用于打开历史文件时迁移为语法文本 */
+interface LegacyRichSpan {
+  start: number;
+  end: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+}
+
+type RunStyle = Omit<SvgTextRun, "text">;
+
+/** 起始标签：[b] [i] [u] [color=#rgb(4|6|8)]；color 必须带值 */
+const OPEN_TAG_RE = /^\[(b|i|u|color)(=(#[0-9a-fA-F]{3,8}))?\]/i;
+/** 结束标签：[/b] [/i] [/u] [/color] */
+const CLOSE_TAG_RE = /^\[\/(b|i|u|color)\]/i;
+
+interface TextTag {
+  kind: "b" | "i" | "u" | "color";
+  color?: string;
+}
+
+/** 标签栈 → 当前生效样式（内层覆盖外层） */
+function stackStyle(stack: TextTag[]): RunStyle {
+  const st: RunStyle = {};
+  for (const t of stack) {
+    if (t.kind === "b") st.bold = true;
+    else if (t.kind === "i") st.italic = true;
+    else if (t.kind === "u") st.underline = true;
+    else if (t.color) st.color = t.color;
+  }
+  return st;
+}
+
+function styleKey(s: RunStyle): string {
+  return `${s.bold ? "b" : ""}${s.italic ? "i" : ""}${s.underline ? "u" : ""}${s.color ?? ""}`;
+}
+
+/** 相邻同样式运行段合并（减少 tspan 与重复标签） */
+function mergeRuns(runs: SvgTextRun[]): SvgTextRun[] {
+  const out: SvgTextRun[] = [];
+  for (const r of runs) {
+    const last = out[out.length - 1];
+    if (last && styleKey(last) === styleKey(r)) last.text += r.text;
+    else out.push({ ...r });
   }
   return out;
 }
 
-/** 相邻同样式字符归组为样式段 */
-function groupRichSpans(text: string, styles: SvgRichStyle[]): SvgRichSpan[] | undefined {
-  const spans: SvgRichSpan[] = [];
-  let start = -1;
-  let curKey = "";
-  for (let i = 0; i <= text.length; i++) {
-    const st = i < text.length ? styles[i] ?? {} : null;
-    const key = st ? JSON.stringify(st) : "";
-    if (curKey !== "" && key !== curKey) {
-      spans.push({ start, end: i, ...(JSON.parse(curKey) as SvgRichStyle) });
-      curKey = "";
-    }
-    if (st && Object.keys(st).length > 0 && curKey === "") {
-      start = i;
-      curKey = key;
-    }
-  }
-  return spans.length ? spans : undefined;
-}
-
-/** 对区间应用样式（布尔属性自动反转：区间内全有则取消）；返回归一化后的样式段 */
-export function applyRichSpan(
-  text: string,
-  rich: SvgRichSpan[] | undefined,
-  span: SvgRichSpan,
-): SvgRichSpan[] | undefined {
-  const styles = richCharStyles(text, rich);
-  // 反转决策只看原始状态、循环外一次计算：逐字符重算会因前面的字符已被
-  // 改写而逐个翻转，表现为「顺序应用/取消单个字符」
-  const decide = (k: "bold" | "italic" | "underline"): boolean => {
-    let all = true;
-    for (let i = Math.max(0, span.start); i < Math.min(text.length, span.end); i++) {
-      if (!styles[i]?.[k]) {
-        all = false;
-        break;
-      }
-    }
-    return !all;
-  };
-  const boldVal = span.bold !== undefined ? decide("bold") : undefined;
-  const italicVal = span.italic !== undefined ? decide("italic") : undefined;
-  const underlineVal = span.underline !== undefined ? decide("underline") : undefined;
-  for (let i = Math.max(0, span.start); i < Math.min(text.length, span.end); i++) {
-    const st = styles[i];
-    if (boldVal !== undefined) st.bold = boldVal;
-    if (italicVal !== undefined) st.italic = italicVal;
-    if (underlineVal !== undefined) st.underline = underlineVal;
-    if (span.color !== undefined) st.color = span.color;
-    if (span.fontSize !== undefined) st.fontSize = span.fontSize;
-  }
-  return groupRichSpans(text, styles);
-}
-
-/** 清除区间内的全部富文本样式 */
-export function clearRichRange(
-  text: string,
-  rich: SvgRichSpan[] | undefined,
-  start: number,
-  end: number,
-): SvgRichSpan[] | undefined {
-  const styles = richCharStyles(text, rich);
-  for (let i = Math.max(0, start); i < Math.min(text.length, end); i++) {
-    styles[i] = {};
-  }
-  return groupRichSpans(text, styles);
-}
-
-/** 文本内容变化后收敛样式段（钳制区间、剔除空段） */
-export function normalizeRich(text: string, rich: SvgRichSpan[] | undefined): SvgRichSpan[] | undefined {
-  if (!rich?.length) return undefined;
-  return groupRichSpans(text, richCharStyles(text, rich));
-}
-
-/** 逐字符样式 → 渲染运行段 */
-function groupRichRuns(
-  ln: string,
-  styles: SvgRichStyle[],
-): { text: string; style: SvgRichStyle }[] {
-  const runs: { text: string; style: SvgRichStyle }[] = [];
-  let cur: { text: string; style: SvgRichStyle } | null = null;
-  for (let i = 0; i < ln.length; i++) {
-    const st = styles[i] ?? {};
-    if (!cur || JSON.stringify(cur.style) !== JSON.stringify(st)) {
-      cur = { text: ln[i], style: st };
-      runs.push(cur);
-    } else {
-      cur.text += ln[i];
-    }
-  }
-  return runs;
-}
-
 /**
- * 生成 text 元素的内部标记：按换行拆行（行定位 tspan，行距 1.25 倍字号），
- * 富文本段再拆样式运行 tspan。渲染与导出共用，保证所见即所得。
+ * 语法文本 → 样式运行段。标签语义同 HTML：成对生效、可嵌套，未闭合的起始标签
+ * 作用到文本末尾；不能配对的结束标签按普通文本保留（用户输入的字面量不凭空消失）；
+ * \[ 与 \\ 输出字面量；不合法/带值的 [b]、缺值的 [color] 同样按普通文本处理。
  */
-export function buildTextInner(el: Pick<SvgEl, "x" | "text" | "style" | "rich">): string {
-  const lines = el.text.split("\n");
-  const styles = richCharStyles(el.text, el.rich);
-  let offset = 0;
-  return lines
-    .map((ln, i) => {
-      const lineStart = offset;
-      offset += ln.length + 1;
-      const pos = `x="${num(el.x)}" dy="${num(i === 0 ? 0 : el.style.fontSize * 1.25)}"`;
-      if (!el.rich?.length) {
-        return `<tspan ${pos}>${escText(ln)}</tspan>`;
+export function parseTextRuns(src: string): SvgTextRun[] {
+  const runs: SvgTextRun[] = [];
+  const stack: TextTag[] = [];
+  let buf = "";
+  const flush = (): void => {
+    if (!buf) return;
+    runs.push({ text: buf, ...stackStyle(stack) });
+    buf = "";
+  };
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\\" && (src[i + 1] === "[" || src[i + 1] === "\\")) {
+      buf += src[i + 1];
+      i += 2;
+      continue;
+    }
+    if (ch === "[") {
+      const rest = src.slice(i);
+      const open = OPEN_TAG_RE.exec(rest);
+      // color 必须带值、其余不允许带值，否则视为普通文本
+      if (open && (open[1].toLowerCase() === "color") === !!open[3]) {
+        flush();
+        stack.push({ kind: open[1].toLowerCase() as TextTag["kind"], color: open[3] });
+        i += open[0].length;
+        continue;
       }
-      const body = groupRichRuns(ln, styles.slice(lineStart, lineStart + ln.length))
-        .map((r) => {
-          const attrs: string[] = [];
-          if (r.style.bold) attrs.push(`font-weight="700"`);
-          if (r.style.italic) attrs.push(`font-style="italic"`);
-          if (r.style.underline) attrs.push(`text-decoration="underline"`);
-          if (r.style.color) attrs.push(`fill="${escAttr(r.style.color)}"`);
-          if (r.style.fontSize) attrs.push(`font-size="${num(r.style.fontSize)}"`);
-          return `<tspan${attrs.length ? " " + attrs.join(" ") : ""}>${escText(r.text)}</tspan>`;
-        })
-        .join("");
-      return `<tspan ${pos}>${body}</tspan>`;
+      const close = CLOSE_TAG_RE.exec(rest);
+      if (close) {
+        const kind = close[1].toLowerCase() as TextTag["kind"];
+        const at = stack.map((t) => t.kind).lastIndexOf(kind);
+        if (at >= 0) {
+          flush();
+          stack.splice(at, 1);
+          i += close[0].length;
+          continue;
+        }
+      }
+    }
+    buf += ch;
+    i += 1;
+  }
+  flush();
+  return mergeRuns(runs);
+}
+
+/** 语法文本 → 可见文本（宽度估算等只看内容的场合用） */
+export function plainText(src: string): string {
+  return parseTextRuns(src)
+    .map((r) => r.text)
+    .join("");
+}
+
+/** 语法转义：字面量反斜杠与中括号前置反斜杠（保证往返解析一致） */
+function escMarkup(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\[/g, "\\[");
+}
+
+/** 样式运行段 → 语法文本（导入外部 SVG 时反向生成） */
+export function runsToMarkup(runs: SvgTextRun[]): string {
+  return mergeRuns(runs)
+    .map((r) => {
+      const tags: [string, string][] = [];
+      if (r.bold) tags.push(["[b]", "[/b]"]);
+      if (r.italic) tags.push(["[i]", "[/i]"]);
+      if (r.underline) tags.push(["[u]", "[/u]"]);
+      if (r.color) tags.push([`[color=${r.color}]`, "[/color]"]);
+      if (!tags.length) return escMarkup(r.text);
+      const open = tags.map((t) => t[0]).join("");
+      const close = [...tags].reverse().map((t) => t[1]).join("");
+      return `${open}${escMarkup(r.text)}${close}`;
     })
     .join("");
 }
 
-/** 从 DOM text 元素还原内容（行 tspan → \n）与富文本段（嵌套样式 tspan） */
+/** 样式运行段 → 行 tspan 内的标记（默认样式直接写字面量，不额外嵌套） */
+function runInner(r: SvgTextRun): string {
+  const attrs: string[] = [];
+  if (r.bold) attrs.push(`font-weight="700"`);
+  if (r.italic) attrs.push(`font-style="italic"`);
+  if (r.underline) attrs.push(`text-decoration="underline"`);
+  if (r.color) attrs.push(`fill="${escAttr(r.color)}"`);
+  const body = escText(r.text);
+  return attrs.length ? `<tspan ${attrs.join(" ")}>${body}</tspan>` : body;
+}
+
+/**
+ * 生成 text 元素的内部标记：按换行拆行（行定位 tspan，行距 1.25 倍字号），
+ * 行内样式运行段再拆样式 tspan。渲染与导出共用，保证所见即所得。
+ */
+export function buildTextInner(el: Pick<SvgEl, "x" | "text" | "style">): string {
+  const lines: SvgTextRun[][] = [[]];
+  for (const r of parseTextRuns(el.text)) {
+    r.text.split("\n").forEach((seg, i) => {
+      if (i > 0) lines.push([]);
+      if (seg) lines[lines.length - 1].push({ ...r, text: seg });
+    });
+  }
+  return lines
+    .map((runs, i) => {
+      const pos = `x="${num(el.x)}" dy="${num(i === 0 ? 0 : el.style.fontSize * 1.25)}"`;
+      return `<tspan ${pos}>${runs.map(runInner).join("")}</tspan>`;
+    })
+    .join("");
+}
+
+/** 样式 tspan 的属性 → 运行段样式 */
+function tspanStyle(c: Element): RunStyle {
+  const st: RunStyle = {};
+  const fw = c.getAttribute("font-weight");
+  if (fw === "700" || fw === "bold") st.bold = true;
+  if (c.getAttribute("font-style") === "italic") st.italic = true;
+  if ((c.getAttribute("text-decoration") ?? "").includes("underline")) st.underline = true;
+  const col = c.getAttribute("fill");
+  if (col) st.color = col;
+  return st;
+}
+
+/** 从 DOM text 元素还原语法文本（行 tspan → \n，嵌套样式 tspan → 标签） */
 export function parseTextContent(el: SvgEl, node: Element): void {
   const lineTspans = Array.from(node.children).filter((c) => c.tagName.toLowerCase() === "tspan");
   if (!lineTspans.length) {
-    el.text = node.textContent ?? "";
+    el.text = runsToMarkup([{ text: node.textContent ?? "" }]);
     return;
   }
-  const lines: string[] = [];
-  let rich: SvgRichSpan[] | undefined;
-  let offset = 0;
-  for (const lt of lineTspans) {
+  const runs: SvgTextRun[] = [];
+  lineTspans.forEach((lt, i) => {
+    if (i > 0) runs.push({ text: "\n" });
     for (const child of Array.from(lt.childNodes)) {
       const seg = child.textContent ?? "";
+      if (!seg) continue;
       const isTspan = child.nodeType === 1 && (child as Element).tagName.toLowerCase() === "tspan";
-      if (isTspan && seg) {
-        const c = child as Element;
-        const sp: SvgRichSpan = { start: offset, end: offset + seg.length };
-        const fw = c.getAttribute("font-weight");
-        if (fw === "700" || fw === "bold") sp.bold = true;
-        if (c.getAttribute("font-style") === "italic") sp.italic = true;
-        if ((c.getAttribute("text-decoration") ?? "").includes("underline")) sp.underline = true;
-        const col = c.getAttribute("fill");
-        if (col) sp.color = col;
-        const fs = c.getAttribute("font-size");
-        if (fs) sp.fontSize = parseFloat(fs);
-        rich = rich ?? [];
-        rich.push(sp);
-      }
-      offset += seg.length;
+      runs.push(isTspan ? { text: seg, ...tspanStyle(child as Element) } : { text: seg });
     }
-    lines.push(lt.textContent ?? "");
-    offset += 1;
+  });
+  el.text = runsToMarkup(runs);
+}
+
+/** 旧版区间式富文本 → 语法文本（历史文件打开时迁移，避免格式丢失） */
+function migrateLegacyRich(el: SvgEl, spans: LegacyRichSpan[] | undefined): boolean {
+  if (!Array.isArray(spans) || !spans.length) return false;
+  const styles: RunStyle[] = Array.from({ length: el.text.length }, () => ({}));
+  for (const sp of spans) {
+    for (let i = Math.max(0, sp.start); i < Math.min(el.text.length, sp.end); i++) {
+      if (sp.bold !== undefined) styles[i].bold = sp.bold;
+      if (sp.italic !== undefined) styles[i].italic = sp.italic;
+      if (sp.underline !== undefined) styles[i].underline = sp.underline;
+      if (sp.color !== undefined) styles[i].color = sp.color;
+    }
   }
-  el.text = lines.join("\n");
-  if (rich?.length) el.rich = rich;
+  el.text = runsToMarkup(styles.map((st, i) => ({ text: el.text[i], ...st })));
+  return true;
 }
 
 /** 坐标精度收敛（保留三位小数，消除拖拽浮点噪声；自由点集在导出时统一处理） */
@@ -668,12 +694,23 @@ export function elToSvg(el: SvgEl): string {
       }
       break;
     case "text":
-      a.push(`x="${num(el.x)}"`, `y="${num(el.y)}"`, `fill="${escAttr(s.fill)}"`, `font-size="${num(s.fontSize)}"`, `font-family="system-ui, 'Segoe UI', sans-serif"`);
+      a.push(
+        `x="${num(el.x)}"`,
+        `y="${num(el.y)}"`,
+        `fill="${escAttr(s.fill)}"`,
+        `font-size="${num(s.fontSize)}"`,
+        `font-family="${escAttr(s.fontFamily || DEFAULT_FONT)}"`,
+      );
+      if (s.stroke !== "none") {
+        a.push(`stroke="${escAttr(s.stroke)}"`, `stroke-width="${num(s.strokeWidth)}"`);
+        // 描边垫在填充之下：否则描边压住字形，中文笔画会被吃细
+        a.push(`paint-order="stroke"`);
+      }
       if (s.textAlign === "center") a.push(`text-anchor="middle"`);
       else if (s.textAlign === "right") a.push(`text-anchor="end"`);
       break;
   }
-  if (s.dash > 0 && s.stroke !== "none" && el.kind !== "text") {
+  if (s.dash > 0 && s.stroke !== "none") {
     a.push(`stroke-dasharray="${num(s.dash)}"`);
   }
   if (s.opacity < 1) a.push(`opacity="${num(s.opacity)}"`);
@@ -808,8 +845,15 @@ function sanitizeDoc(d: SvgDoc): SvgDoc {
         : undefined;
     el.closed = el.closed === true;
     el.text = el.text ?? "";
-    el.rich = normalizeRich(el.text, el.rich);
+    // 旧版区间式富文本（rich 字段）迁移为语法文本，迁移后字段剔除
+    const legacy = el as SvgEl & { rich?: LegacyRichSpan[] };
+    if (migrateLegacyRich(el, legacy.rich)) delete legacy.rich;
     el.style = { ...newStyle(el.kind), ...(el.style ?? {}) };
+    // 文本此前不可设描边（面板无入口、渲染也不输出），旧文件里 text 的默认描边色
+    // 是历史残留：按「无描边」处理，避免升级后所有文字突然多出一圈黑边
+    if (el.kind === "text" && el.style.stroke === DEFAULT_STROKE) el.style.stroke = "none";
+    // 旧文件没有字形字段（newStyle 默认即补上）；空串收敛为默认栈，避免面板出现空值
+    if (!el.style.fontFamily) el.style.fontFamily = DEFAULT_FONT;
     el.anims = Array.isArray(el.anims)
       ? el.anims.map((a) => ({ ...newAnim(a?.kind ?? "motion"), ...a, id: a?.id || genId("a") }))
       : [];
@@ -832,6 +876,8 @@ function attrToEl(node: Element, layerId: string): SvgEl | null {
       dash: dashStr ? nf(dashStr.split(/[\s,]+/)[0], 0) : 0,
       fontSize: fontSize ? nf(fontSize, 16) : 16,
       textAlign: "left",
+      // 外部 SVG 的字形按原样保留（缺省回退到默认字体栈）
+      fontFamily: node.getAttribute("font-family") || DEFAULT_FONT,
     };
   };
   const base = (kind: SvgElKind): SvgEl => ({

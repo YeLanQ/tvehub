@@ -114,7 +114,7 @@ const TOOLS: { key: Exclude<ToolIconKey, "fit">; title: string }[] = [
   { key: "line", title: "直线：拖拽绘制（L）" },
   { key: "pencil", title: "铅笔：自由绘制（P）" },
   { key: "pen", title: "钢笔：单击=直角点，按住拖拽=曲线点，Enter 结束（开放），双击闭合，Esc 取消（B）" },
-  { key: "text", title: "文本：点击落点创建，属性面板编辑内容（T）" },
+  { key: "text", title: "文本：点击落点创建，属性面板写内容与 [b]/[i]/[u]/[color=#hex] 语法（T）" },
 ];
 
 /** 线条工具（直线/铅笔/钢笔）显示粗细滑动条 */
@@ -167,7 +167,7 @@ const toolHint = computed(() => {
     case "pen":
       return "单击=直角点 · 拖拽=曲线 · Enter 结束 · 双击闭合";
     case "text":
-      return "点击画布创建文本，属性面板编辑内容";
+      return "点击画布创建文本 · 内容支持 [b]/[i]/[u]/[color=#hex] 富文本语法";
     default:
       return "滚轮缩放 · 空格/中键拖拽平移";
   }

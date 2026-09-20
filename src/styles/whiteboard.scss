@@ -29,51 +29,21 @@
   flex-shrink: 0;
 }
 
-// 富文本工具条（作用于 textarea 选中区间）
-.sv-rich-wrap {
+// 文本内容编辑（语法源 textarea + 语法提示）
+.sv-text-wrap {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   flex: 1;
   min-width: 0;
 }
 
-.sv-rich-bar {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-
-  .sv-rich-btn {
-    min-width: 22px;
-    height: 20px;
-    padding: 0 5px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-dim);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    cursor: pointer;
-
-    &:hover {
-      color: var(--text);
-    }
-
-    &.active {
-      color: #4a9eff;
-      border-color: #4a9eff;
-    }
-  }
-
-  .sv-rich-color {
-    width: 26px;
-    height: 20px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--bg-input);
-    cursor: pointer;
-  }
+.sv-syntax-hint {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  opacity: 0.75;
+  user-select: text;
 }
 
 // 标题栏内白板尺寸下拉（预设 = 项目设置的设计分辨率列表）
@@ -298,6 +268,13 @@
   width: 100%;
   height: 100%;
   touch-action: none;
+
+  // 画布文本是用户内容，允许字体合成：ui-kit 的 :root 为 UI 文本设了
+  // font-synthesis: none，遇到没有真斜体字面的字体（中文尤其常见）斜体会被
+  // 静默丢弃；导出的 SVG 在浏览器里本来就会合成，这里放开才能所见即所得。
+  text {
+    font-synthesis: weight style;
+  }
 }
 
 .sv-stage-hud {
@@ -703,8 +680,9 @@
     text-align: right;
   }
 
+  // ComboBox 自带 ui-kit 外观（含右侧 ▾ 的留白），排除在面板通用输入框样式之外
   input[type="number"],
-  input[type="text"],
+  input[type="text"]:not(.combo-box-input),
   select {
     flex: 1;
     min-width: 0;
@@ -719,6 +697,12 @@
       outline: none;
       border-color: var(--text-dim);
     }
+  }
+
+  // 面板整体禁用了文本选择，输入类控件要单独放开（否则字形等字段无法划选）
+  input,
+  textarea {
+    user-select: text;
   }
 
   input[type="color"] {
@@ -751,7 +735,6 @@
     border: 1px solid var(--border);
     border-radius: 3px;
     resize: vertical;
-    user-select: text;
 
     &:focus {
       outline: none;

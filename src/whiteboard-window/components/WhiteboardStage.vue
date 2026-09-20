@@ -16,6 +16,7 @@ import { toolCursorCss } from "../tool-icons";
 import {
   buildPathD,
   buildTextInner,
+  DEFAULT_FONT,
   deletePathAnchor,
   elBBox,
   genId,
@@ -112,6 +113,17 @@ const dashAttr = (el: SvgEl): string | undefined =>
   el.style.dash > 0 ? String(el.style.dash) : undefined;
 const opAttr = (el: SvgEl): number | undefined =>
   el.style.opacity < 1 ? el.style.opacity : undefined;
+/** 文本描边属性：无描边时不下发（免得 stroke-width 干扰字形）；有描边时垫在填充之下 */
+function textStrokeAttrs(el: SvgEl): Record<string, string | number> {
+  if (el.style.stroke === "none") return {};
+  const attrs: Record<string, string | number> = {
+    stroke: el.style.stroke,
+    "stroke-width": el.style.strokeWidth,
+    "paint-order": "stroke",
+  };
+  if (el.style.dash > 0) attrs["stroke-dasharray"] = el.style.dash;
+  return attrs;
+}
 const ptsAttr = (pts: SvgPt[]): string =>
   pts.map((p) => `${Math.round(p.x * 100) / 100},${Math.round(p.y * 100) / 100}`).join(" ");
 
@@ -535,7 +547,17 @@ watch(
   () => {
     const el = store.selectedEl();
     if (el?.kind !== "text") return null;
-    return { id: el.id, x: el.x, y: el.y, text: el.text, fontSize: el.style.fontSize, align: el.style.textAlign };
+    return {
+      id: el.id,
+      x: el.x,
+      y: el.y,
+      text: el.text,
+      fontSize: el.style.fontSize,
+      align: el.style.textAlign,
+      font: el.style.fontFamily,
+      stroke: el.style.stroke,
+      strokeWidth: el.style.strokeWidth,
+    };
   },
   async (key) => {
     if (!key) {
@@ -548,8 +570,13 @@ watch(
       textSelBox.value = null;
       return;
     }
+    // getBBox 不含描边：描边居中压在字形轮廓上，各向外扩半个线宽
+    const pad = key.stroke !== "none" ? key.strokeWidth / 2 : 0;
     const b = node.getBBox();
-    textSelBox.value = { id: key.id, b: { x: b.x, y: b.y, w: b.width, h: b.height } };
+    textSelBox.value = {
+      id: key.id,
+      b: { x: b.x - pad, y: b.y - pad, w: b.width + pad * 2, h: b.height + pad * 2 },
+    };
   },
   { immediate: true },
 );
@@ -867,8 +894,9 @@ onBeforeUnmount(() => {
               :x="el.x" :y="el.y"
               :fill="el.style.fill" :font-size="el.style.fontSize"
               :text-anchor="el.style.textAlign === 'center' ? 'middle' : el.style.textAlign === 'right' ? 'end' : undefined"
-              font-family="system-ui, 'Segoe UI', sans-serif"
+              :font-family="el.style.fontFamily || DEFAULT_FONT"
               :opacity="opAttr(el)"
+              v-bind="textStrokeAttrs(el)"
               @pointerdown="onElDown(el, $event)"
               v-html="buildTextInner(el)"
             ></text>
