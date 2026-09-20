@@ -301,6 +301,11 @@ export const api = {
   /** 白板窗口启动时拉取待打开文件名（取走即清空） */
   takePendingWhiteboardFile: () =>
     invoke<string | null>("take_pending_whiteboard_file"),
+  /** 显示文档窗口（全局单例；hash 非空 = 待打开文档页，冷启动拉取兜底） */
+  showDocsWindow: (hash?: string | null) =>
+    invoke<void>("show_docs_window", { hash: hash ?? null }),
+  /** 文档窗口启动时拉取待打开 hash（取走即清空） */
+  takePendingDocsHash: () => invoke<string | null>("take_pending_docs_hash"),
   /** 列出全局白板目录下的 .svg 文件名（按名称排序） */
   whiteboardListFiles: () => invoke<string[]>("whiteboard_list_files"),
   /** 读取全局白板文件内容 */

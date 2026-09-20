@@ -48,8 +48,9 @@ const DOC_LINKS = [
 ];
 
 /**
- * 内嵌文档（静态 docs 网页，public/docs）：点击打开在应用内弹层中查看。
- * hash 为文档路径（public/docs 相对路径，去 .md 扩展名）。
+ * 文档入口（静态 docs 网页，public/docs）：桌面端开全局单例文档窗口，
+ * 浏览器直开回退应用内弹层（HomeView 决定）。hash 为文档路径（public/docs
+ * 相对路径，去 .md 扩展名）。
  */
 const DOC_PAGES = [
   {
@@ -260,7 +261,7 @@ async function openDocLink(url: string) {
           <div class="tpl-name">{{ d.name }}</div>
           <div class="tpl-desc">{{ d.desc }}</div>
         </div>
-        <button title="在应用内打开文档" @click="openDocsViewer(d.hash)">打开</button>
+        <button title="在文档窗口中打开" @click="openDocsViewer(d.hash)">打开</button>
       </div>
       <div v-for="d in DOC_LINKS" :key="d.url" class="tpl-row">
         <div class="tpl-info">

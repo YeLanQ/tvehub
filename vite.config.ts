@@ -382,7 +382,8 @@ export default defineConfig(async (): Promise<UserConfig> => ({
   },
 
   // 多页构建：index.html = 编辑器窗口（label "main"），home.html = 首页窗口（label "home"），
-  // graph.html = 脚本图窗口（label "graph"），whiteboard.html = 白板窗口（全局单例 label "whiteboard"）
+  // graph.html = 脚本图窗口（label "graph"），whiteboard.html = 白板窗口（全局单例 label "whiteboard"），
+  // docs.html = 文档窗口（全局单例 label "docs"，壳内嵌 public/docs 静态文档站）
   build: {
     rollupOptions: {
       input: {
@@ -390,6 +391,7 @@ export default defineConfig(async (): Promise<UserConfig> => ({
         home: path.resolve(__dirname, "home.html"),
         graph: path.resolve(__dirname, "graph.html"),
         whiteboard: path.resolve(__dirname, "whiteboard.html"),
+        docs: path.resolve(__dirname, "docs.html"),
       },
     },
   },

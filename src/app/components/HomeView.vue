@@ -27,6 +27,7 @@ import WhiteboardSection from "./home/WhiteboardSection.vue";
 import LanShareSection from "./home/LanShareSection.vue";
 import "../../styles/components/home-view.scss";
 import { isTauri } from "../../lib/tauri-env";
+import { api } from "../../lib/api";
 import { handoffToWindow } from "../lib/window-handoff";
 import { syncDevToolsStatus } from "../lib/devtools";
 import { syncPermsFromBackend } from "../lib/devtools/state";
@@ -51,11 +52,17 @@ const showNewProject = ref(false);
 /** 运行环境标记（浏览器直开环境无窗口系统：交接走单窗口回退，桌面端初始化也据此跳过） */
 const inTauri = isTauri();
 
-/** 内嵌文档查看器（弹层 iframe 加载 public/docs 静态页） */
+/** 内嵌文档查看器（弹层 iframe 加载 public/docs 静态页）。
+ *  桌面端文档走全局单例文档窗口（show_docs_window），此处弹层仅作
+ *  浏览器直开（无窗口系统）时的回退显示。 */
 const showDocsViewer = ref(false);
 const docsViewerSrc = ref("/docs/index.html");
 
 function openDocsViewer(hash: string): void {
+  if (inTauri) {
+    void api.showDocsWindow(hash).catch((e) => toastErr(`打开文档窗口失败: ${e}`));
+    return;
+  }
   docsViewerSrc.value = `/docs/index.html#${hash}`;
   showDocsViewer.value = true;
 }
@@ -260,7 +267,7 @@ watch(showNewProject, (val) => {
       </main>
     </div>
 
-    <!-- 内嵌文档查看器（public/docs 静态页） -->
+    <!-- 内嵌文档查看器（public/docs 静态页；浏览器直开回退，桌面端走文档窗口） -->
     <Transition name="fade">
       <div v-if="showDocsViewer" class="docs-viewer-backdrop" @click.self="closeDocsViewer">
         <div class="docs-viewer">

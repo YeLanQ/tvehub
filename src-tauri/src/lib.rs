@@ -600,6 +600,59 @@ async fn show_whiteboard_window(
     Ok(())
 }
 
+/// 显示文档窗口（全局单例：不存在则创建，存在则聚焦）。hash 非空时写入待打开
+/// hash（窗口冷启动时经 take_pending_docs_hash 拉取；热路径窗口已存在则由
+/// tve:docs-open 事件直达 docs.html 前端）。None 覆盖清空：避免陈旧跳转残留。
+#[tauri::command]
+async fn show_docs_window(
+    app: tauri::AppHandle,
+    pending: tauri::State<'_, PendingDocsHash>,
+    hash: Option<String>,
+) -> Result<(), String> {
+    let hash = hash.filter(|h| !h.trim().is_empty());
+    *pending.0.lock().unwrap() = hash.clone();
+    if let Some(w) = app.get_webview_window("docs") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        if let Some(h) = hash {
+            use tauri::Emitter;
+            let _ = app.emit_to("docs", "tve:docs-open", h);
+        }
+        return Ok(());
+    }
+    // 窗口保持隐藏，前端首帧（iframe 加载完成）主动 show()，避免空白闪现（与白板一致）
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        "docs",
+        tauri::WebviewUrl::App("docs.html".into()),
+    )
+    .title("tve 文档")
+    .inner_size(1180.0, 780.0)
+    .min_inner_size(860.0, 560.0)
+    .visible(false)
+    .decorations(false)
+    .background_color(tauri::window::Color(20, 20, 20, 255))
+    .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    builder = match appdirs::webview_data_dir() {
+        Some(dir) => builder.data_directory(dir),
+        None => builder,
+    };
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 文档窗口待打开 hash（与白板待打开文件同款双通道的冷启动兜底）
+#[derive(Default)]
+pub(crate) struct PendingDocsHash(std::sync::Mutex<Option<String>>);
+
+/// 文档窗口启动时拉取待打开 hash（取走即清空）
+#[tauri::command]
+async fn take_pending_docs_hash(
+    state: tauri::State<'_, PendingDocsHash>,
+) -> Result<Option<String>, String> {
+    Ok(state.0.lock().unwrap().take())
+}
+
 /// 白板窗口启动时拉取待打开文件名（取走即清空；热路径走事件，不留陈旧状态）
 #[tauri::command]
 async fn take_pending_whiteboard_file(
@@ -819,6 +872,7 @@ pub fn run() {
         .manage(scene::SceneSession::default())
         .manage(PendingProjects::default())
         .manage(PendingWhiteboardFile::default())
+        .manage(PendingDocsHash::default())
         .manage(ActiveEditorWindow::default())
         .manage(task::TaskManager::default())
         .manage(devtools::DevToolsState::default())
@@ -947,6 +1001,8 @@ pub fn run() {
             show_home_window,
             show_whiteboard_window,
             take_pending_whiteboard_file,
+            show_docs_window,
+            take_pending_docs_hash,
             whiteboard_list_files,
             whiteboard_read,
             whiteboard_write,
