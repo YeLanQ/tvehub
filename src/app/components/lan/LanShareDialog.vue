@@ -43,6 +43,8 @@ const props = withDefaults(
     build?: (opts: { title: string; note: string }) => Record<string, string>;
     /** 目录引用模式：要共享的目录（绝对路径），源目录变化即时可见 */
     dir?: string;
+    /** 发布前准备（如先把当前场景打包进 dir）；抛错即中止发布 */
+    prepare?: () => Promise<void>;
     /** 入口文件（默认 index.html） */
     entry?: string;
     /** 产物规模提示（如「3 个图层 · 1280×720」） */
@@ -131,6 +133,16 @@ watch(
 watch([title, note], schedulePreview);
 
 async function publish(): Promise<void> {
+  // 发布前准备（如把当前场景打包成分享产物）：失败即中止
+  pending.value = true;
+  try {
+    if (props.prepare) await props.prepare();
+  } catch (e) {
+    toastErr(`生成分享内容失败：${e}`);
+    return;
+  } finally {
+    pending.value = false;
+  }
   // 目录引用模式：登记目录、源目录变化即时可见（预览刷新后无需重新发布）
   if (isDir.value) {
     pending.value = true;
@@ -232,7 +244,7 @@ async function openInBrowser(): Promise<void> {
 
             <div class="lan-dialog-summary">
               <span v-if="disabled">当前没有可分享的内容</span>
-              <span v-else-if="isDir">按引用共享：源目录一变，访问者刷新即见最新内容</span>
+              <span v-else-if="isDir">按引用共享：不复制文件，服务端直接读取该目录</span>
               <span v-else-if="sizeError">{{ sizeError }}</span>
               <span v-else>
                 将发布 {{ humanSize(size) }} 内容
@@ -243,7 +255,7 @@ async function openInBrowser(): Promise<void> {
             <p class="lan-dialog-tip">
               {{
                 isDir
-                  ? "发布后局域网内设备可凭链接或二维码打开；源目录内容更新后无需重新发布，访问者刷新页面即见最新。服务走明文 HTTP，请只在可信网络中使用。"
+                  ? "发布后局域网内设备可凭链接或二维码打开；点「更新分享内容」会重新生成该目录的产物并覆盖上一次。服务走明文 HTTP，请只在可信网络中使用。"
                   : "发布后局域网内设备可凭链接或二维码打开；再次点击「更新分享内容」会覆盖上一次的产物。服务走明文 HTTP，请只在可信网络中使用。"
               }}
             </p>

@@ -228,6 +228,8 @@ export const api = {
     /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
     cdnBase: string;
     files: Record<string, string>;
+    /** 产物落盘目录（项目相对路径；缺省 build/<channel>/），如局域网共享用 .tmp/share */
+    outDir?: string;
   }) => invoke<BuildResult>("build_export", args),
   /** 扫描 exe 旁 public 目录下的用户自定义模板
    *  （kind: "templates"=项目模板 / "exports-web"=web 导出模板） */

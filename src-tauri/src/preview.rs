@@ -51,22 +51,43 @@ fn write_export(
     write_export_dir(&out, files, binaries)
 }
 
-/// 清空并重建 `out` 导出目录，写入文本与二进制产物（预览/构建导出共用）
+/// 重建 `out` 导出目录，写入文本与二进制产物（预览/构建导出共用）。
+/// 先写 `out.staging` 再整体换入：导出上百个文件要持续数秒，而该目录会被网页
+/// 预览服务与局域网共享**按引用实时读盘**——边删边写会让访问者撞上半成品 404；
+/// 换入只占两次 rename 的毫秒级空窗。
 pub(crate) fn write_export_dir(
     out: &Path,
     files: HashMap<String, String>,
     binaries: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
-    if out.exists() {
-        fs::remove_dir_all(out).map_err(|e| format!("清理旧导出产物失败: {}", e))?;
+    let staging = out.with_extension("staging");
+    if staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
     }
-    fs::create_dir_all(out).map_err(|e| format!("创建导出目录失败: {}", e))?;
-
+    fs::create_dir_all(&staging).map_err(|e| format!("创建导出目录失败: {}", e))?;
     for (rel, content) in &files {
-        write_export_file(out, rel, content.as_bytes())?;
+        write_export_file(&staging, rel, content.as_bytes())?;
     }
     for (rel, bytes) in binaries {
-        write_export_file(out, rel, bytes)?;
+        write_export_file(&staging, rel, bytes)?;
+    }
+
+    let backup = out.with_extension("old");
+    if out.exists() {
+        let _ = fs::remove_dir_all(&backup);
+        fs::rename(out, &backup).map_err(|e| format!("换出旧导出目录失败: {}", e))?;
+    }
+    if let Err(e) = fs::rename(&staging, out) {
+        // 换入失败把旧目录放回去：宁可继续服务旧内容，也不留一个空目录
+        let restored = fs::rename(&backup, out).is_ok();
+        let _ = fs::remove_dir_all(&staging);
+        return Err(format!(
+            "提交导出目录失败: {e}{}",
+            if restored { "" } else { "（旧目录未能恢复）" }
+        ));
+    }
+    if backup.exists() {
+        let _ = fs::remove_dir_all(&backup);
     }
     Ok(())
 }
@@ -820,7 +841,45 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use super::{collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc};
+    use super::{collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc, write_export_dir};
+
+    /// 导出目录必须整体换入：成功时旧文件清干净、无暂存残留；
+    /// 中途失败（非法路径）时旧产物原样保留——共享/预览不能撞到半成品。
+    #[test]
+    fn write_export_dir_swaps_atomically_and_keeps_old_on_failure() {
+        let out = std::env::temp_dir().join(format!("tve-export-swap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        let mut files = std::collections::HashMap::new();
+        files.insert("index.html".to_string(), "<v1>".to_string());
+        files.insert("engine/core/log.mjs".to_string(), "export const v = 1;".to_string());
+        write_export_dir(&out, files.clone(), &Default::default()).expect("首次导出");
+        assert!(out.join("index.html").exists());
+        assert!(out.join("engine/core/log.mjs").exists());
+        assert!(!out.with_extension("staging").exists(), "无暂存残留");
+        assert!(!out.with_extension("old").exists(), "无备份残留");
+
+        // 二次导出删旧纳新
+        let mut files2 = std::collections::HashMap::new();
+        files2.insert("index.html".to_string(), "<v2>".to_string());
+        write_export_dir(&out, files2, &Default::default()).expect("覆盖导出");
+        assert_eq!(fs::read_to_string(out.join("index.html")).unwrap(), "<v2>");
+        assert!(!out.join("engine").exists(), "旧文件不残留");
+        assert!(!out.with_extension("old").exists());
+
+        // 中途失败（非法相对路径在写入阶段被拒）：旧产物原样保留，可继续被访问
+        let mut bad = std::collections::HashMap::new();
+        bad.insert("index.html".to_string(), "<v3>".to_string());
+        bad.insert("../escape.txt".to_string(), "x".to_string());
+        assert!(write_export_dir(&out, bad, &Default::default()).is_err());
+        assert_eq!(
+            fs::read_to_string(out.join("index.html")).unwrap(),
+            "<v2>",
+            "失败不破坏既有产物"
+        );
+        let _ = fs::remove_dir_all(&out);
+        let _ = fs::remove_dir_all(&out.with_extension("staging"));
+        let _ = fs::remove_dir_all(&out.with_extension("old"));
+    }
 
     /// 材质引用的着色器（.mat 的 shader）与其贴图参数（props）必须随产物打包：
     /// 缺失会让产物内效果整体消失（且只表现为"没效果"，不好排查）。

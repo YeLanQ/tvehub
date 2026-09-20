@@ -199,10 +199,12 @@ export async function runBuild(opts: {
   release: boolean;
   /** CDN 模式：three.js 运行时不内嵌（从 Three CDN 地址在线加载） */
   cdn: boolean;
-  /** gzip 资源地址（归档远程基址；空 = 本地 assets.gzip） */
+  /** gzip 资源地址（assets.gzip 归档远程基址；空 = 本地读取） */
   gzipBase: string;
-  /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
+  /** Three CDN 地址（three.js 远程基址，CDN 模式下生效；空 = 内嵌 three.js） */
   cdnBase: string;
+  /** 产物落盘目录（项目相对路径；缺省 build/web/，如局域网共享用 .tmp/share） */
+  outDir?: string;
 }): Promise<BuildResult> {
   // 产物内容与编辑器一致：构建前把当前编辑场景落盘（后端按磁盘内容读取）
   try {
@@ -280,6 +282,7 @@ export async function runBuild(opts: {
     gzipBase: opts.gzipBase,
     cdnBase: opts.cdnBase,
     files: runtime,
+    outDir: opts.outDir,
   });
   logStore.log("success", `构建完成: ${result.output_dir}`, "build");
   if (result.missing.length) {

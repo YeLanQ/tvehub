@@ -74,7 +74,7 @@ export async function publishLanSite(req: LanPublishSiteRequest): Promise<LanSha
   return run(() => api.lanSharePublishSite(req));
 }
 
-/** 按引用共享外部目录（源目录变化即时可见，无需重复发布） */
+/** 按引用共享外部目录（不复制文件；发布前先把产物打进目录） */
 export async function addLanDirShare(req: LanAddDirRequest): Promise<LanShareStatus> {
   return run(() => api.lanShareAddDir(req));
 }

@@ -578,6 +578,7 @@ pub async fn build_export(
     gzip_base: String,
     cdn_base: String,
     files: HashMap<String, String>,
+    out_dir: Option<String>,
 ) -> Result<BuildResult, String> {
     // 注册到任务管理器：支持取消 + 进度广播 + 多项目隔离
     let handle = state.register(&app, "export", Some(&root), crate::task::Priority::Normal);
@@ -599,6 +600,7 @@ pub async fn build_export(
             gzip_base,
             cdn_base,
             files,
+            out_dir,
             Some(&cancel_check),
             Some(&|p, m| handle.report_progress(p, m)),
         );
@@ -882,6 +884,7 @@ fn build_export_impl(
     gzip_base: String,
     three_base: String,
     files: HashMap<String, String>,
+    out_dir: Option<String>,
     is_cancelled: Option<&dyn Fn() -> bool>,
     report_progress: Option<&dyn Fn(f64, &str)>,
 ) -> Result<BuildResult, String> {
@@ -920,7 +923,17 @@ fn build_export_impl(
         scenes[0].clone()
     };
 
-    let out = root_path.join("build").join(&channel);
+    // 输出目录：默认 build/<channel>；调用方可覆盖（如局域网共享打到 .tmp/share）。
+    // 覆盖目录必须是项目根内的相对路径（拒绝绝对路径与 .. 越界）
+    let out = match out_dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(rel) => {
+            if Path::new(rel).is_absolute() || rel.split(['/', '\\']).any(|s| s == "..") {
+                return Err(format!("非法导出目录: {rel}"));
+            }
+            root_path.join(rel)
+        }
+        None => root_path.join("build").join(&channel),
+    };
     let mut files = files;
     if !files.contains_key("index.html") {
         return Err("网页运行时缺少 index.html".to_string());
@@ -1295,6 +1308,7 @@ mod tests {
                 runtime_files(entry),
                 None,
                 None,
+                None,
             )
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
 
@@ -1506,6 +1520,7 @@ mod tests {
                 ]),
                 None,
                 None,
+                None,
             )
             .unwrap()
         };
@@ -1641,6 +1656,7 @@ export const b = T ? 2 : 0;
                 gzip_base.into(),
                 three_base.into(),
                 runtime_files(single),
+                None,
                 None,
                 None,
             )

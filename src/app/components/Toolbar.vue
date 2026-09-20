@@ -7,6 +7,7 @@ import { dispatchCommand } from "../commands";
 import { isTauri } from "../../lib/tauri-env";
 import WindowControls from "../../ui-kit/components/WindowControls.vue";
 import LanShareDialog from "./lan/LanShareDialog.vue";
+import { runBuild } from "../lib/build-export";
 import "../../styles/components/toolbar.scss";
 
 const store = getEditorStore();
@@ -35,13 +36,35 @@ const projectName = computed(() => projectStore.projectName ?? "未命名项目"
 /** 编辑器是否有未保存修改（保存按钮标记点） */
 const editorDirty = computed(() => store.dirty());
 
-/** 网页预览共享弹层：把 <项目>/.tmp/web-preview 按引用共享到局域网（源目录变化即时可见） */
+/** 网页分享弹层：当前场景打包成单页 gzip 产物（<项目>/.tmp/share）共享到局域网 */
 const shareOpen = ref(false);
-/** 预览产物目录与来源键（后端 canonicalize 前先判目录存在，报错带引导） */
-const previewDir = computed(() =>
-  projectStore.currentPath ? `${projectStore.currentPath}/.tmp/web-preview` : "",
+/** 分享产物目录与来源键（每次发布先重新打包，访问者刷新即见最新） */
+const shareDir = computed(() =>
+  projectStore.currentPath ? `${projectStore.currentPath}/.tmp/share` : "",
 );
 const shareSource = computed(() => `web-preview:${projectStore.currentPath ?? ""}`);
+
+/** 发布前打包：单页模式 + gzip（场景/资产/运行时全部内联进一个 index.html，无散文件） */
+async function prepareShare(): Promise<void> {
+  const root = projectStore.currentPath;
+  if (!root) throw new Error("尚未打开项目");
+  const sceneRel = projectStore.sceneRel || "assets/Main.scene";
+  await runBuild({
+    root,
+    channel: "web",
+    scenes: [sceneRel],
+    mainScene: sceneRel,
+    title: projectName.value,
+    debug: false,
+    templates: ["web:single"],
+    gzip: true,
+    release: false,
+    cdn: false,
+    gzipBase: "",
+    cdnBase: "",
+    outDir: ".tmp/share",
+  });
+}
 
 function setViewMode(mode: ViewMode): void {
   store.setViewMode(mode);
@@ -111,7 +134,7 @@ function onDragDblClick(e: MouseEvent): void {
 
     <button
       :disabled="!projectStore.currentPath"
-      title="共享网页预览：把预览产物发布到局域网，手机扫码打开（需先在「预览」页签生成过网页预览）"
+      title="共享网页：把当前场景打包成单页产物发布到局域网，手机扫码打开"
       @click="shareOpen = true"
     >
       共享
@@ -138,13 +161,15 @@ function onDragDblClick(e: MouseEvent): void {
     <!-- 窗口控制按钮（合并自独立标题栏） -->
     <WindowControls />
 
-    <!-- 共享网页预览：目录引用（按需读盘，预览刷新后无需重新发布） -->
+    <!-- 共享网页：发布前自动打包单页 gzip 产物（无散文件），目录按引用共享 -->
     <LanShareDialog
       :open="shareOpen"
       kind="folder"
       :source="shareSource"
-      :default-title="`${projectName} · 网页预览`"
-      :dir="previewDir"
+      :default-title="`${projectName} · 网页分享`"
+      :dir="shareDir"
+      :prepare="prepareShare"
+      entry="index.html"
       @close="shareOpen = false"
     />
   </div>
