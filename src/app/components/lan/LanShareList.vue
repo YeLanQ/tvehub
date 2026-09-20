@@ -95,7 +95,7 @@ async function revealSource(root: string): Promise<void> {
     </header>
 
     <p v-if="!shares.length" class="lan-list-empty">
-      还没有共享内容。白板窗口点「共享」发布放映页，或在下面按目录共享构建产物。
+      还没有共享内容。白板窗口点「共享」发布放映页。
     </p>
 
     <ul v-else class="lan-list">

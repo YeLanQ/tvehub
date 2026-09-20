@@ -2,7 +2,7 @@
 //!
 //! 托管站点的文件都经这里写入——发布走「先写 staging 再整体替换」，避免访问者
 //! 看到半成品；所有站点内相对路径先过 `safe_rel`，拒绝绝对路径、反斜杠与 `..`，
-//! 写入前再用 starts_with 兜一次越界。目录引用共享的统计也复用这里的 `dir_stats`。
+//! 写入前再用 starts_with 兜一次越界。
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -29,7 +29,7 @@ pub(super) fn safe_rel(rel: &str) -> Result<String, String> {
     Ok(trimmed)
 }
 
-pub(super) fn dir_stats(root: &Path) -> (usize, u64) {
+fn dir_stats(root: &Path) -> (usize, u64) {
     let mut files = 0usize;
     let mut size = 0u64;
     let mut stack = vec![root.to_path_buf()];
@@ -90,28 +90,6 @@ pub(super) fn write_site_files(site_dir: &Path, files: &HashMap<String, String>)
     Ok(dir_stats(site_dir))
 }
 
-pub(super) fn guess_entry(dir: &Path) -> String {
-    let mut candidates: Vec<String> = fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|e| e.path().is_file())
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    name.to_lowercase().ends_with(".html").then_some(name)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    candidates.sort_by_key(|a| a.to_lowercase());
-    candidates
-        .iter()
-        .find(|n| n.eq_ignore_ascii_case("index.html"))
-        .cloned()
-        .or_else(|| candidates.into_iter().next())
-        .unwrap_or_else(|| "index.html".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,25 +125,6 @@ mod tests {
         files.insert("extra.css".to_string(), "body{}".to_string());
         let (count2, _) = write_site_files(&dir, &files).expect("覆盖写入");
         assert_eq!(count2, 2);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn guess_entry_picks_html_entry() {
-        let dir = std::env::temp_dir().join(format!("tve-lanshare-entry-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        // 没有任何 html：退回默认入口名（访问时才 404，不在共享时挡住用户）
-        assert_eq!(guess_entry(&dir), "index.html");
-
-        fs::write(dir.join("b.html"), "b").unwrap();
-        fs::write(dir.join("a.html"), "a").unwrap();
-        fs::write(dir.join("note.txt"), "t").unwrap();
-        // 无 index.html：取按名排序后的第一个 html
-        assert_eq!(guess_entry(&dir), "a.html");
-
-        fs::write(dir.join("index.html"), "i").unwrap();
-        assert_eq!(guess_entry(&dir), "index.html");
         let _ = fs::remove_dir_all(&dir);
     }
 }

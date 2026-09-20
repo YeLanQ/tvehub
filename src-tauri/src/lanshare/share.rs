@@ -4,7 +4,7 @@
 //! - **托管站点**（`managed=true`）：发布时把文本产物整站写入 `sites/<id>/`，
 //!   随共享记录删除；白板放映页、自建网页产物走这条。
 //! - **目录引用**（`managed=false`）：直接服务一个外部目录，不复制文件，
-//!   源目录一变访问者立即可见；构建产物、网页预览产物、任意文件夹走这条。
+//!   源目录一变访问者立即可见；只服务存量条目（目录共享的创建入口已移除）。
 //!
 //! 清单落盘在 `<config_root>/lan-share/index.json`。
 
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub(super) use super::site::safe_rel;
-use super::site::{dir_stats, guess_entry, write_site_files};
+use super::site::write_site_files;
 use super::{base_dir, now_ms, sites_dir};
 
 /// 一条共享
@@ -68,22 +68,6 @@ pub struct PublishSiteRequest {
     #[serde(default)]
     pub files: HashMap<String, String>,
     /// 已存在的托管共享 id：传入则原地更新；省略则按 source 复用或新建
-    #[serde(default)]
-    pub share_id: Option<String>,
-}
-
-/// 按引用共享外部目录
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddDirRequest {
-    pub title: String,
-    #[serde(default)]
-    pub note: String,
-    /// 要共享的目录（绝对路径）
-    pub dir: String,
-    #[serde(default)]
-    pub entry: Option<String>,
-    /// 已存在的共享 id：传入则原地更新；省略则按 source（目录路径）复用或新建
     #[serde(default)]
     pub share_id: Option<String>,
 }
@@ -230,79 +214,6 @@ pub(super) fn publish_site(
         }
     };
     Ok(share)
-}
-
-/// 顶层目录里挑一个入口文件（没给 entry 又不存在 index.html 时的兜底）
-/// 按引用共享（或原地更新）一个外部目录
-pub(super) fn add_dir(shares: &mut Vec<LanShare>, req: AddDirRequest) -> Result<LanShare, String> {
-    let raw = req.dir.trim();
-    if raw.is_empty() {
-        return Err("请选择要共享的目录".into());
-    }
-    let path = PathBuf::from(raw);
-    let canonical = fs::canonicalize(&path).map_err(|e| format!("目录不存在或不可读: {e}"))?;
-    if !canonical.is_dir() {
-        return Err("所选路径不是目录".into());
-    }
-    let source = canonical.display().to_string();
-    let entry = match req.entry.as_deref() {
-        Some(e) if !e.trim().is_empty() => safe_rel(e)?,
-        _ => guess_entry(&canonical),
-    };
-    let title = if req.title.trim().is_empty() {
-        canonical
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "目录共享".to_string())
-    } else {
-        req.title.trim().chars().take(80).collect()
-    };
-
-    let (file_count, size) = dir_stats(&canonical);
-    let now = now_ms();
-    let existing = find_target(shares, req.share_id.as_deref(), &source)?;
-    if let Some(i) = existing {
-        if shares[i].managed {
-            return Err("该共享是托管站点，不能改成目录引用".into());
-        }
-    }
-    Ok(match existing {
-        Some(i) => {
-            let share = &mut shares[i];
-            share.title = title;
-            share.note = req.note.clone();
-            share.source = source.clone();
-            share.entry = entry;
-            share.root = source;
-            share.enabled = true;
-            share.updated_at = now;
-            share.file_count = file_count;
-            share.size = size;
-            share.clone()
-        }
-        None => {
-            let share = LanShare {
-                id: new_share_id(shares),
-                kind: "folder".into(),
-                title,
-                note: req.note.clone(),
-                source,
-                entry,
-                root: canonical.display().to_string(),
-                managed: false,
-                enabled: true,
-                created_at: now,
-                updated_at: now,
-                file_count,
-                size,
-                hits: 0,
-                last_access: 0,
-                last_client: String::new(),
-            };
-            shares.push(share.clone());
-            share
-        }
-    })
 }
 
 pub(super) fn set_enabled(shares: &mut [LanShare], id: &str, enabled: bool) -> Result<(), String> {

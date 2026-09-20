@@ -1008,7 +1008,6 @@ pub fn run() {
             lanshare::lan_share_start,
             lanshare::lan_share_stop,
             lanshare::lan_share_publish_site,
-            lanshare::lan_share_add_dir,
             lanshare::lan_share_set_enabled,
             lanshare::lan_share_remove,
             task::cancel_task,

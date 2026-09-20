@@ -3,7 +3,6 @@
 // 组件只从这里 import，不直接碰 lib/api 的类型与状态实现。
 // ---------------------------------------------------------------------------
 export {
-  addLanDirShare,
   findShare,
   findShareBySource,
   lanShare,
