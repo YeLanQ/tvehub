@@ -1,0 +1,2 @@
+# 外部资产单一事实源：字节级原样（构建期 verbatim 拷入 public/engine），禁止 Git eol 转换
+src/runtime/extra/** -text

@@ -11,6 +11,7 @@
 import { api } from "../../../lib/api";
 import { logStore } from "../../stores/log";
 import { loadAssetTemplate } from "../asset-templates";
+import { scriptClassNameFromStem } from "../script-prototypes";
 import { compileScript, type CompiledScript } from "./compile";
 import { scriptJsPath } from "./paths";
 
@@ -56,12 +57,7 @@ export async function ensureEntryScript(root: string): Promise<boolean> {
   }
   // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入），与新建脚本同一规则
   const base = entry.slice(entry.lastIndexOf("/") + 1).replace(/\.tsx?$/, "");
-  const className =
-    base
-      .split(/[^A-Za-z0-9]+/)
-      .filter(Boolean)
-      .map((seg) => seg[0].toUpperCase() + seg.slice(1))
-      .join("") || "Main";
+  const className = scriptClassNameFromStem(base, "Main");
   const content = await loadAssetTemplate("script", { CLASS_NAME: className });
   if (!content) return false;
   try {

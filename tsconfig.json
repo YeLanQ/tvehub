@@ -14,6 +14,10 @@
     "noEmit": true,
     "jsx": "preserve",
 
+    /* vite.config.ts 引 scripts/*.mjs（无 .d.ts 声明）与 @vitejs/plugin-vue：
+       允许 JS 参与推断，否则无声明模块在 strict 下报 TS7016（implicitly any）。 */
+    "allowJs": true,
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

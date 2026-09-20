@@ -1,0 +1,9 @@
+{
+  "id": "vue",
+  "name": "vue",
+  "version": "3.5.42",
+  "license": "MIT",
+  "homepage": "https://vuejs.org/",
+  "source": "vue@3.5.42",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

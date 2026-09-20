@@ -1,0 +1,10 @@
+{
+  "id": "fflate",
+  "name": "fflate",
+  "version": "0.8.3",
+  "license": "MIT",
+  "homepage": "https://101arrowz.github.io/fflate",
+  "note": "随产物分发（public/engine/runtime/loaders/fflate.module.js）",
+  "source": "fflate@0.8.3",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

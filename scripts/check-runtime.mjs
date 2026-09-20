@@ -6,11 +6,13 @@ const SRC = path.join(ROOT, "src", "runtime");
 const ENGINE = path.join(ROOT, "public", "engine");
 
 const compiled = new Set();
-(function walk(dir) {
+(function walk(dir, rel) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, e.name);
-    if (e.isDirectory()) walk(abs);
-    else if (e.name.endsWith(".ts")) {
+    if (e.isDirectory()) {
+      if (!rel && e.name === "extra") continue; // 外部资产目录：只拷进 engine，不参与编译校验
+      walk(abs, rel ? `${rel}/${e.name}` : e.name);
+    } else if (e.name.endsWith(".ts")) {
       const rel = path.relative(SRC, abs).replace(/\.ts$/, ".mjs").split(path.sep).join("/");
       compiled.add(rel);
     }

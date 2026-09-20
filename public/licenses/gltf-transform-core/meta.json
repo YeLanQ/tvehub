@@ -1,0 +1,9 @@
+{
+  "id": "gltf-transform-core",
+  "name": "@gltf-transform/core",
+  "version": "4.5.0",
+  "license": "MIT",
+  "homepage": "https://gltf-transform.dev/",
+  "source": "@gltf-transform/core@4.5.0",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

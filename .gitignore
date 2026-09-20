@@ -28,3 +28,7 @@ dist-ssr
 # smoke test build output
 .tmp-smoke
 .tmp*
+
+# 网页预览运行时 = 纯构建产物目录（源 = src/runtime/** + src/runtime/extra/** +
+# node_modules/three），由 scripts/build-runtime.mjs 一次全量再生，不入库
+public/engine/

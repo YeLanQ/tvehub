@@ -1,0 +1,10 @@
+{
+  "id": "ktx-software",
+  "name": "KTX-Software (basis_transcoder)",
+  "version": "—",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/KhronosGroup/KTX-Software",
+  "note": "KTX2 转码器随产物分发（public/engine/runtime/loaders/basis/），经 three examples/jsm/libs 拷贝；上游副本未随附许可证正文",
+  "source": "引擎内置 vendor 资产（见 src/runtime/extra/README.md）",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

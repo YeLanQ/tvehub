@@ -102,9 +102,11 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
   }
 
   /**
-   * 按创意工坊内容新建项目资产（右键菜单「创意工坊 ▸ 标签 ▸ 内容」）：
+   * 按创意工坊内容导入项目资产（右键菜单「创意工坊 ▸ 标签 ▸ 内容」）：
+   * **直接用源文件名**（不弹命名窗）——原型文件即成品，选一项就落一份同名资产，
+   * 重名由创建链路自动加后缀（"Rotator 2.ts" / "RimLight 2.shader"），不覆盖已有文件。
    * - 脚本（code 分类的 .ts）：固定创建在 src/（脚本系统只编译 src/ 下的 .ts），
-   *   故从任意目录调起都落到 src/，提示里显示真实目标而不随右键位置变化；
+   *   故从任意目录调起都落到 src/，内容原样落盘（仓库即所得，不改写类名）；
    * - 效果（effect 分类的 .shader）：把原型源码写成当前目录下的着色器资产
    *   （指令名随路径自动同步，随后在材质卡片「着色器」下拉中挂载）。
    */
@@ -115,34 +117,24 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
       logStore.log("warn", ctx.isSrcDir(dir) ? "src 目录不允许新建着色器" : "内置目录只读，不允许新建着色器");
       return;
     }
-    const isScript = item.kind === "script";
-    const name = await prompt({
-      title: isScript ? "新建脚本" : "新建着色器",
-      label: isScript
-        ? `src/（脚本名）· 原型：${item.name}`
-        : `${dir}/（着色器名）· 效果原型：${item.name}`,
-      placeholder: item.name,
-      confirmText: "创建",
-    });
-    if (!name?.trim()) return;
     const source = await readRepoFile(item.category, item.file);
     if (!source.trim()) {
       logStore.log("warn", `创意工坊内容读取失败: ${item.category}/${item.file}`);
       return;
     }
-    if (isScript) {
+    if (item.kind === "script") {
       const proto: ScriptPrototype = {
         id: item.file,
         name: item.name,
         description: "",
         code: source,
       };
-      const rel = await getScriptsStore().createScript(name.trim(), proto);
-      if (rel) logStore.log("success", `已按创意工坊原型「${item.name}」创建脚本: ${rel}`);
+      const rel = await getScriptsStore().createScript(item.name, proto);
+      if (rel) logStore.log("success", `已按创意工坊原型「${item.name}」导入脚本: ${rel}`);
       return;
     }
-    const rel = await assetsStore.createShaderFromSource(root, dir, name.trim(), source);
-    if (rel) logStore.log("success", `已按创意工坊效果「${item.name}」创建着色器: ${rel}`);
+    const rel = await assetsStore.createShaderFromSource(root, dir, item.name, source);
+    if (rel) logStore.log("success", `已按创意工坊效果「${item.name}」导入着色器: ${rel}`);
   }
 
   /** 新建空白预制体（assets/prefabs 语义上的目录均可；模板创建） */
