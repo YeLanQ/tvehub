@@ -8,6 +8,7 @@ mod build;
 mod devtools;
 mod internal;
 mod js_minify;
+mod lanshare;
 mod model_bin;
 pub mod preview;
 mod project;
@@ -821,6 +822,7 @@ pub fn run() {
         .manage(ActiveEditorWindow::default())
         .manage(task::TaskManager::default())
         .manage(devtools::DevToolsState::default())
+        .manage(lanshare::LanShareState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
         // 首页「开发者服务」页签可停用/改端口。
         .setup(|app| {
@@ -832,6 +834,8 @@ pub fn run() {
                 "tve:editor:dock-layout:v3",
             );
             devtools::autostart(app.handle());
+            // 局域网共享按配置自动开服（后台线程：探测网卡会起进程，不阻塞首页）
+            lanshare::autostart(app.handle());
             // 首页窗口改为代码创建（tauri.conf.json 不再声明窗口）：便携式需要
             // 在创建时指定 WebView 数据目录，而 config 的 data_directory 相对路径
             // 会被 Tauri 解析到 %LOCALAPPDATA%\<label>，无法表达 exe 同级目录。
@@ -998,6 +1002,15 @@ pub fn run() {
             ui_state::ui_state_get,
             ui_state::ui_state_set,
             ui_state::ui_state_remove,
+            lanshare::lan_share_status,
+            lanshare::lan_share_net_info,
+            lanshare::lan_share_set_config,
+            lanshare::lan_share_start,
+            lanshare::lan_share_stop,
+            lanshare::lan_share_publish_site,
+            lanshare::lan_share_add_dir,
+            lanshare::lan_share_set_enabled,
+            lanshare::lan_share_remove,
             task::cancel_task,
             task::cancel_tasks_by_root,
             task::list_tasks,

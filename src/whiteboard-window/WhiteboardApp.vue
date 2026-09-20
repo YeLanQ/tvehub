@@ -29,13 +29,47 @@ import WhiteboardStage from "./components/WhiteboardStage.vue";
 import WhiteboardLayersPanel from "./components/WhiteboardLayersPanel.vue";
 import WhiteboardPropsPanel from "./components/WhiteboardPropsPanel.vue";
 import WhiteboardSlideBar from "./components/WhiteboardSlideBar.vue";
+import LanShareDialog from "../app/components/lan/LanShareDialog.vue";
+import { lanShare } from "../app/lib/lan-share";
 import { slideGo, slideShow, slideStop } from "./slide-show";
+import { boardPages, boardStartPage, buildBoardSite } from "./share/site";
 
 const store = getWhiteboardStore();
 const inTauri = isTauri();
 const stageRef = ref<InstanceType<typeof WhiteboardStage> | null>(null);
 /** 幻灯片放映态（快捷键分支与状态条提示读它） */
 const slide = slideShow();
+
+// ---------------------------------------------------------------------------
+// 局域网分享：把当前文档打成自包含放映页发布出去（扫码即可在手机上看）。
+// 同一白板再次分享＝原地更新（source 相同），不产生重复共享条目。
+// ---------------------------------------------------------------------------
+const shareOpen = ref(false);
+
+/** 分享来源标识：同一文件始终映射到同一条共享 */
+const shareSource = computed(() => `whiteboard:${store.fileName()}`);
+
+/** 分享站点内容（弹层每次「发布/更新」都会重新构建，保证是最新画面） */
+function buildShareFiles(opts: { title: string; note: string }): Record<string, string> {
+  return buildBoardSite(store.state.doc, {
+    title: opts.title,
+    note: opts.note,
+    transition: whiteboardLayout.slideTransition,
+    easing: whiteboardLayout.slideEasing,
+    auto: whiteboardLayout.slideMode === "auto",
+    interval: whiteboardLayout.slideInterval,
+    // 打开时停在作者当前看的那一页：图层面板选中的那层
+    start: boardStartPage(store.state.doc, store.state.activeLayerId),
+    download: lanShare.status?.config.allowDownload ?? true,
+  });
+}
+
+/** 分享规模提示（弹层里展示） */
+const shareSummary = computed(() => {
+  const doc = store.state.doc;
+  const pages = boardPages(doc);
+  return `${pages.length} 页 · ${doc.w}×${doc.h} · ${doc.els.length} 个元素`;
+});
 
 
 // ---------------------------------------------------------------------------
@@ -334,6 +368,15 @@ onUnmounted(() => {
         <button :disabled="!store.canUndo()" title="撤销（Ctrl+Z）" @click="store.undo()">撤销</button>
         <button :disabled="!store.canRedo()" title="重做（Ctrl+Y）" @click="store.redo()">重做</button>
 
+        <button
+          class="sv-share-btn"
+          :title="store.state.degraded ? '浏览器预览无法开启共享' : '分享到局域网：生成可扫码打开的放映页'"
+          :disabled="store.state.degraded"
+          @click="shareOpen = true"
+        >
+          共享
+        </button>
+
         <WindowControls />
       </div>
     </header>
@@ -457,5 +500,17 @@ onUnmounted(() => {
       <ContextMenu />
       <!-- 全局气泡通知（白板窗口独立挂载：提示统一走这里） -->
       <ToastHost />
+
+      <!-- 局域网分享弹层（发布自包含放映页 + 二维码） -->
+      <LanShareDialog
+        :open="shareOpen"
+        kind="whiteboard"
+        :source="shareSource"
+        :default-title="store.fileName()"
+        :build="buildShareFiles"
+        :summary="shareSummary"
+        :disabled="store.state.doc.els.length === 0"
+        @close="shareOpen = false"
+      />
   </div>
 </template>

@@ -1226,3 +1226,20 @@
     color: var(--text-dim);
   }
 }
+
+// 标题栏「共享」按钮：与保存同级的主动作，但不着色（避免与保存抢视觉重心）。
+// 小圆点取主题强调色（ui-kit :root 的 --accent），与标题栏其它控件同一套配色。
+.sv-share-btn {
+  position: relative;
+
+  &::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: 1px;
+  }
+}

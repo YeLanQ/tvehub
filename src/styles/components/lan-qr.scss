@@ -1,0 +1,68 @@
+// ---------------------------------------------------------------------------
+// 二维码卡片（LanQrCode.vue）——按钮/字段原语与配色约定见 lan-common.scss
+//
+// 卡片本身是主题表面（panel 底 + border），二维码是「贴在卡片上的一张白纸」：
+// 它的深/浅色来自编码器参数（近黑模块 + 纯白底 + 静区），**刻意不随主题**——
+// 扫码识别率取决于对比度，反色或换成主题色会直接掉识别率。改配色请只改卡片外壳。
+// ---------------------------------------------------------------------------
+@use "./lan-common" as *;
+
+.lan-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+
+  .lan-qr-head {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .lan-qr-code {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    // 二维码 SVG 自带白底与 4 模块静区，这里只给纸面一点圆角
+    :deep(svg) {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: 6px;
+    }
+  }
+
+  .lan-qr-too-long {
+    padding: 24px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--warn);
+    background: var(--bg-input);
+    border: 1px solid var(--warn);
+    border-radius: 8px;
+  }
+
+  .lan-qr-text {
+    max-width: 100%;
+    font-size: 12px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text);
+    word-break: break-all;
+    text-align: center;
+    user-select: all;
+    // 地址是这张卡片的主要产物，虚线示意「可复制」
+    border-bottom: 1px dotted var(--text-dim);
+  }
+
+  .lan-qr-actions {
+    display: flex;
+    gap: 8px;
+  }
+}

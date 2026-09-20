@@ -7,14 +7,15 @@
   "scripts": {
     "dev": "vite",
     "check:layers": "node scripts/check-layers.mjs",
-    "build": "node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
+    "build": "node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "tauri build",
     "smoke": "node scripts/smoke/runner.mjs",
     "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
-    "gen:licenses": "node scripts/sync-licenses.mjs"
+    "gen:licenses": "node scripts/sync-licenses.mjs",
+    "qr:check": "node scripts/qr-selfcheck-run.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

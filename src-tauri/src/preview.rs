@@ -633,7 +633,7 @@ pub fn run_preview_server_mode(port: u16, root: PathBuf) {
     shutdown.store(true, Ordering::Relaxed);
 }
 
-fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
@@ -737,7 +737,7 @@ fn sanitize_target(raw: &str) -> Option<String> {
     Some(rel.to_string())
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -766,7 +766,7 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-fn mime_for(path: &Path) -> &'static str {
+pub(crate) fn mime_for(path: &Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())

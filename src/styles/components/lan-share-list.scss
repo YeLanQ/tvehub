@@ -1,0 +1,144 @@
+// ---------------------------------------------------------------------------
+// 共享列表（LanShareList.vue）——按钮/字段原语与配色约定见 lan-common.scss
+// 颜色全部取 ui-kit 主题变量，本文件不出现十六进制色值。
+// ---------------------------------------------------------------------------
+@use "./lan-common" as *;
+
+.lan-list-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+
+  .lan-list-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+
+    h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+  }
+
+  .lan-list-count {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .lan-list-empty {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-dim);
+  }
+}
+
+.lan-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lan-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+
+  // 停用项整体压暗，但保持可读（不是 disabled 控件，仍可操作）
+  &.off {
+    opacity: 0.6;
+  }
+
+  .lan-item-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .lan-item-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .lan-item-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // 类型徽标：只用表面色 + 描边（主题强调色是中性灰，不适合做彩色标签）
+  .lan-item-kind {
+    flex: none;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+
+    &.sub {
+      background: transparent;
+    }
+  }
+
+  .lan-item-off {
+    flex: none;
+    font-size: 11px;
+    color: var(--warn);
+  }
+
+  .lan-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .lan-item-link {
+    font-size: 12px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text);
+    word-break: break-all;
+    user-select: all;
+    border-bottom: 1px dotted var(--text-dim);
+
+    &.muted {
+      color: var(--text-dim);
+      font-family: inherit;
+      border-bottom: 0;
+    }
+  }
+
+  .lan-item-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+
+  .lan-item-qr {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    padding-top: 10px;
+  }
+}

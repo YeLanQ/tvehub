@@ -1,0 +1,126 @@
+// ---------------------------------------------------------------------------
+// 局域网共享各组件的共用样式原语（按钮/字段/提示）。
+// 由 lan-qr / lan-service / lan-share-list / lan-share-dialog / lan-share-section
+// 各自 @use——每个组件只依赖自己显式引入的东西。
+//
+// 颜色一律取 ui-kit 主题变量（src/ui-kit/styles/variables.scss 的 :root），本文件
+// 不出现任何十六进制色值：局域网是应用的一部分，配色随主题走，改主题只需改变量表。
+// （对本项目而言这不是空话：早先这里自造过 --panel-bg/--input-bg 这类不存在的
+// 变量名，兜底色一直生效，等于自开了一套配色。）
+// ---------------------------------------------------------------------------
+
+// 小按钮：卡片与弹层里的主操作/次操作统一观感
+.lan-btn {
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease;
+
+  &:hover:not(:disabled) {
+    background: var(--btn-hover);
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  // 次操作：不填色，只留描边
+  &.ghost {
+    background: transparent;
+  }
+  // 主操作：主题强调色 + 深色前景（强调色是中性灰，配深底前景对比度足够）
+  &.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+
+    &:hover:not(:disabled) {
+      background: var(--text-dim);
+      border-color: var(--text-dim);
+    }
+  }
+  // 破坏性操作：主题错误色
+  &.danger {
+    color: var(--err);
+    border-color: var(--err);
+  }
+}
+
+// 表单字段：左标签 + 右控件 + 下方说明（说明只对有需要解释的字段出现）
+.lan-field {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  grid-template-areas:
+    "label control"
+    ". hint";
+  align-items: center;
+  gap: 2px 10px;
+
+  .lan-field-label {
+    grid-area: label;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  input,
+  select {
+    grid-area: control;
+    padding: 6px 9px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text);
+    font-size: 13px;
+    min-width: 0;
+  }
+
+  .lan-field-hint {
+    grid-area: hint;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+}
+
+.lan-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-dim);
+}
+
+.lan-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.lan-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding-left: 86px;
+}
+
+.lan-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+// 需要用户注意的提示（端口被占用回退之类）：主题警告色描边 + 输入底色
+.lan-notice {
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--bg-input);
+  border: 1px solid var(--warn);
+}

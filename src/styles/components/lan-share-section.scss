@@ -1,0 +1,75 @@
+// ---------------------------------------------------------------------------
+// 首页「局域网共享」分区（LanShareSection.vue）——原语见 lan-common.scss
+// 颜色全部取 ui-kit 主题变量，本文件不出现十六进制色值。
+// ---------------------------------------------------------------------------
+@use "./lan-common" as *;
+
+.lan-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px 24px;
+
+  .section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+    }
+  }
+
+  .section-desc {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-dim);
+  }
+}
+
+.lan-dir-card {
+  .lan-dir-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  // 目录输入 + 选择/共享按钮同一行：输入框直接复用字段样式
+  .lan-dir-pick {
+    grid-area: control;
+    display: flex;
+    gap: 8px;
+
+    input {
+      grid-area: auto;
+      flex: 1;
+      min-width: 0;
+      padding: 6px 9px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text);
+      font-size: 13px;
+    }
+  }
+
+  .lan-quick {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+    padding-left: 86px;
+  }
+
+  .lan-quick-label {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+}

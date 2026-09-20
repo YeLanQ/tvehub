@@ -24,6 +24,7 @@ import PreferencesSection from "./home/PreferencesSection.vue";
 import WorkshopSection from "./home/WorkshopSection.vue";
 import DevServiceSection from "./home/DevServiceSection.vue";
 import WhiteboardSection from "./home/WhiteboardSection.vue";
+import LanShareSection from "./home/LanShareSection.vue";
 import "../../styles/components/home-view.scss";
 import { isTauri } from "../../lib/tauri-env";
 import { handoffToWindow } from "../lib/window-handoff";
@@ -33,7 +34,7 @@ import { toastOk, toastErr } from "../lib/toast";
 
 const projectStore = getProjectStore();
 
-type Section = "projects" | "templates" | "workshop" | "prefs" | "dev" | "whiteboard";
+type Section = "projects" | "templates" | "workshop" | "prefs" | "dev" | "whiteboard" | "lan";
 const section = ref<Section>("projects");
 
 /** 最近项目卡片的「⋯」菜单：当前展开项的项目路径（null = 全部收起；
@@ -209,6 +210,20 @@ watch(showNewProject, (val) => {
           </svg>
           <span>白板</span>
         </button>
+        <button
+          class="nav-global"
+          :class="{ active: section === 'lan' }"
+          title="共享：把白板/构建产物发布成局域网址，手机扫码即开"
+          @click="section = 'lan'"
+        >
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2.5" y="2.5" width="4.2" height="4.2" rx="0.7" />
+            <path d="M6.7 4.6h3.4v3.4" />
+            <rect x="9.3" y="9.3" width="4.2" height="4.2" rx="0.7" />
+            <path d="M6.7 11.4H4.6" />
+          </svg>
+          <span>共享</span>
+        </button>
       </nav>
 
       <!-- 主区域 -->
@@ -239,6 +254,9 @@ watch(showNewProject, (val) => {
 
         <!-- ========== 白板（全局单例窗口的入口画廊） ========== -->
         <WhiteboardSection v-if="section === 'whiteboard'" />
+
+        <!-- ========== 共享（统一配置 + 产物发布 + 二维码） ========== -->
+        <LanShareSection v-if="section === 'lan'" />
       </main>
     </div>
 

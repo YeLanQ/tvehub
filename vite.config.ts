@@ -13,6 +13,7 @@ import {
   syncLicenses,
   generateLicenseRegistry,
 } from "./scripts/sync-licenses.mjs";
+import { THEME_SOURCE, generateLanTheme } from "./scripts/gen-lan-theme.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -115,12 +116,14 @@ function templateIndexPlugin(): Plugin {
       generateWebPreviewFiles();
       syncLicenses(); // 依赖升级后补齐 public/licenses 副本
       generateLicenseRegistry();
+      generateLanTheme(); // 局域网对外页面的主题色（事实源 = ui-kit 主题变量表）
     },
     configureServer(server) {
       generateTemplateRegistry();
       generateWebPreviewFiles();
       syncLicenses();
       generateLicenseRegistry();
+      generateLanTheme();
       for (const root of [TEMPLATE_ROOT, WEB_EXPORT_ROOT, LICENSE_ROOT]) {
         const abs = path.resolve(root);
         if (fs.existsSync(abs)) server.watcher.add(abs);
@@ -139,6 +142,8 @@ function templateIndexPlugin(): Plugin {
         }
         // 许可证副本目录变化（新增库/手工补正文）→ 重建清单
         if (norm.startsWith(`${LICENSE_ROOT}/`)) generateLicenseRegistry();
+        // 主题变量表变化 → 重新生成局域网对外页面的颜色令牌
+        if (norm === THEME_SOURCE) generateLanTheme();
       };
       server.watcher.on("add", onChange);
       server.watcher.on("unlink", onChange);

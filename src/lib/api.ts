@@ -308,6 +308,34 @@ export const api = {
     invoke<void>("whiteboard_write", { name, content }),
   /** 删除全局白板文件 */
   whiteboardDelete: (name: string) => invoke<void>("whiteboard_delete", { name }),
+
+  // ---------------------------------------------------------------------------
+  // 局域网共享：统一配置 / 地址 / 发布产物 / 启停单条共享
+  // ---------------------------------------------------------------------------
+
+  /** 当前状态（配置 + 地址候选 + 共享列表）；首次调用顺带从磁盘载入 */
+  lanShareStatus: () => invoke<LanShareStatus>("lan_share_status"),
+  /** 本机地址清单（配置页地址下拉与排查用） */
+  lanShareNetInfo: () => invoke<LanNetInfo>("lan_share_net_info"),
+  /** 改配置（补丁式）；端口/网卡/口令变化会重启监听 */
+  lanShareSetConfig: (patch: LanShareConfigPatch) =>
+    invoke<LanShareStatus>("lan_share_set_config", { patch }),
+  /** 开服 */
+  lanShareStart: () => invoke<LanShareStatus>("lan_share_start"),
+  /** 停服（配置保留） */
+  lanShareStop: () => invoke<LanShareStatus>("lan_share_stop"),
+  /** 发布托管站点（整站覆盖写；files 为「相对路径 → 文本内容」） */
+  lanSharePublishSite: (req: LanPublishSiteRequest) =>
+    invoke<LanShareStatus>("lan_share_publish_site", { req }),
+  /** 按引用共享一个外部目录（不复制文件，源目录变化即时可见） */
+  lanShareAddDir: (req: LanAddDirRequest) =>
+    invoke<LanShareStatus>("lan_share_add_dir", { req }),
+  /** 启停单条共享（停用后直链 404，记录与文件保留） */
+  lanShareSetEnabled: (id: string, enabled: boolean) =>
+    invoke<LanShareStatus>("lan_share_set_enabled", { id, enabled }),
+  /** 删除共享（托管站点连同站点目录一并删除） */
+  lanShareRemove: (id: string) => invoke<LanShareStatus>("lan_share_remove", { id }),
+
   /** 追加一行调试日志到应用配置目录 debug.log */
   appendDebugLog: (line: string) => invoke<void>("append_debug_log", { line }),
   /** 打开 WebView 开发者工具（发行构建会返回错误提示） */
@@ -349,6 +377,116 @@ export const api = {
   listTasks: (root?: string) =>
     invoke<TaskStatus[]>("list_tasks", { root: root ?? null }),
 };
+
+// ---------------------------------------------------------------------------
+// 局域网共享（与 Rust lanshare 模块对应）
+// ---------------------------------------------------------------------------
+
+/** 统一配置（Rust 权威存储；落 <config_root>/lan-share/config.json） */
+export interface LanShareConfig {
+  enabled: boolean;
+  port: number;
+  /** 绑定网卡：空 = 绑定全部网卡（0.0.0.0）；填具体 IPv4 则只在该网卡监听 */
+  host: string;
+  deviceName: string;
+  autoStart: boolean;
+  /** 访问口令：非空时访问者需输入（明文 HTTP，仅防误入，不作安全边界） */
+  accessCode: string;
+  /** 站点页是否显示「下载源文件」入口 */
+  allowDownload: boolean;
+}
+
+/** 配置补丁：只提交要改的字段 */
+export interface LanShareConfigPatch {
+  enabled?: boolean;
+  port?: number;
+  host?: string;
+  deviceName?: string;
+  autoStart?: boolean;
+  accessCode?: string;
+  allowDownload?: boolean;
+}
+
+/** 一个候选访问地址（ip + 可直接拼链接的 base URL） */
+export interface LanShareUrl {
+  ip: string;
+  /** 默认路由所在地址（前端取它编二维码） */
+  primary: boolean;
+  /** 私有网段地址 */
+  private: boolean;
+  url: string;
+}
+
+/** 一条共享（与 Rust share::LanShare 对应） */
+export interface LanShareEntry {
+  id: string;
+  /** 产物类型：whiteboard（白板放映页）/ site（网页产物）/ folder（目录共享） */
+  kind: string;
+  title: string;
+  note: string;
+  /** 来源标识（白板文件名 / 绝对目录），同一来源再次发布会原地更新 */
+  source: string;
+  entry: string;
+  /** 站点根目录绝对路径 */
+  root: string;
+  /** true = 托管站点（在 lan-share/sites/<id>/ 下）；false = 目录引用 */
+  managed: boolean;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  fileCount: number;
+  size: number;
+  /** 访问统计（内存态，重启归零） */
+  hits: number;
+  lastAccess: number;
+  lastClient: string;
+}
+
+/** 服务状态快照 */
+export interface LanShareStatus {
+  config: LanShareConfig;
+  running: boolean;
+  /** 实际监听端口（配置端口被占用时会回退） */
+  port: number;
+  bound: string;
+  /** 需要提示用户的信息（端口回退等） */
+  notice: string | null;
+  urls: LanShareUrl[];
+  shares: LanShareEntry[];
+}
+
+export interface LanAddress {
+  ip: string;
+  primary: boolean;
+  private: boolean;
+}
+
+export interface LanNetInfo {
+  hostname: string;
+  deviceName: string;
+  addresses: LanAddress[];
+}
+
+/** 发布托管站点请求（files = 相对路径 → 文本内容，整站覆盖写） */
+export interface LanPublishSiteRequest {
+  kind: string;
+  title: string;
+  note?: string;
+  source?: string;
+  entry?: string | null;
+  files: Record<string, string>;
+  /** 已有托管共享 id：传入则原地更新 */
+  shareId?: string | null;
+}
+
+/** 按引用共享外部目录请求 */
+export interface LanAddDirRequest {
+  title: string;
+  note?: string;
+  dir: string;
+  entry?: string | null;
+  shareId?: string | null;
+}
 
 /** 用户自定义模板信息（exe 旁 public 目录扫描结果；与内置注册表字段对齐） */
 export interface UserTemplateInfo {

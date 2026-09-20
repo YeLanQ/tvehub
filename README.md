@@ -180,7 +180,12 @@ pnpm smoke --all            # 全量回归
 pnpm smoke --filter runtime # 按名称/描述筛选（支持正则）
 pnpm smoke --list           # 列出全部套件
 pnpm check:layers           # 分层守卫检查
+pnpm qr:check               # 二维码编码器自检（对照参考实现逐模块 + 独立解码器解码）
 ```
+
+`qr:check` 是自研二维码编码器（`src/app/lib/lan-share/qr/`，局域网共享地址用）的正确性闸门：逐模块比对参考实现 + 独立解码器解码，覆盖版本 1~40、四个纠错等级、八个掩码与 SVG 渲染几何。参考实现与解码器只在开发期使用、不进依赖，按 `scripts/qr-selfcheck.ts` 头部说明用 `npm pack` 解压到 `.tmp-qrcheck/ref/` 即启用完整比对；缺失时降级为仅解码自检。后端局域网共享服务自带集成测试：`cargo test --lib lanshare`（路由 / 路径越界拒绝 / 访问口令闸门 / 站点写入）。
+
+局域网共享的配色统一取 ui-kit 主题变量表（`src/ui-kit/styles/variables.scss` 的 `:root`）：应用内样式直接写 `var(--bg-panel)` 这类令牌，对外页面（白板放映页、共享索引页、口令解锁页）的内联 CSS 在构建期由 `scripts/gen-lan-theme.mjs`（前端）与 `src-tauri/build.rs`（服务端）从同一份变量表生成，**改主题只需改变量表**，`pnpm build` 与 dev 启动会自动重建，改 `variables.scss` 也会触发 Rust 重编译。相关测试会拒绝页面里出现裸色值。
 
 常用套件：`logic-engine`（逻辑引擎）、`graph-runtime`（场景图运行时，真实产物直跑）、`graph`（场景图注册表/菜单/会话）、`fsm`（状态机/行为树）。`.ts` 套件经 vite --ssr 打包后运行（产物在 `.tmp-smoke/<id>/`，`--skip-build` 可复用）；`--fail-fast` 首败即停，`-q` 只看失败与汇总。
 
