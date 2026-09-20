@@ -4,9 +4,14 @@
 //          例外：src/runtime/extra/**（手动维护的外部资产：物理引擎构建、
 //          basis/draco 解码器等）不参与编译，仅字节级原样拷出
 //   产物 = public/engine/**（稳定路径，player.mjs / 预览 / 4 种导出模式零改动）
-// 编译产物带 AUTO-GENERATED 头并入库（可 review、干净检出即可服务）；
-// extra 拷出物不入库（已 gitignore，干净检出后由本管线在编译前自动补齐——
-// vendorExternalPlugin 依赖它们在 engine 下就位才能外部化相对 import）。
+// public/engine 是**纯构建产物目录，不入库**（.gitignore 整目录），一次 buildRuntime()
+// 全量再生，顺序固定：
+//   1. vendorPreviewLoaders()：three 构建 + 模型加载器 + draco JS 解码器（← node_modules/three）
+//   2. copyExtraAssets()：手动维护外部资产（← src/runtime/extra）
+//   3. vite 编译 .ts → .mjs（带 AUTO-GENERATED 头）
+// 前两步是第三步的前提：threeExternalPlugin / vendorExternalPlugin 把裸 three 与
+// vendor 相对 import 外部化，要求 engine 下对应文件已就位。所有写入均变更检测，
+// 重复执行幂等（内容一致不落盘，不触发运行产物清单等 watcher 抖动）。
 //
 // 关键决策：
 // - three 外部化：'three' / 'three/webgpu' 解析到 public/engine/core/ 的 three
@@ -28,6 +33,7 @@ import { build } from "vite";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { vendorPreviewLoaders } from "./vendor-preview-loaders.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_DIR = path.join(ROOT, "public", "engine");
@@ -271,6 +277,7 @@ export function buildRuntime(why = "") {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const t0 = Date.now();
+    vendorPreviewLoaders();
     copyExtraAssets();
     const input = collectInputs();
     await build({
@@ -287,7 +294,7 @@ export function buildRuntime(why = "") {
           fileName: (_format, name) => `${name}.mjs`,
         },
         outDir: ENGINE_DIR,
-        emptyOutDir: false, // 产物落 public/engine，绝不能清掉手写的引擎模块
+        emptyOutDir: false, // engine 为共享产物目录（vendor/extra 输出同在其中），只增量写本步产物
         copyPublicDir: false, // outDir 在 publicDir 内部：必须禁用，否则整个 public/ 会被复制进产物目录
         minify: false,
         sourcemap: false,

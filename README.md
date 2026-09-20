@@ -126,7 +126,7 @@ TvE Hub 以此为设计原点：一站式覆盖从搭场景到构建导出的完
 src/
   framework/     # 编辑器引擎（场景/动画/物理/逻辑/导航/地形/脚本/图注册表……各子系统）
   runtime/       # 播放器网页运行时（预览与构建产物使用，编辑器共用；含场景图内核）
-    extra/       # 手动维护的外部资产（物理引擎构建/basis/draco 解码器）：构建期原样拷入 public/engine，engine 侧副本不入库
+    extra/       # 手动维护的外部资产（物理引擎构建/basis/draco 解码器）：构建期原样拷入 public/engine
   graph-window/  # 场景图编辑窗口（Vue Flow 画布、卡片、检查器、会话）
   app/           # 首页与编辑器窗口应用壳
   docks/         # 编辑器/图窗口共享停靠系统工厂
@@ -134,6 +134,7 @@ src/
   ui-kit/        # 编辑器 UI 组件库
   lib/           # 数据层门面（唯一允许直接调用桌面端 IPC 的位置）
 public/docs/     # 内置文档 submodule（TvEHub-Docs 独立仓库）：editor/（编辑器，含 graph.md 场景图）+ sdk/（脚本 API）
+public/engine/   # 网页预览运行时 = 纯构建产物目录（不入库）：src/runtime 编译 + src/runtime/extra 外部资产 + node_modules/three vendor，由 scripts/build-runtime.mjs 一次全量再生（dev 启动/build 链自动执行）
 src-tauri/       # 桌面端后端（项目/资产管理、预览构建、窗口会话、资产协议、监视器）
 scripts/         # 构建/生成脚本与 smoke 冒烟测试
 ```

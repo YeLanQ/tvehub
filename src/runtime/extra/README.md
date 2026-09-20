@@ -9,9 +9,10 @@
 
 - **只拷贝、不编译**——这些文件不参与 esbuild/vite 转译，不会加 AUTO-GENERATED
   横幅（保持字节级原样）；`collectInputs()` / `check-runtime.mjs` 均显式跳过本目录。
-- **本目录入库，`public/engine` 中对应副本不入库**（见根 `.gitignore`），
-  干净检出后首次 `pnpm dev` / `pnpm build` 会自动补齐。
-- 不要直接改 `public/engine` 下的这些副本——改了也会在下次构建时被本目录覆盖。
+- **本目录入库；`public/engine` 整个目录是纯构建产物、不入库**（见根 `.gitignore`），
+  干净检出后首次 `pnpm dev` / `pnpm build` 全量再生。
+- 不要直接改 `public/engine` 下的这些副本——改了也会在下次构建时被本目录覆盖
+  （且下次构建不会保留：engine 内容始终由 源编译 + 本目录 + three vendor 三路决定）。
 
 ## 清单与升级方式
 

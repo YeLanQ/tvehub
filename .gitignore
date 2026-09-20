@@ -29,8 +29,6 @@ dist-ssr
 .tmp-smoke
 .tmp*
 
-# public/engine 中由 src/runtime/extra 构建期拷出的外部资产（不入库，构建自动再生）
-public/engine/runtime/physics-engines/
-public/engine/runtime/loaders/basis/
-public/engine/runtime/loaders/draco/draco_decoder.wasm
-public/engine/runtime/loaders/draco/draco_wasm_wrapper.js
+# 网页预览运行时 = 纯构建产物目录（源 = src/runtime/** + src/runtime/extra/** +
+# node_modules/three），由 scripts/build-runtime.mjs 一次全量再生，不入库
+public/engine/

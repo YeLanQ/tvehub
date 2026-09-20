@@ -131,13 +131,13 @@ function templateIndexPlugin(): Plugin {
   };
 }
 
-// 运行时自动编译插件（dev）：web 运行时的生成模块（public/engine 下 AUTO-GENERATED
-// 文件，单一事实源在 src/runtime + src/framework；src/runtime/extra 的外部资产
-// 不入库、由拷贝步骤补齐）在开发服务器启动时先构建一次，并监听源目录变化防抖重建。
-// 构建期由 build 链的第一步 node scripts/build-runtime.mjs 负责。
+// 运行时自动编译插件（dev）：public/engine 为纯构建产物目录（不入库；源 =
+// src/runtime/** 编译 + src/runtime/extra/** 外部资产 + node_modules/three vendor），
+// 开发服务器启动时由 buildRuntime() 一次全量再生，并监听源目录变化防抖重建。
+// 构建期由 build 链的第一步 node scripts/build-runtime.mjs 负责（同一入口）。
 // 注意：本插件必须排在 templateIndexPlugin 之前——dev 的 configureServer 按插件顺序
-// 执行，运行产物清单（generateWebPreviewFiles）扫描 public/engine，需先由本插件把
-// extra 资产拷出，干净检出首次启动的清单才完整。
+// 执行，运行产物清单（generateWebPreviewFiles）扫描 public/engine，需先由本插件完成
+// 全量再生，干净检出首次启动的清单才完整。
 const RUNTIME_SRC_ROOTS = ["src/runtime", "src/framework"];
 
 function runtimeBuildPlugin(): Plugin {
