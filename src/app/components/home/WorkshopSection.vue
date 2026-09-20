@@ -43,7 +43,7 @@ const activeFiles = computed(() => activeCategory.value?.files ?? []);
 const activePrototypeExt = computed(() => activeCategory.value?.prototypeExt ?? null);
 /** 当前分类是否支持在工坊里增删改原型（code/effect 等原型分类） */
 const canEditActiveCategory = computed(() => activePrototypeExt.value !== null);
-/** 当前分类是否为脚本原型（表单提示按扩展名区分：脚本可用 {{CLASS_NAME}}） */
+/** 当前分类是否为脚本原型（表单提示按扩展名区分） */
 const isScriptCategory = computed(() => activePrototypeExt.value === "ts");
 
 /** 表单文案（按分类扩展名自适应） */
@@ -51,7 +51,7 @@ const protoFormText = computed(() =>
   isScriptCategory.value
     ? {
         namePlaceholder: "旋转脚本",
-        codeHint: "代码（支持 {{CLASS_NAME}} 占位符，创建脚本时替换为脚本类名）",
+        codeHint: "代码（导入脚本时原样落盘，类名请与文件名一致）",
         codePlaceholder: "// @desc 描述会自动写在首行\nimport { Component, property } from \"tve\";",
       }
     : {
@@ -117,7 +117,7 @@ async function saveProtoForm(): Promise<void> {
     return;
   }
   if (!protoForm.code.trim()) {
-    alert("请填写原型内容（脚本可用 {{CLASS_NAME}} 占位符）");
+    alert("请填写原型内容");
     return;
   }
   const file = `${name}.${ext}`;

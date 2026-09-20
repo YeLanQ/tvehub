@@ -106,7 +106,7 @@ export function useAssetActions(ctx: UseAssetActionsCtx): AssetActionsApi {
    * **直接用源文件名**（不弹命名窗）——原型文件即成品，选一项就落一份同名资产，
    * 重名由创建链路自动加后缀（"Rotator 2.ts" / "RimLight 2.shader"），不覆盖已有文件。
    * - 脚本（code 分类的 .ts）：固定创建在 src/（脚本系统只编译 src/ 下的 .ts），
-   *   故从任意目录调起都落到 src/，类名随最终文件名注入；
+   *   故从任意目录调起都落到 src/，内容原样落盘（仓库即所得，不改写类名）；
    * - 效果（effect 分类的 .shader）：把原型源码写成当前目录下的着色器资产
    *   （指令名随路径自动同步，随后在材质卡片「着色器」下拉中挂载）。
    */

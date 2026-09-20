@@ -22,7 +22,7 @@ import { DEFAULT_FSM_GRAPH, FSM_EXT } from "../../framework/fsm";
 import { BT_EXT, defaultBehaviorTree } from "../../framework/behavior";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
-import { injectClassName, scriptClassNameFromStem, type ScriptPrototype } from "../lib/script-prototypes";
+import { scriptClassNameFromStem, type ScriptPrototype } from "../lib/script-prototypes";
 import { sanitizeAssetStem } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { remapAssetPath } from "../lib/asset-paths";
@@ -610,24 +610,17 @@ export const assetService = {
     // 基名（调用方可能已带 .ts，避免 .ts.ts）
     const base = clean.toLowerCase().endsWith(".ts") ? clean.slice(0, -".ts".length) : clean;
     const rel = uniqueRel(assets, destDir, base, ".ts");
-    // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入）；取**去重后**的文件名，
-    // 重名时文件是 "Rotator 2.ts"、类名同步为 "Rotator2"（类名 = 文件名是脚本
-    // 组件的标识约定，工坊原型默认用原型名导入，重名是常态）
+    // 类名仅内置模板路径使用（模板 {{CLASS_NAME}} 注入）= 去重后文件名 PascalCase
     const fileStem = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.ts$/, "");
     const className = scriptClassNameFromStem(fileStem);
     try {
-      // 工坊自定义原型 → 用原型代码注入类名；内置/缺省 → 内置模板
-      let content =
+      // 工坊原型 → 原样落盘（仓库即所得，不做占位符替换/类名改写）；
+      // 内置/缺省 → 内置模板按文件名注入类名
+      const content =
         proto && proto.code.trim()
-          ? injectClassName(proto.code, className)
+          ? proto.code
           : await loadAssetTemplate("script", { CLASS_NAME: className });
       if (content == null) throw new Error("脚本模板读取失败");
-      // 原型里写死的默认导出类名跟随脚本名改写（保证类名 = 文件名，如
-      // CameraFollow 原型改名 MyFollow 创建后类名同步为 MyFollow）
-      content = content.replace(
-        /export\s+default\s+class\s+[A-Za-z_$][\w$]*/,
-        `export default class ${className}`,
-      );
       await api.writeText(root, rel, content);
       logStore.log("success", `已新建脚本: ${rel}${proto ? "（工坊原型）" : ""}`);
       return rel;
