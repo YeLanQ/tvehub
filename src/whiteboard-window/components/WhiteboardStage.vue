@@ -875,6 +875,10 @@ onBeforeUnmount(() => {
         <pattern id="sv-grid" width="24" height="24" patternUnits="userSpaceOnUse">
           <path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
         </pattern>
+        <!-- 放映裁剪区 = 画板：与导出 SVG 的可见范围一致（根 svg 尺寸即画板，本来就裁） -->
+        <clipPath id="sv-board-clip">
+          <rect x="0" y="0" :width="store.state.doc.w" :height="store.state.doc.h" />
+        </clipPath>
       </defs>
 
       <!-- 屏幕空间网格 -->
@@ -892,70 +896,74 @@ onBeforeUnmount(() => {
         />
 
         <!-- 图层（锁定层 pointer-events:none，点击落到画板 = 取消选中；放映中只渲染
-             当前页与过渡中的上一页，切页动画挂在图层 <g> 上） -->
-        <g
-          v-for="item in layersWithEls"
-          :key="item.layer.id"
-          :class="slideLayerClass(item)"
-          :opacity="item.layer.opacity < 1 ? item.layer.opacity : undefined"
-          :style="slideLayerStyle(item)"
-        >
-          <template v-for="el in item.els" :key="el.id">
-            <rect
-              v-if="el.kind === 'rect'"
-              :x="el.x" :y="el.y" :width="el.w" :height="el.h"
-              :fill="el.style.fill" :stroke="el.style.stroke"
-              :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
-              :opacity="opAttr(el)"
-              @pointerdown="onElDown(el, $event)"
-            />
-            <ellipse
-              v-else-if="el.kind === 'ellipse'"
-              :cx="el.x + el.w / 2" :cy="el.y + el.h / 2"
-              :rx="el.w / 2" :ry="el.h / 2"
-              :fill="el.style.fill" :stroke="el.style.stroke"
-              :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
-              :opacity="opAttr(el)"
-              @pointerdown="onElDown(el, $event)"
-            />
-            <line
-              v-else-if="el.kind === 'line'"
-              :x1="el.x1" :y1="el.y1" :x2="el.x2" :y2="el.y2"
-              :stroke="el.style.stroke" :stroke-width="el.style.strokeWidth"
-              :stroke-dasharray="dashAttr(el)" stroke-linecap="round"
-              :opacity="opAttr(el)"
-              @pointerdown="onElDown(el, $event)"
-            />
-            <polyline
-              v-else-if="el.kind === 'pencil'"
-              :points="ptsAttr(el.points)"
-              fill="none" :stroke="el.style.stroke" :stroke-width="el.style.strokeWidth"
-              stroke-linecap="round" stroke-linejoin="round"
-              :opacity="opAttr(el)"
-              @pointerdown="onElDown(el, $event)"
-            />
-            <path
-              v-else-if="el.kind === 'path'"
-              :d="buildPathD(el)"
-              :fill="el.style.fill" :stroke="el.style.stroke"
-              :stroke-width="el.style.strokeWidth" stroke-linejoin="round"
-              :stroke-dasharray="dashAttr(el)"
-              :opacity="opAttr(el)"
-              @pointerdown="onElDown(el, $event)"
-            />
-            <text
-              v-else-if="el.kind === 'text'"
-              :data-el="el.id"
-              :x="el.x" :y="el.y"
-              :fill="el.style.fill" :font-size="el.style.fontSize"
-              :text-anchor="el.style.textAlign === 'center' ? 'middle' : el.style.textAlign === 'right' ? 'end' : undefined"
-              :font-family="el.style.fontFamily || DEFAULT_FONT"
-              :opacity="opAttr(el)"
-              v-bind="textStrokeAttrs(el)"
-              @pointerdown="onElDown(el, $event)"
-              v-html="buildTextInner(el)"
-            ></text>
-          </template>
+             当前页与过渡中的上一页，切页动画挂在图层 <g> 上）。
+             放映时整组裁到画板内：翻页期间新页从画板外滑入，超出白板的内容不该露在
+             深色背景上（裁剪挂在无 transform 的包一层 <g> 上，避免跟着图层一起位移） -->
+        <g :clip-path="slide.active ? 'url(#sv-board-clip)' : undefined">
+          <g
+            v-for="item in layersWithEls"
+            :key="item.layer.id"
+            :class="slideLayerClass(item)"
+            :opacity="item.layer.opacity < 1 ? item.layer.opacity : undefined"
+            :style="slideLayerStyle(item)"
+          >
+            <template v-for="el in item.els" :key="el.id">
+              <rect
+                v-if="el.kind === 'rect'"
+                :x="el.x" :y="el.y" :width="el.w" :height="el.h"
+                :fill="el.style.fill" :stroke="el.style.stroke"
+                :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
+                :opacity="opAttr(el)"
+                @pointerdown="onElDown(el, $event)"
+              />
+              <ellipse
+                v-else-if="el.kind === 'ellipse'"
+                :cx="el.x + el.w / 2" :cy="el.y + el.h / 2"
+                :rx="el.w / 2" :ry="el.h / 2"
+                :fill="el.style.fill" :stroke="el.style.stroke"
+                :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
+                :opacity="opAttr(el)"
+                @pointerdown="onElDown(el, $event)"
+              />
+              <line
+                v-else-if="el.kind === 'line'"
+                :x1="el.x1" :y1="el.y1" :x2="el.x2" :y2="el.y2"
+                :stroke="el.style.stroke" :stroke-width="el.style.strokeWidth"
+                :stroke-dasharray="dashAttr(el)" stroke-linecap="round"
+                :opacity="opAttr(el)"
+                @pointerdown="onElDown(el, $event)"
+              />
+              <polyline
+                v-else-if="el.kind === 'pencil'"
+                :points="ptsAttr(el.points)"
+                fill="none" :stroke="el.style.stroke" :stroke-width="el.style.strokeWidth"
+                stroke-linecap="round" stroke-linejoin="round"
+                :opacity="opAttr(el)"
+                @pointerdown="onElDown(el, $event)"
+              />
+              <path
+                v-else-if="el.kind === 'path'"
+                :d="buildPathD(el)"
+                :fill="el.style.fill" :stroke="el.style.stroke"
+                :stroke-width="el.style.strokeWidth" stroke-linejoin="round"
+                :stroke-dasharray="dashAttr(el)"
+                :opacity="opAttr(el)"
+                @pointerdown="onElDown(el, $event)"
+              />
+              <text
+                v-else-if="el.kind === 'text'"
+                :data-el="el.id"
+                :x="el.x" :y="el.y"
+                :fill="el.style.fill" :font-size="el.style.fontSize"
+                :text-anchor="el.style.textAlign === 'center' ? 'middle' : el.style.textAlign === 'right' ? 'end' : undefined"
+                :font-family="el.style.fontFamily || DEFAULT_FONT"
+                :opacity="opAttr(el)"
+                v-bind="textStrokeAttrs(el)"
+                @pointerdown="onElDown(el, $event)"
+                v-html="buildTextInner(el)"
+              ></text>
+            </template>
+          </g>
         </g>
 
         <!-- 创建中的草稿预览 -->
