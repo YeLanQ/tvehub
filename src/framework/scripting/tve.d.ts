@@ -5,6 +5,8 @@
 // 访问引擎能力。本文件是脚本类型的唯一事实源：编辑器（Monaco 智能提示 /
 // 诊断）直接加载本文件，运行时实现在 public/engine/core/tve.mjs
 // （播放器侧；两者保持镜像同步）。
+// 对外 API 参考文档 public/docs/sdk/api.md 由本文件自动生成
+// （pnpm gen:api-docs），改 API 后重跑即可，文档本身不要手改。
 //
 // 设计约束：全部为引擎自有类型（Vec3 普通对象、度制欧拉角，与编辑器数据模型
 // 一致），不暴露任何 three.js / WebGL 接口。

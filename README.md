@@ -194,7 +194,20 @@ pnpm qr:check               # 二维码编码器自检（对照参考实现逐�
 内置用户文档位于 `public/docs/`（编辑器内可直接查看）：
 
 - **编辑器**：[总览](public/docs/editor/overview.md) · [项目管理](public/docs/editor/projects.md) · [场景编辑](public/docs/editor/scene.md) · [**场景图**](public/docs/editor/graph.md) · [UI 系统](public/docs/editor/ui.md) · [检查器与组件](public/docs/editor/inspector.md) · [资产系统](public/docs/editor/assets.md) · [着色器](public/docs/editor/shaders.md) · [动画编辑器](public/docs/editor/animation.md) · [脚本工作台](public/docs/editor/scripting.md) · [预览与构建](public/docs/editor/preview-build.md)
-- **SDK（脚本 API）**：[总览](public/docs/sdk/overview.md) · [装饰器](public/docs/sdk/decorators.md) · [实体与查询](public/docs/sdk/entity.md) · [engine 入口](public/docs/sdk/engine.md) · [UI](public/docs/sdk/ui.md) · [内置组件门面](public/docs/sdk/components.md) · [math](public/docs/sdk/math.md) · [tween](public/docs/sdk/tween.md) · [utils](public/docs/sdk/utils.md)
+- **SDK（脚本 API）**：[总览](public/docs/sdk/overview.md) · [装饰器](public/docs/sdk/decorators.md) · [实体与查询](public/docs/sdk/entity.md) · [engine 入口](public/docs/sdk/engine.md) · [UI](public/docs/sdk/ui.md) · [内置组件门面](public/docs/sdk/components.md) · [math](public/docs/sdk/math.md) · [tween](public/docs/sdk/tween.md) · [utils](public/docs/sdk/utils.md) · [API 参考（自动生成）](public/docs/sdk/api.md)
+
+## 版本与变更
+
+版本号单一事实源是 `src-tauri/tauri.conf.json`，`scripts/sync-version.mjs` 已挂 dev/build 链首自动同步 package.json 与 Cargo.toml。变更日志与 API 参考均为生成物，**不手写**：
+
+```bash
+pnpm changelog              # 从 Conventional Commits 全量再生 CHANGELOG.md
+pnpm version:bump auto      # 按未发布提交自动递增版本（feat→minor、fix→patch、破坏性→major）
+pnpm version:bump patch     # 也可显式指定 major | minor | patch | build（构建号）
+pnpm gen:api-docs           # tve.d.ts 变更后再生 public/docs/sdk/api.md（全量 SDK API 参考）
+```
+
+发布流程：`pnpm version:bump auto`（自动改版本 + 把新版本段写进 CHANGELOG，标「未发布」）→ 提交 `chore(version): vX.Y.Z`（这条提交就是发版锚点，下次 `pnpm changelog` 会给该段补上日期）。提交信息请遵循 Conventional Commits（`feat(scope): …` / `fix(scope): …`），CHANGELOG 的分组与版本递增都靠它。
 
 ## 创意工坊资源仓库
 

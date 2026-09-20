@@ -5,9 +5,13 @@
 // 用法：
 //   pnpm version:sync            校准 package.json / Cargo.toml 到事实源（默认）
 //   pnpm version:check           只校验不写入，不一致则退出码 1（build 链门禁）
-//   pnpm version:bump [级别]     先递增事实源再同步，级别 major|minor|patch|build
-//                                （build = 递增 "+N" 构建号；major/minor/patch
-//                                会清掉 "+N"，下次 version:bump build 从 +1 重新计）
+//   pnpm version:bump [级别]     先递增事实源再同步，级别 major|minor|patch|build|auto
+//                                auto = 按未发布提交自动判定（feat→minor、fix→patch、
+//                                破坏性→major；0.x 阶段破坏性按 semver 惯例只升 minor）
+//                                build = 递增 "+N" 构建号；major/minor/patch
+//                                会清掉 "+N"，下次 version:bump build 从 +1 重新计
+//   major/minor/patch（含 auto 判定结果）递增后自动再生 CHANGELOG.md，
+//   新版本段以「未发布」出现，发版提交落锚后下次 pnpm changelog 补上日期。
 // 可选 --root <dir> 指定仓库根（默认脚本上级目录），供临时目录测试用。
 //
 // Cargo.lock 不手改：随下次 cargo build 自动再生。
@@ -15,6 +19,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoBumpLevel, splitByRelease } from "./changelog-core.mjs";
+import { renderChangelog } from "./gen-changelog.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -134,16 +140,31 @@ const targets = [
 
 // ---- 主流程 ----------------------------------------------------------------
 
+// 是否需要在同步后再生 CHANGELOG（major/minor/patch 递增才算内容发版）
+let regenChangelog = false;
+
 function targetVersion() {
   const conf = readJson(tauriConfPath);
   if (!conf.version) throw new Error("tauri.conf.json 缺少 version 字段（它是版本号唯一事实源）");
   let v = parseVersion(conf.version);
   if (cmd === "bump") {
-    const next = bumpVersion(v, bumpLevel ?? "patch");
+    let level = bumpLevel ?? "patch";
+    if (level === "auto") {
+      const unreleased = splitByRelease(root).find((s) => s.label === null);
+      const resolved = autoBumpLevel(unreleased?.commits ?? [], v.major);
+      if (!resolved) {
+        console.error("✗ 没有未发布的提交（上个发版锚点之后无内容），无法 auto 递增；请显式指定 major|minor|patch|build");
+        process.exit(1);
+      }
+      level = resolved;
+      console.log(`auto 判定：未发布提交 → ${level}`);
+    }
+    const next = bumpVersion(v, level);
     conf.version = fmtVersion(next);
     writeJson(tauriConfPath, conf, true);
     console.log(`✓ src-tauri/tauri.conf.json: ${fmtVersion(v)} → ${fmtVersion(next)}`);
     v = next;
+    regenChangelog = level !== "build";
   }
   return fmtVersion(v);
 }
@@ -171,4 +192,10 @@ if (drifted) {
   console.error("\n版本号漂移：运行 pnpm version:sync 校准后重试");
   process.exit(1);
 }
+
+if (regenChangelog) {
+  writeFileSync(path.join(root, "CHANGELOG.md"), renderChangelog(root));
+  console.log("✓ CHANGELOG.md 已写入新版本段（未发布，发版提交后 pnpm changelog 补日期）");
+}
+
 console.log(`\n版本统一为 ${target}（Cargo.lock 随下次 cargo build 自动更新）`);
