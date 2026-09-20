@@ -69,7 +69,7 @@ TvE Hub 以此为设计原点：一站式覆盖从搭场景到构建导出的完
 - **停靠面板系统**：层级 / 属性（检查器）/ 控制台 / 资产 / 动画 五种面板，支持拖拽停靠、浮动窗口、合并标签页、布局持久化（编辑器与场景图窗口共享同一套停靠工厂）；动画聚焦模式下锁定布局防止误动；
 - **四种视图模式**：场景（3D 编辑视口）/ 布局（UI 画布）/ 预览（内嵌网页运行）/ 脚本（代码工作台）；预览与脚本模式暂停编辑器视口渲染以节省资源；
 - **检查器与组件**：变换、网格、灯光、相机、物理（刚体/碰撞体）、音源、粒子、脚本组件等卡片式编辑；
-- **撤销/保存**：命令式撤销栈，未保存标记，快捷键与工具切换（W/E/R）。
+- **撤销/保存**：命令式撤销栈，未保存标记，快捷键与工具切换（W/E/R）、快捷键 F 快速聚焦选中对象。
 
 ### 场景图（kp-2 新增）
 
@@ -132,7 +132,7 @@ src/
   components/    # 通用业务组件
   ui-kit/        # 编辑器 UI 组件库
   lib/           # 数据层门面（唯一允许直接调用桌面端 IPC 的位置）
-public/docs/     # 内置文档：editor/（编辑器，含 graph.md 场景图）+ sdk/（脚本 API）
+public/docs/     # 内置文档 submodule（TvEHub-Docs 独立仓库）：editor/（编辑器，含 graph.md 场景图）+ sdk/（脚本 API）
 src-tauri/       # 桌面端后端（项目/资产管理、预览构建、窗口会话、资产协议、监视器）
 scripts/         # 构建/生成脚本与 smoke 冒烟测试
 ```
@@ -161,17 +161,18 @@ pnpm build:portable
 
 ## 质量检查
 
-项目以 smoke 冒烟脚本做回归测试（Node 直跑），覆盖网格、物理、组件、着色器、粒子、阴影、地形、状态机、逻辑引擎/运行时、**场景图运行时（节点/容器/朝向/寻路）、批处理、分层渲染**、导航、输入、补间、脚本钩子等子系统：
+项目以 smoke 冒烟脚本做回归测试（Node 直跑，无需 GPU/浏览器），覆盖网格、物理、组件、着色器、粒子、阴影、地形、状态机、逻辑引擎/运行时、**场景图运行时（节点/容器/朝向/寻路）、批处理、分层渲染**、导航、输入、补间、脚本钩子等子系统。统一入口 `pnpm smoke`，套件集中在 `scripts/smoke/tracker/` 由 `scripts/smoke/`（runner/registry/harness）统一管理并**动态发现注册**——新脚本丢进 `tracker/` 即被纳入，无需登记：
 
 ```bash
-pnpm smoke:logic-engine     # 示例：逻辑引擎 81 项
-pnpm smoke:graph-runtime    # 示例：场景图运行时 99 项（真实产物直跑）
-pnpm smoke:graph            # 示例：场景图注册表/菜单/会话 268 项
-pnpm smoke:fsm              # 示例：状态机/行为树求值
+pnpm smoke                  # 交互菜单（↑↓ 移动，空格勾选，回车运行）
+pnpm smoke graph            # 跑指定套件（可多个：pnpm smoke graph fsm）
+pnpm smoke --all            # 全量回归
+pnpm smoke --filter runtime # 按名称/描述筛选（支持正则）
+pnpm smoke --list           # 列出全部套件
 pnpm check:layers           # 分层守卫检查
 ```
 
-全部脚本见 `package.json` 的 `scripts`。
+常用套件：`logic-engine`（逻辑引擎）、`graph-runtime`（场景图运行时，真实产物直跑）、`graph`（场景图注册表/菜单/会话）、`fsm`（状态机/行为树）。`.ts` 套件经 vite --ssr 打包后运行（产物在 `.tmp-smoke/<id>/`，`--skip-build` 可复用）；`--fail-fast` 首败即停，`-q` 只看失败与汇总。
 
 ## 文档
 

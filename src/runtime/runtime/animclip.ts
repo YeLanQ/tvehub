@@ -506,6 +506,6 @@ export async function createClipAnimations(entries, env) {
   return api;
 }
 
-// smoke 对照钩子（scripts/smoke-components.ts 校验与 framework clip.ts 同语义；
+// smoke 对照钩子（scripts/smoke/tracker/smoke-components.ts 校验与 framework clip.ts 同语义；
 // 浏览器运行时与导出产物均未使用）
 export const __test = { parseClip, sampleClip };
