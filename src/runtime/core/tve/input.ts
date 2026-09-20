@@ -36,8 +36,16 @@ export function installInputListeners() {
     state.pointerState.down = false;
   });
 
+  // iOS Safari 自 10 起按无障碍策略忽略 user-scalable=no：捏合缩放页面只能
+  // 用 gesturestart 阻止（其他浏览器无此事件，注册无副作用）
+  window.addEventListener("gesturestart", (e) => e.preventDefault());
+
   const canvas = state.host && state.host.canvas;
   if (!canvas) return;
+  // 画布禁用浏览器触摸手势（滚动/双击缩放/捏合）：手势一旦被浏览器接管，
+  // 页面会收到 pointercancel、按住的触点被删除（虚拟摇杆一拖就被松开）。
+  // 宿主页模板的 CSS 同样设置，这里兜底所有宿主（含第三方内嵌）。
+  canvas.style.touchAction = "none";
 
   // 事件坐标 → 画布局部 CSS 像素（与 engine.ui.screenToUi 入参同一空间）。
   // 不用 offsetX/offsetY：up/cancel 可能落在画布外（鼠标拖出画布释放），

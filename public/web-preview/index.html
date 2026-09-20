@@ -2,7 +2,7 @@
 <html lang="zh">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>网页预览</title>
     <style>
       html,
@@ -25,6 +25,7 @@
       #app canvas {
         display: block;
         flex: none;
+        touch-action: none;
       }
       #error {
         display: none;
