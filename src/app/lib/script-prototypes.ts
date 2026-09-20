@@ -22,3 +22,18 @@ export interface ScriptPrototype {
 export function injectClassName(code: string, className: string): string {
   return code.replace(/\{\{\s*CLASS_NAME\s*\}\}/g, className);
 }
+
+/**
+ * 文件名 → 脚本类名（PascalCase）：类名恒等于文件名（脚本组件在场景里以
+ * `script:<类名>` 为标识）。去重后的文件名（"Rotator 2.ts"）类名须为 "Rotator2"，
+ * 不能沿用原名——否则同名类会让脚本组件解析歧义。
+ */
+export function scriptClassNameFromStem(stem: string, fallback = "MyScript"): string {
+  return (
+    stem
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map((seg) => seg[0].toUpperCase() + seg.slice(1))
+      .join("") || fallback
+  );
+}

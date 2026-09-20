@@ -193,7 +193,9 @@ pnpm check:layers           # 分层守卫检查
 
 ## 创意工坊资源仓库
 
-创意工坊页面的内容来自 `public/repos/`（独立仓库 [TvEHub-Repos](https://gitcode.com/YeLanQ/TvEHub-Repos.git)，**MIT** 许可）：**一个子目录一个分类**（目录名即分类 id，新增目录即自动出现同名标签），文件首部 `// @desc:` 注释作为卡片描述。当前分类 `code`（脚本原型）与 `effect`（效果着色器原型）支持在工坊内新建/编辑，落盘即写回该目录——改完在 submodule 内提交推送即可共享。约定详见 [public/repos/README.md](public/repos/README.md)。
+创意工坊页面的内容来自 `public/repos/`（独立仓库 [TvEHub-Repos](https://gitcode.com/YeLanQ/TvEHub-Repos.git)，**MIT** 许可）：**一个子目录一个分类**（目录名即分类 id，新增目录即自动出现同名标签），文件首部 `// @desc:` 注释作为卡片描述。当前分类 `code`（脚本原型）与 `effect`（效果着色器原型）支持在工坊内新建/编辑，落盘即写回该目录——改完在 submodule 内提交推送即可共享。
+
+编辑器里使用这些原型：资产面板右键「**创意工坊 ▸ 标签 ▸ 内容**」选一项即**按源文件名直接导入**同名项目资产（不弹命名窗、不覆盖已有文件，重名自动加后缀）——脚本固定落在 `src/` 并自动打开（类名随最终文件名），效果着色器落在右键目录。约定详见 [public/repos/README.md](public/repos/README.md)。
 
 ## 支持我们
 

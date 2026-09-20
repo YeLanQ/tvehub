@@ -22,7 +22,7 @@ import { DEFAULT_FSM_GRAPH, FSM_EXT } from "../../framework/fsm";
 import { BT_EXT, defaultBehaviorTree } from "../../framework/behavior";
 import { DEFAULT_TEXCUBE_MAP } from "../lib/texcube";
 import { loadAssetTemplate } from "../lib/asset-templates";
-import { injectClassName, type ScriptPrototype } from "../lib/script-prototypes";
+import { injectClassName, scriptClassNameFromStem, type ScriptPrototype } from "../lib/script-prototypes";
 import { sanitizeAssetStem } from "../lib/materials";
 import { isProtectedAsset } from "../lib/asset-guards";
 import { remapAssetPath } from "../lib/asset-paths";
@@ -610,14 +610,12 @@ export const assetService = {
     // 基名（调用方可能已带 .ts，避免 .ts.ts）
     const base = clean.toLowerCase().endsWith(".ts") ? clean.slice(0, -".ts".length) : clean;
     const rel = uniqueRel(assets, destDir, base, ".ts");
+    // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入）；取**去重后**的文件名，
+    // 重名时文件是 "Rotator 2.ts"、类名同步为 "Rotator2"（类名 = 文件名是脚本
+    // 组件的标识约定，工坊原型默认用原型名导入，重名是常态）
+    const fileStem = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.ts$/, "");
+    const className = scriptClassNameFromStem(fileStem);
     try {
-      // 类名 = 文件名 PascalCase（模板 {{CLASS_NAME}} 注入）
-      const className =
-        clean
-          .split(/[^A-Za-z0-9]+/)
-          .filter(Boolean)
-          .map((s) => s[0].toUpperCase() + s.slice(1))
-          .join("") || "MyScript";
       // 工坊自定义原型 → 用原型代码注入类名；内置/缺省 → 内置模板
       let content =
         proto && proto.code.trim()
