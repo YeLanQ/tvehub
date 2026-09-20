@@ -134,6 +134,7 @@ src/
   ui-kit/        # 编辑器 UI 组件库
   lib/           # 数据层门面（唯一允许直接调用桌面端 IPC 的位置）
 public/docs/     # 内置文档 submodule（TvEHub-Docs 独立仓库）：editor/（编辑器，含 graph.md 场景图）+ sdk/（脚本 API）
+public/repos/    # 创意工坊资源仓库 submodule（TvEHub-Repos 独立仓库，MIT）：一个子目录一个分类（code 脚本原型 / effect 效果着色器原型，新增目录即出现同名标签）
 public/engine/   # 网页预览运行时 = 纯构建产物目录（不入库）：src/runtime 编译 + src/runtime/extra 外部资产 + node_modules/three vendor，由 scripts/build-runtime.mjs 一次全量再生（dev 启动/build 链自动执行）
 src-tauri/       # 桌面端后端（项目/资产管理、预览构建、窗口会话、资产协议、监视器）
 scripts/         # 构建/生成脚本与 smoke 冒烟测试
@@ -144,6 +145,13 @@ scripts/         # 构建/生成脚本与 smoke 冒烟测试
 ## 快速开始
 
 环境要求：Node.js 18+、pnpm、Rust 工具链（构建桌面端安装包需要）。
+
+仓库含两个 submodule（`public/docs` 内置文档、`public/repos` 创意工坊资源仓库），克隆时需一并拉取：
+
+```bash
+git clone --recurse-submodules https://gitcode.com/YeLanQ/TvEHub.git   # 首次克隆
+git submodule update --init                                            # 已克隆过的仓库补拉
+```
 
 ```bash
 pnpm install
@@ -183,6 +191,10 @@ pnpm check:layers           # 分层守卫检查
 - **编辑器**：[总览](public/docs/editor/overview.md) · [项目管理](public/docs/editor/projects.md) · [场景编辑](public/docs/editor/scene.md) · [**场景图**](public/docs/editor/graph.md) · [UI 系统](public/docs/editor/ui.md) · [检查器与组件](public/docs/editor/inspector.md) · [资产系统](public/docs/editor/assets.md) · [着色器](public/docs/editor/shaders.md) · [动画编辑器](public/docs/editor/animation.md) · [脚本工作台](public/docs/editor/scripting.md) · [预览与构建](public/docs/editor/preview-build.md)
 - **SDK（脚本 API）**：[总览](public/docs/sdk/overview.md) · [装饰器](public/docs/sdk/decorators.md) · [实体与查询](public/docs/sdk/entity.md) · [engine 入口](public/docs/sdk/engine.md) · [UI](public/docs/sdk/ui.md) · [内置组件门面](public/docs/sdk/components.md) · [math](public/docs/sdk/math.md) · [tween](public/docs/sdk/tween.md) · [utils](public/docs/sdk/utils.md)
 
+## 创意工坊资源仓库
+
+创意工坊页面的内容来自 `public/repos/`（独立仓库 [TvEHub-Repos](https://gitcode.com/YeLanQ/TvEHub-Repos.git)，**MIT** 许可）：**一个子目录一个分类**（目录名即分类 id，新增目录即自动出现同名标签），文件首部 `// @desc:` 注释作为卡片描述。当前分类 `code`（脚本原型）与 `effect`（效果着色器原型）支持在工坊内新建/编辑，落盘即写回该目录——改完在 submodule 内提交推送即可共享。约定详见 [public/repos/README.md](public/repos/README.md)。
+
 ## 支持我们
 
 TvE Hub 由独立开发者利用业余时间持续打磨——从场景编辑到场景图，每一个功能都源自「让创作少一步折腾」的执念。项目完全开源免费，但我们也很现实：开发、测试设备与运行成本都在真实发生。
@@ -197,3 +209,5 @@ TvE Hub 由独立开发者利用业余时间持续打磨——从场景编辑到
 ## 许可
 
 本项目基于 [Apache License 2.0](LICENSE) 开源发布。
+
+两个 submodule 是各自独立的开源仓库：`public/repos/`（创意工坊资源仓库）基于 [MIT](public/repos/LICENSE) 发布，`public/docs/`（内置文档）见 [TvEHub-Docs](https://gitcode.com/YeLanQ/TvEHub-Docs)。
