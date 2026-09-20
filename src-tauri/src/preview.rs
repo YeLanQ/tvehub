@@ -504,12 +504,21 @@ fn start_server(root: PathBuf) -> Result<PreviewServer, String> {
     // 会互相抢占；实际端口经子进程 stdout 首行 base URL 回传。
     let exe = std::env::current_exe().map_err(|e| format!("获取 exe 路径失败: {e}"))?;
     let root_str = root.display().to_string();
-    let mut child = Command::new(&exe)
-        .arg("--preview-server")
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--preview-server")
         .arg("0")
         .arg(&root_str)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::piped());
+    // release 主程序是 GUI 子系统（无控制台可继承）：不带 CREATE_NO_WINDOW 时，
+    // 每次起预览服务器都会闪出一个控制台空窗（同 lanshare/net.rs 的 ipconfig）。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("启动预览服务器子进程失败: {e}"))?;
 

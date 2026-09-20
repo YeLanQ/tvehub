@@ -72,7 +72,18 @@ fn usable(ip: &Ipv4Addr) -> bool {
 /// 因此中文系统（"IPv4 地址 . . . : 192.168.1.5"）同样适用。
 #[cfg(windows)]
 fn system_ipv4s() -> Vec<Ipv4Addr> {
-    let output = match std::process::Command::new("ipconfig").arg("/all").output() {
+    // release 主程序是 GUI 子系统（无控制台可继承）：裸起 ipconfig 会让每次
+    // 调用都弹出一个黑色控制台空窗（共享页每条 lan_share_* 命令开头都要探测
+    // 网卡，用户看到的就是「切一次页签 / 点一次开关就弹一窗」）。
+    // CREATE_NO_WINDOW 让子进程静默执行；dev 下从终端启动本就无此问题。
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new("ipconfig");
+    cmd.arg("/all");
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = match cmd.output() {
         Ok(o) => o,
         Err(_) => return Vec::new(),
     };
