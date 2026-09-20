@@ -29,6 +29,9 @@ dist-ssr
 .tmp-smoke
 .tmp*
 
+# vitest coverage 报告（pnpm test:coverage 产物）
+coverage/
+
 # 网页预览运行时 = 纯构建产物目录（源 = src/runtime/** + src/runtime/extra/** +
 # node_modules/three），由 scripts/build-runtime.mjs 一次全量再生，不入库
 public/engine/

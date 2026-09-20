@@ -5,13 +5,16 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vitest run && vite",
     "check:layers": "node scripts/check-layers.mjs",
-    "build": "node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vite build",
+    "build": "node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vitest run && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "tauri build",
     "smoke": "node scripts/smoke/runner.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
     "gen:licenses": "node scripts/sync-licenses.mjs",
@@ -42,9 +45,13 @@
     "@types/node": "^26.6.2",
     "@types/three": "^0.185.4",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vitest/coverage-v8": "^5.0.1",
+    "@vue/test-utils": "^2.5.1",
+    "jsdom": "^30.1.0",
     "meshoptimizer": "^1.2.0",
     "sass": "^1.103.1",
     "vite": "^6.0.3",
+    "vitest": "^5.0.1",
     "vue-tsc": "^2.1.10"
   }
 }
