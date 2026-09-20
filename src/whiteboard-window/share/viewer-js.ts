@@ -5,7 +5,8 @@
 // - 一页 = 一个可见图层，页面顺序 = 图层顺序；
 // - 切页动画种类/方向/时长与编辑器一致（关键帧在 viewer-css.ts）；
 // - 过渡期间旧页要压在新页下面（DOM 顺序），后退翻页时把旧页挪到新页之前；
-// - 元素动画（文档自带 <style> 里的 keyframes）用根节点 tve-paused class 暂停。
+// - 元素动画（文档自带 <style> 里的 keyframes）用根节点 tve-paused class 暂停；
+// - 全屏 = 纯净放映：画布满幅、浮动栏默认隐藏（H 临时唤出），退出全屏还原窗口态。
 //
 // 用 ES5 写法（var/function）：分享出去的页面要在各种老旧手机浏览器里能跑，
 // 不做语法转译也不引依赖。字符串里避免反引号与 ${，否则会破坏外层模板。
@@ -182,8 +183,13 @@ export const VIEWER_JS = `
 
   var bars = readBars();
 
-  /** 把两栏占用的高度写进画布内边距（含栏与画板之间的视觉间隔） */
+  /** 把两栏占用的高度写进画布内边距（含栏与画板之间的视觉间隔）；全屏时归零（满幅放映） */
   function reserveChrome() {
+    if (inFullscreen()) {
+      stage.style.setProperty('--tv-pad-top', '0px');
+      stage.style.setProperty('--tv-pad-bottom', '0px');
+      return;
+    }
     var gap = 12;
     var topPad = gap;
     var bottomPad = gap;
@@ -221,8 +227,14 @@ export const VIEWER_JS = `
     syncBars();
   }
 
-  /** H：一次收起/展开全部浮动栏（放映时把画面还给内容） */
+  /** H：一次收起/展开全部浮动栏（放映时把画面还给内容）；全屏中改为临时唤出/隐藏 */
   function toggleChrome() {
+    if (inFullscreen()) {
+      fsChrome = !fsChrome;
+      if (fsChrome) document.body.classList.add('tv-fs-chrome');
+      else document.body.classList.remove('tv-fs-chrome');
+      return;
+    }
     var hide = !(bars.top && bars.foot);
     bars.top = hide;
     bars.foot = hide;
@@ -241,6 +253,34 @@ export const VIEWER_JS = `
   }
   window.addEventListener('resize', reserveChrome);
   window.addEventListener('orientationchange', reserveChrome);
+
+  // -------------------------------------------------------------------------
+  // 全屏（纯净放映）：画布满幅（reserveChrome 归零让位，黑边即源于让位），
+  // 两栏默认隐藏（CSS 随 body.tv-fs 生效）。H 临时唤出时覆盖在画面上——
+  // 只改会话标志、不写 localStorage，退出全屏自动还原窗口态的收展偏好。
+  // -------------------------------------------------------------------------
+  var fsChrome = false;
+
+  function inFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function applyFs() {
+    var fs = inFullscreen();
+    if (fs) {
+      document.body.classList.add('tv-fs');
+      if (fsChrome) document.body.classList.add('tv-fs-chrome');
+      else document.body.classList.remove('tv-fs-chrome');
+    } else {
+      fsChrome = false;
+      document.body.classList.remove('tv-fs');
+      document.body.classList.remove('tv-fs-chrome');
+    }
+    reserveChrome();
+  }
+
+  document.addEventListener('fullscreenchange', applyFs);
+  document.addEventListener('webkitfullscreenchange', applyFs);
 
   function syncAuto() {
     if (autoTimer) {
@@ -262,8 +302,9 @@ export const VIEWER_JS = `
 
   function fullscreen() {
     var el = document.documentElement;
-    if (document.fullscreenElement) {
+    if (inFullscreen()) {
       if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     } else if (el.requestFullscreen) {
       el.requestFullscreen();
     } else if (el.webkitRequestFullscreen) {
