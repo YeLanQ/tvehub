@@ -1,0 +1,9 @@
+{
+  "id": "vue-flow-minimap",
+  "name": "@vue-flow/minimap",
+  "version": "1.5.4",
+  "license": "MIT",
+  "homepage": "https://github.com/bcakmakoglu/vue-flow#readme",
+  "source": "@vue-flow/minimap@1.5.4",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

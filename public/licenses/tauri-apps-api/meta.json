@@ -1,0 +1,9 @@
+{
+  "id": "tauri-apps-api",
+  "name": "@tauri-apps/api",
+  "version": "2.11.1",
+  "license": "Apache-2.0 OR MIT",
+  "homepage": "https://github.com/tauri-apps/tauri#readme",
+  "source": "@tauri-apps/api@2.11.1",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

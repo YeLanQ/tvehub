@@ -1,0 +1,9 @@
+{
+  "id": "vue-flow-core",
+  "name": "@vue-flow/core",
+  "version": "1.48.2",
+  "license": "MIT",
+  "homepage": "https://vueflow.dev",
+  "source": "@vue-flow/core@1.48.2",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

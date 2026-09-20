@@ -7,6 +7,11 @@ import {
   generateWebPreviewFiles,
 } from "./scripts/gen-web-preview-files.mjs";
 import { buildRuntime } from "./scripts/build-runtime.mjs";
+import {
+  LICENSE_ROOT,
+  syncLicenses,
+  generateLicenseRegistry,
+} from "./scripts/sync-licenses.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -29,6 +34,9 @@ const APP_VERSION = appDisplayVersion();
  * src/generated/template-registry.ts。开发服务器启动/模板文件变化时自动重建，
  * 构建（buildStart）时同样生成 —— 前端直接 import 该模块（模板列表零 fetch 依赖），
  * 模板目录下新增模板即自动注册。
+ * 同一插件顺带维护第三方许可：依赖许可证副本同步 + 清单生成（见
+ * scripts/sync-licenses.mjs：public/licenses/** → src/generated/license-registry.ts，
+ * 首页「偏好设置 → 关于」消费；目录变化时重建清单）。
  */
 const TEMPLATE_ROOT = "public/templates";
 const WEB_EXPORT_ROOT = "public/exports/web";
@@ -105,11 +113,15 @@ function templateIndexPlugin(): Plugin {
     buildStart() {
       generateTemplateRegistry();
       generateWebPreviewFiles();
+      syncLicenses(); // 依赖升级后补齐 public/licenses 副本
+      generateLicenseRegistry();
     },
     configureServer(server) {
       generateTemplateRegistry();
       generateWebPreviewFiles();
-      for (const root of [TEMPLATE_ROOT, WEB_EXPORT_ROOT]) {
+      syncLicenses();
+      generateLicenseRegistry();
+      for (const root of [TEMPLATE_ROOT, WEB_EXPORT_ROOT, LICENSE_ROOT]) {
         const abs = path.resolve(root);
         if (fs.existsSync(abs)) server.watcher.add(abs);
       }
@@ -123,6 +135,8 @@ function templateIndexPlugin(): Plugin {
         if (WEB_PREVIEW_ROOTS.some((root) => norm.startsWith(`${root}/`))) {
           generateWebPreviewFiles();
         }
+        // 许可证副本目录变化（新增库/手工补正文）→ 重建清单
+        if (norm.startsWith(`${LICENSE_ROOT}/`)) generateLicenseRegistry();
       };
       server.watcher.on("add", onChange);
       server.watcher.on("unlink", onChange);
@@ -137,7 +151,7 @@ function templateIndexPlugin(): Plugin {
  *  Worker Blob，于是抛无从定位的 `SyntaxError: Unexpected token '<'`（HTML 第 2 行）。
  *  这里在内部中间件之前拦截这两个前缀：文件不存在直接 404，与生产静态服务、
  *  Rust 预览服务器（src-tauri/src/preview.rs 返回 404）行为一致。 */
-const RUNTIME_ASSET_PREFIXES = ["/engine/", "/web-preview/"];
+const RUNTIME_ASSET_PREFIXES = ["/engine/", "/web-preview/", "/licenses/"];
 
 function runtimeAssetGuardPlugin(): Plugin {
   return {

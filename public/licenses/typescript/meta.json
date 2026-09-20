@@ -1,0 +1,9 @@
+{
+  "id": "typescript",
+  "name": "typescript",
+  "version": "5.6.2",
+  "license": "Apache-2.0",
+  "homepage": "https://www.typescriptlang.org/",
+  "source": "typescript@5.6.2",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

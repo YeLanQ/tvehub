@@ -1,0 +1,10 @@
+{
+  "id": "ammo",
+  "name": "ammo.js (Bullet Physics)",
+  "version": "—",
+  "license": "Zlib",
+  "homepage": "https://github.com/kripken/ammo.js",
+  "note": "物理引擎 ammo 后端随产物分发（public/engine/runtime/physics-engines/ammo/）；上游未随附许可证正文",
+  "source": "引擎内置 vendor 资产（见 src/runtime/extra/README.md）",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

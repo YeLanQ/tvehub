@@ -1,0 +1,10 @@
+{
+  "id": "tauri-apps-plugin-opener",
+  "name": "@tauri-apps/plugin-opener",
+  "version": "2.5.5",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/tauri-apps/plugins-workspace",
+  "note": "上游仅随附 SPDX 文档（LICENSE.spdx），未附许可证正文",
+  "source": "@tauri-apps/plugin-opener@2.5.5",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "dimforge-rapier3d-compat",
+  "name": "@dimforge/rapier3d-compat",
+  "version": "0.20.0",
+  "license": "Apache-2.0",
+  "homepage": "https://rapier.rs",
+  "note": "物理引擎构建随产物分发（public/engine/runtime/physics-engines/rapier.mjs）",
+  "source": "@dimforge/rapier3d-compat@0.20.0",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

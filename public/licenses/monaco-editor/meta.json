@@ -1,0 +1,9 @@
+{
+  "id": "monaco-editor",
+  "name": "monaco-editor",
+  "version": "0.52.2",
+  "license": "MIT",
+  "homepage": "https://github.com/microsoft/monaco-editor",
+  "source": "monaco-editor@0.52.2",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

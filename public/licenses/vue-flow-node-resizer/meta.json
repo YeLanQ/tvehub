@@ -1,0 +1,9 @@
+{
+  "id": "vue-flow-node-resizer",
+  "name": "@vue-flow/node-resizer",
+  "version": "1.5.1",
+  "license": "MIT",
+  "homepage": "https://github.com/bcakmakoglu/vue-flow#readme",
+  "source": "@vue-flow/node-resizer@1.5.1",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "gltf-transform-functions",
+  "name": "@gltf-transform/functions",
+  "version": "4.5.0",
+  "license": "MIT",
+  "homepage": "https://gltf-transform.dev/functions.html",
+  "source": "@gltf-transform/functions@4.5.0",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

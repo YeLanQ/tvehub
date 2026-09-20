@@ -1,0 +1,9 @@
+{
+  "id": "gltf-transform-extensions",
+  "name": "@gltf-transform/extensions",
+  "version": "4.5.0",
+  "license": "MIT",
+  "homepage": "https://gltf-transform.dev/extensions.html",
+  "source": "@gltf-transform/extensions@4.5.0",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}

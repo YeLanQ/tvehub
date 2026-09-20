@@ -1,0 +1,10 @@
+{
+  "id": "draco3dgltf",
+  "name": "draco3dgltf",
+  "version": "1.5.7",
+  "license": "Apache-2.0",
+  "homepage": "git+https://github.com/google/draco.git",
+  "note": "压缩 glTF 资产处理用；上游包未随附许可证正文，见上游仓库",
+  "source": "draco3dgltf@1.5.7",
+  "generatedBy": "scripts/sync-licenses.mjs"
+}
