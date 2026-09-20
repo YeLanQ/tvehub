@@ -28,6 +28,7 @@ import {
   resetComponentSettings,
   LIGHT_KIND_OPTIONS,
 } from "../../lib/component-registry";
+import { toast } from "../../lib/toast";
 import { prompt } from "../../lib/prompt";
 import { openContextMenu, menuSeparator, type CtxMenuItem } from "../../../lib/editor/context-menu";
 import type { InspectorNodeApi } from "./useInspectorNode";
@@ -153,6 +154,18 @@ export function useInspectorComponents(ctx: InspectorNodeApi): InspectorComponen
     commit((target) => {
       target.components = [...target.components, comp];
     }, `添加${componentMetaOf(type).label.split(" ")[0]}组件`);
+    remindPhysicsEnabled(type);
+  }
+
+  /** 项目未启用物理时提醒：预览/构建不随包物理运行时，刚体/碰撞体不会生效 */
+  function remindPhysicsEnabled(type: "rigidBody" | "collider" | "light" | "audioSource" | "animationClip"): void {
+    if (type !== "rigidBody" && type !== "collider") return;
+    if (projectStore.physicsEnabled) return;
+    toast(
+      "warn",
+      "项目未启用物理：预览/构建不随包物理运行时，刚体/碰撞体不会生效",
+      { duration: 8000, action: { label: "前往设置", run: () => projectStore.openSettings() } },
+    );
   }
 
   function onAddScriptComponent(scriptRel: string): void {
@@ -355,6 +368,7 @@ export function useInspectorComponents(ctx: InspectorNodeApi): InspectorComponen
         });
       if (items.length) {
         engine.patchNodes(items, "批量添加" + componentMetaOf(type).label.split(" ")[0] + "组件");
+        remindPhysicsEnabled(type);
       }
     };
     const addScript = (scriptRel: string): void => {

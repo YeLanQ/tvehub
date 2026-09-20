@@ -14,6 +14,8 @@ import { logStore } from "../../stores/log";
 import { dispatchCommand } from "../../commands";
 import { confirm } from "../../lib/confirm";
 import { formatBytes, openDracoCompressDialog } from "../../lib/draco-compress";
+import { configUsesDracoCompression } from "../../lib/web-preview-runtime";
+import { toast } from "../../lib/toast";
 import { instantiatePrefabAsset } from "../../lib/prefabs";
 import { assetService } from "../../services/assetService";
 import { isInternalAsset } from "../../../lib/internal-assets";
@@ -269,6 +271,20 @@ export function useAssetItemActions(ctx: UseAssetItemActionsCtx): AssetItemActio
         "success",
         `Draco 压缩完成: ${outRel}（${formatBytes(result.originalSize)} → ${formatBytes(result.compressedSize)}，减小 ${(saved * 100).toFixed(1)}%）`,
       );
+      // 项目未启用 Draco 压缩时提醒：预览/构建不随包解码器，压缩模型运行时会 404
+      let cfgText = "";
+      try {
+        cfgText = await api.readText(root, "project.config.json");
+      } catch {
+        /* 无配置按未启用处理 */
+      }
+      if (!configUsesDracoCompression(cfgText)) {
+        toast(
+          "warn",
+          "项目未启用 Draco 压缩：预览/构建不随包解码器，压缩模型加载会 404",
+          { duration: 8000, action: { label: "前往设置", run: () => projectStore.openSettings() } },
+        );
+      }
     } catch (e) {
       logStore.log("error", `Draco 压缩失败: ${e}`);
     }
