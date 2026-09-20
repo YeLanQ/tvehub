@@ -10,7 +10,7 @@
 //   2. copyExtraAssets()：手动维护外部资产（← src/runtime/extra）
 //   3. vite 编译 .ts → .mjs（带 AUTO-GENERATED 头）
 // 前两步是第三步的前提：threeExternalPlugin / vendorExternalPlugin 把裸 three 与
-// vendor 相对 import 外部化，要求 engine 下对应文件已就位。所有写入均变更检测，
+// vendor 相对 import 外部化，要求 engine 下对应文件已就位。三步的写入均变更检测，
 // 重复执行幂等（内容一致不落盘，不触发运行产物清单等 watcher 抖动）。
 //
 // 关键决策：
@@ -227,48 +227,57 @@ function verifyOutput(input) {
 }
 
 /** 外部说明符修正：Vite/Rollup 对绝对外部 id 的相对化基准不可控（曾产出
- *  `../../../public/engine/...` 等错误路径），统一在后处理按「产物文件自身目录」
+ *  `../../../public/engine/...` 等错误路径），统一按「产物文件自身目录」
  *  重算所有指向 public/engine/ 下真实文件的 import 为正确的相对路径。
  *  覆盖静态 import（from "..."）与动态 import（import("...")，物理引擎惰性加载）。 */
-function fixExternalSpecifiers(input) {
+function rewriteExternalSpecifiers(text, dir) {
   const engineRoot = path.resolve(ENGINE_DIR);
-  for (const name of Object.keys(input)) {
-    const file = path.join(ENGINE_DIR, `${name}.mjs`);
-    const dir = path.dirname(file);
-    let text = fs.readFileSync(file, "utf8");
-    const fixSpec = (spec) => {
-      if (!spec.startsWith(".")) return spec;
-      const resolved = path.resolve(dir, spec);
-      if (resolved.startsWith(engineRoot + path.sep) && fs.existsSync(resolved)) {
-        let rel = path.relative(dir, resolved).split(path.sep).join("/");
-        if (!rel.startsWith(".")) rel = "./" + rel;
-        return rel;
-      }
-      return spec;
-    };
-    // 静态 import: from "..."
-    text = text.replace(
-      /(from\s+["'])([^"']*)(["'])/g,
-      (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`,
-    );
-    // 动态 import: import("...")
-    text = text.replace(
-      /(import\s*\(\s*["'])([^"']*)(["']\s*\))/g,
-      (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`,
-    );
-    fs.writeFileSync(file, text);
-  }
+  const fixSpec = (spec) => {
+    if (!spec.startsWith(".")) return spec;
+    const resolved = path.resolve(dir, spec);
+    if (resolved.startsWith(engineRoot + path.sep) && fs.existsSync(resolved)) {
+      let rel = path.relative(dir, resolved).split(path.sep).join("/");
+      if (!rel.startsWith(".")) rel = "./" + rel;
+      return rel;
+    }
+    return spec;
+  };
+  // 静态 import: from "..."
+  text = text.replace(/(from\s+["'])([^"']*)(["'])/g, (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`);
+  // 动态 import: import("...")
+  return text.replace(
+    /(import\s*\(\s*["'])([^"']*)(["']\s*\))/g,
+    (_m, pre, spec, post) => `${pre}${fixSpec(spec)}${post}`,
+  );
 }
 
-/** 给产物添加 AUTO-GENERATED banner（Vite lib 模式不生效 rollupOptions.output.banner，
- *  统一在后处理注入）。幂等：已有 banner 跳过。 */
-function addBanner(input) {
-  for (const name of Object.keys(input)) {
-    const file = path.join(ENGINE_DIR, `${name}.mjs`);
-    let text = fs.readFileSync(file, "utf8");
-    if (text.startsWith(BANNER)) continue;
-    fs.writeFileSync(file, BANNER + text);
+/** 产物落盘：在内存里完成「说明符修正 + AUTO-GENERATED banner」，与磁盘现有内容比较，
+ *  一致就不写。dev 启动每次都会重编译，若无条件重写，已存在的 .mjs 会全部更新 mtime →
+ *  chokidar 一批 change 事件 → 无谓的 HMR 抖动（也正是 plugin-vue handleHotUpdate 在
+ *  初始化窗口读到 null compiler 的触发源）。返回 [写入数, 未变数]。 */
+function writeOutputs(outputs) {
+  const files = Array.isArray(outputs) ? outputs.flatMap((o) => o.output) : outputs.output;
+  let written = 0;
+  let unchanged = 0;
+  for (const item of files) {
+    const dest = path.join(ENGINE_DIR, item.fileName);
+    let buf;
+    if (item.type === "asset") {
+      buf = Buffer.isBuffer(item.source) ? item.source : Buffer.from(item.source);
+    } else {
+      // banner 由本步骤统一注入（Vite lib 模式不生效 rollupOptions.output.banner），幂等
+      const text = rewriteExternalSpecifiers(item.code, path.dirname(dest));
+      buf = Buffer.from(text.startsWith(BANNER) ? text : BANNER + text, "utf8");
+    }
+    if (fs.existsSync(dest) && fs.readFileSync(dest).equals(buf)) {
+      unchanged++;
+      continue;
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, buf);
+    written++;
   }
+  return [written, unchanged];
 }
 
 /** 执行运行时编译（dev 插件与 build 链共用；并发调用串行化） */
@@ -280,7 +289,10 @@ export function buildRuntime(why = "") {
     vendorPreviewLoaders();
     copyExtraAssets();
     const input = collectInputs();
-    await build({
+    // write:false —— 产物先在内存里做后处理（说明符修正 + banner）再与磁盘比对落盘。
+    // 让 rollup 直接写会无条件更新 mtime（内容一致也写），dev 每次启动都因此触发一批
+    // watcher change 事件，见 writeOutputs。
+    const result = await build({
       configFile: false,
       root: ROOT,
       logLevel: "warn",
@@ -294,6 +306,7 @@ export function buildRuntime(why = "") {
           fileName: (_format, name) => `${name}.mjs`,
         },
         outDir: ENGINE_DIR,
+        write: false, // 见上：后处理 + 内容比对后再落盘
         emptyOutDir: false, // engine 为共享产物目录（vendor/extra 输出同在其中），只增量写本步产物
         copyPublicDir: false, // outDir 在 publicDir 内部：必须禁用，否则整个 public/ 会被复制进产物目录
         minify: false,
@@ -310,11 +323,11 @@ export function buildRuntime(why = "") {
         },
       },
     });
-    fixExternalSpecifiers(input);
-    addBanner(input);
+    const [written, unchanged] = writeOutputs(result);
     verifyOutput(input);
     console.log(
-      `[build-runtime] web 运行时已编译（${why || "手动"}，${Date.now() - t0}ms）→ public/engine`,
+      `[build-runtime] web 运行时已编译（${why || "手动"}，${Date.now() - t0}ms）→ public/engine` +
+        `（写入 ${written}，未变 ${unchanged}）`,
     );
   })().finally(() => {
     inFlight = null;
