@@ -23,19 +23,6 @@ const title = computed(() =>
     : "正在打开项目",
 );
 
-/** 各阶段折算进度（等权平均）：done=1，active 有计量按 n/N（留 5% 收尾），
- *  active 无计量按 0.4，failed=1（错误信息另示） */
-const percent = computed(() => {
-  let sum = 0;
-  for (const s of boot.state.stages) {
-    if (s.status === "done" || s.status === "failed") sum += 1;
-    else if (s.status === "active") {
-      sum += s.total > 0 ? Math.min(1, s.done / s.total) * 0.95 : 0.4;
-    }
-  }
-  return Math.round((sum / boot.state.stages.length) * 100);
-});
-
 /** 逐项计量文案（如材质 3/12） */
 function detail(done: number, total: number): string {
   return total > 0 ? `${done} / ${total}` : "";
@@ -74,9 +61,9 @@ function detail(done: number, total: number): string {
         </ul>
 
         <div class="boot-bar">
-          <div class="boot-bar-fill" :style="{ width: percent + '%' }"></div>
+          <div class="boot-bar-fill" :style="{ width: boot.percent + '%' }"></div>
         </div>
-        <div class="boot-percent">{{ percent }}%</div>
+        <div class="boot-percent">{{ boot.percent }}%</div>
 
         <div v-if="boot.state.error" class="boot-error">{{ boot.state.error }}</div>
         <div v-else class="boot-hint">资产与场景全部就绪后进入编辑器</div>

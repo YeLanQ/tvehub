@@ -22,15 +22,6 @@ const title = computed(() =>
     ? boot.state.projectName
     : "正在打开项目",
 );
-
-/** 各阶段折算进度（等权平均）：done/failed=1，active=0.4 */
-const percent = computed(() => {
-  let sum = 0;
-  for (const s of boot.state.stages) {
-    sum += s.status === "done" || s.status === "failed" ? 1 : s.status === "active" ? 0.4 : 0;
-  }
-  return Math.round((sum / boot.state.stages.length) * 100);
-});
 </script>
 
 <template>
@@ -64,9 +55,9 @@ const percent = computed(() => {
         </ul>
 
         <div class="boot-bar">
-          <div class="boot-bar-fill" :style="{ width: percent + '%' }"></div>
+          <div class="boot-bar-fill" :style="{ width: boot.percent + '%' }"></div>
         </div>
-        <div class="boot-percent">{{ percent }}%</div>
+        <div class="boot-percent">{{ boot.percent }}%</div>
 
         <div v-if="boot.state.error" class="boot-error">{{ boot.state.error }}</div>
         <div v-else class="boot-hint">资产与场景就绪后进入场景图</div>

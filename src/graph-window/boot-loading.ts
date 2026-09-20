@@ -7,6 +7,7 @@
 // 视觉复用编辑器 boot-mask.scss，与编辑器窗口打开体验一致。
 // ---------------------------------------------------------------------------
 import { readonly, reactive } from "vue";
+import { bootStagePercent } from "../app/lib/boot-progress";
 
 /** 装载阶段（固定顺序，蒙版按此渲染） */
 export const GRAPH_BOOT_STAGES = [
@@ -39,6 +40,8 @@ export interface GraphBootStore {
     error: string;
     stages: GraphBootStageState[];
   }>;
+  /** 总进度百分比（0..100）：只增不减，begin() 归零 */
+  readonly percent: number;
   /** 布防蒙版（idle/ready → standby） */
   standby: () => void;
   /** 进入装载：重置阶段并记录起始时间 */
@@ -73,6 +76,11 @@ export function getGraphBootStore(): GraphBootStore {
   /** 令牌：失效收尾定时器（begin/fail/finish 竞态） */
   let token = 0;
 
+  /** 已展示过的最大进度：进度条只增不减（同一次装载内）；begin() 开新一轮时
+   *  归零。最大值在读取时取——只在渲染时刻采样稳定状态（普通变量而非 ref：
+   *  不引入额外响应式依赖，阶段本身的变化已足以驱动重渲染）。 */
+  let shownPercent = 0;
+
   function stageOf(id: GraphBootStageId): GraphBootStageState {
     return state.stages.find((s) => s.id === id) ?? state.stages[0];
   }
@@ -91,6 +99,11 @@ export function getGraphBootStore(): GraphBootStore {
 
   const store: GraphBootStore = {
     state: readonly(state) as unknown as GraphBootStore["state"],
+    get percent() {
+      const p = bootStagePercent(state.stages);
+      if (p > shownPercent) shownPercent = p;
+      return shownPercent;
+    },
     standby() {
       if (state.phase === "loading") return;
       token += 1;
@@ -103,6 +116,7 @@ export function getGraphBootStore(): GraphBootStore {
       state.projectName = projectName;
       state.error = "";
       resetStages();
+      shownPercent = 0;
       startedAt = Date.now();
     },
     activate(id) {

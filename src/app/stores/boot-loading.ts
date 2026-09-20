@@ -10,6 +10,7 @@
 //   非装载期间（如编辑器内双击切换场景）的汇报被忽略，不弹蒙版；
 // - ready：finish() 在最短展示时长后收尾，蒙版淡出。
 import { readonly, reactive } from "vue";
+import { bootStagePercent } from "../lib/boot-progress";
 
 export type BootPhase = "idle" | "standby" | "loading" | "ready";
 export type BootStageStatus = "pending" | "active" | "done" | "failed";
@@ -55,6 +56,8 @@ export interface BootLoadingStore {
     error: string;
     stages: BootStageState[];
   }>;
+  /** 总进度百分比（0..100）：只增不减，begin() 归零 */
+  readonly percent: number;
   /** 布防蒙版（idle/ready → standby；loading 期间不降级） */
   standby: () => void;
   /** 进入装载：重置阶段并记录起始时间 */
@@ -92,6 +95,12 @@ export function getBootLoadingStore(): BootLoadingStore {
   /** 令牌：失效 begin/fail/finish 竞态下残留的收尾定时器 */
   let token = 0;
 
+  /** 已展示过的最大进度：进度条只增不减（同一次装载内），任何重复/乱序汇报
+   *  都不会让它往回走；begin() 开新一轮时归零。最大值在读取时取——只在渲染
+   *  时刻采样稳定状态，方法内部多步赋值产生的中间态不会把进度抬高（用普通
+   *  变量而非 ref：不引入额外响应式依赖，阶段本身的变化已足以驱动重渲染）。 */
+  let shownPercent = 0;
+
   function stageOf(id: BootStageId): BootStageState {
     return state.stages.find((s) => s.id === id) ?? state.stages[0];
   }
@@ -114,6 +123,11 @@ export function getBootLoadingStore(): BootLoadingStore {
 
   const store: BootLoadingStore = {
     state: readonly(state) as unknown as BootLoadingStore["state"],
+    get percent() {
+      const p = bootStagePercent(state.stages);
+      if (p > shownPercent) shownPercent = p;
+      return shownPercent;
+    },
     standby() {
       if (state.phase === "loading") return;
       token += 1;
@@ -129,6 +143,7 @@ export function getBootLoadingStore(): BootLoadingStore {
       state.projectName = projectName;
       state.error = "";
       resetStages();
+      shownPercent = 0;
       startedAt = Date.now();
     },
     activate(id) {
@@ -139,9 +154,15 @@ export function getBootLoadingStore(): BootLoadingStore {
     progress(id, done, total) {
       if (state.phase !== "loading") return;
       const s = stageOf(id);
-      s.status = "active";
+      // 已收尾的阶段不再被后续汇报拉回进行中：同一场景可能被两条装载路径
+      // 先后装载（挂载期自身装载 + 交接补装载），重复汇报若把 done 改回
+      // active，该阶段折算值会从 1 掉到 n/N×0.95，进度条随即回滚。
+      if (s.status === "done" || s.status === "failed") return;
+      // 先记计量再置 active：避免出现「active 但 total 仍为 0」的中间态
+      // （该中间态在折算口径里等于无计量进度，取值偏高）
       s.done = done;
       s.total = total;
+      s.status = "active";
     },
     complete(id) {
       if (state.phase !== "loading") return;
