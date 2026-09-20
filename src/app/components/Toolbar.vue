@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getEditorStore, type ViewMode } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { dispatchCommand } from "../commands";
 import { isTauri } from "../../lib/tauri-env";
 import WindowControls from "../../ui-kit/components/WindowControls.vue";
+import LanShareDialog from "./lan/LanShareDialog.vue";
 import "../../styles/components/toolbar.scss";
 
 const store = getEditorStore();
@@ -33,6 +34,14 @@ const VIEW_TABS: { key: ViewMode; label: string; title: string }[] = [
 const projectName = computed(() => projectStore.projectName ?? "未命名项目");
 /** 编辑器是否有未保存修改（保存按钮标记点） */
 const editorDirty = computed(() => store.dirty());
+
+/** 网页预览共享弹层：把 <项目>/.tmp/web-preview 按引用共享到局域网（源目录变化即时可见） */
+const shareOpen = ref(false);
+/** 预览产物目录与来源键（后端 canonicalize 前先判目录存在，报错带引导） */
+const previewDir = computed(() =>
+  projectStore.currentPath ? `${projectStore.currentPath}/.tmp/web-preview` : "",
+);
+const shareSource = computed(() => `web-preview:${projectStore.currentPath ?? ""}`);
 
 function setViewMode(mode: ViewMode): void {
   store.setViewMode(mode);
@@ -101,6 +110,14 @@ function onDragDblClick(e: MouseEvent): void {
     </div>
 
     <button
+      :disabled="!projectStore.currentPath"
+      title="共享网页预览：把预览产物发布到局域网，手机扫码打开（需先在「预览」页签生成过网页预览）"
+      @click="shareOpen = true"
+    >
+      共享
+    </button>
+
+    <button
       :disabled="!state.canUndo"
       @click="dispatchCommand('editor.undo')"
       title="撤销上一次场景修改"
@@ -120,5 +137,15 @@ function onDragDblClick(e: MouseEvent): void {
 
     <!-- 窗口控制按钮（合并自独立标题栏） -->
     <WindowControls />
+
+    <!-- 共享网页预览：目录引用（按需读盘，预览刷新后无需重新发布） -->
+    <LanShareDialog
+      :open="shareOpen"
+      kind="folder"
+      :source="shareSource"
+      :default-title="`${projectName} · 网页预览`"
+      :dir="previewDir"
+      @close="shareOpen = false"
+    />
   </div>
 </template>

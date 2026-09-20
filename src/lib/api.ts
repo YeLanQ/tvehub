@@ -327,6 +327,9 @@ export const api = {
   /** 发布托管站点（整站覆盖写；files 为「相对路径 → 文本内容」） */
   lanSharePublishSite: (req: LanPublishSiteRequest) =>
     invoke<LanShareStatus>("lan_share_publish_site", { req }),
+  /** 按引用共享一个外部目录（不复制文件，源目录变化即时可见） */
+  lanShareAddDir: (req: LanAddDirRequest) =>
+    invoke<LanShareStatus>("lan_share_add_dir", { req }),
   /** 启停单条共享（停用后直链 404，记录与文件保留） */
   lanShareSetEnabled: (id: string, enabled: boolean) =>
     invoke<LanShareStatus>("lan_share_set_enabled", { id, enabled }),
@@ -473,6 +476,17 @@ export interface LanPublishSiteRequest {
   entry?: string | null;
   files: Record<string, string>;
   /** 已有托管共享 id：传入则原地更新 */
+  shareId?: string | null;
+}
+
+/** 按引用共享外部目录请求 */
+export interface LanAddDirRequest {
+  title: string;
+  note?: string;
+  dir: string;
+  /** 来源标识（稳定业务键）：同一来源再次发布即原地更新；缺省用目录绝对路径 */
+  source?: string;
+  entry?: string | null;
   shareId?: string | null;
 }
 

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 /**
- * 发布/分享弹层：把一组「相对路径 → 文本内容」的产物发布成局域网站点，并给出二维码。
+ * 发布/分享弹层：把产物发布成局域网站点，并给出二维码。
  *
- * 调用方只提供产物本身（白板传自包含放映页，其它场景传网页产物），
+ * 两种产物形态（调用方二选一）：
+ * - 托管站点（传 build）：一组「相对路径 → 文本内容」整站覆盖写（白板放映页等文本产物）；
+ * - 目录引用（传 dir）：直接共享一个外部目录，不复制文件，源目录一变访问者刷新即见
+ *   （网页预览这类按需读盘、含二进制的产物）。
+ *
  * 发布、更新、停用、删除与二维码展示都在这里统一处理——各处「共享」入口行为一致。
- *
  * 已存在同来源共享时整个弹层切换成「已共享」形态：显示直链与二维码，
  * 主按钮变成「更新分享内容」，另给停用/重新启用入口。
  * 刻意不放删除：销毁共享属于管理动作，统一在首页「共享」分区的列表里做（带二次确认），
@@ -14,6 +17,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import LanQrCode from "./LanQrCode.vue";
 import {
+  addLanDirShare,
   findShareBySource,
   humanSize,
   lanShare,
@@ -29,14 +33,16 @@ import "../../../styles/components/lan-share-dialog.scss";
 const props = withDefaults(
   defineProps<{
     open: boolean;
-    /** 产物类型（whiteboard / site） */
+    /** 产物类型（whiteboard / site / folder） */
     kind: string;
     /** 来源标识：同一来源再次发布即原地更新 */
     source: string;
     /** 默认标题（首次发布时预填） */
     defaultTitle: string;
-    /** 产物构建：返回「相对路径 → 文本内容」；标题/备注可参与产物内容 */
-    build: (opts: { title: string; note: string }) => Record<string, string>;
+    /** 托管站点模式：产物构建，返回「相对路径 → 文本内容」；标题/备注可参与产物内容 */
+    build?: (opts: { title: string; note: string }) => Record<string, string>;
+    /** 目录引用模式：要共享的目录（绝对路径），源目录变化即时可见 */
+    dir?: string;
     /** 入口文件（默认 index.html） */
     entry?: string;
     /** 产物规模提示（如「3 个图层 · 1280×720」） */
@@ -59,12 +65,20 @@ const sizeError = ref("");
 const existing = computed(() => findShareBySource(props.source));
 const link = computed(() => (existing.value ? shareLink(lanShare.status, existing.value.id) : ""));
 const busy = computed(() => pending.value || lanShare.busy);
+/** 目录引用模式（传了 dir 即按引用共享，不走产物构建） */
+const isDir = computed(() => !!props.dir);
 
 /** 预演构建：拿到产物并算出体积（同时暴露构建错误，避免发布时才失败） */
 function preview(): void {
   sizeError.value = "";
-  if (props.disabled) {
+  // 目录引用不复制内容，没有体积可算（源目录变化即时可见）
+  if (props.disabled || isDir.value) {
     size.value = 0;
+    return;
+  }
+  if (!props.build) {
+    size.value = 0;
+    sizeError.value = "未提供分享内容";
     return;
   }
   try {
@@ -117,7 +131,30 @@ watch(
 watch([title, note], schedulePreview);
 
 async function publish(): Promise<void> {
-  if (props.disabled) return;
+  // 目录引用模式：登记目录、源目录变化即时可见（预览刷新后无需重新发布）
+  if (isDir.value) {
+    pending.value = true;
+    try {
+      await addLanDirShare({
+        title: title.value.trim() || props.defaultTitle,
+        note: note.value,
+        dir: props.dir!,
+        source: props.source,
+        entry: props.entry,
+        shareId: existing.value?.id ?? null,
+      });
+      toastOk(existing.value ? "分享内容已更新" : "已开始共享，扫码即可打开");
+    } catch (e) {
+      toastErr(`发布失败：${e}`);
+    } finally {
+      pending.value = false;
+    }
+    return;
+  }
+  if (!props.build) {
+    toastErr("未提供分享内容");
+    return;
+  }
   let files: Record<string, string>;
   try {
     files = props.build({ title: title.value.trim() || props.defaultTitle, note: note.value });
@@ -195,6 +232,7 @@ async function openInBrowser(): Promise<void> {
 
             <div class="lan-dialog-summary">
               <span v-if="disabled">当前没有可分享的内容</span>
+              <span v-else-if="isDir">按引用共享：源目录一变，访问者刷新即见最新内容</span>
               <span v-else-if="sizeError">{{ sizeError }}</span>
               <span v-else>
                 将发布 {{ humanSize(size) }} 内容
@@ -203,8 +241,11 @@ async function openInBrowser(): Promise<void> {
             </div>
 
             <p class="lan-dialog-tip">
-              发布后局域网内设备可凭链接或二维码打开；再次点击「更新分享内容」会覆盖上一次的产物。
-              服务走明文 HTTP，请只在可信网络中使用。
+              {{
+                isDir
+                  ? "发布后局域网内设备可凭链接或二维码打开；源目录内容更新后无需重新发布，访问者刷新页面即见最新。服务走明文 HTTP，请只在可信网络中使用。"
+                  : "发布后局域网内设备可凭链接或二维码打开；再次点击「更新分享内容」会覆盖上一次的产物。服务走明文 HTTP，请只在可信网络中使用。"
+              }}
             </p>
 
             <div class="lan-dialog-actions">

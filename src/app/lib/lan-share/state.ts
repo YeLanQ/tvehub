@@ -10,6 +10,7 @@
 import { reactive } from "vue";
 import { api } from "../../../lib/api";
 import type {
+  LanAddDirRequest,
   LanPublishSiteRequest,
   LanShareConfigPatch,
   LanShareEntry,
@@ -71,6 +72,11 @@ export async function setLanShareEnabled(enabled: boolean): Promise<LanShareStat
 /** 发布托管站点（白板放映页 / 网页产物） */
 export async function publishLanSite(req: LanPublishSiteRequest): Promise<LanShareStatus> {
   return run(() => api.lanSharePublishSite(req));
+}
+
+/** 按引用共享外部目录（源目录变化即时可见，无需重复发布） */
+export async function addLanDirShare(req: LanAddDirRequest): Promise<LanShareStatus> {
+  return run(() => api.lanShareAddDir(req));
 }
 
 /** 启停单条共享 */

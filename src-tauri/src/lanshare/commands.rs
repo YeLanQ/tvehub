@@ -7,7 +7,7 @@
 //! 地址探测（要起进程读网卡）一律在持锁之前做，不在临界区里做慢操作。
 use super::config::LanShareConfigPatch;
 use super::net::{self, LanNetInfo};
-use super::share::{self, PublishSiteRequest};
+use super::share::{self, AddDirRequest, PublishSiteRequest};
 use super::{
     config, ensure_loaded, ensure_running, status, stop_running, LanShareState, LanShareStatus,
 };
@@ -128,6 +128,26 @@ pub async fn lan_share_publish_site(
     {
         let mut shares = inner.shares.lock().map_err(|_| "清单锁失效".to_string())?;
         share::publish_site(&app, &mut shares, req)?;
+        share::save(&app, &shares)?;
+    }
+    ensure_running(&app, &mut inner)?;
+    Ok(status(&inner, &addresses))
+}
+
+/// 按引用共享一个外部目录（网页预览这类按需读盘、含二进制的产物走这条）：
+/// 不复制文件，源目录一变访问者立即可见。
+#[tauri::command]
+pub async fn lan_share_add_dir(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LanShareState>,
+    req: AddDirRequest,
+) -> Result<LanShareStatus, String> {
+    ensure_loaded(&app, &state)?;
+    let addresses = net::addresses_info();
+    let mut inner = state.lock()?;
+    {
+        let mut shares = inner.shares.lock().map_err(|_| "清单锁失效".to_string())?;
+        share::add_dir(&mut shares, req)?;
         share::save(&app, &shares)?;
     }
     ensure_running(&app, &mut inner)?;
