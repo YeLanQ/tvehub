@@ -45,12 +45,21 @@ function fetchRuntimeText(rel: string): Promise<string> {
   let p = runtimeTextCache.get(rel);
   if (!p) {
     const url = rel.startsWith("engine/") ? `/${rel}` : `/web-preview/${rel}`;
-    p = fetch(url).then((res) => {
+    p = fetch(url).then(async (res) => {
       if (!res.ok) {
         runtimeTextCache.delete(rel); // 失败不缓存，下次重试
         throw new Error(`读取网页运行时失败: ${url} (${res.status})`);
       }
-      return res.text();
+      const text = await res.text();
+      // dev 服务器对缺失文件按 SPA 兜底返回 index.html（状态仍是 200）：
+      // public/engine 为纯构建产物目录（首次构建前/再生窗口可能缺文件），
+      // 若不拦截会把 HTML 当模块文本内联成 blob → SyntaxError: Unexpected token '<'。
+      // 报错不入缓存，构建补齐后自动恢复。
+      if (/^\s*<(!doctype|html)/i.test(text)) {
+        runtimeTextCache.delete(rel);
+        throw new Error(`读取网页运行时失败: ${url} 返回 HTML 兜底页（运行时文件缺失，请等待构建完成或重启编辑器）`);
+      }
+      return text;
     });
     runtimeTextCache.set(rel, p);
   }
