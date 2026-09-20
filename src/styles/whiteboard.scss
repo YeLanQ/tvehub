@@ -221,11 +221,18 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    // ui-kit 全局 button 的 4px 11px 内边距会把 34px 宽的内容区压到 12px，
+    // 声明 18px 的图标被 flex 收缩成 12×12（比设计小 1/3）；清零并禁止收缩
+    padding: 0;
     color: var(--text-dim);
     background: transparent;
     border: none;
     border-radius: 6px;
     cursor: pointer;
+
+    svg {
+      flex: none;
+    }
 
     &:hover {
       color: var(--text);
