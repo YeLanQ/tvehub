@@ -19,7 +19,7 @@ importers:
         version: 4.5.0
       '@gltf-transform/functions':
         specifier: ^4.5.0
-        version: 4.5.0
+        version: 4.5.0(@types/node@26.6.2)
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -66,12 +66,15 @@ importers:
       '@types/draco3dgltf':
         specifier: ^1.4.3
         version: 1.4.3
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
       '@types/three':
         specifier: ^0.185.4
         version: 0.185.4
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
-        version: 5.2.4(vite@6.4.3(sass@1.103.1))(vue@3.5.42(typescript@5.6.2))
+        version: 5.2.4(vite@6.4.3(@types/node@26.6.2)(sass@1.103.1))(vue@3.5.42(typescript@5.6.2))
       meshoptimizer:
         specifier: ^1.2.0
         version: 1.2.0
@@ -80,7 +83,7 @@ importers:
         version: 1.103.1
       vite:
         specifier: ^6.0.3
-        version: 6.4.3(sass@1.103.1)
+        version: 6.4.3(@types/node@26.6.2)(sass@1.103.1)
       vue-tsc:
         specifier: ^2.1.10
         version: 2.2.12(typescript@5.6.2)
@@ -767,6 +770,9 @@ packages:
   '@types/ndarray@1.1.0':
     resolution: {integrity: sha512-go+C6vHBUuO9jH6Tj6qEZ63JEGoMSxFdmd+6QAtthGD6xumBfIz3RbNDDs2aoRVLf9naH8lk5jnWy2UHHKgYQQ==}
 
+  '@types/node@26.6.2':
+    resolution: {integrity: sha512-X1P21scMv4zGKLYqjdGjaKa7COa0RKVYYZZN/NfvLQ1JegxFhdhpZG/Lyn8AXx6CDUavKAd11v6BvfpkDByK8g==}
+
   '@types/stats.js@0.17.4':
     resolution: {integrity: sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA==}
 
@@ -1102,6 +1108,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
+
   uniq@1.0.1:
     resolution: {integrity: sha512-Gw+zz50YNKPDKXs+9d+aKAjVwpjNwqzvNpLigIruT4HA9lMZNdMqs9x07kKHB/L9WRzqp4+DlTU5s4wG2esdoA==}
 
@@ -1284,14 +1293,14 @@ snapshots:
       '@gltf-transform/core': 4.5.0
       ktx-parse: 1.1.0
 
-  '@gltf-transform/functions@4.5.0':
+  '@gltf-transform/functions@4.5.0(@types/node@26.6.2)':
     dependencies:
       '@gltf-transform/core': 4.5.0
       '@gltf-transform/extensions': 4.5.0
       ktx-parse: 1.1.0
       ndarray: 1.1.1
       ndarray-lanczos: 0.3.0
-      ndarray-pixels: 5.2.0
+      ndarray-pixels: 5.2.0(@types/node@26.6.2)
     transitivePeerDependencies:
       - '@types/node'
 
@@ -1603,6 +1612,10 @@ snapshots:
 
   '@types/ndarray@1.1.0': {}
 
+  '@types/node@26.6.2':
+    dependencies:
+      undici-types: 8.9.0
+
   '@types/stats.js@0.17.4': {}
 
   '@types/three@0.185.4':
@@ -1618,9 +1631,9 @@ snapshots:
 
   '@types/webxr@0.5.24': {}
 
-  '@vitejs/plugin-vue@5.2.4(vite@6.4.3(sass@1.103.1))(vue@3.5.42(typescript@5.6.2))':
+  '@vitejs/plugin-vue@5.2.4(vite@6.4.3(@types/node@26.6.2)(sass@1.103.1))(vue@3.5.42(typescript@5.6.2))':
     dependencies:
-      vite: 6.4.3(sass@1.103.1)
+      vite: 6.4.3(@types/node@26.6.2)(sass@1.103.1)
       vue: 3.5.42(typescript@5.6.2)
 
   '@volar/language-core@2.4.15':
@@ -1912,12 +1925,12 @@ snapshots:
     dependencies:
       cwise-compiler: 1.1.3
 
-  ndarray-pixels@5.2.0:
+  ndarray-pixels@5.2.0(@types/node@26.6.2):
     dependencies:
       '@types/ndarray': 1.1.0
       ndarray: 1.1.1
       ndarray-ops: 1.2.2
-      sharp: 0.35.4
+      sharp: 0.35.4(@types/node@26.6.2)
     transitivePeerDependencies:
       - '@types/node'
 
@@ -1987,7 +2000,7 @@ snapshots:
 
   semver@7.8.5: {}
 
-  sharp@0.35.4:
+  sharp@0.35.4(@types/node@26.6.2):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -2018,6 +2031,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.4
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
+      '@types/node': 26.6.2
 
   source-map-js@1.2.1: {}
 
@@ -2033,9 +2047,11 @@ snapshots:
 
   typescript@5.6.2: {}
 
+  undici-types@8.9.0: {}
+
   uniq@1.0.1: {}
 
-  vite@6.4.3(sass@1.103.1):
+  vite@6.4.3(@types/node@26.6.2)(sass@1.103.1):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.7)
@@ -2044,6 +2060,7 @@ snapshots:
       rollup: 4.63.1
       tinyglobby: 0.2.17
     optionalDependencies:
+      '@types/node': 26.6.2
       fsevents: 2.3.3
       sass: 1.103.1
 

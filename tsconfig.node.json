@@ -4,7 +4,15 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+
+    /* vite.config.ts 是 node 侧脚本：不补 target/lib/types 时默认落到 ES5 + 无 node
+       全局，单独编译会撒一堆与代码无关的报错（__dirname、String#includes、Promise）。 */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "allowJs": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "scripts/**/*.mjs"]
 }
