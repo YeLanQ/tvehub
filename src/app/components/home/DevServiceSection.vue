@@ -19,6 +19,7 @@ import {
   sanitizeMcpName,
 } from "../../lib/devtools/state";
 import { startDevTools, stopDevTools } from "../../lib/devtools";
+import { toastWarn, toastErr } from "../../lib/toast";
 import {
   groupDevToolsTools,
   mcpEndpointOf,
@@ -95,7 +96,7 @@ async function toggleDevService(e: Event): Promise<void> {
   const on = (e.target as HTMLInputElement).checked;
   if (!inTauri) {
     (e.target as HTMLInputElement).checked = false;
-    alert("开发者服务控制服务器仅桌面端可用");
+    toastWarn("开发者服务控制服务器仅桌面端可用");
     return;
   }
   devSvcBusy.value = true;
@@ -104,7 +105,7 @@ async function toggleDevService(e: Event): Promise<void> {
     else await stopDevTools();
   } catch (err) {
     devtools.enabled = false;
-    alert(`开发者服务启动失败：${err}`);
+    toastErr(`开发者服务启动失败：${err}`);
   } finally {
     devSvcBusy.value = false;
   }

@@ -40,6 +40,7 @@ import {
   type GVarDataType,
   type ScriptGraphDoc,
 } from "../framework/graph";
+import { toast, type ToastLevel } from "../ui-kit/composables/toast";
 
 /** 画布桥：GraphCanvas 挂载时注册，宿主 UI 经此驱动画布能力 */
 export interface GraphCanvasBridge {
@@ -92,7 +93,6 @@ interface GraphWindowStore {
   readonly projectName: string;
   readonly snapToGrid: boolean;
   readonly centerMode: "graph" | "preview";
-  readonly notice: string;
   readonly modal: GraphModalState;
   readonly hierarchy: HierarchyRowDto[];
   readonly hierarchySearch: string;
@@ -125,7 +125,8 @@ interface GraphWindowStore {
   handleFsChanged(paths: string[]): Promise<void>;
   askText(title: string, label: string, value?: string): Promise<string | null>;
   askConfirm(title: string, label: string, danger?: boolean): Promise<boolean>;
-  showToast(text: string): void;
+  /** 气泡提示（统一走 ui-kit 全局气泡，level 决定配色） */
+  showToast(text: string, level?: ToastLevel): void;
   /** 卸载前冲刷未落盘的图会话 */
   flushGraph(): Promise<void>;
   /** 当前会话 → 带 formatVersion/模块指纹的完整导出文档（预览导出与侧车同源） */
@@ -162,7 +163,6 @@ export function getGraphWindowStore(): GraphWindowStore {
     projectName: "",
     snapToGrid: true,
     centerMode: "graph" as "graph" | "preview",
-    notice: "",
     modal: {
       open: false,
       title: "",
@@ -184,7 +184,6 @@ export function getGraphWindowStore(): GraphWindowStore {
     graphCustomNodes: [] as GCustomNodeDef[],
   });
 
-  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   let sceneWatchInstalled = false;
   let sceneDebounce: ReturnType<typeof setTimeout> | null = null;
   /** 脚本 @property schema 解析缓存（rel → 进行中/已完成的解析 Promise） */
@@ -196,12 +195,8 @@ export function getGraphWindowStore(): GraphWindowStore {
   /** 会话图（画布权威；store 持有引用供侧车保存与预览导出） */
   let graphDoc: ScriptGraphDoc = { nodes: [], edges: [], comments: [] };
 
-  function showToastNow(text: string): void {
-    state.notice = text;
-    if (noticeTimer) clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => {
-      state.notice = "";
-    }, 4000);
+  function showToastNow(text: string, level: ToastLevel = "info"): void {
+    toast(level, text);
   }
 
   /** 图节点引用的模块指纹（注册表归属快照；装载方据此校验模块可用性） */
@@ -236,7 +231,7 @@ export function getGraphWindowStore(): GraphWindowStore {
       state.graphDirty = false;
       state.lastSavedAt = new Date().toLocaleTimeString();
     } catch (e) {
-      showToastNow(`场景图自动保存失败: ${e}`);
+      showToastNow(`场景图自动保存失败: ${e}`, "err");
     }
   }
 
@@ -285,7 +280,7 @@ export function getGraphWindowStore(): GraphWindowStore {
       state.hierarchy = r.rows;
     } catch (e) {
       state.hierarchy = [];
-      showToastNow(`场景会话不可用（项目可能还没有场景）: ${e}`);
+      showToastNow(`场景会话不可用（项目可能还没有场景）: ${e}`, "warn");
     }
   }
 
@@ -318,9 +313,6 @@ export function getGraphWindowStore(): GraphWindowStore {
     },
     get centerMode() {
       return state.centerMode;
-    },
-    get notice() {
-      return state.notice;
     },
     get modal() {
       return state.modal;
@@ -456,7 +448,7 @@ export function getGraphWindowStore(): GraphWindowStore {
       try {
         await sceneApi.open(root, rel);
       } catch (e) {
-        showToastNow(`打开场景失败: ${e}`);
+        showToastNow(`打开场景失败: ${e}`, "err");
         return;
       }
       if (token !== sceneToken) return;
@@ -482,7 +474,7 @@ export function getGraphWindowStore(): GraphWindowStore {
       state.graphCustomNodes = graphDoc.customNodes ?? [];
       registerCustomNodeDefs(state.graphCustomNodes);
       store.canvas?.loadDoc(graphDoc);
-      showToastNow(`已打开场景 ${rel}`);
+      showToastNow(`已打开场景 ${rel}`, "ok");
     },
 
     async ensureSceneSession() {
@@ -538,8 +530,8 @@ export function getGraphWindowStore(): GraphWindowStore {
       });
     },
 
-    showToast(text) {
-      showToastNow(text);
+    showToast(text, level = "info") {
+      showToastNow(text, level);
     },
 
     async flushGraph() {

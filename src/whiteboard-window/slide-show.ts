@@ -112,7 +112,7 @@ function transitionTo(next: number, dir: 1 | -1): void {
 export function slideStart(): void {
   const pages = slideDeck();
   if (!pages.length) {
-    store.showNotice("没有可见图层，无法放映");
+    store.showNotice("没有可见图层，无法放映", "warn");
     return;
   }
   const activeIdx = pages.findIndex((p) => p.id === store.state.activeLayerId);

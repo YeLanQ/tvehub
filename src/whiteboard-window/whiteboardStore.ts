@@ -27,6 +27,7 @@ import {
   type SvgLayer,
   type SvgTool,
 } from "./svg-doc";
+import { toast, type ToastLevel } from "../ui-kit/composables/toast";
 
 const HISTORY_LIMIT = 100;
 
@@ -41,7 +42,6 @@ export interface WhiteboardState {
   degraded: boolean;
   loading: boolean;
   dirty: boolean;
-  notice: string;
   /** 打开的白板文件名（null = 未保存的新文档） */
   currentFile: string | null;
   /** 新文档的保存文件名（保存后固定进 currentFile） */
@@ -87,7 +87,8 @@ export interface WhiteboardStore {
   patchLayer(id: string, patch: Partial<SvgLayer>, label: string): void;
   moveLayer(id: string, towardTop: boolean): void;
   save(): Promise<void>;
-  showNotice(text: string): void;
+  /** 气泡提示（统一走 ui-kit 全局气泡，level 决定配色） */
+  showNotice(text: string, level?: ToastLevel): void;
 }
 
 let singleton: WhiteboardStore | null = null;
@@ -99,7 +100,6 @@ export function getWhiteboardStore(): WhiteboardStore {
   const redoStack: HistoryEntry[] = [];
   /** 进行中批量的起始快照（拖拽/连续输入期间置位，settle 时入栈） */
   let pendingSnap: string | null = null;
-  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   const initialDoc = newDoc(1280, 720);
   const state = reactive<WhiteboardState>({
@@ -108,7 +108,6 @@ export function getWhiteboardStore(): WhiteboardStore {
     degraded: false,
     loading: false,
     dirty: false,
-    notice: "",
     currentFile: null,
     saveName: "未命名.svg",
     selectedId: null,
@@ -133,12 +132,8 @@ export function getWhiteboardStore(): WhiteboardStore {
     syncTitle();
   }
 
-  function showNotice(text: string): void {
-    state.notice = text;
-    if (noticeTimer) clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => {
-      state.notice = "";
-    }, 4000);
+  function showNotice(text: string, level: ToastLevel = "info"): void {
+    toast(level, text);
   }
 
   function clearHistory(): void {
@@ -167,7 +162,7 @@ export function getWhiteboardStore(): WhiteboardStore {
 
     async loadFile(name) {
       if (!isTauri()) {
-        showNotice("浏览器预览无法读取白板文件");
+        showNotice("浏览器预览无法读取白板文件", "warn");
         return;
       }
       state.loading = true;
@@ -180,9 +175,9 @@ export function getWhiteboardStore(): WhiteboardStore {
         state.selectedId = null;
         state.activeLayerId = doc.layers[doc.layers.length - 1]?.id ?? null;
         clearHistory();
-        if (warning) showNotice(warning);
+        if (warning) showNotice(warning, "warn");
       } catch (e) {
-        showNotice(`打开白板失败：${e}`);
+        showNotice(`打开白板失败：${e}`, "err");
       } finally {
         state.loading = false;
       }
@@ -292,7 +287,7 @@ export function getWhiteboardStore(): WhiteboardStore {
       if (!el) return;
       const layer = state.doc.layers.find((l) => l.id === el.layerId);
       if (layer?.locked) {
-        showNotice("所在图层已锁定，无法删除");
+        showNotice("所在图层已锁定，无法删除", "warn");
         return;
       }
       store.commit("删除元素", () => {
@@ -344,7 +339,7 @@ export function getWhiteboardStore(): WhiteboardStore {
 
     removeLayer(id) {
       if (state.doc.layers.length <= 1) {
-        showNotice("至少保留一个图层");
+        showNotice("至少保留一个图层", "warn");
         return;
       }
       store.commit("删除图层", () => {
@@ -392,12 +387,12 @@ export function getWhiteboardStore(): WhiteboardStore {
 
     async save() {
       if (!isTauri()) {
-        showNotice("浏览器预览无法保存白板");
+        showNotice("浏览器预览无法保存白板", "warn");
         return;
       }
       const raw = currentFileName().trim();
       if (!raw) {
-        showNotice("文件名无效");
+        showNotice("文件名无效", "warn");
         return;
       }
       const name = raw.toLowerCase().endsWith(".svg") ? raw : `${raw}.svg`;
@@ -409,9 +404,9 @@ export function getWhiteboardStore(): WhiteboardStore {
         // 元数据时间戳（首页时间轴排序依据）
         await bumpWhiteboardMeta(name).catch(() => {});
         void emit("tve:whiteboard-saved", { name }).catch(() => {});
-        showNotice(`已保存 ${name}`);
+        showNotice(`已保存 ${name}`, "ok");
       } catch (e) {
-        showNotice(`保存失败：${e}`);
+        showNotice(`保存失败：${e}`, "err");
       }
       syncTitle();
     },

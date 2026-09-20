@@ -222,7 +222,7 @@ function createTargetOk(): boolean {
   const id = activeLayerId();
   const layer = store.state.doc.layers.find((l) => l.id === id);
   if (!layer || layer.locked) {
-    store.showNotice(layer?.locked ? "活动图层已锁定，请先解锁" : "请先选择一个图层");
+    store.showNotice(layer?.locked ? "活动图层已锁定，请先解锁" : "请先选择一个图层", "warn");
     return false;
   }
   return true;

@@ -13,6 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import WindowControls from "../ui-kit/components/WindowControls.vue";
 import Slider from "../ui-kit/components/Slider.vue";
 import ContextMenu from "../ui-kit/components/ContextMenu.vue";
+import ToastHost from "../ui-kit/components/ToastHost.vue";
 import { isTauri } from "../lib/tauri-env";
 import { isEditingText } from "../app/commands/context";
 import { groupResolutionPresets, matchResolutionPreset } from "../app/lib/project-settings";
@@ -442,9 +443,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 状态条 -->
+      <!-- 状态条（气泡提示走 ui-kit 全局宿主，不再占用状态条） -->
       <footer class="sv-status">
-        <span class="sv-status-notice">{{ store.state.notice }}</span>
         <span class="sv-flex"></span>
         <span class="sv-status-hint">{{ toolHint }}</span>
         <span class="mono">
@@ -455,5 +455,7 @@ onUnmounted(() => {
 
       <!-- ui-kit 上下文菜单宿主（幻灯片页码列表等浮层挂载点） -->
       <ContextMenu />
+      <!-- 全局气泡通知（白板窗口独立挂载：提示统一走这里） -->
+      <ToastHost />
   </div>
 </template>

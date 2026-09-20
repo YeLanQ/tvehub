@@ -1,5 +1,6 @@
 export { default as ComponentCard } from "./components/ComponentCard.vue";
 export { default as ConfirmDialog } from "./components/ConfirmDialog.vue";
+export { default as ToastHost } from "./components/ToastHost.vue";
 export { default as PromptDialog } from "./components/PromptDialog.vue";
 export { default as NumberField } from "./components/NumberField.vue";
 export { default as ContextMenu } from "./components/ContextMenu.vue";
@@ -14,6 +15,22 @@ export {
   type ConfirmOptions,
   type ConfirmState,
 } from "./composables/confirm";
+
+export {
+  toasts,
+  toast,
+  toastOk,
+  toastInfo,
+  toastWarn,
+  toastErr,
+  dismiss,
+  dismissAll,
+  leave,
+  type ToastLevel,
+  type ToastItem,
+  type ToastAction,
+  type ToastOptions,
+} from "./composables/toast";
 
 export {
   prompt,

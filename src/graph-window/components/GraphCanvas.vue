@@ -271,7 +271,7 @@ function putNode(n: GNode): void {
 function addProto(entityId: string, at?: { x: number; y: number }): void {
   if (!entityId) return;
   if (nodes.value.some((n) => (n.data?.g as GNode | undefined)?.entityId === entityId)) {
-    store.showToast("该实体已在图中");
+    store.showToast("该实体已在图中", "warn");
     return;
   }
   requestSnapshot();
@@ -579,12 +579,15 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
   if (!source || source.type !== "entity.proto") return;
   const entity = store.sceneEntities.find((e) => e.id === source.entityId);
   if (!entity || entity.logic?.kind !== wantKind) {
-    store.showToast(isFsm ? "作用域需接入携带 .fsm 的状态机原型卡" : "作用域需接入携带 .bt 的行为树原型卡");
+    store.showToast(
+      isFsm ? "作用域需接入携带 .fsm 的状态机原型卡" : "作用域需接入携带 .bt 的行为树原型卡",
+      "warn",
+    );
     return;
   }
   const asset = entity.logic.asset;
   if (!asset) {
-    store.showToast(`该原型未绑定 .${wantKind} 资产，容器无法读取`);
+    store.showToast(`该原型未绑定 .${wantKind} 资产，容器无法读取`, "warn");
     return;
   }
   const root = store.root;
@@ -598,7 +601,7 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
         .map((s) => (typeof s.name === "string" ? s.name.trim() : ""))
         .filter(Boolean);
       if (!names.length) {
-        store.showToast("状态机资产内没有状态");
+        store.showToast("状态机资产内没有状态", "warn");
         return;
       }
       const entryState = (graph.states ?? []).find((s) => s.id === graph.entry)?.name ?? "";
@@ -606,7 +609,7 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
       container.params.states = names.join(",");
       container.params.initial = names.includes(entryState) ? entryState : names[0];
       store.markGraphDirty();
-      store.showToast(`状态机容器已读取状态：${names.join(" / ")}`);
+      store.showToast(`状态机容器已读取状态：${names.join(" / ")}`, "ok");
       return;
     }
     // bt.container：模式取树根类型；统计树节点构成写入摘要 chips
@@ -622,7 +625,7 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
     };
     walk(tree);
     if (!total) {
-      store.showToast("行为树资产内没有节点");
+      store.showToast("行为树资产内没有节点", "warn");
       return;
     }
     const rootType = typeof tree.type === "string" ? tree.type : "sequence";
@@ -630,9 +633,9 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
     container.params.mode = rootType;
     container.params.treeSummary = `${total} 节点 · ${[...counts.entries()].map(([t, c]) => `${t}×${c}`).join("、")}`;
     store.markGraphDirty();
-    store.showToast(`行为树容器已读取资产：${total} 个节点`);
+    store.showToast(`行为树容器已读取资产：${total} 个节点`, "ok");
   } catch (e) {
-    store.showToast(`读取逻辑资产失败: ${e}`);
+    store.showToast(`读取逻辑资产失败: ${e}`, "err");
   }
 }
 

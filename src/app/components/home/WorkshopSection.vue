@@ -10,6 +10,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm } from "../../lib/confirm";
+import { toastWarn, toastErr } from "../../lib/toast";
 import { isTauri } from "../../../lib/tauri-env";
 import {
   cachedRepoCategories,
@@ -113,11 +114,11 @@ async function saveProtoForm(): Promise<void> {
   if (!cat || !ext) return;
   const name = protoForm.name.trim();
   if (!name) {
-    alert("请填写原型名称");
+    toastWarn("请填写原型名称");
     return;
   }
   if (!protoForm.code.trim()) {
-    alert("请填写原型内容");
+    toastWarn("请填写原型内容");
     return;
   }
   const file = `${name}.${ext}`;
@@ -129,7 +130,7 @@ async function saveProtoForm(): Promise<void> {
       await deleteRepoFile(cat.id, protoForm.editingId);
     }
   } catch (e) {
-    alert(`保存失败：${e}`);
+    toastErr(`保存失败：${e}`);
     return;
   }
   protoForm.open = false;
@@ -153,7 +154,7 @@ async function removeProtoFile(f: RepoFile): Promise<void> {
   try {
     await deleteRepoFile(cat.id, f.file);
   } catch (e) {
-    alert(`删除失败：${e}`);
+    toastErr(`删除失败：${e}`);
     return;
   }
   await refreshRepos();
@@ -166,7 +167,7 @@ async function openCategoryDir(): Promise<void> {
   try {
     await revealItemInDir(cat.dir);
   } catch (e) {
-    alert(`打开目录失败：${e}`);
+    toastErr(`打开目录失败：${e}`);
   }
 }
 

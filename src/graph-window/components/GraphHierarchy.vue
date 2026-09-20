@@ -148,8 +148,8 @@ function addToCanvas(id: string): void {
 function copyName(name: string): void {
   void navigator.clipboard
     .writeText(name)
-    .then(() => store.showToast(`已复制实体名: ${name}`))
-    .catch(() => store.showToast("复制失败"));
+    .then(() => store.showToast(`已复制实体名: ${name}`, "ok"))
+    .catch(() => store.showToast("复制失败", "err"));
 }
 
 function onRowContext(e: MouseEvent, id: string, name: string): void {

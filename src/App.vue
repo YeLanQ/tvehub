@@ -18,6 +18,7 @@ import AssetsPanel from "./app/components/AssetsPanel.vue";
 import AnimationEditorPanel from "./app/components/AnimationEditorPanel.vue";
 import ConfirmDialog from "./app/components/ConfirmDialog.vue";
 import PromptDialog from "./app/components/PromptDialog.vue";
+import ToastHost from "./app/components/ToastHost.vue";
 import DracoCompressDialog from "./app/components/DracoCompressDialog.vue";
 import FsmEditorDialog from "./app/components/logic/FsmEditorDialog.vue";
 import BtEditorDialog from "./app/components/logic/BtEditorDialog.vue";
@@ -230,6 +231,8 @@ onUnmounted(() => {
       <ConfirmDialog />
       <!-- 全局输入弹窗 -->
       <PromptDialog />
+      <!-- 全局气泡通知（统一提示通道） -->
+      <ToastHost />
       <!-- Draco 压缩参数弹窗 -->
       <DracoCompressDialog />
       <!-- 逻辑资产可视化编辑器弹窗（状态机 / 行为树；双击资产或右键「打开编辑器」） -->

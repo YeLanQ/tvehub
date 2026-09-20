@@ -16,6 +16,7 @@ import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import PromptDialog from "./PromptDialog.vue";
+import ToastHost from "./ToastHost.vue";
 import TitleBar from "../../ui-kit/components/TitleBar.vue";
 import ProjectsSection from "./home/ProjectsSection.vue";
 import TemplatesSection from "./home/TemplatesSection.vue";
@@ -28,6 +29,7 @@ import { isTauri } from "../../lib/tauri-env";
 import { handoffToWindow } from "../lib/window-handoff";
 import { syncDevToolsStatus } from "../lib/devtools";
 import { syncPermsFromBackend } from "../lib/devtools/state";
+import { toastOk, toastErr } from "../lib/toast";
 
 const projectStore = getProjectStore();
 
@@ -62,14 +64,9 @@ function closeDocsViewer(): void {
   docsViewerSrc.value = "";
 }
 
-/** 复制提示（2 秒消失） */
-const showCopyToast = ref(false);
-let copyToastTimer: ReturnType<typeof setTimeout> | null = null;
-/** 弹出复制提示（触发点是开发者服务分区的端点/配置复制） */
+/** 复制提示（开发者服务分区的端点/配置复制触发） */
 function showCopiedTip(): void {
-  showCopyToast.value = true;
-  if (copyToastTimer) clearTimeout(copyToastTimer);
-  copyToastTimer = setTimeout(() => (showCopyToast.value = false), 2000);
+  toastOk("已复制到剪贴板");
 }
 
 onMounted(() => {
@@ -123,7 +120,7 @@ async function handoffToEditor(): Promise<void> {
     );
   } catch (e) {
     console.error("切换到编辑器窗口失败:", e);
-    alert("切换到编辑器窗口失败：" + e);
+    toastErr("切换到编辑器窗口失败：" + e);
   }
 }
 
@@ -245,11 +242,6 @@ watch(showNewProject, (val) => {
       </main>
     </div>
 
-    <!-- 复制成功提示（开发者服务·端点/配置复制） -->
-    <Transition name="fade">
-      <div v-if="showCopyToast" class="copy-toast">已复制到剪贴板</div>
-    </Transition>
-
     <!-- 内嵌文档查看器（public/docs 静态页） -->
     <Transition name="fade">
       <div v-if="showDocsViewer" class="docs-viewer-backdrop" @click.self="closeDocsViewer">
@@ -271,6 +263,8 @@ watch(showNewProject, (val) => {
     <ConfirmDialog />
     <!-- 全局输入弹窗（首页窗口独立挂载：重命名项目等 prompt 依赖它） -->
     <PromptDialog />
+    <!-- 全局气泡通知（首页窗口独立挂载：提示统一走这里） -->
+    <ToastHost />
 
     <NewProjectDialog
       v-if="showNewProject"

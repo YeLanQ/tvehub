@@ -13,6 +13,7 @@
 import { nextTick, onMounted, onUnmounted, type Component } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import ContextMenu from "../ui-kit/components/ContextMenu.vue";
+import ToastHost from "../ui-kit/components/ToastHost.vue";
 import WindowControls from "../ui-kit/components/WindowControls.vue";
 import { isTauri } from "../lib/tauri-env";
 import { isEditingText } from "../app/commands/context";
@@ -43,7 +44,6 @@ import "@vue-flow/minimap/dist/style.css";
 import "@vue-flow/node-resizer/dist/style.css";
 
 const store = getGraphWindowStore();
-const win = getCurrentWindow();
 const inTauri = isTauri();
 
 /** 工具栏空白区域 mousedown：启动窗口原生拖拽 */
@@ -51,7 +51,9 @@ function onDragDown(e: MouseEvent): void {
   if (!inTauri || e.button !== 0) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, .project-info, .tool-switch")) return;
-  void win.startDragging();
+  // 窗口句柄惰性获取：浏览器直开 graph.html 时 getCurrentWindow() 会抛错，
+  // setup 里缓存会让整个组件挂不上，连降级提示都渲染不出来。
+  void getCurrentWindow().startDragging();
 }
 
 /** 双击工具栏空白区域切换最大化 */
@@ -59,7 +61,7 @@ function onDragDblClick(e: MouseEvent): void {
   if (!inTauri) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, .project-info, .tool-switch")) return;
-  void win.toggleMaximize();
+  void getCurrentWindow().toggleMaximize();
 }
 
 
@@ -258,11 +260,10 @@ onUnmounted(() => {
         ></div>
         <DockZone :sys="graphDocks" :panels="PANEL_COMP" zone="bottom" />
 
-        <!-- 状态条 -->
+        <!-- 状态条（气泡提示走 ui-kit 全局宿主，不再占用状态条） -->
         <footer class="gstatus">
           <span class="gstatus-rel">{{ store.sceneEntities.length }} 个实体 · {{ store.sceneRel }}</span>
           <span class="gflex"></span>
-          <span class="gnotice">{{ store.notice }}</span>
         </footer>
       </div>
 
@@ -274,5 +275,8 @@ onUnmounted(() => {
       <GraphModal />
       <ContextMenu />
     </template>
+
+    <!-- 全局气泡通知（图窗口独立挂载；置于分支之外：任何窗口形态下都在） -->
+    <ToastHost />
   </div>
 </template>

@@ -20,6 +20,7 @@ import {
   removeWhiteboardMeta,
   type WhiteboardMetaEntry,
 } from "../../../whiteboard-window/whiteboard-meta";
+import { toastOk, toastWarn, toastErr } from "../../lib/toast";
 import "../../../styles/components/whiteboard-section.scss";
 
 interface WbItem {
@@ -32,7 +33,6 @@ const items = ref<WbItem[]>([]);
 const previews = ref<Record<string, string>>({});
 const loading = ref(false);
 const errorText = ref("");
-const notice = ref("");
 const search = ref("");
 const filterTag = ref("");
 const showArchived = ref(false);
@@ -40,15 +40,8 @@ const showArchived = ref(false);
 const editingName = ref("");
 const tagDraft = ref("");
 
-let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let unlistenSaved: UnlistenFn | null = null;
 let unlistenMeta: UnlistenFn | null = null;
-
-function showNotice(text: string): void {
-  notice.value = text;
-  if (noticeTimer) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => (notice.value = ""), 4000);
-}
 
 /** 列出全局白板文件 + 预览（data URL）+ 元数据（缺失自动登记） */
 async function refresh(): Promise<void> {
@@ -89,7 +82,7 @@ async function refresh(): Promise<void> {
 /** 打开白板窗口（单例）：name 非空 = 打开指定文件；null = 新建/聚焦 */
 async function openWhiteboard(name: string | null): Promise<void> {
   if (!isTauri()) {
-    showNotice("白板窗口需在桌面端使用（浏览器预览无窗口系统）");
+    toastWarn("白板窗口需在桌面端使用（浏览器预览无窗口系统）");
     return;
   }
   try {
@@ -97,7 +90,7 @@ async function openWhiteboard(name: string | null): Promise<void> {
     // 窗口已存在时热直达（冷启动时事件丢失，由待打开状态兜底）
     if (name) void emit("tve:whiteboard-open", { name }).catch(() => {});
   } catch (e) {
-    showNotice(`打开白板失败: ${e}`);
+    toastErr(`打开白板失败: ${e}`);
   }
 }
 
@@ -195,9 +188,9 @@ async function deleteWhiteboard(name: string): Promise<void> {
     await api.whiteboardDelete(name);
     await removeWhiteboardMeta(name);
     await refresh();
-    showNotice(`已删除 ${name}`);
+    toastOk(`已删除 ${name}`);
   } catch (e) {
-    showNotice(`删除失败：${e}`);
+    toastErr(`删除失败：${e}`);
   }
 }
 
@@ -221,7 +214,6 @@ onUnmounted(() => {
   unlistenSaved = null;
   unlistenMeta?.();
   unlistenMeta = null;
-  if (noticeTimer) clearTimeout(noticeTimer);
 });
 </script>
 
@@ -248,8 +240,6 @@ onUnmounted(() => {
         </button>
       </div>
     </div>
-
-    <div v-if="notice" class="wb-notice">{{ notice }}</div>
 
     <!-- 筛选：标签 chips（搜索已移至页头） -->
     <div v-if="allTags.length" class="wb-filters">

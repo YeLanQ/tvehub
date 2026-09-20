@@ -14,6 +14,7 @@ import { getProjectStore, type RecentProject } from "../../stores/project";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm } from "../../lib/confirm";
 import { prompt } from "../../lib/prompt";
+import { toastErr } from "../../lib/toast";
 import { api } from "../../../lib/api";
 import { openScriptGraphWindow } from "../../lib/graph-launch";
 
@@ -46,7 +47,7 @@ async function openProject(project: RecentProject | string) {
   const success = await projectStore.openProject(path);
   busy.value = false;
   if (!success) {
-    alert("打开项目失败");
+    toastErr("打开项目失败");
     return;
   }
   emit("opened");
@@ -93,7 +94,7 @@ async function trashProject(path: string, name: string) {
     await api.trashPath(path);
   } catch (e) {
     console.error("移入回收站失败:", e);
-    alert("移入回收站失败");
+    toastErr("移入回收站失败");
     return;
   }
   // 移入回收站后同步清除后端最近记录（尽力而为；避免旧路径残留、系统回收站恢复后复活）
