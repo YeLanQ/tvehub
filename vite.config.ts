@@ -132,9 +132,12 @@ function templateIndexPlugin(): Plugin {
 }
 
 // 运行时自动编译插件（dev）：web 运行时的生成模块（public/engine 下 AUTO-GENERATED
-// 文件，单一事实源在 src/runtime + src/framework）在开发服务器启动时先编译一次
-// （产物已入库，缺省也能直接服务），并监听源目录变化防抖重建。构建期由 build 链
-// 的第一步 node scripts/build-runtime.mjs 负责。
+// 文件，单一事实源在 src/runtime + src/framework；src/runtime/extra 的外部资产
+// 不入库、由拷贝步骤补齐）在开发服务器启动时先构建一次，并监听源目录变化防抖重建。
+// 构建期由 build 链的第一步 node scripts/build-runtime.mjs 负责。
+// 注意：本插件必须排在 templateIndexPlugin 之前——dev 的 configureServer 按插件顺序
+// 执行，运行产物清单（generateWebPreviewFiles）扫描 public/engine，需先由本插件把
+// extra 资产拷出，干净检出首次启动的清单才完整。
 const RUNTIME_SRC_ROOTS = ["src/runtime", "src/framework"];
 
 function runtimeBuildPlugin(): Plugin {
@@ -172,7 +175,7 @@ function runtimeBuildPlugin(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue(), templateIndexPlugin(), runtimeBuildPlugin()],
+  plugins: [vue(), runtimeBuildPlugin(), templateIndexPlugin()],
 
   // 应用显示版本（编译期常量，见 appDisplayVersion）
   define: {

@@ -28,3 +28,9 @@ dist-ssr
 # smoke test build output
 .tmp-smoke
 .tmp*
+
+# public/engine 中由 src/runtime/extra 构建期拷出的外部资产（不入库，构建自动再生）
+public/engine/runtime/physics-engines/
+public/engine/runtime/loaders/basis/
+public/engine/runtime/loaders/draco/draco_decoder.wasm
+public/engine/runtime/loaders/draco/draco_wasm_wrapper.js
