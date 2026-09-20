@@ -10,7 +10,7 @@ import { num, D2R } from "./utils";
 
 /**
  * 灯光阴影参数置位：
- * 贴图分辨率（点光 1024 / 其余 2048；three 只在首次渲染前按 mapSize 分配贴图）、
+ * 贴图分辨率（点光 1024 / 其余 4096；three 只在首次渲染前按 mapSize 分配贴图）、
  * 浓度（shadow.intensity）、深度偏移；法线偏移 ≤0 = 自动（交给运行时贴合按纹素
  * 相对化）；近裁剪面对点光/聚光灯直接生效（平行光的阴影相机由运行时按场景包围盒
  * 后推后合成 near，这里不写）。配置留档在 light.userData.shadowCfg 供贴合读取。
@@ -32,8 +32,8 @@ export function applyLightShadow(light, s) {
   light.shadow.camera.layers.mask = light.layers.mask;
   if (light.castShadow !== true) return;
   const isPoint = light.isPointLight === true;
-  // 显式分辨率档位优先；0 = 自动（平面 2048 / 点光 1024，立方体贴图 ×6 开销降档）
-  const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 2048;
+  // 显式分辨率档位优先；0 = 自动（平面 4096 / 点光 1024，立方体贴图 ×6 开销降档）
+  const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 4096;
   light.shadow.mapSize.set(size, size);
   light.shadow.intensity = cfg.strength;
   light.shadow.bias = cfg.bias;

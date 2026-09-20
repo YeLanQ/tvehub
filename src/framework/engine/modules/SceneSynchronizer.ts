@@ -251,7 +251,10 @@ function outlineGeometryFrom(
 
 // —— 阴影（点光/平行光/聚光灯）——
 /** 法线偏移自动档（单位为阴影贴图纹素）：范围越大纹素越粗，固定偏移会变麻点/飘影 */
-const SHADOW_NORMAL_BIAS_TEXELS = 1.2;
+// 自动法线偏移的纹素倍数：掠射光（光源与对象齐平）下受光面的深度斜率大，
+// 1.2 纹素压不住自阴影，会呈「百叶窗」条纹（拖动光源时纹素网格扫过表面）；
+// 3 纹素可覆盖常见掠射角，代价是阴影边缘轻微内缩（peter-panning 可忽略）
+const SHADOW_NORMAL_BIAS_TEXELS = 3;
 /** 阴影相机重算节拍（帧）：场景随时在变，写死的范围会把阴影裁掉，按节拍惰性贴合 */
 const SHADOW_REFIT_INTERVAL = 20;
 /** 有阴影能力的 three 灯光（点光=立方体贴图 / 平行光=正交 / 聚光灯=透视） */
@@ -1075,13 +1078,43 @@ export class SceneSynchronizer {
       // near = 场景起点（alongFinal − reach）+ 用户近裁剪面（Near Plane：比这更近的物体不参与投影）
       cam.near = Math.max(alongFinal - reach + cfg.near, 0.01);
       cam.far = Math.max(alongFinal + reach, cam.near + 0.1);
-      cam.left = -reach;
-      cam.right = reach;
-      cam.top = reach;
-      cam.bottom = -reach;
+      // 正交范围沿灯光右/上轴做紧凑投影（8 个包围盒角落 → 灯光轴），比包围球
+      // 半径的方形范围显著收紧——同分辨率下纹素更细，阴影边缘锯齿更轻
+      _shadowOrigin.setFromMatrixPosition(light.matrixWorld);
+      const e = light.matrixWorld.elements;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (
+        const [cx, cy, cz] of [
+          [bounds.min.x, bounds.min.y, bounds.min.z],
+          [bounds.max.x, bounds.min.y, bounds.min.z],
+          [bounds.min.x, bounds.max.y, bounds.min.z],
+          [bounds.max.x, bounds.max.y, bounds.min.z],
+          [bounds.min.x, bounds.min.y, bounds.max.z],
+          [bounds.max.x, bounds.min.y, bounds.max.z],
+          [bounds.min.x, bounds.max.y, bounds.max.z],
+          [bounds.max.x, bounds.max.y, bounds.max.z],
+        ] as const
+      ) {
+        const dx = cx - _shadowOrigin.x;
+        const dy = cy - _shadowOrigin.y;
+        const dz = cz - _shadowOrigin.z;
+        const px = dx * e[0] + dy * e[1] + dz * e[2];
+        const py = dx * e[4] + dy * e[5] + dz * e[6];
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+      cam.left = minX;
+      cam.right = maxX;
+      cam.top = maxY;
+      cam.bottom = minY;
       // three 的平行光阴影矩阵不会自动重建投影矩阵（参数变了必须显式更新）
       cam.updateProjectionMatrix();
-      autoBiasExtent = reach * 2;
+      autoBiasExtent = Math.max(maxX - minX, maxY - minY);
     }
 
     // 法线偏移自动档（用户未设时）：按阴影贴图纹素相对化 —— 范围越大纹素越粗，

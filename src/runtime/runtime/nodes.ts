@@ -194,7 +194,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
 
   /**
    * 灯光阴影参数置位（与编辑器 SceneSynchronizer 同一语义）：
-   * 贴图分辨率（点光 1024 / 其余 2048；three 只在首次渲染前按 mapSize 分配贴图）、
+   * 贴图分辨率（点光 1024 / 其余 4096；three 只在首次渲染前按 mapSize 分配贴图）、
    * 浓度（shadow.intensity）、深度偏移、法线偏移（≤0 = 自动，交给 player 的贴合逻辑）、
    * 近裁剪面（平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）。
    * 配置留档在 light.userData.shadowCfg 供 player 贴合时读取。
@@ -217,8 +217,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
     light.shadow.camera.layers.mask = light.layers.mask;
     if (light.castShadow !== true) return;
     const isPoint = light.isPointLight === true;
-    // 显式分辨率档位优先；0 = 自动（平面 2048 / 点光 1024，立方体贴图 ×6 开销降档）
-    const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 2048;
+    // 显式分辨率档位优先；0 = 自动（平面 4096 / 点光 1024，立方体贴图 ×6 开销降档）
+    const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 4096;
     light.shadow.mapSize.set(size, size);
     light.shadow.intensity = cfg.strength;
     light.shadow.bias = cfg.bias;

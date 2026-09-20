@@ -67,6 +67,7 @@ export const WEB_PREVIEW_RUNTIME_FILES: string[] = [
   "engine/runtime/resource.mjs",
   "engine/runtime/shader.mjs",
   "engine/runtime/shaderHooks.mjs",
+  "engine/runtime/shadow.mjs",
   "engine/runtime/sky.mjs",
   "engine/runtime/stage.mjs",
   "engine/runtime/terrain.mjs",

@@ -36,6 +36,7 @@ import { applyMeshTextures, loadImageTex } from "../engine/runtime/textures.mjs"
 import { tickShaderTime, setNodeMaterialBackend } from "../engine/runtime/mesh.mjs";
 import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createRenderer, createStage, recreateWebGLRendererPreserveBuffer } from "../engine/runtime/stage.mjs";
+import { refitShadowCameras } from "../engine/runtime/shadow.mjs";
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
 import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
@@ -904,6 +905,9 @@ async function main() {
     scripts.lateUpdate(dt);
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
+    // 阴影相机贴合（每 20 帧节拍；首次立即）：范围贴合场景包围盒 + 兑现自动
+    // normalBias——没有这一步，受光面会出现整面自阴影条纹（shadow acne）
+    refitShadowCameras(scene);
     // UI 相机叠加：画布根贴合渲染相机（相机位姿回填之后）
     uiApi.update(cam);
     applyClearFlags();
