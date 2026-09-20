@@ -5,12 +5,14 @@
  * 顶部标题栏（文件 + 保存 + 撤销重做 + 动画播放 + 窗口控制，可拖拽移动窗口）、
  * 工具条（绘制工具 + 视图适应）、中央画布 + 右侧面板（图层/属性/动画）、
  * 底部状态条。快捷键：V/R/O/L/P/B/T 切工具、Delete 删除、Ctrl+Z/Y 撤销重做、
- * Ctrl+S 保存、Enter 结束钢笔（开放路径）、Esc 取消（文本焦点时让位）。
+ * Ctrl+S 保存、Enter 结束钢笔（开放路径）、Esc 取消（文本焦点时让位）；
+ * 幻灯片放映中：←/→（含 ↑/↓、PageUp/PageDown）翻页、Esc 退出放映。
  */
 import { nextTick, computed, onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import WindowControls from "../ui-kit/components/WindowControls.vue";
 import Slider from "../ui-kit/components/Slider.vue";
+import ContextMenu from "../ui-kit/components/ContextMenu.vue";
 import { isTauri } from "../lib/tauri-env";
 import { isEditingText } from "../app/commands/context";
 import { groupResolutionPresets, matchResolutionPreset } from "../app/lib/project-settings";
@@ -25,10 +27,14 @@ import { TOOL_ICONS, type ToolIconKey } from "./tool-icons";
 import WhiteboardStage from "./components/WhiteboardStage.vue";
 import WhiteboardLayersPanel from "./components/WhiteboardLayersPanel.vue";
 import WhiteboardPropsPanel from "./components/WhiteboardPropsPanel.vue";
+import WhiteboardSlideBar from "./components/WhiteboardSlideBar.vue";
+import { slideGo, slideShow, slideStop } from "./slide-show";
 
 const store = getWhiteboardStore();
 const inTauri = isTauri();
 const stageRef = ref<InstanceType<typeof WhiteboardStage> | null>(null);
+/** 幻灯片放映态（快捷键分支与状态条提示读它） */
+const slide = slideShow();
 
 
 // ---------------------------------------------------------------------------
@@ -161,8 +167,9 @@ function applyCustomSize(): void {
   fitStage();
 }
 
-/** 状态条操作提示（随工具切换） */
+/** 状态条操作提示（放映中最优先，其次随工具切换） */
 const toolHint = computed(() => {
+  if (slide.active) return "放映中：← → 翻页 · Esc 退出";
   switch (store.state.tool) {
     case "pen":
       return "单击=直角点 · 拖拽=曲线 · Enter 结束 · 双击闭合";
@@ -213,6 +220,19 @@ function onKeydown(e: KeyboardEvent): void {
     return;
   }
   if (isEditingText()) return;
+  // 放映中：方向键/翻页键切页、Esc 退出；其余编辑快捷键整体让位
+  if (slide.active) {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown") {
+      e.preventDefault();
+      slideGo(1);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp") {
+      e.preventDefault();
+      slideGo(-1);
+    } else if (e.key === "Escape") {
+      slideStop();
+    }
+    return;
+  }
   const k = e.key.toLowerCase();
   const toolKeys: Record<string, "select" | "rect" | "ellipse" | "line" | "pencil" | "pen" | "text"> = {
     v: "select", r: "rect", o: "ellipse", l: "line", p: "pencil", b: "pen", t: "text",
@@ -321,6 +341,10 @@ onUnmounted(() => {
       <div class="sv-main">
         <div class="sv-stage-wrap">
           <WhiteboardStage ref="stageRef" />
+
+          <!-- 幻灯片浮动工具（画布左下角）：图层当页播放 -->
+          <WhiteboardSlideBar />
+
           <!-- 浮动工具条：画布底部居中悬浮，SVG 图标按钮 -->
           <div class="sv-float-stack">
             <!-- 线条粗细滑动条（直线/铅笔/钢笔工具时显示） -->
@@ -428,5 +452,8 @@ onUnmounted(() => {
           {{ store.state.doc.w }}×{{ store.state.doc.h }}
         </span>
       </footer>
+
+      <!-- ui-kit 上下文菜单宿主（幻灯片页码列表等浮层挂载点） -->
+      <ContextMenu />
   </div>
 </template>

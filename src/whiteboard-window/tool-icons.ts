@@ -28,9 +28,16 @@ export const TOOL_ICONS: Record<ToolIconKey, string> = {
   fit: `<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>`,
 };
 
+/** 幻灯片浮动工具：放映/停止、上一页/下一页、设置行展开/收起 */
+export const PLAY_ICON = `<polygon points="6 4 20 12 6 20 6 4"/>`;
+export const STOP_ICON = `<rect x="6" y="6" width="12" height="12" rx="1.5"/>`;
+export const PREV_ICON = `<polygon points="17 5 8 12 17 19 17 5"/><line x1="5" y1="5" x2="5" y2="19"/>`;
+export const NEXT_ICON = `<polygon points="7 5 16 12 7 19 7 5"/><line x1="19" y1="5" x2="19" y2="19"/>`;
+export const CHEVRON_UP_ICON = `<path d="M6 15l6-6 6 6"/>`;
+export const CHEVRON_DOWN_ICON = `<path d="M6 9l6 6 6-6"/>`;
+
 /** 图层面板：眼睛（可见）/ 带斜线的眼睛（隐藏）、锁 / 开锁 */
-export const EYE_ICON = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
-export const EYE_OFF_ICON = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>`;
+export const EYE_ICON = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;export const EYE_OFF_ICON = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>`;
 export const LOCK_ICON = `<rect x="4.5" y="11" width="15" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>`;
 export const UNLOCK_ICON = `<rect x="4.5" y="11" width="15" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.83-1.3"/>`;
 

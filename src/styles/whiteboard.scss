@@ -247,6 +247,311 @@
 }
 
 // ---------------------------------------------------------------------------
+// 幻灯片浮动工具（画布左下角）：放映开关 + 翻页 + 切换方式/间隔/驱动方式
+// ---------------------------------------------------------------------------
+.sv-slide-bar {
+  position: absolute;
+  left: 14px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(28, 28, 28, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  z-index: 12;
+
+  .sv-slide-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  // 放映开关：主操作，占位比图标按钮宽
+  .sv-slide-play {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--btn);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--btn-hover);
+    }
+
+    &.active {
+      color: #fff;
+      background: #4a9eff;
+      border-color: #4a9eff;
+    }
+
+    svg {
+      flex: none;
+    }
+  }
+
+  .sv-slide-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 3px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .sv-slide-btn {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    // ui-kit 全局 button 有 4px 11px 内边距：图标按钮必须清零，否则内容区只剩 2px，
+    // SVG 作为 flex 子项会被压成一条竖线（图标看起来像消失）
+    padding: 0;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+
+    svg {
+      flex: none;
+    }
+
+    &:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    &:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+  }
+
+  .sv-slide-count {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    max-width: 150px;
+    padding: 3px 5px;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+
+    &:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    b {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    // 当前页图层名：长了截断（完整名在 title 里）
+    i {
+      max-width: 92px;
+      overflow: hidden;
+      font-style: normal;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .sv-slide-fold {
+    width: 24px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0; // 同上：清零全局内边距，保住图标宽度
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+
+    svg {
+      flex: none;
+    }
+
+    &:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+  }
+
+  .sv-slide-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+
+    select,
+    input {
+      padding: 3px 5px;
+      font-size: 11px;
+      color: var(--text);
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      user-select: text;
+
+      &:focus {
+        outline: none;
+        border-color: var(--text-dim);
+      }
+
+      &:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+    }
+
+    input {
+      width: 42px;
+    }
+
+    .sv-slide-unit {
+      margin-left: -2px;
+    }
+  }
+
+  .sv-slide-modes {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 3px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .sv-slide-mode {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    &.active {
+      color: var(--text);
+      background: var(--bg-active);
+    }
+
+    // 事件控制：占位项（禁用 + 角标），不参与当前交互
+    &.sv-slide-mode-todo {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.5;
+      cursor: default;
+
+      .sv-slide-todo {
+        padding: 0 3px;
+        font-size: 9px;
+        color: var(--warn);
+        border: 1px solid rgba(217, 161, 59, 0.45);
+        border-radius: 3px;
+      }
+    }
+  }
+
+  &.collapsed {
+    padding: 4px 6px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 幻灯片切页动画：位移量由画布下发（--sv-dx/--sv-dy = 画板宽/高，方向带符号），
+// 时长同 --sv-slide-dur（与 slide-show.ts 的 SLIDE_DURATION_MS 一致）。
+// 推入：新页从右/下进、旧页向左/上出；渐隐：交叉淡入淡出；
+// 层叠：旧页原地缩小变暗垫到下面，新页从侧边压上来（与推入的区别就在旧页不动、只「下沉」）。
+// ---------------------------------------------------------------------------
+@keyframes sv-slide-in-x {
+  from { transform: translate(var(--sv-dx, 100%), 0); }
+  to { transform: translate(0, 0); }
+}
+@keyframes sv-slide-out-x {
+  from { transform: translate(0, 0); }
+  to { transform: translate(calc(-1 * var(--sv-dx, 100%)), 0); }
+}
+@keyframes sv-slide-in-y {
+  from { transform: translate(0, var(--sv-dy, 100%)); }
+  to { transform: translate(0, 0); }
+}
+@keyframes sv-slide-out-y {
+  from { transform: translate(0, 0); }
+  to { transform: translate(0, calc(-1 * var(--sv-dy, 100%))); }
+}
+@keyframes sv-slide-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sv-slide-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes sv-slide-stack-out {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.9); opacity: 0.45; }
+}
+
+.sv-svg {
+  .sv-slide-in-x,
+  .sv-slide-out-x,
+  .sv-slide-in-y,
+  .sv-slide-out-y,
+  .sv-slide-fade-in,
+  .sv-slide-fade-out,
+  .sv-slide-stack-out {
+    // fill-mode both：动画前后都保持关键帧状态，收尾清 class 即回到常态
+    animation-duration: var(--sv-slide-dur, 520ms);
+    animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+    animation-fill-mode: both;
+  }
+
+  .sv-slide-in-x { animation-name: sv-slide-in-x; }
+  .sv-slide-out-x { animation-name: sv-slide-out-x; }
+  .sv-slide-in-y { animation-name: sv-slide-in-y; }
+  .sv-slide-out-y { animation-name: sv-slide-out-y; }
+  .sv-slide-fade-in { animation-name: sv-slide-fade-in; }
+  .sv-slide-fade-out { animation-name: sv-slide-fade-out; }
+
+  // 下沉围绕自身内容中心，无需位移（层叠里旧页不动位置）
+  .sv-slide-stack-out {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation-name: sv-slide-stack-out;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 主体：画布 + 右侧面板
 // ---------------------------------------------------------------------------
 .sv-main {

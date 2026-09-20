@@ -11,6 +11,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { getWhiteboardStore } from "../whiteboardStore";
 import { whiteboardLayout } from "../layout";
+import { slideDeck, slideShow, SLIDE_DURATION_MS } from "../slide-show";
 import { HANDLE_CURSOR } from "../tool-icons";
 import { toolCursorCss } from "../tool-icons";
 import {
@@ -26,6 +27,7 @@ import {
   roundElCoords,
   type SvgEl,
   type SvgElKind,
+  type SvgLayer,
   type SvgPt,
 } from "../svg-doc";
 
@@ -37,6 +39,8 @@ interface PenNode {
 }
 
 const store = getWhiteboardStore();
+/** 幻灯片放映状态（只读消费：翻页/开关由浮动工具与快捷键触发） */
+const slide = slideShow();
 
 // ---------------------------------------------------------------------------
 // 视口：world → screen = world * z + (view.x, view.y)；viewBox 跟随舞台 CSS 尺寸
@@ -102,12 +106,59 @@ const svgRef = ref<SVGSVGElement | null>(null);
  *  追加在所有 vnode 之后不参与 patch；textContent 更新不转义，CSS 字符安全） */
 let styleNode: SVGStyleElement | null = null;
 
-const layersWithEls = computed(() => {
+/** 图层渲染项：role 为放映中的过渡角色（in = 新页，out = 旧页） */
+interface LayerItem {
+  layer: SvgLayer;
+  els: SvgEl[];
+  role: "in" | "out" | null;
+}
+
+/**
+ * 待渲染图层：常态按可见性平铺；放映中只渲染当前页（+ 过渡中的上一页，先渲染 =
+ * 压在新页下面，层叠切换靠这个顺序让新页盖住旧页）。
+ */
+const layersWithEls = computed<LayerItem[]>(() => {
   const doc = store.state.doc;
-  return doc.layers
-    .filter((l) => l.visible)
-    .map((l) => ({ layer: l, els: doc.els.filter((e) => e.layerId === l.id) }));
+  const elsOf = (layerId: string): SvgEl[] => doc.els.filter((e) => e.layerId === layerId);
+  if (!slide.active) {
+    return doc.layers.filter((l) => l.visible).map((l) => ({ layer: l, els: elsOf(l.id), role: null }));
+  }
+  const pages = slideDeck();
+  const cur = pages[slide.index];
+  if (!cur) return [];
+  const anim = slide.anim;
+  const out = anim ? pages.find((p) => p.id === anim.fromId) : undefined;
+  const items: LayerItem[] = [];
+  if (out && out.id !== cur.id) items.push({ layer: out, els: elsOf(out.id), role: "out" });
+  items.push({ layer: cur, els: elsOf(cur.id), role: "in" });
+  return items;
 });
+
+/** 放映切页动画的 class（无在途过渡 = 不挂） */
+function slideLayerClass(item: LayerItem): string | undefined {
+  const anim = slide.anim;
+  if (!anim || !item.role) return undefined;
+  if (anim.kind === "fade") return item.role === "in" ? "sv-slide-fade-in" : "sv-slide-fade-out";
+  if (anim.kind === "stack") {
+    // 层叠：新页从侧边压上来，旧页原地缩小变暗「垫到下面」（不是跟着平移，那样与推入无区别）
+    return item.role === "in" ? "sv-slide-in-x" : "sv-slide-stack-out";
+  }
+  const axis = anim.kind === "pushY" ? "y" : "x";
+  return item.role === "in" ? `sv-slide-in-${axis}` : `sv-slide-out-${axis}`;
+}
+
+/** 图层 <g> 的内联样式：锁定层与放映态都不接指针事件；切页位移量按画板尺寸下发 */
+function slideLayerStyle(item: LayerItem): Record<string, string> {
+  const st: Record<string, string> = {};
+  if (item.layer.locked || slide.active) st["pointer-events"] = "none";
+  const anim = slide.anim;
+  if (anim && item.role) {
+    st["--sv-dx"] = `${anim.dir * store.state.doc.w}px`;
+    st["--sv-dy"] = `${anim.dir * store.state.doc.h}px`;
+    st["--sv-slide-dur"] = `${SLIDE_DURATION_MS}ms`;
+  }
+  return st;
+}
 
 const dashAttr = (el: SvgEl): string | undefined =>
   el.style.dash > 0 ? String(el.style.dash) : undefined;
@@ -219,6 +270,8 @@ function onBgDown(e: PointerEvent): void {
     return;
   }
   if (e.button !== 0) return;
+  // 放映中只保留平移（上面已处理）：避免误画/误选，画布交给翻页与讲解
+  if (slide.active) return;
   const tool = store.state.tool;
   if (tool === "select") {
     store.selectEl(null);
@@ -838,14 +891,16 @@ onBeforeUnmount(() => {
           fill="#ffffff" stroke="rgba(255,255,255,0.25)"
         />
 
-        <!-- 图层（锁定层 pointer-events:none，点击落到画板 = 取消选中） -->
+        <!-- 图层（锁定层 pointer-events:none，点击落到画板 = 取消选中；放映中只渲染
+             当前页与过渡中的上一页，切页动画挂在图层 <g> 上） -->
         <g
-          v-for="{ layer, els } in layersWithEls"
-          :key="layer.id"
-          :opacity="layer.opacity < 1 ? layer.opacity : undefined"
-          :style="layer.locked ? 'pointer-events:none' : ''"
+          v-for="item in layersWithEls"
+          :key="item.layer.id"
+          :class="slideLayerClass(item)"
+          :opacity="item.layer.opacity < 1 ? item.layer.opacity : undefined"
+          :style="slideLayerStyle(item)"
         >
-          <template v-for="el in els" :key="el.id">
+          <template v-for="el in item.els" :key="el.id">
             <rect
               v-if="el.kind === 'rect'"
               :x="el.x" :y="el.y" :width="el.w" :height="el.h"
@@ -957,8 +1012,8 @@ onBeforeUnmount(() => {
         </g>
       </g>
 
-      <!-- 选中框 + 控制点（屏幕空间，尺寸不随缩放） -->
-      <g class="sv-overlay">
+      <!-- 选中框 + 控制点（屏幕空间，尺寸不随缩放；放映中不出现编辑控件） -->
+      <g v-if="!slide.active" class="sv-overlay">
         <rect
           v-if="selBox"
           :x="selBox.x" :y="selBox.y" :width="selBox.w" :height="selBox.h"
