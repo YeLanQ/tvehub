@@ -245,11 +245,6 @@ export class UISystem {
    *  静态 UI 每帧零解析——只在标注/结构变化或 gizmo 拖拽时重算） */
   private resolvedRev = new Map<THREE.Object3D, number>();
 
-  /** 布局视图当前缩放（gizmo 手柄尺寸补偿用） */
-  get zoom(): number {
-    return this.viewZoom;
-  }
-
   /**
    * 滚轮缩放（锚点 = 指针处的画布点不动）。
    * 屏幕 UI 点 q = zoom × (c + pan)（q.x = ndc.x×5×aspect，q.y = ndc.y×5，

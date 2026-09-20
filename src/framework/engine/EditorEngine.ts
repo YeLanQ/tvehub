@@ -2947,7 +2947,6 @@ export class EditorEngine {
     if (!ndc) return;
     const factor = Math.exp(-e.deltaY * 0.0015);
     this.uiSystem.zoomAt(factor, ndc.x, ndc.y, this.activeCameraAspect());
-    this.gizmo.setUI2DZoom(this.uiSystem.zoom);
   };
 
   private onLayoutPointerDown = (e: PointerEvent): void => {
