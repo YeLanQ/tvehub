@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 import { reactive } from "vue";
 import { uiStateGet, uiStateSet } from "../lib/ui-state";
+import { DEFAULT_SLIDE_EASING, isEasingOption } from "./easings";
 
 export type WhiteboardSideTab = "layers" | "props";
 
@@ -22,10 +23,11 @@ export interface WhiteboardLayout {
   sideTab: WhiteboardSideTab;
   /** 线条工具（直线/铅笔/钢笔）的线条粗细 */
   toolWidth: number;
-  /** 幻灯片：切换方式 / 驱动方式 / 自动播放间隔（秒）/ 工具条收起态 */
+  /** 幻灯片：切换方式 / 驱动方式 / 自动播放间隔（秒）/ 切换曲线 / 工具条收起态 */
   slideTransition: SlideTransition;
   slideMode: SlideMode;
   slideInterval: number;
+  slideEasing: string;
   slideCollapsed: boolean;
 }
 
@@ -40,6 +42,7 @@ export const whiteboardLayout = reactive<WhiteboardLayout>({
   slideTransition: "pushX",
   slideMode: "manual",
   slideInterval: 3,
+  slideEasing: DEFAULT_SLIDE_EASING,
   slideCollapsed: false,
 });
 
@@ -67,6 +70,7 @@ export function applySavedLayout(saved: Partial<WhiteboardLayout>): void {
   }
   const iv = Number(whiteboardLayout.slideInterval);
   whiteboardLayout.slideInterval = Number.isFinite(iv) ? Math.min(60, Math.max(1, Math.round(iv))) : 3;
+  if (!isEasingOption(whiteboardLayout.slideEasing)) whiteboardLayout.slideEasing = DEFAULT_SLIDE_EASING;
   whiteboardLayout.slideCollapsed = whiteboardLayout.slideCollapsed === true;
   whiteboardLayout.toolWidth = Number.isFinite(Number(whiteboardLayout.toolWidth))
     ? Math.min(24, Math.max(1, Number(whiteboardLayout.toolWidth)))

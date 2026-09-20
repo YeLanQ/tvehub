@@ -11,6 +11,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { getWhiteboardStore } from "../whiteboardStore";
 import { whiteboardLayout } from "../layout";
+import { DEFAULT_SLIDE_EASING } from "../easings";
 import { slideDeck, slideShow, SLIDE_DURATION_MS } from "../slide-show";
 import { HANDLE_CURSOR } from "../tool-icons";
 import { toolCursorCss } from "../tool-icons";
@@ -147,7 +148,7 @@ function slideLayerClass(item: LayerItem): string | undefined {
   return item.role === "in" ? `sv-slide-in-${axis}` : `sv-slide-out-${axis}`;
 }
 
-/** 图层 <g> 的内联样式：锁定层与放映态都不接指针事件；切页位移量按画板尺寸下发 */
+/** 图层 <g> 的内联样式：锁定层与放映态都不接指针事件；切页位移量与曲线按当前设置下发 */
 function slideLayerStyle(item: LayerItem): Record<string, string> {
   const st: Record<string, string> = {};
   if (item.layer.locked || slide.active) st["pointer-events"] = "none";
@@ -156,6 +157,7 @@ function slideLayerStyle(item: LayerItem): Record<string, string> {
     st["--sv-dx"] = `${anim.dir * store.state.doc.w}px`;
     st["--sv-dy"] = `${anim.dir * store.state.doc.h}px`;
     st["--sv-slide-dur"] = `${SLIDE_DURATION_MS}ms`;
+    st["--sv-slide-ease"] = whiteboardLayout.slideEasing || DEFAULT_SLIDE_EASING;
   }
   return st;
 }

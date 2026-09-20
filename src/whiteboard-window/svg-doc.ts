@@ -6,6 +6,8 @@
 //   回读优先解析该属性（无损往返），外部 SVG 走 DOM 遍历兜底（无动画/图层信息降级）。
 // ---------------------------------------------------------------------------
 
+import { DEFAULT_ANIM_EASING } from "./easings";
+
 export type SvgTool =
   | "select"
   | "rect"
@@ -164,7 +166,7 @@ export function newAnim(kind: SvgAnimKind): SvgAnim {
     dur: 2,
     delay: 0,
     repeat: -1,
-    easing: "ease-in-out",
+    easing: DEFAULT_ANIM_EASING,
   };
 }
 

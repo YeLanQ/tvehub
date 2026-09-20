@@ -277,6 +277,13 @@
     gap: 6px;
   }
 
+  // 设置行分组（与首行分离：拆成两行避免横向顶到画布底部居中的浮动工具条）
+  .sv-slide-opts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   // 放映开关：主操作，占位比图标按钮宽
   .sv-slide-play {
     display: inline-flex;
@@ -421,6 +428,11 @@
       border-radius: 4px;
       user-select: text;
 
+      // 窄一点，避免两行设置把工具条撑宽到与画布底部居中的浮动工具条重叠
+      &.sv-slide-select {
+        max-width: 128px;
+      }
+
       &:focus {
         outline: none;
         border-color: var(--text-dim);
@@ -496,7 +508,8 @@
 
 // ---------------------------------------------------------------------------
 // 幻灯片切页动画：位移量由画布下发（--sv-dx/--sv-dy = 画板宽/高，方向带符号），
-// 时长同 --sv-slide-dur（与 slide-show.ts 的 SLIDE_DURATION_MS 一致）。
+// 时长与曲线同样由画布下发（--sv-slide-dur / --sv-slide-ease，来自 slide-show 与
+// whiteboardLayout.slideEasing，曲线表见 easings.ts）；无下发时回落到默认值。
 // 推入：新页从右/下进、旧页向左/上出；渐隐：交叉淡入淡出；
 // 层叠：旧页原地缩小变暗垫到下面，新页从侧边压上来（与推入的区别就在旧页不动、只「下沉」）。
 // ---------------------------------------------------------------------------
@@ -539,7 +552,7 @@
   .sv-slide-stack-out {
     // fill-mode both：动画前后都保持关键帧状态，收尾清 class 即回到常态
     animation-duration: var(--sv-slide-dur, 520ms);
-    animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+    animation-timing-function: var(--sv-slide-ease, cubic-bezier(0.22, 0.61, 0.36, 1));
     animation-fill-mode: both;
   }
 

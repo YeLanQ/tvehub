@@ -9,6 +9,7 @@
  */
 import { computed } from "vue";
 import { openContextMenu } from "../../ui-kit/composables/context-menu";
+import { EASING_OPTIONS } from "../easings";
 import {
   saveWhiteboardLayout,
   whiteboardLayout,
@@ -55,6 +56,11 @@ const MODES: { value: SlideMode; label: string; hint: string }[] = [
 
 function setTransition(ev: Event): void {
   whiteboardLayout.slideTransition = (ev.target as HTMLSelectElement).value as SlideTransition;
+  saveWhiteboardLayout();
+}
+
+function setEasing(ev: Event): void {
+  whiteboardLayout.slideEasing = (ev.target as HTMLSelectElement).value;
   saveWhiteboardLayout();
 }
 
@@ -148,45 +154,57 @@ function openPageList(e: MouseEvent): void {
       </button>
     </div>
 
-    <div v-show="!whiteboardLayout.slideCollapsed" class="sv-slide-row sv-slide-opts">
-      <label class="sv-slide-field" title="切页动画">
-        <span>切换</span>
-        <select :value="whiteboardLayout.slideTransition" @change="setTransition">
-          <option v-for="t in TRANSITIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
-        </select>
-      </label>
+    <!-- 设置行拆成两行：挤在一行会横向顶到画布底部居中的浮动工具条 -->
+    <div v-show="!whiteboardLayout.slideCollapsed" class="sv-slide-opts">
+      <div class="sv-slide-row">
+        <label class="sv-slide-field" title="切页动画">
+          <span>切换</span>
+          <select class="sv-slide-select" :value="whiteboardLayout.slideTransition" @change="setTransition">
+            <option v-for="t in TRANSITIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+        </label>
 
-      <label
-        class="sv-slide-field"
-        :title="whiteboardLayout.slideMode === 'auto' ? '自动播放间隔（秒）' : '切到自动播放后生效'"
-      >
-        <span>间隔</span>
-        <input
-          type="number"
-          min="1"
-          max="60"
-          step="1"
-          :value="whiteboardLayout.slideInterval"
-          :disabled="whiteboardLayout.slideMode !== 'auto'"
-          @change="setIntervalSec"
-        />
-        <span class="sv-slide-unit">s</span>
-      </label>
+        <label class="sv-slide-field" title="切页动画曲线（缓动，与元素动画同一套曲线表）">
+          <span>曲线</span>
+          <select class="sv-slide-select" :value="whiteboardLayout.slideEasing" @change="setEasing">
+            <option v-for="e in EASING_OPTIONS" :key="e.value" :value="e.value">{{ e.label }}</option>
+          </select>
+        </label>
+      </div>
 
-      <div class="sv-slide-modes" role="group" title="驱动方式">
-        <button
-          v-for="m in MODES"
-          :key="m.value"
-          class="sv-slide-mode"
-          :class="{ active: whiteboardLayout.slideMode === m.value }"
-          :title="m.hint"
-          @click="setMode(m.value)"
-        >{{ m.label }}</button>
-        <button
-          class="sv-slide-mode sv-slide-mode-todo"
-          disabled
-          title="事件控制（占位）：待接入逻辑图/外部事件驱动切页，暂未启用"
-        >事件<span class="sv-slide-todo">占位</span></button>
+      <div class="sv-slide-row">
+        <label
+          class="sv-slide-field"
+          :title="whiteboardLayout.slideMode === 'auto' ? '自动播放间隔（秒）' : '切到自动播放后生效'"
+        >
+          <span>间隔</span>
+          <input
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            :value="whiteboardLayout.slideInterval"
+            :disabled="whiteboardLayout.slideMode !== 'auto'"
+            @change="setIntervalSec"
+          />
+          <span class="sv-slide-unit">s</span>
+        </label>
+
+        <div class="sv-slide-modes" role="group" title="驱动方式">
+          <button
+            v-for="m in MODES"
+            :key="m.value"
+            class="sv-slide-mode"
+            :class="{ active: whiteboardLayout.slideMode === m.value }"
+            :title="m.hint"
+            @click="setMode(m.value)"
+          >{{ m.label }}</button>
+          <button
+            class="sv-slide-mode sv-slide-mode-todo"
+            disabled
+            title="事件控制（占位）：待接入逻辑图/外部事件驱动切页，暂未启用"
+          >事件<span class="sv-slide-todo">占位</span></button>
+        </div>
       </div>
     </div>
   </div>
