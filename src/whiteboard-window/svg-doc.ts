@@ -52,8 +52,18 @@ export interface SvgAnim {
 
 export type SvgTextAlign = "left" | "center" | "right";
 
+/** 图片填充适配：cover 填满裁齐 / contain 适应留白 / stretch 拉伸 / tile 平铺 */
+export type SvgFillFit = "cover" | "contain" | "stretch" | "tile";
+
 export interface SvgStyle {
-  fill: string; // "none" 或 #hex
+  fill: string; // "none" 或 #hex；有图片填充时退为衬底色（图片下透出）
+  /** 图片填充：data URL（文档与导出 .svg 均自包含，无外部引用） */
+  fillImage?: string;
+  /** 图片适配方式（缺省 cover） */
+  fillFit?: SvgFillFit;
+  /** 图片原始像素尺寸（选图时记录；tile 模式的铺贴尺寸） */
+  fillImgW?: number;
+  fillImgH?: number;
   stroke: string;
   strokeWidth: number;
   opacity: number; // 0~1 元素透明度
@@ -649,6 +659,40 @@ function escAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+/** 图片填充图案的 id（编辑器画布与导出 SVG 同名同构，fill 以 url(#) 引用） */
+export function fillPatId(elId: string): string {
+  return `tve-pat-${elId}`;
+}
+
+/** 元素实际 fill 值：有图片填充 → 图案引用；零尺寸包围盒上图案无效，退回底色 */
+export function elFillAttr(el: SvgEl): string {
+  if (!el.style.fillImage) return el.style.fill;
+  const b = elBBox(el);
+  if (b.w <= 0 || b.h <= 0) return el.style.fill;
+  return `url(#${fillPatId(el.id)})`;
+}
+
+/**
+ * 图片填充 → <pattern> 定义（挂文档 <defs>）：
+ * - cover/contain/stretch 用 objectBoundingBox 图案（铺满元素包围盒），
+ *   变形交给 image 的 preserveAspectRatio（slice/meet/none）；
+ * - tile 用 userSpaceOnUse 图案按原始像素尺寸铺贴。
+ */
+function patternDef(el: SvgEl): string | null {
+  const href = el.style.fillImage;
+  if (!href) return null;
+  const img = (w: string, h: string, par?: string): string =>
+    `<image href="${escAttr(href)}" xlink:href="${escAttr(href)}" x="0" y="0" width="${w}" height="${h}"${par ? ` preserveAspectRatio="${par}"` : ""}/>`;
+  const fit = el.style.fillFit ?? "cover";
+  if (fit === "tile") {
+    const w = el.style.fillImgW && el.style.fillImgW > 0 ? el.style.fillImgW : 64;
+    const h = el.style.fillImgH && el.style.fillImgH > 0 ? el.style.fillImgH : 64;
+    return `<pattern id="${fillPatId(el.id)}" patternUnits="userSpaceOnUse" width="${num(w)}" height="${num(h)}">${img(num(w), num(h))}</pattern>`;
+  }
+  const par = fit === "stretch" ? "none" : fit === "contain" ? "xMidYMid meet" : "xMidYMid slice";
+  return `<pattern id="${fillPatId(el.id)}" patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" width="1" height="1">${img("1", "1", par)}</pattern>`;
+}
+
 function escText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -660,7 +704,7 @@ export function elToSvg(el: SvgEl): string {
   switch (el.kind) {
     case "rect":
       a.push(`x="${num(el.x)}"`, `y="${num(el.y)}"`, `width="${num(el.w)}"`, `height="${num(el.h)}"`);
-      a.push(`fill="${escAttr(s.fill)}"`);
+      a.push(`fill="${escAttr(elFillAttr(el))}"`);
       if (s.stroke !== "none") a.push(`stroke="${escAttr(s.stroke)}"`, `stroke-width="${num(s.strokeWidth)}"`);
       break;
     case "ellipse":
@@ -670,7 +714,7 @@ export function elToSvg(el: SvgEl): string {
         `rx="${num(Math.max(0, el.w / 2))}"`,
         `ry="${num(Math.max(0, el.h / 2))}"`,
       );
-      a.push(`fill="${escAttr(s.fill)}"`);
+      a.push(`fill="${escAttr(elFillAttr(el))}"`);
       if (s.stroke !== "none") a.push(`stroke="${escAttr(s.stroke)}"`, `stroke-width="${num(s.strokeWidth)}"`);
       break;
     case "line":
@@ -690,7 +734,7 @@ export function elToSvg(el: SvgEl): string {
       break;
     case "path":
       a.push(`d="${escAttr(buildPathD(el))}"`);
-      a.push(`fill="${escAttr(s.fill)}"`);
+      a.push(`fill="${escAttr(elFillAttr(el))}"`);
       if (s.stroke !== "none") {
         a.push(`stroke="${escAttr(s.stroke)}"`, `stroke-width="${num(s.strokeWidth)}"`, `stroke-linejoin="round"`);
       }
@@ -699,7 +743,7 @@ export function elToSvg(el: SvgEl): string {
       a.push(
         `x="${num(el.x)}"`,
         `y="${num(el.y)}"`,
-        `fill="${escAttr(s.fill)}"`,
+        `fill="${escAttr(elFillAttr(el))}"`,
         `font-size="${num(s.fontSize)}"`,
         `font-family="${escAttr(s.fontFamily || DEFAULT_FONT)}"`,
       );
@@ -785,10 +829,12 @@ export function serializeDoc(doc: SvgDoc, playing: boolean): string {
     layers.push(`<g ${attrs.join(" ")}>\n${els.map(elToSvg).join("\n")}\n</g>`);
   }
   const css = buildAnimCss(doc);
+  const defs = doc.els.map(patternDef).filter((d): d is string => !!d).join("\n");
   const docJson = escAttr(JSON.stringify(doc));
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${num(doc.w)}" height="${num(doc.h)}" viewBox="0 0 ${num(doc.w)} ${num(doc.h)}" data-tve-doc="${docJson}"${playing ? "" : ` class="tve-paused"`}>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${num(doc.w)}" height="${num(doc.h)}" viewBox="0 0 ${num(doc.w)} ${num(doc.h)}" data-tve-doc="${docJson}"${playing ? "" : ` class="tve-paused"`}>`,
     css ? `<style>\n${css}\n</style>` : "",
+    defs ? `<defs>\n${defs}\n</defs>` : "",
     ...layers,
     `</svg>`,
   ]
@@ -804,6 +850,9 @@ const nf = (v: string | null, def = 0): number => {
   const n = parseFloat(v ?? "");
   return Number.isFinite(n) ? n : def;
 };
+
+/** 合法图片适配值（sanitize 用） */
+const FILL_FITS: SvgFillFit[] = ["cover", "contain", "stretch", "tile"];
 
 function sanitizeDoc(d: SvgDoc): SvgDoc {
   const doc = d;
@@ -856,6 +905,11 @@ function sanitizeDoc(d: SvgDoc): SvgDoc {
     if (el.kind === "text" && el.style.stroke === DEFAULT_STROKE) el.style.stroke = "none";
     // 旧文件没有字形字段（newStyle 默认即补上）；空串收敛为默认栈，避免面板出现空值
     if (!el.style.fontFamily) el.style.fontFamily = DEFAULT_FONT;
+    // 图片填充字段校验：类型不对/空值剔除，适配值越界回退 cover，尺寸非法剔除
+    if (typeof el.style.fillImage !== "string" || !el.style.fillImage) delete el.style.fillImage;
+    if (el.style.fillFit && !FILL_FITS.includes(el.style.fillFit)) delete el.style.fillFit;
+    if (typeof el.style.fillImgW !== "number" || !(el.style.fillImgW > 0)) delete el.style.fillImgW;
+    if (typeof el.style.fillImgH !== "number" || !(el.style.fillImgH > 0)) delete el.style.fillImgH;
     el.anims = Array.isArray(el.anims)
       ? el.anims.map((a) => ({ ...newAnim(a?.kind ?? "motion"), ...a, id: a?.id || genId("a") }))
       : [];
@@ -871,7 +925,9 @@ function attrToEl(node: Element, layerId: string): SvgEl | null {
     const dashStr = node.getAttribute("stroke-dasharray");
     const fontSize = node.getAttribute("font-size");
     return {
-      fill: fill ?? (kind === "pencil" ? "none" : "#000000"),
+      // 外部 SVG 的渐变/图案填充（url(#)）本编辑器不支持：按无填充处理，
+      // 避免回存后引用悬空渲染成透明
+      fill: fill && fill.startsWith("url(") ? "none" : fill ?? (kind === "pencil" ? "none" : "#000000"),
       stroke: stroke ?? (kind === "line" || kind === "pencil" ? "#000000" : "none"),
       strokeWidth: nf(node.getAttribute("stroke-width"), 1),
       opacity: nf(node.getAttribute("opacity"), 1),

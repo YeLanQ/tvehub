@@ -7,7 +7,7 @@ import { computed, ref } from "vue";
 import Slider from "../../ui-kit/components/Slider.vue";
 import ComboBox from "../../ui-kit/components/ComboBox.vue";
 import { getWhiteboardStore } from "../whiteboardStore";
-import { DEFAULT_STROKE, type SvgEl, type SvgTextAlign } from "../svg-doc";
+import { DEFAULT_STROKE, type SvgEl, type SvgFillFit, type SvgTextAlign } from "../svg-doc";
 
 const store = getWhiteboardStore();
 
@@ -67,6 +67,14 @@ const KIND_LABEL: Record<string, string> = {
 /** 上次非空填充色（勾选「无填充」前记住，取消勾选时恢复） */
 const lastFill = ref("#4a9eff");
 
+/** 图片填充相关字段整体清掉（「移除图片」按钮；「无」勾选框只管颜色，两者互不干扰） */
+function clearImgFields(t: SvgEl): void {
+  delete t.style.fillImage;
+  delete t.style.fillFit;
+  delete t.style.fillImgW;
+  delete t.style.fillImgH;
+}
+
 function num(ev: Event): number {
   const v = parseFloat((ev.target as HTMLInputElement).value);
   return Number.isFinite(v) ? v : 0;
@@ -96,6 +104,87 @@ function fillNone(ev: Event): void {
       target.style.fill = lastFill.value;
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// 图片填充：本地面板选图 → data URL 内嵌文档（导出 .svg / 分享页随之自包含）
+// ---------------------------------------------------------------------------
+
+/** data URL 体积上限（文档 JSON 与导出 .svg 都会带上它，太大文件会失控） */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const hasImgFill = computed(() => !!el.value?.style.fillImage);
+
+const imgInput = ref<HTMLInputElement | null>(null);
+
+function pickImage(): void {
+  imgInput.value?.click();
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+/** 原始像素尺寸（tile 铺贴尺寸依据；读不出时留空，渲染按 64px 兜底） */
+function naturalSize(src: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+    im.onerror = () => resolve({ w: 0, h: 0 });
+    im.src = src;
+  });
+}
+
+async function onImgPicked(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ""; // 清掉选择记录：同一张图可重复选
+  const t = el.value;
+  if (!file || !t) return;
+  if (!file.type.startsWith("image/")) {
+    store.showNotice("请选择图片文件", "warn");
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    store.showNotice(`图片过大（${(file.size / 1024 / 1024).toFixed(1)}MB），请压缩到 5MB 内`, "warn");
+    return;
+  }
+  try {
+    const url = await readAsDataUrl(file);
+    const size = await naturalSize(url);
+    store.commit("设置图片填充", () => {
+      t.style.fillImage = url;
+      t.style.fillFit = t.style.fillFit ?? "cover";
+      if (size.w > 0 && size.h > 0) {
+        t.style.fillImgW = size.w;
+        t.style.fillImgH = size.h;
+      }
+    });
+  } catch {
+    store.showNotice("读取图片失败", "err");
+  }
+}
+
+function onImgFit(ev: Event): void {
+  const t = el.value;
+  if (!t) return;
+  const fit = (ev.target as HTMLSelectElement).value as SvgFillFit;
+  store.commit("修改图片适配", () => {
+    t.style.fillFit = fit;
+  });
+}
+
+function clearImgFill(): void {
+  const t = el.value;
+  if (!t?.style.fillImage) return;
+  store.commit("移除图片填充", () => {
+    clearImgFields(t);
+  });
 }
 
 /** 描边编辑：直接作用于选中元素（开关由「无」勾选框负责） */
@@ -266,22 +355,62 @@ const lastStrokeColor = ref(DEFAULT_STROKE);
         </label>
       </template>
 
-      <!-- 填充 -->
-      <label v-if="el.kind !== 'line' && el.kind !== 'pencil'" class="sv-field sv-field-wide">
-        <span>填充</span>
-        <span class="sv-inline">
-          <label class="sv-check" title="无填充">
-            <input type="checkbox" :checked="!hasFill" @change="fillNone" /> 无
-          </label>
-          <input
-            v-if="hasFill"
-            type="color"
-            :value="el.style.fill"
-            @input="store.transact(() => (el!.style.fill = ($event.target as HTMLInputElement).value))"
-            @change="store.settle('修改填充')"
-          />
-        </span>
-      </label>
+      <!-- 填充：颜色（「无」只关掉颜色）+ 图片（按钮选图，有图时缩略图提示） -->
+      <template v-if="el.kind !== 'line' && el.kind !== 'pencil'">
+        <label class="sv-field sv-field-wide">
+          <span>填充</span>
+          <span class="sv-inline">
+            <label class="sv-check" title="无颜色填充">
+              <input type="checkbox" :checked="!hasFill" @change="fillNone" /> 无
+            </label>
+            <input
+              v-if="hasFill"
+              type="color"
+              :value="el.style.fill"
+              title="填充色（图片填充时为衬底色）"
+              @input="store.transact(() => (el!.style.fill = ($event.target as HTMLInputElement).value))"
+              @change="store.settle('修改填充')"
+            />
+            <button
+              type="button"
+              class="sv-img-btn"
+              :class="{ active: hasImgFill }"
+              title="图片填充：选一张图片填进形状"
+              @click="pickImage"
+            >
+              <span
+                v-if="hasImgFill"
+                class="sv-img-thumb"
+                :style="{ backgroundImage: `url(${el.style.fillImage})` }"
+              ></span>
+              <svg
+                v-else
+                viewBox="0 0 24 24" width="14" height="14" fill="none"
+                stroke="currentColor" stroke-width="1.8"
+                stroke-linecap="round" stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+          </span>
+        </label>
+        <!-- 图片填充的适配方式与移除（隐藏的文件选择框放在字段外，避免 label 联动） -->
+        <label v-if="hasImgFill" class="sv-field sv-field-wide" title="图片铺进形状的方式">
+          <span>图片</span>
+          <span class="sv-inline">
+            <select :value="el.style.fillFit ?? 'cover'" @change="onImgFit">
+              <option value="cover">填满（裁齐）</option>
+              <option value="contain">适应（留白）</option>
+              <option value="stretch">拉伸（变形）</option>
+              <option value="tile">平铺</option>
+            </select>
+            <button type="button" class="sv-btn" title="移除图片填充" @click="clearImgFill">移除</button>
+          </span>
+        </label>
+        <input ref="imgInput" type="file" accept="image/*" class="sv-img-input" @change="onImgPicked" />
+      </template>
 
       <!-- 描边（勾选「无」= 无描边；宽度/虚线仅在描边启用时显示并直接生效）
            文本也可描边：文字用描边勾勒字形轮廓，线宽/虚线同样生效 -->

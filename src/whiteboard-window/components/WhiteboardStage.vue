@@ -21,6 +21,8 @@ import {
   DEFAULT_FONT,
   deletePathAnchor,
   elBBox,
+  elFillAttr,
+  fillPatId,
   genId,
   insertPathAnchor,
   nearestPathSegment,
@@ -179,6 +181,22 @@ function textStrokeAttrs(el: SvgEl): Record<string, string | number> {
 }
 const ptsAttr = (pts: SvgPt[]): string =>
   pts.map((p) => `${Math.round(p.x * 100) / 100},${Math.round(p.y * 100) / 100}`).join(" ");
+
+/** 图片填充图案列表（挂 <defs>，元素 fill 以 url(#) 引用；与导出 SVG 的 patternDef 同构） */
+const imagePatterns = computed(() => {
+  const out: { id: string; href: string; fit: string; w: number; h: number }[] = [];
+  for (const el of store.state.doc.els) {
+    if (!el.style.fillImage) continue;
+    out.push({
+      id: fillPatId(el.id),
+      href: el.style.fillImage,
+      fit: el.style.fillFit ?? "cover",
+      w: el.style.fillImgW && el.style.fillImgW > 0 ? el.style.fillImgW : 64,
+      h: el.style.fillImgH && el.style.fillImgH > 0 ? el.style.fillImgH : 64,
+    });
+  }
+  return out;
+});
 
 const cursorStyle = computed(() => {
   if (dragMode.value === "pan") return "grabbing";
@@ -881,6 +899,31 @@ onBeforeUnmount(() => {
         <clipPath id="sv-board-clip">
           <rect x="0" y="0" :width="store.state.doc.w" :height="store.state.doc.h" />
         </clipPath>
+        <!-- 图片填充：每元素一个 pattern（href/xlink:href 双写，老内核兜底） -->
+        <pattern
+          v-for="p in imagePatterns"
+          :id="p.id"
+          :key="p.id"
+          :patternUnits="p.fit === 'tile' ? 'userSpaceOnUse' : 'objectBoundingBox'"
+          :patternContentUnits="p.fit === 'tile' ? undefined : 'objectBoundingBox'"
+          :width="p.fit === 'tile' ? p.w : 1"
+          :height="p.fit === 'tile' ? p.h : 1"
+        >
+          <image
+            :href.attr="p.href"
+            :xlink:href="p.href"
+            x="0"
+            y="0"
+            :width="p.fit === 'tile' ? p.w : 1"
+            :height="p.fit === 'tile' ? p.h : 1"
+            :preserveAspectRatio="
+              p.fit === 'stretch' ? 'none'
+              : p.fit === 'contain' ? 'xMidYMid meet'
+              : p.fit === 'tile' ? undefined
+              : 'xMidYMid slice'
+            "
+          />
+        </pattern>
       </defs>
 
       <!-- 屏幕空间网格 -->
@@ -913,7 +956,7 @@ onBeforeUnmount(() => {
               <rect
                 v-if="el.kind === 'rect'"
                 :x="el.x" :y="el.y" :width="el.w" :height="el.h"
-                :fill="el.style.fill" :stroke="el.style.stroke"
+                :fill="elFillAttr(el)" :stroke="el.style.stroke"
                 :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
                 :opacity="opAttr(el)"
                 @pointerdown="onElDown(el, $event)"
@@ -922,7 +965,7 @@ onBeforeUnmount(() => {
                 v-else-if="el.kind === 'ellipse'"
                 :cx="el.x + el.w / 2" :cy="el.y + el.h / 2"
                 :rx="el.w / 2" :ry="el.h / 2"
-                :fill="el.style.fill" :stroke="el.style.stroke"
+                :fill="elFillAttr(el)" :stroke="el.style.stroke"
                 :stroke-width="el.style.strokeWidth" :stroke-dasharray="dashAttr(el)"
                 :opacity="opAttr(el)"
                 @pointerdown="onElDown(el, $event)"
@@ -946,7 +989,7 @@ onBeforeUnmount(() => {
               <path
                 v-else-if="el.kind === 'path'"
                 :d="buildPathD(el)"
-                :fill="el.style.fill" :stroke="el.style.stroke"
+                :fill="elFillAttr(el)" :stroke="el.style.stroke"
                 :stroke-width="el.style.strokeWidth" stroke-linejoin="round"
                 :stroke-dasharray="dashAttr(el)"
                 :opacity="opAttr(el)"
@@ -956,7 +999,7 @@ onBeforeUnmount(() => {
                 v-else-if="el.kind === 'text'"
                 :data-el="el.id"
                 :x="el.x" :y="el.y"
-                :fill="el.style.fill" :font-size="el.style.fontSize"
+                :fill="elFillAttr(el)" :font-size="el.style.fontSize"
                 :text-anchor="el.style.textAlign === 'center' ? 'middle' : el.style.textAlign === 'right' ? 'end' : undefined"
                 :font-family="el.style.fontFamily || DEFAULT_FONT"
                 :opacity="opAttr(el)"

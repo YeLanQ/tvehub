@@ -1095,6 +1095,43 @@
   flex: none !important;
 }
 
+// 图片填充：选图按钮（有图时以缩略图提示）与隐藏的文件选择框
+.sv-img-btn {
+  width: 40px;
+  height: 24px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-dim);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--text-dim);
+  }
+
+  &.active {
+    border-color: var(--text);
+  }
+}
+
+.sv-img-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.sv-img-input {
+  display: none;
+}
+
 .sv-range-val {
   width: 38px;
   font-size: 11px;
