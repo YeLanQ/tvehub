@@ -1,9 +1,13 @@
 // 助手工具面：目录（OpenAI function-calling 格式）与执行器。
 // 所有编辑器操作统一经 devtools 内部桥（devtoolsCall）——与外部控制端同一
 // method → command 映射与工具权限门控；执行错误以 { error } 结构回喂模型自纠。
+// brain.* 大脑工具见 ./brain.ts（直连进程内 Rust 大脑，含执行后自动观测）。
 
 import { api } from "../lib/api";
 import { findSkill } from "./skills";
+import { BRAIN_CATALOG, execBrainTool, observeExecution, type ToolSpec } from "./brain";
+
+export type { ToolSpec };
 
 export interface OpenAITool {
   type: "function";
@@ -12,13 +16,6 @@ export interface OpenAITool {
     description: string;
     parameters: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   };
-}
-
-interface ToolSpec {
-  method: string;
-  description: string;
-  params?: Record<string, string>;
-  required?: string[];
 }
 
 /** 编辑器操作目录（全部走内部 devtools；方法语义与 devtools 权限清单一致） */
@@ -72,10 +69,11 @@ function specToTool(spec: ToolSpec): OpenAITool {
   };
 }
 
-/** 全量工具目录（devtools 方法 + load_skill），发给 LLM 的 tools 数组 */
+/** 全量工具目录（devtools 方法 + brain 大脑工具 + load_skill），发给 LLM 的 tools 数组 */
 export function assistantTools(): OpenAITool[] {
   return [
     ...CATALOG.map(specToTool),
+    ...BRAIN_CATALOG.map(specToTool),
     {
       type: "function",
       function: {
@@ -96,14 +94,18 @@ const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.w
 
 /**
  * 执行一个工具调用。永不抛错——失败返回 { error } 结构回喂模型自纠；
- * load_skill 读本地注册表；project.create 在前端完成（模板 fetch + 建项目，
- * 不依赖编辑器）；其余经 devtools 内部桥，自动注入当前工作区 root。
+ * load_skill 读本地注册表；brain.* 直连大脑（不走 devtools，也不入观测）；
+ * project.create 在前端完成（模板 fetch + 建项目，不依赖编辑器）；其余经
+ * devtools 内部桥，自动注入当前工作区 root。每次执行结束后异步上报大脑
+ * （任务/成败/耗时）——驱动因果链进化与效能门控，不阻塞工具返回。
  */
 export async function execAssistantTool(
   name: string,
   argsJson: string,
   workspaceRoot?: string,
+  task = "",
 ): Promise<{ error: string } | unknown> {
+  const started = performance.now();
   try {
     if (name === "load_skill") {
       const args = JSON.parse(argsJson || "{}") as { id?: string };
@@ -115,16 +117,24 @@ export async function execAssistantTool(
     if (argsJson && argsJson.trim()) {
       params = JSON.parse(argsJson) as Record<string, unknown>;
     }
+    if (name.startsWith("brain.")) {
+      return await execBrainTool(name, params, task);
+    }
+    let result: { error: string } | unknown;
     if (name === "project.create") {
-      return await createWorkspaceProject(params);
+      result = await createWorkspaceProject(params);
+    } else {
+      if (workspaceRoot && ROOT_METHODS.has(name) && !params.root) {
+        params.root = workspaceRoot;
+      }
+      result = await api.devtoolsCall(name, params);
     }
-    if (workspaceRoot && ROOT_METHODS.has(name) && !params.root) {
-      params.root = workspaceRoot;
-    }
-    const result = await api.devtoolsCall(name, params);
+    observeExecution(name, started, result, task);
     return result;
   } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    const result = { error: e instanceof Error ? e.message : String(e) };
+    observeExecution(name, started, result, task);
+    return result;
   }
 }
 

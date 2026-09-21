@@ -153,6 +153,13 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("scene.list");
     expect(prompt).toContain("load_skill");
   });
+  it("正常：策略门注入（brain.plan 三态决策语义）", () => {
+    const prompt = buildSystemPrompt(null, "", assistantTools());
+    expect(prompt).toContain("brain.plan");
+    expect(prompt).toContain("autoExecute");
+    expect(prompt).toContain("needConfirm");
+    expect(prompt).toContain("deny");
+  });
   it("异常：卡片自定义系统提示词替代默认身份，但工具与技能索引保留", () => {
     const prompt = buildSystemPrompt(
       cardFixture({ systemPrompt: "你是一只猫" }),

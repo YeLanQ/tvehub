@@ -407,7 +407,73 @@ export const api = {
   /** 助手专用：进程内执行一条 devtools 方法（权限门控 + 编辑器执行器回填） */
   devtoolsCall: (method: string, params?: Record<string, unknown>) =>
     invoke<unknown>("devtools_internal_call", { method, params }),
+
+  // ---------------------------------------------------------------------------
+  // 助手大脑（Rust brain 模块）：知识图谱检索 / 策略门控 / 观测回写
+  // ---------------------------------------------------------------------------
+
+  /** 语义检索：任务文本 → 相关节点（技能/命令/概念，按综合分降序） */
+  brainQuery: (text: string, topK?: number) =>
+    invoke<BrainRouteHit[]>("brain_query", { text, topK: topK ?? null }),
+  /** 策略规划：任务 → 主技能 + 推荐步骤 + 效能门控决策 */
+  brainPlan: (task: string) => invoke<BrainPlan>("brain_plan", { task }),
+  /** 观测回写：一次工具执行的耗时与成败（驱动因果链进化与效能统计） */
+  brainObserve: (args: { task: string; method: string; ok: boolean; ms: number }) =>
+    invoke<BrainObserveReport>("brain_observe", { args }),
+  /** 大脑状态报表（节点分布/向量压缩/台账/决策计数） */
+  brainStats: () => invoke<BrainStatsReport>("brain_stats"),
 };
+
+// ---------------------------------------------------------------------------
+// 助手大脑类型（与 Rust brain::dto / policy::strategy 的 camelCase 序列化对应）
+// ---------------------------------------------------------------------------
+
+export interface BrainRouteHit {
+  id: string;
+  kind: "skill" | "command" | "concept";
+  label: string;
+  score: number;
+}
+
+export interface BrainPlanStep {
+  method: string;
+  /** green = 只读可自主执行；yellow = 写操作需用户确认 */
+  zone: "green" | "yellow";
+  ratio: number;
+}
+
+export interface BrainPlan {
+  task: string;
+  decision: "autoExecute" | "needConfirm" | "deny";
+  reason: string;
+  /** 全计划瓶颈效能比（0..1，自主执行门槛 0.99） */
+  ratio: number;
+  skills: BrainRouteHit[];
+  steps: BrainPlanStep[];
+}
+
+export interface BrainObserveReport {
+  chainId: string;
+  ratio: number;
+  accuracy: number;
+  autoEligible: boolean;
+  ticked: unknown | null;
+}
+
+export interface BrainStatsReport {
+  nodesByKind: Record<string, number>;
+  edges: number;
+  chains: number;
+  coldEntries: number;
+  vectorRawBytes: number;
+  vectorStoredBytes: number;
+  mergedTotal: number;
+  ticks: number;
+  totalEnergy: number;
+  globalAccuracy: number;
+  decisions: { autoExecute: number; needConfirm: number; denied: number };
+  methods: Array<{ method: string; attempts: number; successes: number; avgMs: number; ratio: number }>;
+}
 
 // ---------------------------------------------------------------------------
 // 局域网共享（与 Rust lanshare 模块对应）

@@ -36,6 +36,7 @@ src/app/commands/     命令注册表（工具栏/快捷键/右键/devtools·MCP
 | 调试日志、devtools 服务、局域网共享 | references/facade-devtools.md |
 | 任务队列、网页预览服务、构建导出 | references/facade-tasks-build.md |
 | 助手：LLM 流式外呼、浮动面板、devtools 进程内调用桥 | references/facade-ai.md |
+| 助手大脑：图谱检索、策略门控、观测回写、冷热分层 | references/facade-brain.md |
 | 读改编辑器/项目/资产/脚本全局状态 | references/stores.md |
 | 图窗口/白板窗口的 store | references/stores-windows.md |
 | 资产业务规则（校验/去重/保护）、编辑器挂载 | references/services.md |

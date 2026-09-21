@@ -5,6 +5,7 @@
 mod appdirs;
 mod ai;
 mod asset_protocol;
+mod brain;
 mod build;
 mod devtools;
 mod internal;
@@ -922,6 +923,9 @@ pub fn run() {
                 "three-visual-editor:dock-layout:v3",
                 "tve:editor:dock-layout:v3",
             );
+            // 助手大脑：配置根下 brain/ 持久化（快照+冷层归档），启动即恢复并摄取内嵌技能
+            let brain_dir = appdirs::config_root(app.handle()).join("brain");
+            app.manage(brain::Brain::new(Some(brain_dir.join("snapshot.json.gz"))));
             devtools::autostart(app.handle());
             // 局域网共享按配置自动开服（后台线程：探测网卡会起进程，不阻塞首页）
             lanshare::autostart(app.handle());
@@ -1108,6 +1112,11 @@ pub fn run() {
             ai::ai_chat_stream,
             ai::ai_cancel,
             ai::ai_list_models,
+            brain::commands::brain_query,
+            brain::commands::brain_plan,
+            brain::commands::brain_observe,
+            brain::commands::brain_stats,
+            brain::commands::brain_tick,
             devtools::devtools_internal_call,
             toggle_assistant_window,
         ])

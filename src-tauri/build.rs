@@ -16,6 +16,9 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[path = "build_skills.rs"]
+mod build_skills;
+
 /// 局域网对外页面需要的主题令牌：CSS 变量名 → Rust 常量名。
 /// 与 scripts/gen-lan-theme.mjs 的 TOKENS 保持一致（同源同集合）。
 const LAN_THEME_TOKENS: &[(&str, &str)] = &[
@@ -129,6 +132,10 @@ fn main() {
 
     // 局域网对外页面的主题常量（改 variables.scss 会触发重编译并重新生成）
     emit_lan_theme(&manifest_dir, &out_dir);
+
+    // 助手大脑的技能索引：.agents/skills → OUT_DIR/skills_index.json（运行时内嵌）
+    let skill_count = build_skills::emit_skills_index(&manifest_dir, &out_dir);
+    println!("cargo:warning=brain skills index: {skill_count} skills embedded");
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     for kind in ["internal", "repos", "templates", "exports"] {

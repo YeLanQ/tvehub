@@ -145,6 +145,14 @@ export function buildSystemPrompt(
         "改完文件即落盘；但 .scene 的节点图编辑建议项目在编辑器打开后用 node.* 走撤销历史。",
       ].join("\n"),
     "## 可用工具\n" + toolLines.join("\n"),
+    [
+      "## 策略门（大脑）",
+      "多步任务、写操作、或不确定从哪下手时，先调 brain.plan({ task }) 拿策略：",
+      "- autoExecute：按 steps 顺序自主执行，完成后一句话汇报整体结果；",
+      "- needConfirm：把 steps 摘要给用户（说明哪些是写操作），同意后再执行；",
+      "- deny：拒绝执行并转述原因，不要绕过。",
+      "brain.query 可查图谱能力（技能/命令/概念），brain.stats 查历史正确率与效能。每次工具执行的结果会自动回灌大脑进化策略，无需手动上报。",
+    ].join("\n"),
     skillIndexPrompt(),
   ].join("\n\n");
 }

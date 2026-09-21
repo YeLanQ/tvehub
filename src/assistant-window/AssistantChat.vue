@@ -181,7 +181,7 @@ async function send(): Promise<void> {
       tools: assistantTools(),
       chat: createTauriTransport(),
       execTool: (name, argsJson) =>
-        execAssistantTool(name, argsJson, convs.activeRoot || undefined),
+        execAssistantTool(name, argsJson, convs.activeRoot || undefined, text),
       baseUrl: prov.baseUrl,
       apiKey: prov.apiKey,
       model: card0?.model?.trim() ? card0.model.trim() : prov.model,
