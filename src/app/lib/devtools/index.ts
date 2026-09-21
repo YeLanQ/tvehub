@@ -69,7 +69,8 @@ export async function startDevTools(): Promise<DevToolsInfo> {
   }
 }
 
-/** 停止开发者服务控制服务器（释放端口；供首页开关与控制端 devtools.stop 调用） */
+/** 停止开发者服务控制服务器（释放端口；供首页开关与控制端 devtools.stop 调用）。
+ *  命令监听器**保持安装**：助手窗口的内部调用与 TCP 服务器无关，停服不影响。 */
 export async function stopDevTools(): Promise<void> {
   try {
     await api.devtoolsStop();
@@ -78,9 +79,7 @@ export async function stopDevTools(): Promise<void> {
   }
   devtools.enabled = false;
   devtools.info = null;
-  unlistenCmd?.();
-  unlistenCmd = null;
-  debugLog("devtools", "开发者服务已停止");
+  debugLog("devtools", "开发者服务已停止（命令监听器保持安装）");
 }
 
 /** 查询当前是否启用（含连接信息）；页面启动时恢复开关状态 */
@@ -118,6 +117,14 @@ async function installCmdListener(): Promise<void> {
   unlistenCmd = await listen<CmdPayload>("devtools:cmd", (e) => {
     void execute(e.payload);
   });
+}
+
+/** 确保命令执行器监听就绪（幂等）：编辑器窗口启动时无条件调用——
+ *  除外部控制端外，助手窗口的内部调用也经 devtools:cmd 到达这里，
+ *  与控制服务器是否启用无关。 */
+export async function ensureCmdListener(): Promise<void> {
+  if (!isEditorWindow()) return;
+  await installCmdListener();
 }
 
 interface CmdPayload {

@@ -10,14 +10,19 @@ const props = withDefaults(
     closable?: boolean;
     minimizable?: boolean;
     maximizable?: boolean;
+    /** 是否显示助手入口（仅需要它的窗口传入，如首页） */
+    assistant?: boolean;
   }>(),
   {
     title: "",
     closable: true,
     minimizable: true,
     maximizable: true,
+    assistant: false,
   },
 );
+
+const emit = defineEmits<{ assistant: [] }>();
 
 // 浏览器直开（无 __TAURI_INTERNALS__）时 getCurrentWindow 会抛错：先判环境再取句柄
 const inTauri = isTauri();
@@ -46,6 +51,14 @@ function onDragDblClick(): void {
     >
       <span v-if="props.title" class="title-bar-title">{{ props.title }}</span>
     </div>
+    <button
+      v-if="props.assistant"
+      class="title-bar-assistant"
+      title="TvE 助手"
+      @click="emit('assistant')"
+    >
+      ✦ 助手
+    </button>
     <WindowControls
       :closable="props.closable"
       :minimizable="props.minimizable"

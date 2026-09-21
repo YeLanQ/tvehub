@@ -392,6 +392,7 @@ export default defineConfig(async (): Promise<UserConfig> => ({
         graph: path.resolve(__dirname, "graph.html"),
         whiteboard: path.resolve(__dirname, "whiteboard.html"),
         docs: path.resolve(__dirname, "docs.html"),
+        assistant: path.resolve(__dirname, "assistant.html"),
       },
     },
   },

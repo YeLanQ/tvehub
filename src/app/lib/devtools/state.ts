@@ -32,6 +32,7 @@ const DEFAULT_TOOLS: DevToolPerm[] = [
   { id: "editor", name: "编辑器状态", group: "编辑器", enabled: true },
   { id: "projectQuery", name: "查询项目", group: "编辑器", enabled: true },
   { id: "projectOpen", name: "打开/关闭项目", group: "编辑器", enabled: true },
+  { id: "projectCreate", name: "新建项目", group: "编辑器", enabled: true },
   // 场景组
   { id: "scene", name: "场景", group: "场景", enabled: true },
   // 节点组
@@ -50,6 +51,8 @@ const DEFAULT_TOOLS: DevToolPerm[] = [
   { id: "screenScreenshot", name: "截图", group: "屏幕快照", enabled: true },
   // 资源组（新建/删除/重命名/列出资产文件）
   { id: "assetList", name: "资源列表", group: "资源", enabled: true },
+  { id: "assetRead", name: "读取资源内容", group: "资源", enabled: true },
+  { id: "assetWrite", name: "写入资源内容", group: "资源", enabled: true },
   { id: "assetCreate", name: "新建资源", group: "资源", enabled: true },
   { id: "assetSelect", name: "选中资源", group: "资源", enabled: true },
   { id: "assetDelete", name: "删除资源", group: "资源", enabled: true },
@@ -62,6 +65,7 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "project.list", description: "列出最近打开的项目" },
   { name: "project.open", description: "打开指定路径的项目" },
   { name: "project.close", description: "关闭当前项目（返回首页）" },
+  { name: "project.create", description: "新建项目（默认 3D 模板；name 必填，parent 缺省用默认项目位置）" },
   { name: "scene.list", description: "列出项目内的 .scene 场景文件" },
   { name: "scene.open", description: "打开指定场景" },
   { name: "scene.save", description: "保存当前场景" },
@@ -83,6 +87,8 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "asset.select", description: "选中资产（path：项目相对路径；属性面板切换到资产预览/属性）" },
   { name: "asset.delete", description: "删除资源文件或目录（path：项目相对路径）" },
   { name: "asset.rename", description: "重命名资源文件或目录（path + newName）" },
+  { name: "asset.read", description: "读取项目内文本资产内容（可带 root 指定工作区项目目录）" },
+  { name: "asset.write", description: "写入项目内文本资产（自动建父目录；可带 root 指定工作区项目目录）" },
 ];
 
 /** method -> 所属工具 id（权限门控用）；未列出的方法（ping / devtools.stop 等）不受权限控制 */
@@ -91,6 +97,7 @@ const METHOD_TOOL: Record<string, string> = {
   "project.list": "projectQuery",
   "project.open": "projectOpen",
   "project.close": "projectOpen",
+  "project.create": "projectCreate",
   "scene.list": "scene",
   "scene.open": "scene",
   "scene.save": "scene",
@@ -108,6 +115,8 @@ const METHOD_TOOL: Record<string, string> = {
   "state.snapshot": "state",
   "state.restore": "state",
   "asset.list": "assetList",
+  "asset.read": "assetRead",
+  "asset.write": "assetWrite",
   "asset.create": "assetCreate",
   "asset.select": "assetSelect",
   "asset.delete": "assetDelete",

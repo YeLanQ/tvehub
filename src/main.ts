@@ -11,7 +11,7 @@ import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
 import { handleProjectOpenedFromHome, disposeEditor } from "./app/services/editorService";
 import { installFsWatch } from "./app/services/fs-watch";
-import { restoreDevToolsStatus } from "./app/lib/devtools";
+import { restoreDevToolsStatus, ensureCmdListener } from "./app/lib/devtools";
 import { api } from "./lib/api";
 import { getBootLoadingStore } from "./app/stores/boot-loading";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
@@ -60,6 +60,8 @@ if (!isTauri()) {
   void listen("devtools:enabled", () => {
     void restoreDevToolsStatus();
   });
+  // 命令执行器常开：助手窗口的内部调用不依赖控制服务器开关
+  void ensureCmdListener();
   void restoreDevToolsStatus();
   // 窗口关闭（X 按钮 / 系统关闭）：直接销毁引擎释放资源（多会话架构：关闭 = 销毁）。
   // Rust 侧不 prevent_close，窗口走默认销毁，前端 onBeforeUnmount 也会触发 disposeEditor。

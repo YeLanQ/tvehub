@@ -18,6 +18,7 @@
 | 图节点注册表（nodeRegistry/opRegistry） | tve-app-operations/graph-nodes.md 类型全表 | 表格行 |
 | 白板工具/文件管理规则 | whiteboard-usage / whiteboard-files | 操作表；改名/防覆盖规则变更重点核对 |
 | spec 新增/删除（含把推荐 spec 落地） | 引用它的单元测试例段 + skills:check 告警消一档 | 推荐写法升级为"真实测试例"，从告警清单摘除 |
+| 助手域（ai.rs/devtools 内部桥/工具目录/技能注册表） | tve-api-usage/facade-ai.md + tve-app-operations/assistant.md | 工具目录（tools.ts CATALOG）与方法清单变更两处同步 |
 | tests/README.md、tests/ISSUES.md | tve-unit-testing SKILL.md 现状锚点 | 数字（用例数/套件数/P0 数）对齐 |
 
 ## 校验器的边界（人工兜底项）

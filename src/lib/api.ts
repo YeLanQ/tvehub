@@ -383,6 +383,30 @@ export const api = {
   /** 列出活跃任务（可选按项目根过滤） */
   listTasks: (root?: string) =>
     invoke<TaskStatus[]>("list_tasks", { root: root ?? null }),
+
+  // ---------------------------------------------------------------------------
+  // 助手：LLM 流式外呼（事件回推）+ 全局面板窗口 + devtools 进程内调用桥
+  // ---------------------------------------------------------------------------
+
+  /** 发起流式对话（立即返回；增量/结束/错误经 ai:chunk / ai:done / ai:error 事件） */
+  aiChatStream: (args: {
+    reqId: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    messages: unknown;
+    temperature?: number;
+  }) => invoke<void>("ai_chat_stream", { args }),
+  /** 取消进行中的流式对话（幂等） */
+  aiCancel: (reqId: string) => invoke<void>("ai_cancel", { reqId }),
+  /** 拉取模型清单（GET /models；部分供应商不支持时前端手填兜底） */
+  aiListModels: (baseUrl: string, apiKey: string) =>
+    invoke<string[]>("ai_list_models", { baseUrl, apiKey }),
+  /** 开/关助手浮动面板（全局单例窗口；返回切换后是否可见） */
+  toggleAssistantWindow: () => invoke<boolean>("toggle_assistant_window"),
+  /** 助手专用：进程内执行一条 devtools 方法（权限门控 + 编辑器执行器回填） */
+  devtoolsCall: (method: string, params?: Record<string, unknown>) =>
+    invoke<unknown>("devtools_internal_call", { method, params }),
 };
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 #![recursion_limit = "512"]
 
 mod appdirs;
+mod ai;
 mod asset_protocol;
 mod build;
 mod devtools;
@@ -645,6 +646,39 @@ async fn show_docs_window(
 #[derive(Default)]
 pub(crate) struct PendingDocsHash(std::sync::Mutex<Option<String>>);
 
+/// 切换助手窗口（全局单例）：不存在则创建（隐藏，前端首帧后 show 防白屏）；
+/// 已存在则显示/隐藏切换。入口在首页标题栏，其他窗口不提供。
+#[tauri::command]
+async fn toggle_assistant_window(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("assistant") {
+        if w.is_visible().map_err(|e| e.to_string())? {
+            let _ = w.hide();
+            return Ok(false);
+        }
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(true);
+    }
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        "assistant",
+        tauri::WebviewUrl::App("assistant.html".into()),
+    )
+    .title("TvE 助手")
+    .inner_size(680.0, 720.0)
+    .min_inner_size(520.0, 520.0)
+    .visible(false)
+    .decorations(false)
+    .background_color(tauri::window::Color(20, 20, 20, 255))
+    .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    if let Some(dir) = appdirs::webview_data_dir() {
+        builder = builder.data_directory(dir);
+    }
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 文档窗口启动时拉取待打开 hash（取走即清空）
 #[tauri::command]
 async fn take_pending_docs_hash(
@@ -875,6 +909,7 @@ pub fn run() {
         .manage(PendingDocsHash::default())
         .manage(ActiveEditorWindow::default())
         .manage(task::TaskManager::default())
+        .manage(ai::AiState::default())
         .manage(devtools::DevToolsState::default())
         .manage(lanshare::LanShareState::default())
         // 开发者服务：应用启动即开启控制服务器（默认端口 39100，被占用回退随机端口）；
@@ -1070,6 +1105,11 @@ pub fn run() {
             task::cancel_task,
             task::cancel_tasks_by_root,
             task::list_tasks,
+            ai::ai_chat_stream,
+            ai::ai_cancel,
+            ai::ai_list_models,
+            devtools::devtools_internal_call,
+            toggle_assistant_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

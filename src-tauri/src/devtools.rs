@@ -29,6 +29,9 @@ pub struct DevToolsState {
     inner: Mutex<Option<Arc<DevToolsRuntime>>>,
     /// 工具 id -> 是否启用；None = 尚未从磁盘加载
     perms: Mutex<Option<HashMap<String, bool>>>,
+    /// 助手等进程内调用方的待回复通道（replyToken -> 回传端）。与控制服务器
+    /// 运行态无关——服务器停开都不影响助手经内部桥调用命令。
+    internal_pending: Mutex<HashMap<String, SyncSender<Result<serde_json::Value, String>>>>,
 }
 
 impl Default for DevToolsState {
@@ -36,6 +39,7 @@ impl Default for DevToolsState {
         DevToolsState {
             inner: Mutex::new(None),
             perms: Mutex::new(None),
+            internal_pending: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -118,6 +122,8 @@ const TOOL_CATALOG: &[(&str, &str, &str)] = &[
     ("previewStop", "停止预览", "预览"),
     ("screenScreenshot", "截图", "屏幕快照"),
     ("assetList", "资源列表", "资源"),
+    ("assetRead", "读取资源内容", "资源"),
+    ("assetWrite", "写入资源内容", "资源"),
     ("assetCreate", "新建资源", "资源"),
     ("assetSelect", "选中资源", "资源"),
     ("assetDelete", "删除资源", "资源"),
@@ -130,6 +136,7 @@ const METHOD_TO_TOOL: &[(&str, &str)] = &[
     ("project.list", "projectQuery"),
     ("project.open", "projectOpen"),
     ("project.close", "projectOpen"),
+    ("project.create", "projectCreate"),
     ("scene.list", "scene"),
     ("scene.open", "scene"),
     ("scene.save", "scene"),
@@ -147,6 +154,8 @@ const METHOD_TO_TOOL: &[(&str, &str)] = &[
     ("state.snapshot", "state"),
     ("state.restore", "state"),
     ("asset.list", "assetList"),
+    ("asset.read", "assetRead"),
+    ("asset.write", "assetWrite"),
     ("asset.create", "assetCreate"),
     ("asset.select", "assetSelect"),
     ("asset.delete", "assetDelete"),
@@ -316,21 +325,98 @@ fn asset_list_of(root: &str) -> Result<serde_json::Value, String> {
 fn try_local(
     app: &AppHandle,
     method: &str,
+    params: &serde_json::Value,
 ) -> Option<Result<serde_json::Value, String>> {
     Some(match method {
         "project.list" => project_recent_list(app),
-        "scene.list" => match scene_root_blocking(app) {
+        // 助手工作区语义：root 参数显式指定项目目录（不依赖编辑器会话）；
+        // 缺省回退活跃编辑器会话的项目根（外部控制端兼容）。
+        "scene.list" => match workspace_root(app, params) {
             Some(root) => scene_list_of(&root),
-            None => Err("尚未打开项目".to_string()),
+            None => Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()),
         },
-        "asset.list" => match scene_root_blocking(app) {
+        "asset.list" => match workspace_root(app, params) {
             Some(root) => asset_list_of(&root),
-            None => Err("尚未打开项目".to_string()),
+            None => Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()),
         },
+        "asset.read" => {
+            let Some(root) = workspace_root(app, params) else {
+                return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
+            };
+            let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+                return Some(Err("缺少 path 参数".to_string()));
+            };
+            asset_read_of(&root, path)
+        }
+        "asset.write" => {
+            let Some(root) = workspace_root(app, params) else {
+                return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
+            };
+            let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+                return Some(Err("缺少 path 参数".to_string()));
+            };
+            let Some(content) = params.get("content").and_then(|c| c.as_str()) else {
+                return Some(Err("缺少 content 参数".to_string()));
+            };
+            asset_write_of(&root, path, content)
+        }
         "scene.tree" | "state.snapshot" => scene_doc_blocking(app),
         "scene.save" => scene_save_blocking(app).map(|_| serde_json::json!({ "ok": true })),
         _ => return None,
     })
+}
+
+/// 方法的工作区项目根：优先 params.root（助手显式指定），回退活跃编辑器会话。
+fn workspace_root(app: &AppHandle, params: &serde_json::Value) -> Option<String> {
+    if let Some(r) = params.get("root").and_then(|r| r.as_str()) {
+        let r = r.trim();
+        if !r.is_empty() {
+            return Some(r.to_string());
+        }
+    }
+    scene_root_blocking(app)
+}
+
+/// 读取项目内文本资产（助手"@插入文件"用）：拒路径穿越与二进制，超长截断。
+fn asset_read_of(root: &str, path: &str) -> Result<serde_json::Value, String> {
+    let abs = workspace_path_of(root, path)?;
+    let meta = std::fs::metadata(&abs).map_err(|_| "文件不存在".to_string())?;
+    if !meta.is_file() {
+        return Err("不是文件（目录请用 asset.list 浏览）".to_string());
+    }
+    if meta.len() > 512 * 1024 {
+        return Err("文件超过 512KB，不适合直接插入".to_string());
+    }
+    let bytes = std::fs::read(&abs).map_err(|e| format!("读取失败: {e}"))?;
+    let content = String::from_utf8(bytes).map_err(|_| "二进制文件不支持插入".to_string())?;
+    let truncated = content.len() > 64 * 1024;
+    let mut shown: String = content.chars().take(16 * 1024).collect();
+    if truncated {
+        shown.push_str("\n…（内容过长，已截断）");
+    }
+    Ok(serde_json::json!({ "path": path, "content": shown, "truncated": truncated }))
+}
+
+/// 写入项目内文本资产（助手工作区编辑用）：自动建父目录，超限拒绝。
+fn asset_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::Value, String> {
+    if content.len() > 512 * 1024 {
+        return Err("内容超过 512KB，请拆分后写入".to_string());
+    }
+    let abs = workspace_path_of(root, path)?;
+    if let Some(dir) = abs.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    std::fs::write(&abs, content).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(serde_json::json!({ "path": path, "bytes": content.len(), "ok": true }))
+}
+
+/// 工作区相对路径安全化：拒空/穿越/反斜杠，返回 root 下的绝对路径
+fn workspace_path_of(root: &str, path: &str) -> Result<std::path::PathBuf, String> {
+    let path = path.trim().trim_start_matches('/');
+    if path.is_empty() || path.contains("..") || path.contains('\\') {
+        return Err("非法的资产路径".to_string());
+    }
+    Ok(std::path::Path::new(root).join(path))
 }
 
 fn scene_root_blocking(app: &AppHandle) -> Option<String> {
@@ -414,7 +500,7 @@ fn dispatch_command(line: &str, rt: &DevToolsRuntime, app: &AppHandle, tx: &Sync
         send_reply(tx, id, serde_json::Value::Null, Some(msg));
         return;
     }
-    if let Some(res) = try_local(app, &method) {
+    if let Some(res) = try_local(app, &method, &params) {
         match res {
             Ok(v) => send_reply(tx, id, v, None),
             Err(e) => send_reply(tx, id, serde_json::Value::Null, Some(e)),
@@ -708,7 +794,7 @@ fn resolve_mcp(msg: serde_json::Value, rt: &DevToolsRuntime, app: &AppHandle) ->
                     "result": { "content": [{ "type": "text", "text": msg }], "isError": true }
                 });
             }
-            let result = match try_local(app, &method) {
+            let result = match try_local(app, &method, &args) {
                 Some(Ok(v)) => serde_json::json!({ "result": v }),
                 Some(Err(e)) => serde_json::json!({ "error": e }),
                 None => mcp_frontend_call(rt, app, &method, args),
@@ -836,6 +922,56 @@ pub async fn devtools_status(
         .map(|rt| rt.info()))
 }
 
+/// 助手等进程内调用方执行一条 devtools 方法（统一走内部 devtools 通道）：
+/// 权限门控 → Rust 本地直答 → 转发活跃编辑器前端执行器并等待回填（60s 超时）。
+/// 与控制服务器启停无关（不走 TCP runtime，internal_pending 直达 devtools_reply）。
+/// 本地直答会 block_on 异步锁，因此整段放进阻塞线程池执行——
+/// 异步命令线程属于 tokio 运行时，在其中 block_on 会 panic。
+#[tauri::command]
+pub async fn devtools_internal_call(
+    app: AppHandle,
+    method: String,
+    params: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let params = params.unwrap_or(serde_json::Value::Null);
+    tauri::async_runtime::spawn_blocking(move || internal_call_blocking(&app, method, params))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn internal_call_blocking(
+    app: &AppHandle,
+    method: String,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    require_tool(app, &method)?;
+    if let Some(res) = try_local(app, &method, &params) {
+        return res;
+    }
+    let active_label =
+        active_editor_label(app).ok_or("没有活跃的编辑器窗口（请先打开项目进入编辑器）")?;
+    let state = app.state::<DevToolsState>();
+    let token = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = sync_channel::<Result<serde_json::Value, String>>(1);
+    state
+        .internal_pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(token.clone(), tx);
+    let payload = serde_json::json!({
+        "id": 1,
+        "method": method,
+        "params": params,
+        "replyToken": token,
+    });
+    let _ = app.emit_to(active_label, "devtools:cmd", payload);
+    match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(Ok(v)) => Ok(v),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("编辑器执行超时（60s）".to_string()),
+    }
+}
+
 /// 前端执行器回填命令结果（按 replyToken 路由回对应客户端）
 #[tauri::command]
 pub async fn devtools_reply(
@@ -844,6 +980,19 @@ pub async fn devtools_reply(
     result: Option<serde_json::Value>,
     error: Option<String>,
 ) -> Result<(), String> {
+    // 进程内调用方（助手桥）优先：不依赖控制服务器运行态，服务器停开都可达
+    if let Some(h) = state
+        .internal_pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&token)
+    {
+        let _ = h.send(match error {
+            Some(e) => Err(e),
+            None => Ok(result.unwrap_or(serde_json::Value::Null)),
+        });
+        return Ok(());
+    }
     let guard = state.inner.lock().map_err(|e| e.to_string())?;
     let Some(rt) = guard.as_ref() else {
         return Ok(());

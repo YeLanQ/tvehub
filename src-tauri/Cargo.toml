@@ -38,5 +38,8 @@ base64 = "0.22"
 notify = "6"
 # 并行计算：资产扫描/导出打包/meta 生成等 IO+CPU 密集任务并行化
 rayon = "1"
+# 助手 LLM 外呼（OpenAI 兼容 /chat/completions SSE 流式）：rustls 免系统 TLS 依赖
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
 
 

@@ -77,6 +77,16 @@ function showCopiedTip(): void {
   toastOk("已复制到剪贴板");
 }
 
+/** 助手浮动面板开关（全局单例窗口；仅首页标题栏提供入口） */
+async function toggleAssistant(): Promise<void> {
+  if (!inTauri) return;
+  try {
+    await api.toggleAssistantWindow();
+  } catch (e) {
+    toastErr(`打开助手失败: ${e}`);
+  }
+}
+
 onMounted(() => {
   projectStore.refreshRecent();
   if (inTauri) {
@@ -139,8 +149,8 @@ watch(showNewProject, (val) => {
 
 <template>
   <div class="home" @click="closeMenu">
-    <!-- 自定义标题栏（无边框窗口） -->
-    <TitleBar title="TvE Hub" />
+    <!-- 自定义标题栏（无边框窗口）；助手入口仅首页提供 -->
+    <TitleBar title="TvE Hub" assistant @assistant="toggleAssistant" />
 
     <div class="home-body">
       <!-- 左侧导航 -->

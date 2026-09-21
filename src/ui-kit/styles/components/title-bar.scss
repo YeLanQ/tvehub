@@ -35,6 +35,28 @@
   padding-right: 8px;
 }
 
+.title-bar-assistant {
+  -webkit-app-region: no-drag;
+  margin-right: 4px;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--accent, #4a6a8f);
+  }
+}
+
 .title-btn {
   width: 32px;
   height: 28px;

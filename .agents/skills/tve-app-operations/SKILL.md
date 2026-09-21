@@ -32,6 +32,7 @@ references/editor-commands.md。
 | 图节点类型全集/图变量/自定义节点/保存机制 | references/graph-nodes.md |
 | 白板：工具/图层/文本/快捷键 | references/whiteboard-usage.md |
 | 白板：文件管理/改名防覆盖/放映/共享发布 | references/whiteboard-files.md |
+| TvE 助手面板（两栏/项目工作区/卡片/供应商/工具权限） | references/assistant.md |
 
 每单元三段：**操作面**（动作 → 入口/命令，含 文件:行号）→ **规则/要点** →
 **测试例**（对应 spec/smoke 或推荐写法）。
