@@ -28,7 +28,7 @@ use trash::move_to_trash;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// 应用主菜单已移除（双窗口均不显示原生菜单栏，快捷键由前端 keydown 处理）。
 
@@ -69,6 +69,7 @@ async fn set_default_project_dir(app: tauri::AppHandle, dir: String) -> Result<(
 async fn open_project(app: tauri::AppHandle, path: String) -> Result<ProjectInfo, String> {
     let info = project::project_info(&PathBuf::from(&path))?;
     store::push_recent(&app, &info.path);
+    let _ = app.emit("projects:changed", ());
     Ok(info)
 }
 
@@ -88,6 +89,8 @@ async fn create_project(
     let files = files.ok_or("模板缺少文件内容")?;
     let info = project::scaffold_from_files(&PathBuf::from(&parent), &name, &files)?;
     store::push_recent(&app, &info.path);
+    // 广播给所有窗口：助手等非首页窗口创建的项目，首页面板即时刷新可见
+    let _ = app.emit("projects:changed", ());
     Ok(info)
 }
 
@@ -116,6 +119,7 @@ async fn list_recent_projects(app: tauri::AppHandle) -> Result<Vec<RecentProject
 #[tauri::command]
 async fn remove_recent_project(app: tauri::AppHandle, path: String) -> Result<(), String> {
     store::remove_recent_path(&app, &path);
+    let _ = app.emit("projects:changed", ());
     Ok(())
 }
 
@@ -176,6 +180,7 @@ async fn rename_project(
     // 最近项目记录跟随新目录名：旧路径已失效，若不更新下次列表会漏掉改名后的项目
     store::remove_recent_path(&app, &path);
     store::push_recent(&app, &info.path);
+    let _ = app.emit("projects:changed", ());
     Ok(info)
 }
 
@@ -398,13 +403,13 @@ pub(crate) struct ActiveEditorWindow(std::sync::Mutex<Option<String>>);
 
 impl ActiveEditorWindow {
     pub(crate) fn get(&self) -> Option<String> {
-        self.0.lock().unwrap().clone()
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     fn set(&self, label: String) {
-        *self.0.lock().unwrap() = Some(label);
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(label);
     }
     fn clear_if(&self, label: &str) {
-        let mut guard = self.0.lock().unwrap();
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if guard.as_deref() == Some(label) {
             *guard = None;
         }
@@ -436,7 +441,7 @@ async fn show_window_with_project(
     state
         .0
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(label.clone(), PendingProjectPayload { root, name, rel });
     if let Some(w) = app.get_webview_window(&label) {
         let _ = w.show();
@@ -449,7 +454,7 @@ async fn show_window_with_project(
         let pending = state
             .0
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&label)
             .map(|p| p.name.clone())
             .unwrap_or_default();
@@ -511,7 +516,7 @@ async fn take_pending_project(
     Ok(state
         .0
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .get(&webview.label().to_string())
         .cloned())
 }
@@ -575,7 +580,7 @@ async fn show_whiteboard_window(
     pending: tauri::State<'_, PendingWhiteboardFile>,
     name: Option<String>,
 ) -> Result<(), String> {
-    *pending.0.lock().unwrap() = name;
+    *pending.0.lock().unwrap_or_else(|e| e.into_inner()) = name;
     if let Some(w) = app.get_webview_window("whiteboard") {
         let _ = w.show();
         let _ = w.set_focus();
@@ -612,7 +617,7 @@ async fn show_docs_window(
     hash: Option<String>,
 ) -> Result<(), String> {
     let hash = hash.filter(|h| !h.trim().is_empty());
-    *pending.0.lock().unwrap() = hash.clone();
+    *pending.0.lock().unwrap_or_else(|e| e.into_inner()) = hash.clone();
     if let Some(w) = app.get_webview_window("docs") {
         let _ = w.show();
         let _ = w.set_focus();
@@ -685,7 +690,7 @@ async fn toggle_assistant_window(app: tauri::AppHandle) -> Result<bool, String> 
 async fn take_pending_docs_hash(
     state: tauri::State<'_, PendingDocsHash>,
 ) -> Result<Option<String>, String> {
-    Ok(state.0.lock().unwrap().take())
+    Ok(state.0.lock().unwrap_or_else(|e| e.into_inner()).take())
 }
 
 /// 白板窗口启动时拉取待打开文件名（取走即清空；热路径走事件，不留陈旧状态）
@@ -693,7 +698,7 @@ async fn take_pending_docs_hash(
 async fn take_pending_whiteboard_file(
     state: tauri::State<'_, PendingWhiteboardFile>,
 ) -> Result<Option<String>, String> {
-    Ok(state.0.lock().unwrap().take())
+    Ok(state.0.lock().unwrap_or_else(|e| e.into_inner()).take())
 }
 
 /// 列出全局白板目录下的 .svg 文件名（按名称排序；目录不存在视为空）
@@ -991,7 +996,7 @@ pub fn run() {
                     }
                     // 清理该窗口的待交付项目与网页预览服务器子进程
                     if let Some(state) = window.app_handle().try_state::<PendingProjects>() {
-                        state.0.lock().unwrap().remove(&label);
+                        state.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&label);
                     }
                     if let Some(state) = window.app_handle().try_state::<preview::PreviewServerState>() {
                         preview::stop_server_for_label(&state, &label);

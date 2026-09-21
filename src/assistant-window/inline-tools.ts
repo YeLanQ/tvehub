@@ -50,22 +50,60 @@ function decodeEntities(text: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** <invoke name="x">…</invoke> → parameter 键值对；形状不符返回 null */
-function callFromInvokeBlock(block: string): ToolCall | null {
-  const name = /<invoke\s+name="([^"]+)"\s*>/.exec(block)?.[1];
-  if (!name) return null;
-  const args: Record<string, string> = {};
-  const paramRe = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
-  let m: RegExpExecArray | null;
-  while ((m = paramRe.exec(block)) !== null) {
-    args[m[1]] = decodeEntities(m[2]).trim();
+/** <invoke name="x">…</invoke> 块解析已由宽松参数槽解析（callFromParams）取代 */
+const LOOSE_BLOCK_RE = /<(?:invoke|function)\b[^>]*>([\s\S]*?)<\/(?:invoke|function)>/g;
+const WRAPPER_RE = /<tool_call>[\s\S]*?<\/tool_call>/g;
+
+const NAME_KEYS = new Set(["name", "tool", "method", "function"]);
+const ARGS_KEYS = new Set(["input", "arguments", "args"]);
+
+/** 宽松参数解析：标准形态 <parameter name="k">v</parameter> +
+ * 残缺等号形态 <parameter=k>v</parameter>（键直接挂在 = 后）。 */
+function parseParamPairs(inner: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const m of inner.matchAll(/<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/g)) {
+    out.push([m[1], decodeEntities(m[2]).trim()]);
   }
-  if (!Object.keys(args).length) return null;
-  return makeCall(name, args);
+  const rest = inner.replace(/<parameter\s+name\s*=\s*"([^"]+)"\s*>[\s\S]*?<\/parameter>/g, "");
+  for (const m of rest.matchAll(/<parameter\s*=\s*"?([^">]+?)"?\s*>([\s\S]*?)<\/parameter>/g)) {
+    out.push([m[1].trim(), decodeEntities(m[2]).trim()]);
+  }
+  return out;
 }
 
-const INVOKE_RE = /<invoke\s+name="[^"]+"[\s\S]*?<\/invoke>/g;
-const WRAPPER_RE = /<tool_call>[\s\S]*?<\/tool_call>/g;
+/** 参数槽 → 调用：
+ * - 块级 name 属性缺失（如 <function=tool_call> 残缺开标签）时，name 槽当工具名、
+ *   input 槽当参数 JSON（残缺方言的语义）；
+ * - 块级 name 属性存在时它就是工具名，一切参数槽（含恰好叫 name 的）都按逐参数
+ *   入参处理（标准 invoke 语义）。 */
+function callFromParams(params: Array<[string, string]>, blockName: string): ToolCall | null {
+  let name = blockName.trim();
+  let argsPair: [string, string] | null = null;
+  const perArg: Record<string, string> = {};
+  for (const [k, v] of params) {
+    const key = k.trim().toLowerCase();
+    if (ARGS_KEYS.has(key) && name && !argsPair) argsPair = [key, v];
+    else if (NAME_KEYS.has(key) && !name) name = v;
+    else perArg[key] = v;
+  }
+  const cleanName = name.replace(/^["']|["']$/g, "").trim();
+  if (!cleanName) return null;
+  if (argsPair) {
+    const [slotKey, raw] = argsPair;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      // 必须是对象才整体作为参数；标量/数组回落为 {槽名: 值}
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return makeCall(cleanName, parsed);
+      }
+      return makeCall(cleanName, { [slotKey]: parsed as string | number | boolean | null });
+    } catch {
+      return makeCall(cleanName, { [slotKey]: raw });
+    }
+  }
+  if (Object.keys(perArg).length) return makeCall(cleanName, perArg);
+  return null;
+}
 
 /** 字符串感知的花括号配平扫描：返回 [start, end)（含 end）或 null */
 function balancedObject(text: string, start: number): [number, number] | null {
@@ -102,28 +140,33 @@ function parseObjectAt(text: string, start: number): unknown {
 }
 
 /** 从回复正文解析内联工具调用。
- * 策略：先吃形状完整的（invoke 块、内含有效调用 JSON 的 tool_call 壳——壳内
- * 捞不到有效调用就不消费，留给裸扫兜底），再在"挖掉已消费区间的等长替身"上
- * 裸扫 JSON——标签残骸里嵌的 {"name":…,"arguments":…} 也能捞出来。 */
+ * 策略：先吃形状完整的（宽松 function/invoke 块、内含有效调用 JSON 的
+ * tool_call 壳——壳内捞不到有效调用就不消费，留给裸扫兜底），再在"挖掉
+ * 已消费区间的等长替身"上裸扫 JSON——标签残骸里嵌的 {"name":…} 也能捞出。 */
 export function parseInlineToolCalls(content: string): ParsedInline {
   const calls: ToolCall[] = [];
   const ranges: Array<[number, number]> = [];
 
-  // 1. XML invoke 块：形状校验通过才消费
-  for (const m of content.matchAll(INVOKE_RE)) {
-    const call = callFromInvokeBlock(m[0]);
+  // 1. 宽松 function/invoke 块（标准 invoke、<function=…> 残缺标签、参数槽两种形态）
+  for (const m of content.matchAll(LOOSE_BLOCK_RE)) {
+    const s = m.index ?? 0;
+    const e = s + m[0].length;
+    const opening = /<(?:invoke|function)\b[^>]*>/.exec(m[0])?.[0] ?? "";
+    const blockName = /name\s*=\s*"([^"]+)"/.exec(opening)?.[1] ?? "";
+    const call = callFromParams(parseParamPairs(m[1]), blockName);
     if (call) {
       calls.push(call);
-      ranges.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+      ranges.push([s, e]);
     }
   }
 
-  // 2. <tool_call> 壳：壳内捞出有效调用 JSON 才整壳消费
+  // 2. <tool_call> 壳：壳内（含已识别的嵌套块）捞出有效调用才整壳消费
   for (const m of content.matchAll(WRAPPER_RE)) {
     const s = m.index ?? 0;
     const e = s + m[0].length;
     const inner = m[0].slice("<tool_call>".length, -"</tool_call>".length);
-    let found = false;
+    const nested = ranges.some(([rs, re]) => rs >= s && re <= e);
+    let found = nested;
     let pos = 0;
     while (pos < inner.length) {
       const brace = inner.indexOf("{", pos);

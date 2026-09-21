@@ -80,6 +80,52 @@ describe("parseInlineToolCalls", () => {
     expect(cleaned).not.toContain("brain.plan");
   });
 
+  it("正常：<function=…> + <parameter=name/input> 等号参数槽方言", () => {
+    const text = [
+      "<tool_call>",
+      "<function=tool_call>",
+      "<parameter=name>",
+      "project.create",
+      "</parameter>",
+      "<parameter=input>",
+      '{"name":"RotCube"}',
+      "</parameter>",
+      "</function>",
+      "</tool_call>",
+    ].join("\n");
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("project.create");
+    expect(JSON.parse(calls[0].arguments)).toEqual({ name: "RotCube" });
+    expect(cleaned).not.toContain("project.create");
+    expect(cleaned).not.toContain("parameter");
+  });
+
+  it("正常：标准 invoke 且参数恰好名为 name——不得吞掉工具名", () => {
+    const text =
+      '<invoke name="project.create"><parameter name="name">RotCube</parameter></invoke>';
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("project.create");
+    expect(JSON.parse(calls[0].arguments)).toEqual({ name: "RotCube" });
+  });
+
+  it("边界：input 槽的值不是 JSON 对象时回落为 {槽名: 值}", () => {
+    const text = '<invoke name="asset.write"><parameter name="input">纯文本内容</parameter></invoke>';
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].arguments)).toEqual({ input: "纯文本内容" });
+  });
+
+  it("正常：<function name=\"…\"> 空格属性形态 + 逐参数入参", () => {
+    const text =
+      '<function name="node.add">\n  <parameter name="kind">mesh</parameter>\n  <parameter name="subtype">sphere</parameter>\n</function>';
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("node.add");
+    expect(JSON.parse(calls[0].arguments)).toEqual({ kind: "mesh", subtype: "sphere" });
+  });
+
   it("边界：壳内没有有效调用 JSON 时整壳保留不误吞", () => {
     const text = "<tool_call>\n这不是 json 也不是调用\n</tool_call>";
     const { calls, cleaned } = parseInlineToolCalls(text);

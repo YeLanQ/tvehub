@@ -11,7 +11,8 @@
 // - 窗口挂载时做应用级初始化：最近项目、开发者服务控制服务器状态与工具权限同步
 //   （提前同步，打开开发者服务分区即为最终状态，不再刷新）。
 // ---------------------------------------------------------------------------
-import { onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { listen } from "@tauri-apps/api/event";
 import { getProjectStore, type RecentProject } from "../stores/project";
 import NewProjectDialog from "./NewProjectDialog.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -87,6 +88,10 @@ async function toggleAssistant(): Promise<void> {
   }
 }
 
+/** 项目列表外部变更防抖（助手建项目 / 控制端开删改项目 → projects:changed） */
+let recentRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let offProjectsChanged: (() => void) | undefined;
+
 onMounted(() => {
   projectStore.refreshRecent();
   if (inTauri) {
@@ -94,7 +99,17 @@ onMounted(() => {
     void syncDevToolsStatus();
     // 工具权限：Rust 为权威存储，启动时同步一次（同时回写 localStorage 镜像）
     void syncPermsFromBackend();
+    // 项目列表跨窗口同步：助手/控制端建、开、删、改项目后首页面板即时刷新
+    void listen("projects:changed", () => {
+      clearTimeout(recentRefreshTimer);
+      recentRefreshTimer = setTimeout(() => void projectStore.refreshRecent(), 300);
+    }).then((off) => (offProjectsChanged = off));
   }
+});
+
+onBeforeUnmount(() => {
+  offProjectsChanged?.();
+  clearTimeout(recentRefreshTimer);
 });
 
 /** 打开新建项目对话框（项目分区的两个入口都经此；同时收起卡片菜单） */
