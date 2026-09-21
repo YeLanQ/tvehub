@@ -34,6 +34,8 @@ installDomShim();
 
 /** 画布 rect 固定 left=10/top=20：clientX/Y - 10/20 = 画布局部坐标 */
 const canvas = {
+  // style 桩：input.mjs 安装监听时会设 canvas.style.touchAction（真实浏览器恒有）
+  style: {},
   getBoundingClientRect: () => ({ left: 10, top: 20, width: 800, height: 600 }),
   addEventListener: (type, fn) => addToListeners(canvasListeners, type, fn),
 };

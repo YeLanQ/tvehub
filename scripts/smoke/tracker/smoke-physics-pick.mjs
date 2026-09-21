@@ -126,6 +126,7 @@ ok(physicsApi.bodyInfo("n_ground") != null, "物理世界就绪（noop 回退时
 // player.mjs 薄层，此处锁定桥接链路
 const listeners = {};
 const fakeCanvas = {
+  style: {}, // 桩：installRuntime 会设 canvas.style.touchAction（真实浏览器恒有）
   addEventListener(type, fn) { listeners[type] = fn; },
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
 };

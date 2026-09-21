@@ -269,6 +269,10 @@ const _shadowTarget = new THREE.Vector3();
 const _shadowAxis = new THREE.Vector3();
 const _shadowToCenter = new THREE.Vector3();
 const _shadowCorner = new THREE.Vector3();
+// 平行光正交范围的投影基：three 的阴影相机姿态是 lookAt(灯位→目标, up=Y)，
+// 不复用灯自身矩阵（灯自身带滚转时两套轴不一致，会裁掉场景角落）
+const _shadowProjM = new THREE.Matrix4();
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 export class SceneSynchronizer {
   private objectMap = new Map<string, THREE.Object3D>();
@@ -1078,10 +1082,13 @@ export class SceneSynchronizer {
       // near = 场景起点（alongFinal − reach）+ 用户近裁剪面（Near Plane：比这更近的物体不参与投影）
       cam.near = Math.max(alongFinal - reach + cfg.near, 0.01);
       cam.far = Math.max(alongFinal + reach, cam.near + 0.1);
-      // 正交范围沿灯光右/上轴做紧凑投影（8 个包围盒角落 → 灯光轴），比包围球
-      // 半径的方形范围显著收紧——同分辨率下纹素更细，阴影边缘锯齿更轻
+      // 正交范围沿**阴影相机**右/上轴做紧凑投影（8 个包围盒角落 → 相机轴），比包围球
+      // 半径的方形范围显著收紧——同分辨率下纹素更细，阴影边缘锯齿更轻。
+      // 注意基必须取 lookAt(灯位→目标) 这套（渲染时 three 为阴影相机选的姿态），
+      // 不能取灯自身矩阵的滚转轴——两套轴不一致时视锥裁掉场景角落、边缘阴影丢失
       _shadowOrigin.setFromMatrixPosition(light.matrixWorld);
-      const e = light.matrixWorld.elements;
+      _shadowProjM.lookAt(_shadowOrigin, _shadowTarget, WORLD_UP);
+      const e = _shadowProjM.elements;
       let minX = Infinity;
       let maxX = -Infinity;
       let minY = Infinity;

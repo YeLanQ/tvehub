@@ -265,14 +265,18 @@ function findLight<T extends THREE.Light>(root: THREE.Object3D, pred: (l: THREE.
     for (const c of corners) {
       const v = new THREE.Vector3(c[0], c[1], c[2]).applyMatrix4(inv);
       const depth = -v.z; // 视空间 -Z 为前方
+      // 紧凑贴合产生的是**非对称**正交范围（left≠-right），按各边界分别判，
+      // 不能用 |v.x| > right 的对称假设
       if (
-        Math.abs(v.x) > cam.right + 1e-3 ||
-        Math.abs(v.y) > cam.top + 1e-3 ||
+        v.x < cam.left - 1e-3 ||
+        v.x > cam.right + 1e-3 ||
+        v.y < cam.bottom - 1e-3 ||
+        v.y > cam.top + 1e-3 ||
         depth < cam.near - 1e-3 ||
         depth > cam.far + 1e-3
       ) {
         inside = false;
-        worst = `x=${v.x.toFixed(2)}/depth=${depth.toFixed(2)}（right=${cam.right.toFixed(2)} near=${cam.near.toFixed(2)} far=${cam.far.toFixed(2)}）`;
+        worst = `x=${v.x.toFixed(2)}/y=${v.y.toFixed(2)}/depth=${depth.toFixed(2)}（L=${cam.left.toFixed(2)} R=${cam.right.toFixed(2)} B=${cam.bottom.toFixed(2)} T=${cam.top.toFixed(2)} near=${cam.near.toFixed(2)} far=${cam.far.toFixed(2)}）`;
         break;
       }
     }

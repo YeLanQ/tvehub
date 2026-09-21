@@ -3,7 +3,7 @@
 // 用导出的 scene.json 片段喂给 public/engine/runtime 的场景树/网格构建链路，验证
 //   ① meshNode（基元/toon）默认投射 + 接收阴影（材质轮廓体除外）；
 //   ② 三种可投影灯光节点的 castShadow 与阴影参数组落到 three 灯光上
-//     （点光立方体贴图降档 1024、平行光/聚光灯 2048、浓度/偏移/近裁剪面）；
+//     （点光立方体贴图降档 1024、平行光/聚光灯 4096、浓度/偏移/近裁剪面）；
 //   ③ 灯光组件（扁平字段）同语义；
 //   ④ 舞台渲染器开启阴影贴图并使用 PCF 软阴影。
 // 运行：pnpm smoke shadow-runtime
@@ -94,7 +94,7 @@ ok(
 ok(pl?.position?.z === 0 && pl?.position?.y === 0, "点光位置在节点原点");
 const dl = lightObjOf("dl");
 ok(dl?.isDirectionalLight === true && dl?.castShadow === true, "平行光 castShadow 落到 three 灯光");
-ok(dl?.shadow?.mapSize?.width === 2048, `平行光贴图 2048（实际 ${dl?.shadow?.mapSize?.width}）`);
+ok(dl?.shadow?.mapSize?.width === 4096, `平行光贴图 4096（实际 ${dl?.shadow?.mapSize?.width}）`);
 ok(dl?.position?.x === 0 && dl?.position?.y === 0 && dl?.position?.z === 0,
   "平行光位置归零（three 默认 (0,1,0) 会让方向偏离节点 -Z 语义）");
 const sl = lightObjOf("sl");
