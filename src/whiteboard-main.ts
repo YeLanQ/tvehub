@@ -30,6 +30,8 @@ if (!isTauri()) {
   void listen<{ name: string }>("tve:whiteboard-open", (e) => {
     if (e.payload?.name) void store.loadFile(e.payload.name);
   });
+  // 新建白板：窗口已存在时重置为空白文档（冷启动新窗口本身就是空白，事件丢失无害）
+  void listen("tve:whiteboard-new", () => store.newDocument());
 }
 
 createApp(WhiteboardApp).mount("#app");

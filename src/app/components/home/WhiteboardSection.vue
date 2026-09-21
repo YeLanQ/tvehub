@@ -79,7 +79,7 @@ async function refresh(): Promise<void> {
   }
 }
 
-/** 打开白板窗口（单例）：name 非空 = 打开指定文件；null = 新建/聚焦 */
+/** 打开白板窗口（单例）：name 非空 = 打开指定文件；null = 新建空白文档 */
 async function openWhiteboard(name: string | null): Promise<void> {
   if (!isTauri()) {
     toastWarn("白板窗口需在桌面端使用（浏览器预览无窗口系统）");
@@ -87,8 +87,10 @@ async function openWhiteboard(name: string | null): Promise<void> {
   }
   try {
     await api.showWhiteboardWindow(name);
-    // 窗口已存在时热直达（冷启动时事件丢失，由待打开状态兜底）
+    // 窗口已存在时热直达（冷启动时事件丢失，由待打开状态兜底）；
+    // 新建则通知重置为空白文档（冷启动新窗口本身就是空白，事件丢失无害）
     if (name) void emit("tve:whiteboard-open", { name }).catch(() => {});
+    else void emit("tve:whiteboard-new").catch(() => {});
   } catch (e) {
     toastErr(`打开白板失败: ${e}`);
   }

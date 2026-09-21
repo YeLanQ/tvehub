@@ -13,7 +13,12 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../lib/api";
 import { isTauri } from "../lib/tauri-env";
-import { bumpWhiteboardMeta } from "./whiteboard-meta";
+import {
+  bumpWhiteboardMeta,
+  loadWhiteboardMeta,
+  patchWhiteboardMeta,
+  removeWhiteboardMeta,
+} from "./whiteboard-meta";
 import {
   buildAnimCss,
   moveElBy,
@@ -30,6 +35,21 @@ import {
 import { toast, type ToastLevel } from "../ui-kit/composables/toast";
 
 const HISTORY_LIMIT = 100;
+
+/**
+ * 保存名校验（与后端 sanitize_whiteboard_name 同规则：仅字母数字/汉字/空格/._-，
+ * 拒绝路径分隔与 ..）。返回错误文案，null = 合法。
+ */
+function invalidSaveNameReason(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return "文件名为空";
+  if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) {
+    return `文件名含非法字符: ${trimmed}`;
+  }
+  const ok = [...trimmed].every((c) => /\p{L}|\p{N}/u.test(c) || " ._-".includes(c));
+  if (!ok) return `文件名含非法字符: ${trimmed}`;
+  return null;
+}
 
 interface HistoryEntry {
   label: string;
@@ -63,6 +83,8 @@ export interface WhiteboardStore {
   markReady(): void;
   /** 打开全局白板文件（解析失败保持原文档并提示） */
   loadFile(name: string): Promise<void>;
+  /** 重置为空白新文档（首页「新建白板」对已开窗口的热直达） */
+  newDocument(): void;
   setTool(t: SvgTool): void;
   snap(): string;
   transact(mutate: () => void): void;
@@ -115,7 +137,8 @@ export function getWhiteboardStore(): WhiteboardStore {
   });
 
   function currentFileName(): string {
-    return state.currentFile ?? state.saveName ?? "未命名.svg";
+    // 保存名即当前名：新文档随输入实时变，已打开文件改名后标题即时跟随（保存才落盘）
+    return state.saveName.trim() || "未命名.svg";
   }
 
   function syncTitle(): void {
@@ -171,6 +194,7 @@ export function getWhiteboardStore(): WhiteboardStore {
         const { doc, warning } = parseSvg(text);
         state.doc = doc;
         state.currentFile = name;
+        state.saveName = name;
         state.dirty = false;
         state.selectedId = null;
         state.activeLayerId = doc.layers[doc.layers.length - 1]?.id ?? null;
@@ -186,6 +210,19 @@ export function getWhiteboardStore(): WhiteboardStore {
 
     setTool(t) {
       state.tool = t;
+    },
+
+    /** 重置为空白新文档（保留画板尺寸；未保存内容随之丢弃，入口在首页「新建白板」） */
+    newDocument() {
+      const doc = newDoc(state.doc.w, state.doc.h);
+      state.doc = doc;
+      state.currentFile = null;
+      state.saveName = "未命名.svg";
+      state.dirty = false;
+      state.selectedId = null;
+      state.activeLayerId = doc.layers[doc.layers.length - 1]?.id ?? null;
+      clearHistory();
+      syncTitle();
     },
 
     snap: () => JSON.stringify(state.doc),
@@ -390,21 +427,67 @@ export function getWhiteboardStore(): WhiteboardStore {
         showNotice("浏览器预览无法保存白板", "warn");
         return;
       }
-      const raw = currentFileName().trim();
-      if (!raw) {
-        showNotice("文件名无效", "warn");
+      const raw = state.saveName.trim();
+      const invalid = invalidSaveNameReason(raw);
+      if (invalid) {
+        showNotice(invalid, "warn");
         return;
       }
       const name = raw.toLowerCase().endsWith(".svg") ? raw : `${raw}.svg`;
+      // 同名占用检查：目标名已被其他白板使用时拒绝保存（不静默覆盖）
+      let existing: string | undefined;
       try {
-        await api.whiteboardWrite(name, serializeDoc(state.doc, true));
-        state.currentFile = name;
-        state.saveName = name;
+        const names = await api.whiteboardListFiles();
+        existing = names.find((n) => n.toLowerCase() === name.toLowerCase());
+      } catch {
+        /* 目录列取失败时跳过占用检查，交给写入兜底 */
+      }
+      const prevFile = state.currentFile;
+      // Windows 文件系统不区分大小写：与归属文件仅大小写不同 = 同一文件
+      const sameFile = prevFile !== null && prevFile.toLowerCase() === name.toLowerCase();
+      if (!sameFile && existing) {
+        showNotice(`已存在同名白板 ${existing}，请换个名字`, "warn");
+        return;
+      }
+      // 仅大小写不同的“改名”沿用磁盘上的原名，避免写新删旧把文件删没
+      const finalName = sameFile ? prevFile! : (existing ?? name);
+      // 已有归属文件且保存名不同 = 重命名（写新名后清理旧文件与旧元数据）
+      const renamed = prevFile !== null && prevFile !== finalName;
+      try {
+        await api.whiteboardWrite(finalName, serializeDoc(state.doc, true));
+        if (renamed && prevFile) {
+          // 收尾尽力而为：旧文件可能已不存在、元数据迁移失败也不阻塞保存
+          try {
+            await api.whiteboardDelete(prevFile);
+          } catch {
+            /* 旧文件清理失败不阻塞 */
+          }
+          try {
+            const old = (await loadWhiteboardMeta())[prevFile];
+            if (old) {
+              await patchWhiteboardMeta(finalName, {
+                tags: old.tags,
+                archived: old.archived,
+                createdAt: old.createdAt,
+                updatedAt: Date.now(),
+              });
+            } else {
+              await bumpWhiteboardMeta(finalName);
+            }
+            await removeWhiteboardMeta(prevFile);
+          } catch {
+            /* 元数据迁移失败不阻塞 */
+          }
+        }
+        state.currentFile = finalName;
+        state.saveName = finalName;
         state.dirty = false;
-        // 元数据时间戳（首页时间轴排序依据）
-        await bumpWhiteboardMeta(name).catch(() => {});
-        void emit("tve:whiteboard-saved", { name }).catch(() => {});
-        showNotice(`已保存 ${name}`, "ok");
+        if (!renamed) {
+          // 元数据时间戳（首页时间轴排序依据）
+          await bumpWhiteboardMeta(finalName).catch(() => {});
+        }
+        void emit("tve:whiteboard-saved", { name: finalName }).catch(() => {});
+        showNotice(renamed ? `已重命名为 ${finalName}` : `已保存 ${finalName}`, "ok");
       } catch (e) {
         showNotice(`保存失败：${e}`, "err");
       }

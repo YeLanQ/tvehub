@@ -346,8 +346,8 @@ onUnmounted(() => {
 
         <div class="spacer"></div>
 
-        <!-- 新文档：保存文件名（落全局白板目录） -->
-        <label v-if="!store.state.currentFile && !store.state.degraded" class="sv-name-field" title="保存文件名（写入全局白板目录）">
+        <!-- 白板名称：新文档为保存名；已打开文件改名后保存即重命名 -->
+        <label v-if="!store.state.degraded" class="sv-name-field" title="白板名称（保存时写入全局白板目录；改名后保存即重命名）">
           <input
             :value="store.state.saveName"
             spellcheck="false"
