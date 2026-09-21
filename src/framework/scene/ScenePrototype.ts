@@ -149,29 +149,32 @@ export class ScenePrototype {
 
     }
     
-    // 解析节点树
+    // 解析节点树（层级事实源 = 嵌套 children，childIds 忽略——与 .prefab /
+    // 后端 Graph::from_root_doc 的解析约定一致）
     if (json.root) {
       const root = Node.fromJSON(json.root as JsonRecord);
+      root.childIds = [];
       scene.nodes.set(root.id, root);
       scene.rootId = root.id;
-      scene.buildChildrenIndex(root);
+      scene.ingestChildren(root, (json.root as JsonRecord).children);
     }
-    
+
     return scene;
   }
 
-  /**
-   * 构建子节点索引
-   */
-  private buildChildrenIndex(node: Node): void {
-    if (node.childIds.length > 0) {
-      this.childrenIndex.set(node.id, [...node.childIds]);
-    }
-    for (const childId of node.childIds) {
-      const child = this.nodes.get(childId);
-      if (child) {
-        this.buildChildrenIndex(child);
-      }
+  /** 嵌套 children 文档递归登记：子节点入 map、父子链与 childrenIndex 重建 */
+  private ingestChildren(parent: Node, docs: unknown): void {
+    if (!Array.isArray(docs)) return;
+    for (const doc of docs) {
+      if (!doc || typeof doc !== "object") continue;
+      const rec = doc as JsonRecord;
+      const child = Node.fromJSON(rec);
+      child.childIds = [];
+      child.parentId = parent.id;
+      parent.childIds.push(child.id);
+      this.childrenIndex.set(parent.id, [...parent.childIds]);
+      this.nodes.set(child.id, child);
+      this.ingestChildren(child, rec.children);
     }
   }
 
@@ -305,35 +308,32 @@ export class ScenePrototype {
     const clone = new ScenePrototype();
     clone.metadata = cloneRecord(this.metadata as unknown as JsonRecord) as unknown as SceneMetadata;
     clone.settings = cloneRecord(this.settings as unknown as JsonRecord) as unknown as SceneSettings;
-    
+
     if (this.rootId) {
       const root = this.nodes.get(this.rootId);
       if (root) {
-        const clonedRoot = this.cloneNode(root);
-        clone.addNode(clonedRoot);
+        clone.addNode(this.cloneNodeInto(clone, root));
       }
     }
-    
+
     return clone;
   }
 
   /**
-   * 递归克隆节点
+   * 递归克隆节点子树到**目标场景**（id 全新、父子链与索引在目标上重建；
+   * 不再写源场景的 nodes map——旧实现会把克隆子孙挂进源场景）
    */
-  private cloneNode(node: Node): Node {
+  private cloneNodeInto(target: ScenePrototype, node: Node): Node {
     const clone = node.clone();
-    const clonedChildren = node.childIds.map(childId => {
+    target.nodes.set(clone.id, clone);
+    for (const childId of node.childIds) {
       const child = this.nodes.get(childId);
-      return child ? this.cloneNode(child) : null;
-    }).filter((n): n is Node => !!n);
-    
-    for (const child of clonedChildren) {
-      child.parentId = clone.id;
-      this.nodes.set(child.id, child);
-      clone.childIds.push(child.id);
+      if (!child) continue;
+      const childClone = this.cloneNodeInto(target, child);
+      childClone.parentId = clone.id;
+      clone.childIds.push(childClone.id);
+      target.childrenIndex.set(clone.id, [...clone.childIds]);
     }
-    
-    this.nodes.set(clone.id, clone);
     return clone;
   }
 

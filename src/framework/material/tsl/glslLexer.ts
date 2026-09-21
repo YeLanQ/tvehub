@@ -86,7 +86,8 @@ export function tokenize(src: string): { tokens: GlslToken[]; errors: string[] }
       }
       if (src[i] === "f" || src[i] === "F") i++;
       const text = src.slice(start, i);
-      const value = Number(text);
+      // GLSL 浮点后缀 f 不是 JS 数字语法（Number("3f") = NaN），剥掉后再转
+      const value = Number(text.replace(/[fF]$/, ""));
       if (Number.isFinite(value)) {
         tokens.push({ type: "num", value, pos: start });
       } else {
