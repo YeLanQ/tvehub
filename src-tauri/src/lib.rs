@@ -1081,6 +1081,7 @@ pub fn run() {
             devtools::devtools_start,
             devtools::devtools_stop,
             devtools::devtools_status,
+            devtools::devtools_recent_calls,
             devtools::devtools_tools,
             devtools::devtools_set_tool,
             devtools::devtools_reply,

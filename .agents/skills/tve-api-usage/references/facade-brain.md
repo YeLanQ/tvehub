@@ -37,8 +37,9 @@ if (name.startsWith("brain.")) {
 }
 ```
 
-`src/assistant-window/agent.ts:149`（系统提示词的策略门：autoExecute 自主执行 /
-needConfirm 先向用户确认 / deny 拒绝并转述原因）。
+`src/assistant-window/agent.ts:73`（系统提示词的策略门：autoExecute 自主执行 /
+needConfirm 先向用户确认 / deny 拒绝并转述原因；模型不支持 function-calling 时
+以正文 JSON 兜底调用）。
 
 技能进构建链路：`src-tauri/build.rs` 调 `build_skills.rs::emit_skills_index`，
 扫描 `.agents/skills/*/SKILL.md` frontmatter 生成 `OUT_DIR/skills_index.json`，

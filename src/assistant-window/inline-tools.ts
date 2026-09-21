@@ -1,0 +1,230 @@
+// 正文内联工具调用解析：部分模型/供应商不支持 function-calling，会把调用
+// 以文本形式写进回复正文。本模块把这类块抠出来转成 ToolCall，让 runAgent
+// 照常执行——指令任务因此不再"只聊天不干活"。
+// 支持三种形态：
+//   1. JSON 对象：{"tool": "x", "input": {…}} / {"name": "x", "arguments": {…}}
+//   2. XML invoke：<invoke name="x"><parameter name="k">v</parameter>…</invoke>
+//   3. 包裹标签：<tool_call>{"name": …}</tool_call>（剥壳后按 JSON 解析）
+// 非调用形状的内容不误吞；cleaned 供展示净化（抠掉已识别块）。
+
+import type { ToolCall } from "./agent";
+
+export interface ParsedInline {
+  calls: ToolCall[];
+  /** 去掉已识别调用块后的正文（历史与展示都用净化版） */
+  cleaned: string;
+}
+
+let seq = 0;
+
+function makeCall(name: string, args: unknown): ToolCall | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 64) return null;
+  let argsJson: string;
+  try {
+    argsJson = typeof args === "string" ? args : JSON.stringify(args ?? {});
+  } catch {
+    return null;
+  }
+  seq += 1;
+  return { id: `inline_${Date.now().toString(36)}_${seq}`, name: trimmed, arguments: argsJson || "{}" };
+}
+
+/** JSON 对象形状校验：tool|name + input|arguments|args */
+function callFromJson(raw: unknown): ToolCall | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const name = typeof obj.tool === "string" ? obj.tool : typeof obj.name === "string" ? obj.name : "";
+  if (!name || !("input" in obj || "arguments" in obj || "args" in obj)) return null;
+  return makeCall(name, obj.input ?? obj.arguments ?? obj.args ?? {});
+}
+
+/** XML 实体解码（parameter 值里常见 &lt; &amp; 等） */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** <invoke name="x">…</invoke> → parameter 键值对；形状不符返回 null */
+function callFromInvokeBlock(block: string): ToolCall | null {
+  const name = /<invoke\s+name="([^"]+)"\s*>/.exec(block)?.[1];
+  if (!name) return null;
+  const args: Record<string, string> = {};
+  const paramRe = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
+  let m: RegExpExecArray | null;
+  while ((m = paramRe.exec(block)) !== null) {
+    args[m[1]] = decodeEntities(m[2]).trim();
+  }
+  if (!Object.keys(args).length) return null;
+  return makeCall(name, args);
+}
+
+const INVOKE_RE = /<invoke\s+name="[^"]+"[\s\S]*?<\/invoke>/g;
+const WRAPPER_RE = /<tool_call>[\s\S]*?<\/tool_call>/g;
+
+/** 字符串感知的花括号配平扫描：返回 [start, end)（含 end）或 null */
+function balancedObject(text: string, start: number): [number, number] | null {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return [start, i];
+    }
+  }
+  return null;
+}
+
+/** 在文本 start 起取第一个配平 JSON 对象并解析（失败返回 null） */
+function parseObjectAt(text: string, start: number): unknown {
+  const range = balancedObject(text, start);
+  if (!range) return null;
+  try {
+    return JSON.parse(text.slice(range[0], range[1] + 1));
+  } catch {
+    return null;
+  }
+}
+
+/** 从回复正文解析内联工具调用。
+ * 策略：先吃形状完整的（invoke 块、内含有效调用 JSON 的 tool_call 壳——壳内
+ * 捞不到有效调用就不消费，留给裸扫兜底），再在"挖掉已消费区间的等长替身"上
+ * 裸扫 JSON——标签残骸里嵌的 {"name":…,"arguments":…} 也能捞出来。 */
+export function parseInlineToolCalls(content: string): ParsedInline {
+  const calls: ToolCall[] = [];
+  const ranges: Array<[number, number]> = [];
+
+  // 1. XML invoke 块：形状校验通过才消费
+  for (const m of content.matchAll(INVOKE_RE)) {
+    const call = callFromInvokeBlock(m[0]);
+    if (call) {
+      calls.push(call);
+      ranges.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+    }
+  }
+
+  // 2. <tool_call> 壳：壳内捞出有效调用 JSON 才整壳消费
+  for (const m of content.matchAll(WRAPPER_RE)) {
+    const s = m.index ?? 0;
+    const e = s + m[0].length;
+    const inner = m[0].slice("<tool_call>".length, -"</tool_call>".length);
+    let found = false;
+    let pos = 0;
+    while (pos < inner.length) {
+      const brace = inner.indexOf("{", pos);
+      if (brace < 0) break;
+      const range = balancedObject(inner, brace);
+      if (!range) break;
+      const call = callFromJson(parseObjectAt(inner, brace));
+      if (call) {
+        calls.push(call);
+        found = true;
+      }
+      pos = range[1] + 1;
+    }
+    if (found) ranges.push([s, e]);
+  }
+
+  // 3. 裸 JSON 扫描（等长挖替身，offset 与原文一致）
+  let scanText = content;
+  for (const [s, e] of ranges) {
+    scanText = scanText.slice(0, s) + " ".repeat(e - s) + scanText.slice(e);
+  }
+  let cursor = 0;
+  while (cursor < scanText.length) {
+    const start = scanText.indexOf("{", cursor);
+    if (start < 0) break;
+    const range = balancedObject(scanText, start);
+    if (!range) break;
+    const call = callFromJson(parseObjectAt(scanText, start));
+    if (call) {
+      calls.push(call);
+      ranges.push([range[0], range[1] + 1]);
+    }
+    cursor = range[1] + 1;
+  }
+
+  return { calls, cleaned: stripAll(content, ranges) };
+}
+
+function stripRanges(text: string, ranges: Array<[number, number]>): string {
+  if (!ranges.length) return text;
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let pos = 0;
+  for (const [s, e] of sorted) {
+    if (s < pos) continue;
+    out += text.slice(pos, s);
+    pos = e;
+  }
+  return out + text.slice(pos);
+}
+
+/** 按区间剔除调用块并收敛空行（stripRanges 的别名语义，供 cleaned 统一出口） */
+function stripAll(text: string, ranges: Array<[number, number]>): string {
+  return stripRanges(text, ranges).replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** 无内联调用（快捷判定，避免每轮都做扫描清理） */
+export function hasInlineToolCalls(content: string): boolean {
+  return parseInlineToolCalls(content).calls.length > 0;
+}
+
+/** 展示用净化正文：抠掉调用块、压掉多余空行 */
+export function cleanedContent(content: string): string {
+  return parseInlineToolCalls(content).cleaned;
+}
+
+/** 定位文本末尾未闭合、且形似调用载荷的外层 "{"（非调用数据不隐藏） */
+function unclosedCallStart(text: string): number {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let lastOpen = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") {
+      if (depth === 0) lastOpen = i;
+      depth++;
+    } else if (c === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+  if (depth === 0 || lastOpen < 0) return -1;
+  return /^\{\s*"?\s*(tool|name)\s*"?\s*:/.test(text.slice(lastOpen, lastOpen + 24))
+    ? lastOpen
+    : -1;
+}
+
+/** 流式显示净化：完整调用块剔除；尾部未写完的调用载荷/调用标签不闪现。
+ * 只动显示，不动历史（历史由 runAgent 的 cleaned 回写负责）。 */
+export function streamingDisplay(text: string): string {
+  const cleaned = cleanedContent(text);
+  const callStart = unclosedCallStart(cleaned);
+  if (callStart >= 0) return cleaned.slice(0, callStart).trimEnd();
+  const tagStart = cleaned.search(/<\s*(?:tool_call|invoke|function|parameter)\b[^<]*$/);
+  if (tagStart >= 0) return cleaned.slice(0, tagStart).trimEnd();
+  return cleaned;
+}

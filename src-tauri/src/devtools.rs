@@ -29,9 +29,54 @@ pub struct DevToolsState {
     inner: Mutex<Option<Arc<DevToolsRuntime>>>,
     /// 工具 id -> 是否启用；None = 尚未从磁盘加载
     perms: Mutex<Option<HashMap<String, bool>>>,
-    /// 助手等进程内调用方的待回复通道（replyToken -> 回传端）。与控制服务器
-    /// 运行态无关——服务器停开都不影响助手经内部桥调用命令。
+    /// 助手等进程内调用方的待回复通道（replyToken -> 回传端）
     internal_pending: Mutex<HashMap<String, SyncSender<Result<serde_json::Value, String>>>>,
+    /// 统一调用日志：助手（内部桥）/控制端（TCP+MCP）都入账，最近 50 条
+    call_log: Mutex<Vec<CallLogEntry>>,
+}
+
+/// 一条工具调用记录（首页开发者服务「最近调用」展示用）
+#[derive(Serialize, Clone)]
+pub struct CallLogEntry {
+    /// Unix 毫秒
+    pub ts: u64,
+    /// assistant = 助手内部桥；control = 控制端（TCP/MCP）
+    pub source: &'static str,
+    pub method: String,
+    /// 助手路径 = 执行结果；控制端路径 = 是否获准执行（结果异步回填不在此刻）
+    pub ok: bool,
+    /// 助手路径的耗时毫秒；控制端路径为 0
+    pub ms: u64,
+    pub detail: String,
+}
+
+/// 追加一条调用日志（超 50 条淘汰最旧）
+fn log_call(
+    state: &DevToolsState,
+    source: &'static str,
+    method: &str,
+    ok: bool,
+    ms: u64,
+    detail: &str,
+) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if let Ok(mut log) = state.call_log.lock() {
+        log.push(CallLogEntry {
+            ts,
+            source,
+            method: method.to_string(),
+            ok,
+            ms,
+            detail: detail.chars().take(160).collect(),
+        });
+        let len = log.len();
+        if len > 50 {
+            log.drain(..len - 50);
+        }
+    }
 }
 
 impl Default for DevToolsState {
@@ -40,6 +85,7 @@ impl Default for DevToolsState {
             inner: Mutex::new(None),
             perms: Mutex::new(None),
             internal_pending: Mutex::new(HashMap::new()),
+            call_log: Mutex::new(Vec::new()),
         }
     }
 }
@@ -497,8 +543,14 @@ fn dispatch_command(line: &str, rt: &DevToolsRuntime, app: &AppHandle, tx: &Sync
 
     // 权限门控（Rust 权威存储）→ Rust 本地执行（纯后端方法）→ 其余转发前端执行器。
     if let Err(msg) = require_tool(app, &method) {
+        if let Some(s) = app.try_state::<DevToolsState>() {
+            log_call(&s, "control", &method, false, 0, &msg);
+        }
         send_reply(tx, id, serde_json::Value::Null, Some(msg));
         return;
+    }
+    if let Some(s) = app.try_state::<DevToolsState>() {
+        log_call(&s, "control", &method, true, 0, "已受理（本地直答或转发编辑器）");
     }
     if let Some(res) = try_local(app, &method, &params) {
         match res {
@@ -922,6 +974,14 @@ pub async fn devtools_status(
         .map(|rt| rt.info()))
 }
 
+/// 最近的工具调用记录（助手 + 控制端统一入账，最新在后）
+#[tauri::command]
+pub async fn devtools_recent_calls(
+    state: State<'_, DevToolsState>,
+) -> Result<Vec<CallLogEntry>, String> {
+    Ok(state.call_log.lock().map_err(|e| e.to_string())?.clone())
+}
+
 /// 助手等进程内调用方执行一条 devtools 方法（统一走内部 devtools 通道）：
 /// 权限门控 → Rust 本地直答 → 转发活跃编辑器前端执行器并等待回填（60s 超时）。
 /// 与控制服务器启停无关（不走 TCP runtime，internal_pending 直达 devtools_reply）。
@@ -944,8 +1004,45 @@ fn internal_call_blocking(
     method: String,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    require_tool(app, &method)?;
-    if let Some(res) = try_local(app, &method, &params) {
+    let state = app.state::<DevToolsState>();
+    // 助手调用与控制端同源：开发者服务未运行则拒绝（首页可开启）
+    let service_on = state.inner.lock().map_err(|e| e.to_string())?.is_some();
+    if !service_on {
+        log_call(&state, "assistant", &method, false, 0, "开发者服务未运行，拒绝执行");
+        return Err("开发者服务未运行：请在首页「开发者服务」中开启后再让助手执行工具".to_string());
+    }
+    let started = std::time::Instant::now();
+    if let Err(e) = require_tool(app, &method) {
+        log_call(&state, "assistant", &method, false, 0, &e);
+        return Err(e);
+    }
+    let result = internal_dispatch(app, &method, params);
+    let ms = started.elapsed().as_millis() as u64;
+    match &result {
+        Ok(v) => log_call(&state, "assistant", &method, true, ms, &value_digest(v)),
+        Err(e) => log_call(&state, "assistant", &method, false, ms, e),
+    }
+    result
+}
+
+/// 结果值摘要（日志展示用：标量直接取，容器取序列化前 160 字符，由 log_call 截断）
+fn value_digest(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// 权限门控之后的实际执行段（本地直答 → 转发活跃编辑器执行器并等待回填）
+fn internal_dispatch(
+    app: &AppHandle,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if let Some(res) = try_local(app, method, &params) {
         return res;
     }
     let active_label =

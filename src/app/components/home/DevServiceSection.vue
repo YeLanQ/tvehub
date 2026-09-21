@@ -8,7 +8,7 @@
 // - 文档与资源：内嵌文档查看器（弹层在 HomeView 根级）与外链入口；
 // 状态同步（控制服务器状态 / 工具权限）在首页窗口挂载时完成，见 HomeView。
 // ---------------------------------------------------------------------------
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "../../../lib/tauri-env";
 import {
@@ -17,6 +17,7 @@ import {
   setToolEnabled,
   enabledMcpTools,
   sanitizeMcpName,
+  refreshRecentCalls,
 } from "../../lib/devtools/state";
 import { startDevTools, stopDevTools } from "../../lib/devtools";
 import { toastWarn, toastErr } from "../../lib/toast";
@@ -131,6 +132,25 @@ async function openDocLink(url: string) {
     console.error("打开链接失败:", e);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 最近调用：助手（内部桥）与控制端（TCP/MCP）统一入账，3 秒轮询刷新
+// ---------------------------------------------------------------------------
+
+const recentReversed = computed(() => [...devtools.recent].reverse());
+
+function fmtCallTime(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+let logTimer: ReturnType<typeof setInterval> | undefined;
+onMounted(() => {
+  void refreshRecentCalls();
+  logTimer = setInterval(() => void refreshRecentCalls(), 3000);
+});
+onBeforeUnmount(() => clearInterval(logTimer));
 </script>
 
 <template>
@@ -189,6 +209,27 @@ async function openDocLink(url: string) {
         </p>
       </template>
       <p v-else class="hint">当前为浏览器直开环境，控制服务器不可用。</p>
+    </div>
+
+    <!-- 最近调用：助手（内部桥）与控制端（TCP/MCP）统一入账 -->
+    <div class="settings-card">
+      <h3>最近调用</h3>
+      <p class="hint">
+        助手与外部控制端的工具调用统一经开发者服务门控并入账（最多保留
+        50 条，3 秒自动刷新）。服务停用时助手工具会被拒绝。
+      </p>
+      <div v-if="recentReversed.length" class="calllog">
+        <div v-for="(c, i) in recentReversed" :key="`${c.ts}-${i}`" class="calllog-row">
+          <span class="mono dim calllog-time">{{ fmtCallTime(c.ts) }}</span>
+          <span class="calllog-src" :class="c.source">{{
+            c.source === "assistant" ? "助手" : "控制端"
+          }}</span>
+          <span class="mono calllog-method">{{ c.method }}</span>
+          <span class="calllog-ok" :class="{ bad: !c.ok }">{{ c.ok ? "✓" : "✗" }}</span>
+          <span class="dim calllog-detail" :title="c.detail">{{ c.detail }}</span>
+        </div>
+      </div>
+      <p v-else class="hint">暂无调用记录。</p>
     </div>
 
     <!-- 工具权限：每个工具可单独启用/禁用（禁用后远程调用返回错误） -->
@@ -273,3 +314,38 @@ async function openDocLink(url: string) {
     </div>
   </section>
 </template>
+
+<style scoped lang="scss">
+.calllog {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.calllog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 11px/1.7 ui-monospace, Consolas, monospace;
+  min-width: 0;
+}
+.calllog-time { flex: none; }
+.calllog-src {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  &.assistant { border-color: var(--accent); color: var(--text); }
+}
+.calllog-method { flex: none; color: var(--text); }
+.calllog-ok { flex: none; color: var(--ok); &.bad { color: var(--err); } }
+.calllog-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+</style>

@@ -192,7 +192,18 @@ export const devtools = reactive({
   /** 固定端口号（0 = 自动随机；>0 时启用服务绑定该端口） */
   port: loadPort(),
   tools: DEFAULT_TOOLS.map((t) => ({ ...t, enabled: loadPerms()[t.id] !== false })),
+  /** 最近工具调用（助手 + 控制端统一入账；refreshRecentCalls 拉取） */
+  recent: [] as Awaited<ReturnType<typeof api.devtoolsRecentCalls>>,
 });
+
+/** 拉取最近调用记录（开发者服务面板「最近调用」展示；失败静默保留旧值） */
+export async function refreshRecentCalls(): Promise<void> {
+  try {
+    devtools.recent = await api.devtoolsRecentCalls();
+  } catch {
+    // 非 Tauri 环境 / 后端暂不可用：保留旧值
+  }
+}
 
 // 启动水合：从后端 KV 读权限/端口镜像，并订阅跨窗口变更
 void (async () => {

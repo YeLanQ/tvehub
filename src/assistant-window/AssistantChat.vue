@@ -4,18 +4,19 @@
 // 发送 = 组装 system(环境提示词+人设+工具+技能索引) + 历史 → 工具循环；
 // @插入：资产列表选择 → asset.read 文本 → fenced 块追加进输入框。
 // ---------------------------------------------------------------------------
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { toastErr } from "../ui-kit";
+import { api } from "../lib/api";
 import { getAssistantStore } from "./store";
 import { parseFileRefs, isBinaryRef } from "./refs";
 import { getConversations, type ChatMessage } from "./conversations";
-import {
-  buildSystemPrompt,
-  createTauriTransport,
-  runAgent,
-  toWire,
-} from "./agent";
+import { buildSystemPrompt, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { createTauriTransport } from "./transport";
+import { streamingDisplay } from "./inline-tools";
+import { mergeStepRow } from "./steps";
 import { assistantTools, execAssistantTool } from "./tools";
+import { copyText } from "./clipboard";
+import ToolSteps, { type ToolStepItem } from "./ToolSteps.vue";
 
 const store = getAssistantStore();
 const convs = getConversations();
@@ -26,12 +27,99 @@ const busy = ref(false);
 const streamingText = ref("");
 const scrollBox = ref<HTMLElement | null>(null);
 const textEl = ref<HTMLTextAreaElement | null>(null);
+/** 在途流式请求 id（终止用） */
+const reqId = ref("");
+const stopRequested = ref(false);
+/** 已复制消息 id（按钮 ✓ 反馈） */
+const copiedId = ref("");
+/** 助手等待用户确认：在输入框上沿弹批准/自行输入/退出浮动条 */
+const pendingConfirm = ref(false);
 
 /** 当前会话标题（首条用户消息自动命名，缺省"新会话"） */
 const activeTitle = computed(() => {
   const id = convs.activeConvId();
   return convs.convs().find((c) => c.id === id)?.title ?? "新会话";
 });
+
+/** 消息时间线：连续工具消息按 toolCallId 合并为「一次调用一行」的步骤块 */
+type Block =
+  | { kind: "msg"; key: string; m: ChatMessage }
+  | { kind: "steps"; key: string; rows: ToolStepItem[] };
+
+const timeline = computed<Block[]>(() => {
+  const out: Block[] = [];
+  for (const m of messages.value) {
+    const last = out[out.length - 1];
+    if (m.role === "tool") {
+      if (last && last.kind === "steps") {
+        mergeStepRow(last.rows, m);
+      } else {
+        const rows: ToolStepItem[] = [];
+        mergeStepRow(rows, m);
+        out.push({ kind: "steps", key: `steps_${m.id}`, rows });
+      }
+    } else {
+      out.push({ kind: "msg", key: m.id, m });
+    }
+  }
+  return out;
+});
+
+/** 最后一块（执行中自动展开跟随的就是它） */
+const lastBlockKey = computed(() => timeline.value[timeline.value.length - 1]?.key ?? "");
+
+const openSteps = reactive(new Set<string>());
+function stepsOpen(key: string): boolean {
+  return openSteps.has(key) || (busy.value && key === lastBlockKey.value);
+}
+function toggleSteps(key: string): void {
+  if (openSteps.has(key)) openSteps.delete(key);
+  else openSteps.add(key);
+}
+
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
+async function copyMsg(m: ChatMessage): Promise<void> {
+  const ok = await copyText(m.content);
+  if (!ok) {
+    toastErr("复制失败：剪贴板不可用");
+    return;
+  }
+  copiedId.value = m.id;
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => (copiedId.value = ""), 1200);
+}
+
+/** 终止：置停止标记（轮边界生效）+ 取消在途流式请求（ai:done cancelled 收尾） */
+async function stopGeneration(): Promise<void> {
+  stopRequested.value = true;
+  pendingConfirm.value = false;
+  if (reqId.value) {
+    try {
+      await api.aiCancel(reqId.value);
+    } catch {
+      // 请求已结束：忽略
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 确认浮动条：批准 = 代发「确认」；自行输入 = 收起面板并聚焦输入框；
+// 退出 = 代发取消指令让模型终止本次任务
+// ---------------------------------------------------------------------------
+
+function approveConfirm(): void {
+  void send("确认");
+}
+
+function customInput(): void {
+  pendingConfirm.value = false;
+  textEl.value?.focus();
+}
+
+function cancelConfirm(): void {
+  pendingConfirm.value = false;
+  void send("（用户已选择退出）终止本次任务，不要再执行任何工具操作，也不要再继续。");
+}
 
 /** 输入框自增高（1 行起步，与 @/发送 同行；上限 140px） */
 function autoGrow(): void {
@@ -81,6 +169,7 @@ function insertRef(path: string): void {
 watch(
   () => convs.activeConvId(),
   async () => {
+    pendingConfirm.value = false;
     messages.value = await convs.ensureActiveMessages();
     scrollBottom();
   },
@@ -150,15 +239,18 @@ async function resolveRefAttachments(refs: string[]): Promise<string> {
   return block;
 }
 
-async function send(): Promise<void> {
-  const text = input.value.trim();
+/** 发送（textArg 供确认浮动条等程序化调用；模板 @click 必须写 send()） */
+async function send(textArg?: string | Event): Promise<void> {
+  const typed = typeof textArg === "string";
+  const text = (typed ? textArg : input.value).trim();
   const prov = provider.value;
   if (!text || busy.value || !prov) return;
   if (!prov.baseUrl.trim() || !prov.model.trim()) {
     toastErr("请先在「设置 → 供应商」填写地址与模型");
     return;
   }
-  input.value = "";
+  if (!typed) input.value = "";
+  pendingConfirm.value = false;
   const convId = convs.activeConvId();
   if (!convId) return;
   convs.append(convId, { role: "user", content: text });
@@ -175,11 +267,12 @@ async function send(): Promise<void> {
   ];
   busy.value = true;
   streamingText.value = "";
+  stopRequested.value = false;
   try {
     const reply = await runAgent({
       messages: wire,
       tools: assistantTools(),
-      chat: createTauriTransport(),
+      chat: createTauriTransport((id) => (reqId.value = id)),
       execTool: (name, argsJson) =>
         execAssistantTool(name, argsJson, convs.activeRoot || undefined, text),
       baseUrl: prov.baseUrl,
@@ -187,19 +280,36 @@ async function send(): Promise<void> {
       model: card0?.model?.trim() ? card0.model.trim() : prov.model,
       temperature: card0?.temperature ?? undefined,
       onDelta: (t) => {
-        streamingText.value = t;
+        // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
+        streamingText.value = streamingDisplay(t);
       },
       onEvent: (e) => {
         if (e.type === "tool_start") {
           convs.append(convId, {
             role: "tool",
-            content: `${e.name}(${e.args ?? ""})`,
+            content: e.args ?? "",
             toolName: e.name,
+            toolCallId: e.callId,
+          });
+        } else if (e.type === "tool_result") {
+          convs.append(convId, {
+            role: "tool",
+            content: e.result ?? "",
+            toolName: e.name,
+            toolCallId: e.callId,
+            result: true,
           });
         }
       },
+      shouldStop: () => stopRequested.value,
     });
-    convs.append(convId, { role: "assistant", content: reply.content });
+    // 空回复兜底：绝不让一轮运行无声无息地结束
+    const finalText =
+      reply.content.trim() ||
+      "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）";
+    convs.append(convId, { role: "assistant", content: finalText });
+    // 请求确认 → 输入框上沿弹批准/自行输入/退出浮动条
+    pendingConfirm.value = !stopRequested.value && looksLikeConfirmRequest(finalText);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     convs.append(convId, { role: "error", content: msg });
@@ -207,6 +317,9 @@ async function send(): Promise<void> {
   } finally {
     busy.value = false;
     streamingText.value = "";
+    reqId.value = "";
+    // 浅拷贝强制时间线重算（落盘的历史步骤块接管收尾）
+    messages.value = [...(await convs.ensureActiveMessages())];
     scrollBottom();
   }
 }
@@ -232,16 +345,27 @@ function onInputKey(e: KeyboardEvent): void {
         还没有配置模型供应商：点左下角「⚙ 设置」→ 供应商，填写 OpenAI 兼容地址与
         API Key 即可开始。
       </p>
-      <template v-for="m in messages" :key="m.id">
-        <div v-if="m.role === 'tool'" class="achat-chip" :title="m.content">
-          ⚙ {{ m.content.length > 90 ? m.content.slice(0, 90) + "…" : m.content }}
-        </div>
+      <template v-for="b in timeline" :key="b.key">
+      <ToolSteps
+        v-if="b.kind === 'steps'"
+        :items="b.rows"
+        :open="stepsOpen(b.key)"
+        :running="busy && b.key === lastBlockKey"
+        @toggle="toggleSteps(b.key)"
+      />
         <div
-          v-else-if="m.role === 'error'"
+          v-else-if="b.m.role === 'error'"
           class="achat-bubble achat-bubble-error"
-        >{{ m.content }}</div>
-        <div v-else class="achat-row" :class="m.role">
-          <div class="achat-bubble">{{ m.content }}</div>
+        >{{ b.m.content }}</div>
+        <div v-else class="achat-row" :class="b.m.role">
+          <div class="achat-bubble">
+            <span class="achat-content">{{ b.m.content }}</span>
+            <button
+              class="achat-copy"
+              :title="copiedId === b.m.id ? '已复制' : '复制'"
+              @click="copyMsg(b.m)"
+            >{{ copiedId === b.m.id ? "✓" : "⧉" }}</button>
+          </div>
         </div>
       </template>
       <div v-if="busy" class="achat-row assistant">
@@ -250,7 +374,23 @@ function onInputKey(e: KeyboardEvent): void {
       </div>
     </div>
 
-    <div class="achat-input">
+    <!-- 确认浮动条：助手请求确认时贴合在输入框上沿 -->
+    <div v-if="pendingConfirm && !busy" class="achat-confirm">
+      <span class="achat-confirm-text">助手请求确认，以继续执行待确认的操作</span>
+      <div class="achat-confirm-actions">
+        <button class="achat-confirm-btn ok" title="回复「确认」并继续执行" @click="approveConfirm()">
+          批准
+        </button>
+        <button class="achat-confirm-btn" title="收起面板，自行输入回复" @click="customInput()">
+          自行输入
+        </button>
+        <button class="achat-confirm-btn bad" title="终止本次任务" @click="cancelConfirm()">
+          退出
+        </button>
+      </div>
+    </div>
+
+    <div class="achat-input" :class="{ joined: pendingConfirm && !busy }">
       <textarea
         ref="textEl"
         v-model="input"
@@ -262,7 +402,10 @@ function onInputKey(e: KeyboardEvent): void {
       <div class="achat-toolbar">
         <button class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
         <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
-        <button class="achat-send" :disabled="!canSend" @click="send">发送</button>
+        <button v-if="busy" class="achat-send stop" title="终止执行" @click="stopGeneration">
+          停止
+        </button>
+        <button v-else class="achat-send" :disabled="!canSend" @click="send()">发送</button>
       </div>
     </div>
 
@@ -303,12 +446,35 @@ function onInputKey(e: KeyboardEvent): void {
 .achat-guide { color: var(--text-dim); background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .achat-row { display: flex; margin: 6px 0; &.user { justify-content: flex-end; } }
 .achat-bubble {
-  max-width: 88%; padding: 7px 10px; border-radius: 10px;
-  background: var(--bg-hover); white-space: pre-wrap; word-break: break-word;
+  position: relative;
+  max-width: 88%; padding: 7px 28px 7px 10px; border-radius: 10px;
+  background: var(--bg-hover); word-break: break-word;
   .user & { background: var(--bg-active); }
+  &:hover .achat-copy { opacity: 1; }
 }
-.achat-bubble-error { border: 1px solid var(--err); color: var(--err); border-radius: 10px; padding: 7px 10px; margin: 6px 0; white-space: pre-wrap; }
-.achat-chip { font: 11px/1.6 ui-monospace, Consolas, monospace; color: var(--ok); background: var(--bg-input); border-radius: 6px; padding: 2px 8px; margin: 3px 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.achat-content { white-space: pre-wrap; user-select: text; cursor: text; }
+.achat-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+  &:hover { background: var(--bg-hover); color: var(--text); }
+}
+.achat-bubble-error { border: 1px solid var(--err); color: var(--err); border-radius: 10px; padding: 7px 10px; margin: 6px 0; white-space: pre-wrap; user-select: text; }
 .achat-typing { display: inline-flex; gap: 4px; i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: atyp 1s infinite; &:nth-child(2) { animation-delay: 0.15s; } &:nth-child(3) { animation-delay: 0.3s; } } }
 @keyframes atyp { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 .achat-input {
@@ -321,6 +487,37 @@ function onInputKey(e: KeyboardEvent): void {
   background: var(--bg-input);
   flex: none;
   &:focus-within { border-color: var(--accent); }
+  &.joined {
+    margin-top: 0;
+    border-radius: 0 0 12px 12px;
+  }
+}
+.achat-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  background: var(--bg-input);
+  flex: none;
+}
+.achat-confirm-text { flex: 1; min-width: 0; font-size: 12px; color: var(--text); }
+.achat-confirm-actions { display: flex; gap: 6px; flex: none; }
+.achat-confirm-btn {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); }
+  &.ok { border-color: var(--ok); color: var(--ok); &:hover { background: var(--ok); color: var(--bg); } }
+  &.bad { border-color: var(--err); color: var(--err); &:hover { background: var(--err); color: var(--bg); } }
 }
 .achat-text {
   resize: none;
@@ -355,7 +552,15 @@ function onInputKey(e: KeyboardEvent): void {
 }
 .achat-send { flex: none; height: 28px; border: none; border-radius: 6px; background: var(--btn); color: var(--text); padding: 0 14px; cursor: pointer;
   &:hover { background: var(--btn-hover); }
-  &:disabled { opacity: 0.45; cursor: default; } }
+  &:disabled { opacity: 0.45; cursor: default; }
+  &.stop {
+    background: transparent;
+    border: 1px solid var(--err);
+    color: var(--err);
+    opacity: 1;
+    cursor: pointer;
+    &:hover { background: var(--err); color: var(--bg); }
+  } }
 .achat-picker { position: fixed; inset: 0; background: rgb(0 0 0 / 0.45); display: flex; align-items: center; justify-content: center; }
 .achat-picker-box { width: 82%; max-height: 70%; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
 .achat-picker-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--text); button { border: none; background: transparent; color: var(--text-dim); font-size: 16px; cursor: pointer; } }

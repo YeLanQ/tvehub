@@ -44,6 +44,19 @@ export interface DevToolPermInfo {
   enabled: boolean;
 }
 
+/** 一条工具调用记录（助手内部桥 + 控制端 TCP/MCP 统一入账） */
+export interface DevCallLogEntry {
+  /** Unix 毫秒 */
+  ts: number;
+  /** assistant = 助手内部桥；control = 控制端（TCP/MCP） */
+  source: "assistant" | "control";
+  method: string;
+  ok: boolean;
+  /** 助手路径的耗时毫秒；控制端路径为 0 */
+  ms: number;
+  detail: string;
+}
+
 /** 创意工坊仓库文件（public/repos/<分类>/<文件>，一个文件一个条目） */
 export interface RepoFileEntry {
   /** 文件名（含扩展名，如 "Spin.ts"） */
@@ -407,6 +420,8 @@ export const api = {
   /** 助手专用：进程内执行一条 devtools 方法（权限门控 + 编辑器执行器回填） */
   devtoolsCall: (method: string, params?: Record<string, unknown>) =>
     invoke<unknown>("devtools_internal_call", { method, params }),
+  /** 最近的工具调用记录（助手 + 控制端统一入账，最新在后） */
+  devtoolsRecentCalls: () => invoke<DevCallLogEntry[]>("devtools_recent_calls"),
 
   // ---------------------------------------------------------------------------
   // 助手大脑（Rust brain 模块）：知识图谱检索 / 策略门控 / 观测回写

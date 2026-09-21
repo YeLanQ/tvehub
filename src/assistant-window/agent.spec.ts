@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
 import type { AssistantReply } from "./agent";
@@ -126,6 +126,141 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toBe("已改用默认参数");
   });
 
+  it("正常：正文残缺 tool_call 壳被解析执行（不空停）", async () => {
+    const garbage =
+      '<tool_call>\n<function=name="tool_calls">\n' +
+      '{"name": "brain.plan", "arguments": {"task": "创建3D项目"}}\n' +
+      "</parameter>\n</function>\n</tool_call>";
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: garbage, toolCalls: [] },
+      { content: "计划完成", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "建项目" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return { decision: "autoExecute" };
+      },
+    });
+    expect(executed).toEqual(["brain.plan"]);
+    expect(reply.content).toBe("计划完成");
+  });
+
+  it("异常：正文带调用痕迹但解析失败时，纠偏提示续跑而不是停轮", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: '<tool_call>\n完全无法解析\n</tool_call>', toolCalls: [] },
+      { content: '{ "tool": "editor.state", "input": {} }', toolCalls: [] },
+      { content: "好了", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "查状态" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+    });
+    expect(executed).toEqual(["editor.state"]);
+    expect(reply.content).toBe("好了");
+  });
+
+  it("正常：行动宣言（纯文字无调用）被拉回循环继续执行", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: "好的，开始执行。先建项目再加立方体。", toolCalls: [] },
+      { content: "", toolCalls: [{ id: "t1", name: "project.create", arguments: '{"name":"Demo"}' }] },
+      { content: "", toolCalls: [{ id: "t2", name: "project.open", arguments: "{}" }] },
+      { content: "已创建并打开项目 Demo，可以继续添加节点。", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "建个项目" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+    });
+    expect(executed).toEqual(["project.create", "project.open"]);
+    expect(reply.content).toContain("已创建");
+  });
+
+  it("边界：宣言救援最多 2 次，之后纯文字按最终回答返回", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: "开始执行。", toolCalls: [] },
+      { content: "接下来加节点。", toolCalls: [] },
+      { content: "然后写脚本。", toolCalls: [] },
+      { content: "（不应走到这一条）", toolCalls: [] },
+    ];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "做事" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+    });
+    expect(reply.content).toBe("然后写脚本。");
+  });
+
+  it("正常：空回复自动续跑，模型继续剩余步骤", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: "", toolCalls: [] },
+      { content: "", toolCalls: [{ id: "t1", name: "editor.state", arguments: "{}" }] },
+      { content: "全部完成", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "查状态" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+    });
+    expect(executed).toEqual(["editor.state"]);
+    expect(reply.content).toBe("全部完成");
+  });
+
+  it("边界：空回复续跑最多 2 次，预算用尽后原样返回（交兜底文案）", async () => {
+    const blank: AssistantReply = { content: "", toolCalls: [] };
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "做事" }],
+      tools: assistantTools(),
+      chat: async () => blank,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+    });
+    expect(reply.content).toBe("");
+    expect(reply.toolCalls).toHaveLength(0);
+  });
+
   it("边界：连续工具轮达到上限后返回提示而非死循环", async () => {
     const { chat } = stubChat([
       { content: "", toolCalls: [{ id: "t", name: "editor.state", arguments: "{}" }] },
@@ -142,6 +277,120 @@ describe("runAgent 工具循环", () => {
     });
     expect(reply.content).toContain("轮");
     expect(reply.toolCalls).toHaveLength(0);
+  });
+
+  it("正常：同轮多个调用并行执行（重叠运行），结果按调用顺序回喂", async () => {
+    const script: AssistantReply[] = [
+      {
+        content: "",
+        toolCalls: [
+          { id: "a", name: "scene.list", arguments: "{}" },
+          { id: "b", name: "asset.list", arguments: "{}" },
+          { id: "c", name: "editor.state", arguments: "{}" },
+        ],
+      },
+      { content: "都查完了", toolCalls: [] },
+    ];
+    let running = 0;
+    let peak = 0;
+    const order: string[] = [];
+    const { chat } = stubChat(script);
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "并行查" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((r) => setTimeout(r, name === "asset.list" ? 20 : 1));
+        running -= 1;
+        order.push(name);
+        return { name };
+      },
+    });
+    expect(peak).toBe(3);
+    expect(reply.content).toBe("都查完了");
+    // 回喂顺序 = 调用顺序（与完成时间无关），保证 tool_call_id 配对稳定
+    expect(order.sort()).toEqual(["asset.list", "editor.state", "scene.list"]);
+  });
+
+  it("正常：模型不支持工具机制时，正文 JSON 调用被识别并执行", async () => {
+    const script: AssistantReply[] = [
+      {
+        content: '我先查状态。\n{ "tool": "editor.state", "input": {} }',
+        toolCalls: [],
+      },
+      { content: "状态正常", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const { chat } = stubChat(script);
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "看看编辑器状态" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return { project: "demo" };
+      },
+    });
+    expect(executed).toEqual(["editor.state"]);
+    expect(reply.content).toBe("状态正常");
+  });
+
+  it("终止：shouldStop 在轮边界生效，未执行的工具保持未执行", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: "", toolCalls: [{ id: "t1", name: "node.add", arguments: "{}" }] },
+      { content: "", toolCalls: [{ id: "t2", name: "node.remove", arguments: "{}" }] },
+    ];
+    const executed: string[] = [];
+    let stop = false;
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "改场景" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        stop = true; // 模拟工具执行期间用户点了停止
+        return {};
+      },
+      shouldStop: () => stop,
+    });
+    expect(executed).toEqual(["node.add"]);
+    expect(reply.content).toContain("停止");
+    expect(reply.toolCalls).toHaveLength(0);
+  });
+
+  it("终止：内联调用也受 shouldStop 门控（不执行任何工具）", async () => {
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: '{ "tool": "asset.delete", "input": {} }', toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "删掉" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+      shouldStop: () => true,
+    });
+    expect(executed).toEqual([]);
+    expect(reply.content).toContain("停止");
   });
 });
 
@@ -174,5 +423,26 @@ describe("buildSystemPrompt", () => {
     const prompt = buildSystemPrompt(cardFixture({}), "");
     expect(prompt).toContain("内置助手");
     expect(prompt).toContain("未打开");
+  });
+});
+
+describe("looksLikeConfirmRequest", () => {
+  it("正常：识别常见的确认请求句式", () => {
+    expect(looksLikeConfirmRequest("需确认的写操作计划（2 次添加 + 1 次保存）…")).toBe(true);
+    expect(looksLikeConfirmRequest("回复「确认」我就执行；若想用地形，一并告诉我。")).toBe(true);
+    expect(looksLikeConfirmRequest("**是否按此计划执行？** 确认后我依次操作。")).toBe(true);
+    expect(looksLikeConfirmRequest("方案已定，确认后我就开始。")).toBe(true);
+    expect(looksLikeConfirmRequest("请批准以上步骤，我将依次执行。")).toBe(true);
+    expect(looksLikeConfirmRequest("发送 OK 立即开始")).toBe(true);
+  });
+
+  it("边界：一般性总结与「已确认」陈述不触发", () => {
+    expect(looksLikeConfirmRequest("已创建并打开项目 Demo，节点添加完毕。")).toBe(false);
+    expect(looksLikeConfirmRequest("已确认材质路径无误，任务完成。")).toBe(false);
+    expect(looksLikeConfirmRequest("（模型这一轮返回了空回复。回复「继续」让它接着执行。）")).toBe(false);
+  });
+
+  it("空值：空文本返回 false", () => {
+    expect(looksLikeConfirmRequest("")).toBe(false);
   });
 });

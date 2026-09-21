@@ -22,6 +22,8 @@ export interface ChatMessage {
   /** role=tool：调用的方法名与回填 id（LLM wire 用 tool_call_id） */
   toolName?: string;
   toolCallId?: string;
+  /** role=tool：true = 工具结果消息（false/缺省 = 调用消息） */
+  result?: boolean;
   createdAt: number;
 }
 
