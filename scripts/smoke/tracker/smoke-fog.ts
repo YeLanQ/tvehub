@@ -1,4 +1,5 @@
 // 雾系统冒烟测试（headless，无需 GPU）。语义参考 three.js 官网 fog 示例：
+// @priority P0
 // scene.fog = new THREE.Fog(color, near, far)（线性）/ new THREE.FogExp2(color, density)（指数）；
 // 高度雾 = exp2 距离衰减 + 海拔衰减（three 无内置类，framework/fog/heightFog.ts 注入）。
 // 覆盖五段：

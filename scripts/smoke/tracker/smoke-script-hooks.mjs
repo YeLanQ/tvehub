@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 脚本生命周期钩子「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 验证 public/engine/core/scripts.mjs 的 fixedUpdate/update/lateUpdate 驱动：
 //   ① 固定步长：帧间隔累积到 1/60s 才触发 onFixedUpdate（参数 = 固定步长）；

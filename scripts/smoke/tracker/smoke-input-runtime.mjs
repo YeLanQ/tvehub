@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 输入系统「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 验证 public/engine/core/tve/input.mjs 的多键/多点触控输入：
 //   ① SDK 接线：engine.input === inputApi、keys/pointers 实时视图；

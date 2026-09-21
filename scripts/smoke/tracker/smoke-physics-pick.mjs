@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 相机射线拾取「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 端到端复现「点击屏幕 → engine.input → CameraNode.screenToRay →
 // engine.physics.castRay → engine.scene.find(nodeId)」完整链路（用户脚本视角）：

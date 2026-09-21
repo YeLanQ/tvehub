@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // Draco 压缩管线冒烟测试（Node 运行；vite --ssr 打包）：
 // 复用 src/app/lib/model-draco 的 compressDocument 管线核心（与编辑器内完全一致，
 // 仅 IO 换成 NodeIO），对高面数测试模型执行：

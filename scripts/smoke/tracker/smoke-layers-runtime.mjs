@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 层级系统「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 用导出的 scene.json 片段喂给 public/engine/runtime 的构建链路，验证
 //   ① meshNode layer 打层（根对象 + userData.nodeLayer，子树内容跟随）；

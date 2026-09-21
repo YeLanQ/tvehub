@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 场景图「网页运行时」冒烟（Node 直跑真实产物，不经打包）：
 // 验证 public/engine/runtime/{graph-behaviors,graph-kernel,graph-core-modules}.mjs
 // 与 nodes.mjs（真实场景构建器）/ 引擎内 three 的接线 —— 即 player 预览时的

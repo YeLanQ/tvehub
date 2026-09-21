@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P1（契约漂移待清：见 tests/ISSUES.md）
 // 粒子系统「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 用 scene.json 片段喂给 public/engine/runtime 的场景树构建链路，验证
 //   ① particleSystemNode 建为 Group + __particles 实例网格子对象，收集到 particles 列表，

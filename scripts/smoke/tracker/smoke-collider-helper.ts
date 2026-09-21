@@ -1,4 +1,5 @@
 // 碰撞体辅助线框冒烟测试：验证共享形状计算（physics/colliderShape.ts）与
+// @priority P0
 // 线框几何构建（helpers/colliderWireframe.ts）的语义正确性（headless，无需 GPU）。
 // 跑法同 smoke:physics：
 //   npx vite build --ssr scripts/smoke-collider-helper.ts --outDir .tmp-smoke --emptyOutDir

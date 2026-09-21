@@ -1,4 +1,5 @@
 // 组件模式冒烟测试：验证节点组件数据层与引擎同步语义（headless，无需 GPU）：
+// @priority P0
 // - 新组件引用（light / audioSource）解析收敛与序列化往返；
 // - 旧场景字节兼容（无 tag / executionOrder=0 不写出）；
 // - SceneSynchronizer 灯光组件：挂载建灯光子对象、停用摘除、参数重建；

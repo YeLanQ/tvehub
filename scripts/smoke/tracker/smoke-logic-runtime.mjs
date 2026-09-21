@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+// @priority P0
 // 逻辑运行器「网页运行时」冒烟（Node 直接运行，不经打包）：
 // 验证 public/engine/runtime/logic.mjs 与 tve SDK 的 engine.logic 接线：
 //   ① createLogic：场景表收集 fsmRunnerNode/btRunnerNode、.fsm/.bt 资产经

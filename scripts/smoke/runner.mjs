@@ -7,9 +7,12 @@
 //   pnpm smoke                    交互菜单（↑↓ 移动，空格勾选，回车运行）
 //   pnpm smoke <id> [<id>…]       运行指定套件
 //   pnpm smoke --all              全量回归
+//   pnpm smoke --core             只跑 P0 核心回归（日常提交口径，必须全绿）
+//   pnpm smoke --priority P1      按优先级筛选（套件头部 // @priority 标记）
 //   pnpm smoke --filter <关键词>   按名称/描述筛选（支持正则）
 //   pnpm smoke --list             列出全部套件
-// 选项：--skip-build 复用 ssr 已有产物；--fail-fast 首败即停；-q/--quiet 只看失败与汇总。
+// 选项：--skip-build 复用 ssr 已有产物；--fail-fast 首败即停；-q/--quiet 只看失败与汇总；
+//       --report-dir <目录> 额外落盘 JUnit XML + summary.json（CI-ready）。
 //
 // 执行模型：顺序运行各套件（子进程），实时转发输出并缓冲，从套件结尾的
 // 「结果：X 通过，Y 失败」行（harness.finish() 输出）解析断言数，末尾打印
@@ -19,9 +22,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import readline from "node:readline";
 import { basename, dirname, join, resolve } from "node:path";
 import { discoverSuites } from "./registry.mjs";
+import { pickInteractively } from "./menu.mjs";
+import { writeSmokeReport } from "./report.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
 process.env.TVE_SMOKE_ROOT ??= ROOT;
@@ -30,16 +34,19 @@ process.env.TVE_SMOKE_ROOT ??= ROOT;
 // 参数
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const opts = { all: false, list: false, filter: null, skipBuild: false, failFast: false, quiet: false, help: false, ids: [] };
+  const opts = { all: false, core: false, priority: null, list: false, filter: null, skipBuild: false, failFast: false, quiet: false, reportDir: null, help: false, ids: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
       case "--all": opts.all = true; break;
+      case "--core": opts.core = true; break;
+      case "--priority": opts.priority = argv[++i] ?? ""; break;
       case "--list": opts.list = true; break;
       case "--filter": opts.filter = argv[++i] ?? ""; break;
       case "--skip-build": opts.skipBuild = true; break;
       case "--fail-fast": opts.failFast = true; break;
       case "-q": case "--quiet": opts.quiet = true; break;
+      case "--report-dir": opts.reportDir = argv[++i] ?? ""; break;
       case "-h": case "--help": opts.help = true; break;
       default:
         if (a.startsWith("--")) {
@@ -59,11 +66,14 @@ function printHelp() {
 
   id…            运行指定套件（pnpm smoke --list 查看全部）
   --all          全量回归
+  --core         只跑 P0 核心回归（日常口径，必须全绿）
+  --priority <P> 按优先级筛选（P0/P1/P2；套件头部 // @priority 标记）
   --filter <词>  按名称/描述筛选（支持正则）
   --list         列出全部套件
   --skip-build   ssr 套件复用 .tmp-smoke/<id>/ 已有产物，跳过 vite 构建
   --fail-fast    首个失败即停
   -q, --quiet    只输出失败详情与汇总
+  --report-dir <目录>  额外写 smoke-junit.xml + smoke-summary.json（CI-ready）
 
 无参数且为交互终端时弹出多选菜单。`);
 }
@@ -93,6 +103,16 @@ function selectSuites(suites, opts) {
       if (hit) picked.add(s.id);
     }
   }
+  if (opts.priority) {
+    for (const s of suites) {
+      if (s.priority === opts.priority) picked.add(s.id);
+    }
+  }
+  if (opts.core) {
+    for (const s of suites) {
+      if (s.priority === "P0") picked.add(s.id);
+    }
+  }
   if (opts.all) for (const s of suites) picked.add(s.id);
   return suites.filter((s) => picked.has(s.id)); // 保持发现顺序
 }
@@ -105,89 +125,8 @@ function suggest(suites, id) {
 
 function printList(suites) {
   for (const s of suites) {
-    console.log(`  ${s.id.padEnd(22)} ${s.kind.padEnd(5)} ${s.desc}`);
+    console.log(`  ${s.priority}  ${s.id.padEnd(22)} ${s.kind.padEnd(5)} ${s.desc}`);
   }
-}
-
-// ---------------------------------------------------------------------------
-// 交互菜单（零依赖：readline keypress 多选）
-// ---------------------------------------------------------------------------
-async function pickInteractively(suites) {
-  if (!suites.length) return [];
-  console.log(`smoke 套件菜单（共 ${suites.length} 项）—— ↑↓ 移动 · 空格勾选 · a 全选/清空 · 回车运行 · q 退出`);
-  const checked = suites.map(() => false);
-  checked[0] = true;
-  let cursor = 0;
-  let lastLines = 0;
-
-  readline.emitKeypressEvents(process.stdin);
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdout.write("\x1b[?25l"); // 隐藏光标
-
-  const width = () => process.stdout.columns ?? 100;
-  function frame() {
-    const lines = [`  已选 ${checked.filter(Boolean).length}/${suites.length}`];
-    const H = Math.min(14, suites.length);
-    const start = Math.max(0, Math.min(cursor - (H >> 1), suites.length - H));
-    for (let i = start; i < start + H && i < suites.length; i++) {
-      const s = suites[i];
-      const pointer = i === cursor ? "❯" : " ";
-      const box = checked[i] ? "◉" : "○";
-      const descMax = Math.max(12, width() - 40);
-      const desc = s.desc.length > descMax ? `${s.desc.slice(0, descMax)}…` : s.desc;
-      lines.push(`${pointer} ${box} ${s.id.padEnd(22)} ${s.kind.padEnd(4)} ${desc}`);
-    }
-    return lines.join("\n");
-  }
-  function draw() {
-    const f = frame();
-    if (lastLines > 0) process.stdout.write(`\x1b[${lastLines}A`);
-    process.stdout.write(`${f.split("\n").map((l) => `${l}\x1b[0K`).join("\n")}\n`);
-    lastLines = f.split("\n").length;
-  }
-
-  return await new Promise((resolveP) => {
-    function cleanup() {
-      process.stdin.removeListener("keypress", onKey);
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      process.stdout.write("\x1b[?25h"); // 恢复光标
-      if (lastLines > 0) process.stdout.write(`\x1b[${lastLines}A\x1b[J`); // 清掉菜单帧
-    }
-    function onKey(str, key) {
-      if (key.ctrl && key.name === "c") {
-        cleanup();
-        resolveP(null);
-        return;
-      }
-      switch (key.name) {
-        case "up": cursor = Math.max(0, cursor - 1); break;
-        case "down": cursor = Math.min(suites.length - 1, cursor + 1); break;
-        case "space": checked[cursor] = !checked[cursor]; break;
-        case "a": {
-          const on = !checked.every(Boolean);
-          for (let i = 0; i < checked.length; i++) checked[i] = on;
-          break;
-        }
-        case "return": case "enter": {
-          cleanup();
-          const sel = suites.filter((_, i) => checked[i]);
-          resolveP(sel.length ? sel : null);
-          return;
-        }
-        case "escape": case "q":
-          cleanup();
-          resolveP(null);
-          return;
-        default:
-          return;
-      }
-      draw();
-    }
-    process.stdin.on("keypress", onKey);
-    draw();
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +229,7 @@ async function main() {
   }
 
   let selected;
-  if (opts.ids.length || opts.filter || opts.all) {
+  if (opts.ids.length || opts.filter || opts.all || opts.core || opts.priority) {
     selected = selectSuites(suites, opts);
   } else if (process.stdin.isTTY) {
     selected = await pickInteractively(suites);
@@ -301,7 +240,7 @@ async function main() {
   } else {
     console.log(`未指定套件。当前注册 ${suites.length} 个：\n`);
     printList(suites);
-    console.log(`\n运行：pnpm smoke <id>… | --all | --filter <关键词>。`);
+    console.log(`\n运行：pnpm smoke <id>… | --all | --core | --filter <关键词>。`);
     return;
   }
 
@@ -311,7 +250,9 @@ async function main() {
     return;
   }
 
-  console.log(`\n▶ 运行 ${selected.length} 个套件（顺序执行）`);
+  const scope = opts.core ? "（P0 核心回归）" : "";
+  console.log(`\n▶ 运行 ${selected.length} 个套件${scope}（顺序执行）`);
+  const startedAt = new Date().toISOString();
   const results = [];
   for (const s of selected) {
     if (!opts.quiet) console.log(`\n${"━".repeat(60)}\n▶ ${s.id} [${s.kind}]${s.desc ? ` — ${s.desc}` : ""}`);
@@ -339,8 +280,13 @@ async function main() {
   }
   console.log(
     `\n共 ${results.length} 套件：${results.length - bad.length} 通过 / ${bad.length} 失败` +
-      `${notRun ? `（未运行 ${notRun}）` : ""} · 断言合计 ${asserts} 项 · 总耗时 ${(totalMs / 1000).toFixed(1)}s`,
+    `${notRun ? `（未运行 ${notRun}）` : ""} · 断言合计 ${asserts} 项 · 总耗时 ${(totalMs / 1000).toFixed(1)}s`,
   );
+  // CI-ready 落盘（--report-dir 指定时）：JUnit XML + 机器可读汇总
+  if (opts.reportDir) {
+    const summary = writeSmokeReport(resolve(ROOT, opts.reportDir), results, { startedAt, totalMs });
+    console.log(`报告已写入 ${resolve(ROOT, opts.reportDir)}${summary ? "" : ""}`);
+  }
   if (bad.length) process.exitCode = 1;
 }
 
