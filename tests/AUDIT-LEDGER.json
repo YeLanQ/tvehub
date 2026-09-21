@@ -1,0 +1,154 @@
+[
+  {
+    "rule": "xss.v-html",
+    "file": "src/app/components/lan/LanQrCode.vue",
+    "sig": "3a7ffc2434",
+    "reason": "QR 库由本机共享 URL 生成的 SVG，无外部内容注入面（复核 2026-09-22）",
+    "date": "2026-09-21T20:22:58.736Z",
+    "expires": "2027-09-21T20:22:58.736Z"
+  },
+  {
+    "rule": "exec.eval",
+    "file": "src/runtime/runtime/graph-core-modules.ts",
+    "sig": "08f8b673f5",
+    "reason": "图自定义节点表达式求值器（产品核心特性）：表达式来自用户本人场景文档、本机 WebView 执行；残余风险=打开他人场景即执行其表达式，已列 CSP 收紧排期跟踪",
+    "date": "2026-09-21T20:22:58.795Z",
+    "expires": "2027-09-21T20:22:58.794Z"
+  },
+  {
+    "rule": "xss.v-html",
+    "file": "src/whiteboard-window/components/WhiteboardStage.vue",
+    "sig": "98c19e6220",
+    "reason": "buildTextInner 渲染白板文本元素 HTML，内容为用户本机文档（编辑器设计内）",
+    "date": "2026-09-21T20:22:58.857Z",
+    "expires": "2027-09-21T20:22:58.857Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/asset_protocol.rs",
+    "sig": "c84f3cae59",
+    "reason": "读前置分段校验（拒../、反斜杠、空段、templates）+ internal_root 受限根（复核 160-178 行）",
+    "date": "2026-09-21T20:22:58.916Z",
+    "expires": "2027-09-21T20:22:58.915Z"
+  },
+  {
+    "rule": "exec.command",
+    "file": "src-tauri/src/lanshare/net.rs",
+    "sig": "da036c0de8",
+    "reason": "ipconfig 固定 argv、无用户输入；已带 CREATE_NO_WINDOW（记忆 windows-gui-spawn-no-window 案例本体）",
+    "date": "2026-09-21T20:22:58.974Z",
+    "expires": "2027-09-21T20:22:58.974Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/lanshare/share.rs",
+    "sig": "45d2ee1f48",
+    "reason": "写 shares_dir(app) 固定 app 目录清单，路径非请求参数",
+    "date": "2026-09-21T20:22:59.037Z",
+    "expires": "2027-09-21T20:22:59.036Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/lanshare/share.rs",
+    "sig": "77051c34a5",
+    "reason": "同上：固定 app 目录",
+    "date": "2026-09-21T20:22:59.095Z",
+    "expires": "2027-09-21T20:22:59.095Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/preview.rs",
+    "sig": "bfe946f9d2",
+    "reason": "backup 导出生命周期目录（out.with_extension(old)），内部路径非请求参数",
+    "date": "2026-09-21T20:22:59.279Z",
+    "expires": "2027-09-21T20:22:59.279Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/preview.rs",
+    "sig": "5bc639ac33",
+    "reason": "位于 write_export_file 守卫函数体内（函数头拒绝对路径/../反斜杠，复核 96-109 行）",
+    "date": "2026-09-21T20:22:59.337Z",
+    "expires": "2027-09-21T20:22:59.337Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/preview.rs",
+    "sig": "30f6c2e19d",
+    "reason": "同上：write_export_file 守卫内",
+    "date": "2026-09-21T20:22:59.396Z",
+    "expires": "2027-09-21T20:22:59.395Z"
+  },
+  {
+    "rule": "exec.command",
+    "file": "src-tauri/src/preview.rs",
+    "sig": "8eecf11988",
+    "reason": "current_exe() 自重启 --preview-server 子进程（崩溃隔离设计），固定 argv、root 为服务端内部路径",
+    "date": "2026-09-21T20:22:59.458Z",
+    "expires": "2027-09-21T20:22:59.458Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "b0314ef99c",
+    "reason": "write_file_in 函数体：调用方 write_repo_file 已过 safe_file 守卫（docs 注明契约）",
+    "date": "2026-09-21T20:22:59.517Z",
+    "expires": "2027-09-21T20:22:59.517Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "520b255c7e",
+    "reason": "delete_file_in 函数体：同上 safe_file 守卫链",
+    "date": "2026-09-21T20:22:59.580Z",
+    "expires": "2027-09-21T20:22:59.579Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "75dd11774c",
+    "reason": "describe()：path 为守卫后参数（category_dir+safe_file join 产物）",
+    "date": "2026-09-21T20:22:59.642Z",
+    "expires": "2027-09-21T20:22:59.642Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "198879318d",
+    "reason": "scan_category：dir 为 category_dir() safe_segment 守卫产物",
+    "date": "2026-09-21T20:22:59.701Z",
+    "expires": "2027-09-21T20:22:59.700Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "d64817d756",
+    "reason": "read_repo_file：safe_file+category_dir 守卫后的 join 产物",
+    "date": "2026-09-21T20:23:03.629Z",
+    "expires": "2027-09-21T20:23:03.629Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "6add458059",
+    "reason": "read_code_proto：safe_proto_file 守卫链",
+    "date": "2026-09-21T20:23:03.691Z",
+    "expires": "2027-09-21T20:23:03.691Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "b74fb50492",
+    "reason": "write_code_proto：safe_proto_file 守卫链",
+    "date": "2026-09-21T20:23:03.750Z",
+    "expires": "2027-09-21T20:23:03.750Z"
+  },
+  {
+    "rule": "trav.unguarded-fs",
+    "file": "src-tauri/src/repos.rs",
+    "sig": "323256b0b9",
+    "reason": "delete_code_proto：safe_proto_file 守卫链",
+    "date": "2026-09-21T20:23:03.808Z",
+    "expires": "2027-09-21T20:23:03.808Z"
+  }
+]

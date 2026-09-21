@@ -5,6 +5,8 @@
 //   skills  = node scripts/check-skills.mjs        技能文档漂移校验（自演化检测网）
 //   types   = pnpm exec vue-tsc --noEmit           类型检查（根 tsconfig strict）
 //   layers  = node scripts/check-layers.mjs        分层门禁（仅 src/lib 可碰 Tauri API）
+//   audit   = node scripts/audit/scan.mjs          质量+安全统一扫描（密钥/XSS/穿越/
+//                                                  CVE/覆盖率/复杂度/重复，分级门禁）
 //   unit    = pnpm exec vitest run                 单元/组件测试（351 例）
 //   smoke   = node scripts/smoke/runner.mjs --core P0 核心回归（必须全绿）
 //
@@ -37,6 +39,12 @@ const STEPS = [
   { name: "skills", title: "技能文档校验", cmd: "node scripts/check-skills.mjs" },
   { name: "types", title: "类型检查", cmd: "pnpm exec vue-tsc --noEmit" },
   { name: "layers", title: "分层门禁", cmd: "node scripts/check-layers.mjs" },
+  {
+    name: "audit",
+    title: "质量+安全统一扫描",
+    cmd: "node scripts/audit/scan.mjs",
+    hint: "报告 reports/audit/audit-report.md；设计内项用 --accept <token> --reason 入台账",
+  },
   { name: "unit", title: "单元/组件测试", cmd: "pnpm exec vitest run" },
   {
     name: "smoke",

@@ -99,6 +99,9 @@ pnpm test:baseline           # 重录性能基线（reports/perf-baseline.json�
 人工评估）。换机器或负载变化后 `pnpm test:baseline` 重录。
 
 `reports/` 与 `coverage/` 均为本地产物，不入库（.gitignore 已排除）。
+唯一例外：**安全/质量评审台账 `tests/AUDIT-LEDGER.json` 入库**（scripts/audit
+扫描器的"设计内接受"记录，rule+file+代码签名三元组命中才生效，代码漂移自动失效；
+新增接受项：`node scripts/audit/scan.mjs --accept <token> --reason "理由"`）。
 
 ## 维护守则
 

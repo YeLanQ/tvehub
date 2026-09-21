@@ -30,6 +30,7 @@ const store = getGraphWindowStore();
 const phase = ref<"idle" | "starting" | "ok" | "error">("idle");
 const baseUrl = ref("");
 const frameKey = ref(0);
+const frameRef = ref<HTMLIFrameElement | null>(null);
 const errorText = ref("");
 const hint = ref("正在导出并启动预览…");
 const refreshing = ref(false);
@@ -151,6 +152,8 @@ async function openInBrowser(): Promise<void> {
 
 /** 预览页引擎日志（player 经 postMessage 转发的 postLog）→ 控制台面板 */
 function onPreviewLog(e: MessageEvent): void {
+  // 只收自家预览 iframe 的消息（防其它窗口/内嵌页伪造日志）
+  if (e.source !== frameRef.value?.contentWindow) return;
   const d = e.data as { __editorPreviewLog?: boolean; level?: string; text?: string } | null;
   if (!d || d.__editorPreviewLog !== true) return;
   const level = d.level === "warn" || d.level === "error" ? d.level : "info";
@@ -178,7 +181,13 @@ onUnmounted(() => {
       <span class="gpreview-scene">{{ store.sceneRel }}</span>
     </div>
     <div class="gpreview-body">
-      <iframe v-if="phase === 'ok'" :key="frameKey" :src="previewUrl" title="场景图预览" />
+      <iframe
+        v-if="phase === 'ok'"
+        :key="frameKey"
+        ref="frameRef"
+        :src="previewUrl"
+        title="场景图预览"
+      />
       <div v-else-if="phase === 'error'" class="gpreview-error">预览失败：{{ errorText }}</div>
       <div v-else class="gpreview-loading">{{ hint }}</div>
     </div>

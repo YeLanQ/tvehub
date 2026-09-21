@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node scripts/sync-version.mjs && vitest run && vite",
     "check:layers": "node scripts/check-layers.mjs",
-    "build": "node scripts/sync-version.mjs && node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && vitest run && vite build",
+    "build": "node scripts/sync-version.mjs && node scripts/build-runtime.mjs && node scripts/gen-web-preview-files.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && node scripts/audit/scan.mjs --no-cve && vitest run && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "tauri build",
@@ -22,6 +22,8 @@
     "test:all": "node scripts/test/run-all.mjs",
     "skills:check": "node scripts/check-skills.mjs",
     "ci:local": "node scripts/ci-local.mjs",
+    "audit:scan": "node scripts/audit/scan.mjs",
+    "audit:rescan": "node scripts/audit/rescan.mjs",
     "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
     "gen:licenses": "node scripts/sync-licenses.mjs",

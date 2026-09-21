@@ -373,6 +373,8 @@ function toggleDebugStats(): void {
 
 /** 预览页 console/错误 → 编辑器控制台（player.mjs 经 postMessage 转发） */
 function onPreviewLog(e: MessageEvent): void {
+  // 只收自家预览 iframe 的消息（防其它窗口/内嵌页伪造日志）
+  if (e.source !== frameRef.value?.contentWindow) return;
   const d = e.data as { __editorPreviewLog?: boolean; level?: string; text?: string } | null;
   if (!d || d.__editorPreviewLog !== true) return;
   const level = d.level === "warn" || d.level === "error" ? d.level : "info";
