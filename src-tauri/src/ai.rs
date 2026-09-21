@@ -129,10 +129,29 @@ async fn run_stream(
             let Some(delta) = v["choices"][0].get("delta") else {
                 continue;
             };
-            if let Some(piece) = delta.get("content").and_then(|c| c.as_str()) {
-                if !piece.is_empty() {
-                    let _ = app.emit("ai:chunk", json!({ "reqId": args.req_id, "delta": piece }));
+            // content 兼容两种形态：字符串（标准）与分段数组（部分网关发
+            // [{type:"text","text":"…"}]）——只认字符串会整段丢正文，
+            // 模型表现为"空回复"
+            match delta.get("content") {
+                Some(serde_json::Value::String(s)) => {
+                    if !s.is_empty() {
+                        let _ =
+                            app.emit("ai:chunk", json!({ "reqId": args.req_id, "delta": s }));
+                    }
                 }
+                Some(serde_json::Value::Array(parts)) => {
+                    for part in parts {
+                        if let Some(s) = part.get("text").and_then(|t| t.as_str()) {
+                            if !s.is_empty() {
+                                let _ = app.emit(
+                                    "ai:chunk",
+                                    json!({ "reqId": args.req_id, "delta": s }),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
             // 工具调用增量（name/arguments 可能分多帧到达，前端按 index 聚合）
             if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
