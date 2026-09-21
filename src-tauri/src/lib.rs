@@ -405,7 +405,7 @@ impl ActiveEditorWindow {
     pub(crate) fn get(&self) -> Option<String> {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
-    fn set(&self, label: String) {
+    pub(crate) fn set(&self, label: String) {
         *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(label);
     }
     fn clear_if(&self, label: &str) {
@@ -432,76 +432,94 @@ struct PendingProjectPayload {
 #[tauri::command]
 async fn show_window_with_project(
     app: tauri::AppHandle,
-    state: tauri::State<'_, PendingProjects>,
     label: String,
     root: String,
     name: String,
     rel: Option<String>,
 ) -> Result<(), String> {
+    open_window_with_project(&app, &label, &root, &name, rel)
+}
+
+/// 打开（或聚焦）editor-*/graph-* 窗口并交付项目——首页命令与 devtools 本地
+/// 兜底（project.open 无活跃编辑器时）共用的同步核心。
+pub(crate) fn open_window_with_project(
+    app: &tauri::AppHandle,
+    label: &str,
+    root: &str,
+    name: &str,
+    rel: Option<String>,
+) -> Result<(), String> {
+    let state = app.state::<PendingProjects>();
     state
         .0
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(label.clone(), PendingProjectPayload { root, name, rel });
-    if let Some(w) = app.get_webview_window(&label) {
+        .insert(
+            label.to_string(),
+            PendingProjectPayload { root: root.to_string(), name: name.to_string(), rel },
+        );
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
         let _ = w.set_focus();
-    } else if label.starts_with("editor-") || label.starts_with("graph-") {
-        // 动态创建窗口（多会话：每个会话独立窗口 + 独立引擎实例，关闭即销毁）
-        // 窗口保持隐藏，前端布防装载蒙版后主动 show()，避免空白闪现
-        // 背景色取编辑器主题底色（--bg #1a1a2e）：WebView 首帧呈现前原生窗口
-        // 默认白底，加载过快时 show 与揭幕贴近，白底会以"闪屏"形式露出来
-        let pending = state
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&label)
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
-        let (url, title, min_w, min_h) = if label.starts_with("editor-") {
-            (
-                tauri::WebviewUrl::App("index.html".into()),
-                format!("TvE Editor – {pending}"),
-                1300.0,
-                860.0,
-            )
-        } else {
-            (
-                tauri::WebviewUrl::App("graph.html".into()),
-                format!("TvE Graph – {pending}"),
-                960.0,
-                600.0,
-            )
-        };
-        // Tauri 原生拖放拦截（缺省开启）会吞掉页面内 HTML5 drag/drop 事件——
-        // 图窗口的「层级拖入画布」依赖页面内 DnD，必须禁用拦截；
-        // 编辑器窗口保留：外部系统文件拖放导入走 onDragDropEvent
-        // （useAssetTransfer），关掉会丢文件路径。
-        let builder = tauri::WebviewWindowBuilder::new(&app, &label, url)
-            .title(title)
-            .inner_size(1300.0, 860.0)
-            .min_inner_size(min_w, min_h)
-            .visible(false)
-            .decorations(false)
-            .background_color(tauri::window::Color(26, 26, 46, 255))
-            // 注意：不要再加 --force-high-performance-gpu。混合显卡机型
-            // （核显驱动屏幕 + 独显渲染）下该参数强制 Chromium 在独显渲染，
-            // 呈现面跨适配器交给核显合成，resize 与独显启停时会瞬间丢帧——
-            // 表现为整个窗口/视口黑闪或透明。让 WebView2 自选 GPU 即可稳定。
-            .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
-        // 便携式 WebView 数据目录：与首页窗口同一目录（同一 WebContext，
-        // 浏览器缓存/origin 存储随 exe 走）；回退模式为 None 走系统默认。
-        let builder = match appdirs::webview_data_dir() {
-            Some(dir) => builder.data_directory(dir),
-            None => builder,
-        };
-        let _w = if label.starts_with("graph-") {
-            builder.disable_drag_drop_handler().build()
-        } else {
-            builder.build()
-        }
-        .map_err(|e| e.to_string())?;
+        return Ok(());
     }
+    if !(label.starts_with("editor-") || label.starts_with("graph-")) {
+        return Ok(());
+    }
+    // 动态创建窗口（多会话：每个会话独立窗口 + 独立引擎实例，关闭即销毁）
+    // 窗口保持隐藏，前端布防装载蒙版后主动 show()，避免空白闪现
+    // 背景色取编辑器主题底色（--bg #1a1a2e）：WebView 首帧呈现前原生窗口
+    // 默认白底，加载过快时 show 与揭幕贴近，白底会以"闪屏"形式露出来
+    let pending = state
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(label)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let (url, title, min_w, min_h) = if label.starts_with("editor-") {
+        (
+            tauri::WebviewUrl::App("index.html".into()),
+            format!("TvE Editor – {pending}"),
+            1300.0,
+            860.0,
+        )
+    } else {
+        (
+            tauri::WebviewUrl::App("graph.html".into()),
+            format!("TvE Graph – {pending}"),
+            960.0,
+            600.0,
+        )
+    };
+    // Tauri 原生拖放拦截（缺省开启）会吞掉页面内 HTML5 drag/drop 事件——
+    // 图窗口的「层级拖入画布」依赖页面内 DnD，必须禁用拦截；
+    // 编辑器窗口保留：外部系统文件拖放导入走 onDragDropEvent
+    // （useAssetTransfer），关掉会丢文件路径。
+    let builder = tauri::WebviewWindowBuilder::new(app, label, url)
+        .title(title)
+        .inner_size(1300.0, 860.0)
+        .min_inner_size(min_w, min_h)
+        .visible(false)
+        .decorations(false)
+        .background_color(tauri::window::Color(26, 26, 46, 255))
+        // 注意：不要再加 --force-high-performance-gpu。混合显卡机型
+        // （核显驱动屏幕 + 独显渲染）下该参数强制 Chromium 在独显渲染，
+        // 呈现面跨适配器交给核显合成，resize 与独显启停时会瞬间丢帧——
+        // 表现为整个窗口/视口黑闪或透明。让 WebView2 自选 GPU 即可稳定。
+        .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    // 便携式 WebView 数据目录：与首页窗口同一目录（同一 WebContext，
+    // 浏览器缓存/origin 存储随 exe 走）；回退模式为 None 走系统默认。
+    let builder = match appdirs::webview_data_dir() {
+        Some(dir) => builder.data_directory(dir),
+        None => builder,
+    };
+    let _w = if label.starts_with("graph-") {
+        builder.disable_drag_drop_handler().build()
+    } else {
+        builder.build()
+    }
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -998,6 +1016,8 @@ pub fn run() {
                     if let Some(state) = window.app_handle().try_state::<PendingProjects>() {
                         state.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&label);
                     }
+                    // 清理 devtools 命令监听器就绪登记（多会话：label 不复用，防残留）
+                    devtools::forget_listener_ready(&label);
                     if let Some(state) = window.app_handle().try_state::<preview::PreviewServerState>() {
                         preview::stop_server_for_label(&state, &label);
                     }
@@ -1091,6 +1111,7 @@ pub fn run() {
             devtools::devtools_set_tool,
             devtools::devtools_reply,
             devtools::devtools_push,
+            devtools::devtools_listener_ready,
             preview::export_web_preview_from_scene,
             preview::start_web_preview_server,
             preview::stop_web_preview,

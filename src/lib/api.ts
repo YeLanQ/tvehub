@@ -388,6 +388,9 @@ export const api = {
   /** 前端推送事件（console / 日志 / 状态变化）广播给所有控制端 */
   devtoolsPush: (event: string, data: unknown) =>
     invoke<void>("devtools_push", { event, data }),
+  /** 回执：本窗口 devtools:cmd 命令监听器已安装（编辑器窗口启动时调用） */
+  devtoolsListenerReady: (label: string) =>
+    invoke<void>("devtools_listener_ready", { label }),
   /** 取消指定任务 */
   cancelTask: (id: string) => invoke<boolean>("cancel_task", { id }),
   /** 批量取消某项目的全部任务 */

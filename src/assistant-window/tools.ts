@@ -23,7 +23,7 @@ const CATALOG: ToolSpec[] = [
   { method: "editor.state", description: "读编辑器当前状态：项目/场景/视图模式/选中/撤销栈。" },
   { method: "project.list", description: "列出最近项目（path/name/sceneCount）。" },
   { method: "project.create", description: "新建项目（默认 3D 模板，含场景/脚本/配置，无需编辑器）。", params: { name: "项目名", parent: "父目录绝对路径；缺省用默认项目位置，再缺省弹目录选择" }, required: ["name"] },
-  { method: "project.open", description: "在编辑器中打开项目（切换编辑器工作区；不需要打开也能读写资产）。", params: { path: "项目绝对路径" }, required: ["path"] },
+  { method: "project.open", description: "在编辑器中打开项目：无活跃编辑器窗口时新建一个编辑器窗口（等同首页打开，返回即就绪）；有活跃编辑器时切换其工作区。", params: { path: "项目绝对路径" }, required: ["path"] },
   { method: "project.close", description: "关闭当前项目回首页。" },
   { method: "scene.list", description: "列出项目内全部 .scene 场景（可带 root 指定工作区，无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
   { method: "scene.open", description: "在编辑器中打开场景（需编辑器已开项目）。", params: { rel: "场景相对路径" }, required: ["rel"] },

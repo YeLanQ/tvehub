@@ -16,12 +16,12 @@
 //!   避免多客户端 id 冲突。
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Tauri managed：当前开发者服务运行时（同一时刻至多一个）+ 工具权限（Rust 权威存储）
@@ -309,6 +309,34 @@ pub async fn devtools_set_tool(
 }
 
 // ---------------------------------------------------------------------------
+// devtools:cmd 监听器就绪登记：编辑器窗口前端装好命令监听后上报自己的 label。
+// 冷启动竞态——窗口刚创建时 emit_to 会在 JS 就绪前丢失（命令石沉大海，调用方
+// 空 60s 超时），故 project.open 的本地兜底开新窗口后会先等就绪回执再放行。
+// ---------------------------------------------------------------------------
+
+static LISTENER_READY: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn listener_ready_set() -> &'static Mutex<HashSet<String>> {
+    LISTENER_READY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// 前端回执：本窗口的 devtools:cmd 监听器已安装（编辑器窗口启动时调用）
+#[tauri::command]
+pub async fn devtools_listener_ready(label: String) -> Result<(), String> {
+    if let Ok(mut set) = listener_ready_set().lock() {
+        set.insert(label);
+    }
+    Ok(())
+}
+
+/// 窗口销毁时清除就绪登记（多会话 label 不复用，仅防集合无界增长）
+pub(crate) fn forget_listener_ready(label: &str) {
+    if let Ok(mut set) = listener_ready_set().lock() {
+        set.remove(label);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rust 本地执行器：纯后端方法（查询/会话落盘）不经前端直接应答；其余仍转发前端。
 // ---------------------------------------------------------------------------
 
@@ -339,6 +367,70 @@ fn project_recent_list(app: &AppHandle) -> Result<serde_json::Value, String> {
         }
     }
     Ok(serde_json::json!({ "recent": recent }))
+}
+
+/// project.open 本地兜底：没有活跃编辑器窗口时，新开一个编辑器窗口交付项目
+/// （等同首页「打开项目」），不再报「没有活跃的编辑器窗口」。有活跃编辑器时
+/// 返回 None——照旧转发该窗口切换工作区，行为不变。
+fn project_open_local(
+    app: &AppHandle,
+    params: &serde_json::Value,
+) -> Option<Result<serde_json::Value, String>> {
+    if active_editor_label(app).is_some() {
+        return None;
+    }
+    let path = params
+        .get("path")
+        .and_then(|p| p.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Some(path) = path else {
+        return Some(Err("缺少 path 参数（项目绝对路径）".to_string()));
+    };
+    let info = match crate::project::project_info(&std::path::PathBuf::from(path)) {
+        Ok(i) => i,
+        Err(e) => return Some(Err(format!("打开项目失败: {e}"))),
+    };
+    // 与首页 open_project 同语义：登记最近 + 广播变更（首页面板即时刷新）
+    crate::store::push_recent(app, &info.path);
+    let _ = app.emit("projects:changed", ());
+    let label = format!(
+        "editor-devtools-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    if let Err(e) = crate::open_window_with_project(app, &label, &info.path, &info.name, None) {
+        return Some(Err(format!("打开编辑器窗口失败: {e}")));
+    }
+    // 新窗口即路由目标：聚焦事件到来之前先标记活跃，后续 node.* 立即可路由
+    app.state::<crate::ActiveEditorWindow>().set(label.clone());
+    // 等命令监听器就绪再放行：避免后续转发在 JS 就绪前 emit 丢失（60s 假等）
+    wait_listener_ready(&label, 15);
+    Some(Ok(serde_json::json!({
+        "ok": true,
+        "path": info.path,
+        "name": info.name,
+        "window": label,
+        "note": "已在新编辑器窗口打开项目（等同首页打开项目），可继续 node.* / scene.* 操作",
+    })))
+}
+
+/// 轮询等待窗口的 devtools:cmd 监听器就绪（秒级上限；超时放行——由转发层
+/// 60s 应答超时兜底，不在此报错）。仅 spawn_blocking / TCP 线程调用，可阻塞。
+fn wait_listener_ready(label: &str, max_secs: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_secs);
+    while std::time::Instant::now() < deadline {
+        let ready = listener_ready_set()
+            .lock()
+            .map(|set| set.contains(label))
+            .unwrap_or(false);
+        if ready {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 fn scene_list_of(root: &str) -> Result<serde_json::Value, String> {
@@ -375,6 +467,12 @@ fn try_local(
 ) -> Option<Result<serde_json::Value, String>> {
     Some(match method {
         "project.list" => project_recent_list(app),
+        // project.open 本地兜底：无活跃编辑器时直接新开编辑器窗口交付项目
+        // （等同首页「打开项目」）；有活跃编辑器 → None 走转发切换工作区
+        "project.open" => match project_open_local(app, params) {
+            Some(res) => res,
+            None => return None,
+        },
         // 助手工作区语义：root 参数显式指定项目目录（不依赖编辑器会话）；
         // 缺省回退活跃编辑器会话的项目根（外部控制端兼容）。
         "scene.list" => match workspace_root(app, params) {

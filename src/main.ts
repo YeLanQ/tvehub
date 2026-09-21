@@ -60,8 +60,12 @@ if (!isTauri()) {
   void listen("devtools:enabled", () => {
     void restoreDevToolsStatus();
   });
-  // 命令执行器常开：助手窗口的内部调用不依赖控制服务器开关
-  void ensureCmdListener();
+  // 命令执行器常开：助手窗口的内部调用不依赖控制服务器开关。
+  // 装好后向 Rust 回执本窗口 label——project.open 无编辑器时的本地兜底新开窗口
+  // 会等这个回执再放行，避免 devtools:cmd 在 JS 就绪前 emit 丢失（60s 假等）。
+  void ensureCmdListener().then(() =>
+    api.devtoolsListenerReady(myLabel).catch(() => {}),
+  );
   void restoreDevToolsStatus();
   // 窗口关闭（X 按钮 / 系统关闭）：直接销毁引擎释放资源（多会话架构：关闭 = 销毁）。
   // Rust 侧不 prevent_close，窗口走默认销毁，前端 onBeforeUnmount 也会触发 disposeEditor。
