@@ -6,7 +6,7 @@
 null）、`findAll()`、`findByTag(tag)`（首个命中）、`findAllByTag(tag)`（全量）、
 `findComponent(token)` / `findComponents(token)`（全场景按组件类型查；token = 脚本类/
 源路径/类名/内置门面类）。
-`Entity.find("路径")` 子树内查找；`getComponent` 传脚本类或 `"src/hp.ts"`/"HPBar"
+`Entity.find("路径")` 子树内查找；`getComponent` 传脚本类或脚本源路径/类名字符串
 字符串；脚本类加载后全局可见，**互相引用组件无需 import 运行时值**
 （严格模式用 `import type` 拿智能提示）。
 共享状态：`dataCenter`（全局单例）`set/get<T>(key, def)/has/delete/keys/configure/

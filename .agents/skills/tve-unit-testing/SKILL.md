@@ -67,3 +67,4 @@ pnpm test:all         # 一键全跑 + reports/<日期>/ 归档
 - 各 API 单元的"测试例"索引（哪些有真实 spec、哪些给的是推荐写法）：`tve-api-usage`
 - 引擎接口与 smoke 套件的对应关系：`tve-engine-interfaces`
 - tve 脚本编写（模板内附验证流程）：`tve-sdk-scripting`
+- 系统层：`tve-agent-autonomy`（自主决策）· `tve-local-ci`（本地 CI）· `tve-self-evolution`（文档自演化）

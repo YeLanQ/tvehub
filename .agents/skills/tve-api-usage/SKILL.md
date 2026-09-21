@@ -54,3 +54,4 @@ src/app/commands/     命令注册表（工具栏/快捷键/右键/devtools·MCP
 - 用 tve SDK 写脚本（完整代码模板）：`tve-sdk-scripting`
 - 写单测的规范与模式：`tve-unit-testing`
 - 编辑器/图窗口/白板的用户操作全集（命令 id 清单）：`tve-app-operations`
+- 系统层：`tve-agent-autonomy`（自主决策）· `tve-local-ci`（本地 CI）· `tve-self-evolution`（文档自演化）

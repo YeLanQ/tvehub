@@ -2,8 +2,7 @@
 
 ## 契约
 
-**模块清单**（源 → 产物映射：`src/runtime/core/X.ts → public/engine/core/X.mjs`、
-`src/runtime/runtime/X.ts → public/engine/runtime/X.mjs`）：
+**模块清单**（源 → 产物映射：`src/runtime/` 下 `core/X.ts` 编译为 `public/engine/core/` 下同名 `.mjs`，`runtime/X.ts` 同理进 `public/engine/runtime/`）：
 
 - core/：tve.ts（SDK）、scripts.ts（脚本宿主）、tween.ts、log.ts（postLog）、
   utils.ts、particles.ts（GLSL 粒子材质）、particleNodeMaterial.ts + nodeMaterialHooks.ts

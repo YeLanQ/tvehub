@@ -20,6 +20,8 @@
     "test:regression:core": "node scripts/smoke/runner.mjs --core",
     "test:baseline": "node scripts/test/run-all.mjs --skip-unit --update-baseline",
     "test:all": "node scripts/test/run-all.mjs",
+    "skills:check": "node scripts/check-skills.mjs",
+    "ci:local": "node scripts/ci-local.mjs",
     "gen:test-model": "vite build --ssr scripts/gen-test-model.ts --outDir .tmp-smoke --emptyOutDir && node .tmp-smoke/gen-test-model.js",
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
     "gen:licenses": "node scripts/sync-licenses.mjs",

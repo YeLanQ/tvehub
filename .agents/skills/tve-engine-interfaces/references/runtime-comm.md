@@ -32,7 +32,8 @@ postMessage 切换）；`src/app/lib/build-export.ts:271`（buildExport 时把�
 ## 测试例
 
 真实测试例：
-- `scripts/smoke/tracker/smoke-pak-runtime.mjs` 类套件覆盖归档装载（P0 面）；
+- pak/asset-bundle/resource 装载链路由 `smoke-runtime-modules.mjs` 的全模块链接
+  检查覆盖（模块损坏/缺失导出在链接期即失败）；
 - smoke harness 的 `installDomShim()`（scripts/smoke/harness.mjs:40 起）——node 下
   跑导入期访问 window/document 的运行时模块，缺更多桩（canvas/baseURI）时调用后自行补。
 

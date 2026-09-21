@@ -48,4 +48,5 @@ references/editor-commands.md。
 ## 姊妹技能
 
 命令派发机制与 IPC：`tve-api-usage`；脚本/图逻辑怎么写：`tve-sdk-scripting`、
-`tve-engine-interfaces`（graph-logic.md）；测试规范：`tve-unit-testing`。
+`tve-engine-interfaces`（graph-logic.md）；测试规范：`tve-unit-testing`；
+系统层：`tve-agent-autonomy` · `tve-local-ci` · `tve-self-evolution`。
