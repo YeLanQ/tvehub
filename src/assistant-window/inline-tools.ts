@@ -54,6 +54,18 @@ function decodeEntities(text: string): string {
 const LOOSE_BLOCK_RE = /<(?:invoke|function)\b[^>]*>([\s\S]*?)<\/(?:invoke|function)>/g;
 const WRAPPER_RE = /<tool_call>[\s\S]*?<\/tool_call>/g;
 
+/** 包裹词（等号方言里挂在 = 后的不是工具名，是壳语义：<function=tool_call>） */
+const WRAPPER_NAME_TOKENS = new Set(["tool_call", "tool_calls", "tool", "invoke", "function", "call"]);
+
+/** 开标签 → 工具名：name="x" 属性优先；缺失时取裸等号方言 <function=asset.read>
+ * 的 = 值（包裹词不算，仍走 name 槽语义）。 */
+function blockNameOf(opening: string): string {
+  const attr = /name\s*=\s*"([^"]+)"/.exec(opening)?.[1] ?? "";
+  if (attr) return WRAPPER_NAME_TOKENS.has(attr.toLowerCase()) ? "" : attr;
+  const bare = /=[\s"']*([A-Za-z0-9_.:\-]+)[\s"'>]/.exec(opening)?.[1] ?? "";
+  return bare && !WRAPPER_NAME_TOKENS.has(bare.toLowerCase()) ? bare : "";
+}
+
 const NAME_KEYS = new Set(["name", "tool", "method", "function"]);
 const ARGS_KEYS = new Set(["input", "arguments", "args"]);
 
@@ -102,7 +114,8 @@ function callFromParams(params: Array<[string, string]>, blockName: string): Too
     }
   }
   if (Object.keys(perArg).length) return makeCall(cleanName, perArg);
-  return null;
+  // 零参调用（如 node.list）：块级工具名有效即可发起，不再要求必须有参数槽
+  return makeCall(cleanName, {});
 }
 
 /** 字符串感知的花括号配平扫描：返回 [start, end)（含 end）或 null */
@@ -147,13 +160,12 @@ export function parseInlineToolCalls(content: string): ParsedInline {
   const calls: ToolCall[] = [];
   const ranges: Array<[number, number]> = [];
 
-  // 1. 宽松 function/invoke 块（标准 invoke、<function=…> 残缺标签、参数槽两种形态）
+  // 1. 宽松 function/invoke 块（标准 invoke、<function=…> 裸等号/残缺标签、参数槽两种形态）
   for (const m of content.matchAll(LOOSE_BLOCK_RE)) {
     const s = m.index ?? 0;
     const e = s + m[0].length;
     const opening = /<(?:invoke|function)\b[^>]*>/.exec(m[0])?.[0] ?? "";
-    const blockName = /name\s*=\s*"([^"]+)"/.exec(opening)?.[1] ?? "";
-    const call = callFromParams(parseParamPairs(m[1]), blockName);
+    const call = callFromParams(parseParamPairs(m[1]), blockNameOf(opening));
     if (call) {
       calls.push(call);
       ranges.push([s, e]);

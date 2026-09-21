@@ -6,6 +6,13 @@ import { nextTick } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import AssistantChat from "./AssistantChat.vue";
 import { getConversations } from "./conversations";
+import { getAssistantStore } from "./store";
+import { runAgent, type AssistantReply } from "./agent";
+
+vi.mock("./agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./agent")>();
+  return { ...actual, runAgent: vi.fn() };
+});
 
 async function mounted() {
   // 每例新建会话：conversations 是模块级单例，避免用例间消息串扰
@@ -96,5 +103,100 @@ describe("AssistantChat 消息气泡", () => {
     const content = wrapper.find(".achat-content");
     expect(content.exists()).toBe(true);
     expect(content.classes()).toContain("achat-content");
+  });
+});
+
+describe("AssistantChat 发送链路（引用别名回归）", () => {
+  it("边界：第二轮运行期间用户消息实时上屏（不被 finally 的引用替换吞掉）", async () => {
+    const store = getAssistantStore();
+    if (!store.providers.some((p) => p.id === "p1")) {
+      store.providers.push({
+        id: "p1",
+        name: "测试供应商",
+        baseUrl: "https://x/v1",
+        apiKey: "k",
+        model: "m",
+        models: ["m"],
+      });
+    }
+    store.setActiveProvider("p1");
+    const runAgentMock = vi.mocked(runAgent);
+    let resolveRun: (r: AssistantReply) => void = () => {};
+    runAgentMock.mockImplementation(
+      () =>
+        new Promise<AssistantReply>((res) => {
+          resolveRun = res;
+        }),
+    );
+    const { wrapper } = await mounted();
+    const userTexts = () =>
+      wrapper.findAll(".achat-row.user .achat-content").map((w) => w.text());
+    const sendBtn = () => wrapper.find(".achat-send:not(.stop)");
+    const textEl = wrapper.find(".achat-text");
+
+    // 第一轮：发送 → 运行中消息可见 → 收尾
+    await textEl.setValue("第一个任务");
+    await sendBtn().trigger("click");
+    await nextTick();
+    expect(userTexts().some((t) => t.includes("第一个任务"))).toBe(true);
+    resolveRun({ content: "第一轮完成", toolCalls: [] });
+    await flushPromises();
+
+    // 第二轮：运行挂起期间用户消息必须实时可见——回归：send 收尾若用浅拷贝
+    // 替换 messages.value 引用，convs.append 进缓存数组的消息就不再驱动时间线，
+    // 用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡）
+    await textEl.setValue("第二个任务");
+    await sendBtn().trigger("click");
+    await nextTick();
+    await nextTick();
+    expect(userTexts().some((t) => t.includes("第二个任务"))).toBe(true);
+    resolveRun({ content: "第二轮完成", toolCalls: [] });
+    await flushPromises();
+  });
+
+  it("边界：运行中的执行过程面板点一次头部即可收起（手动收起优先于自动展开）", async () => {
+    const store = getAssistantStore();
+    if (!store.providers.some((p) => p.id === "p1")) {
+      store.providers.push({
+        id: "p1",
+        name: "测试供应商",
+        baseUrl: "https://x/v1",
+        apiKey: "k",
+        model: "m",
+        models: ["m"],
+      });
+    }
+    store.setActiveProvider("p1");
+    const runAgentMock = vi.mocked(runAgent);
+    let resolveRun: (r: AssistantReply) => void = () => {};
+    runAgentMock.mockImplementation(
+      () =>
+        new Promise<AssistantReply>((res) => {
+          resolveRun = res;
+        }),
+    );
+    const { wrapper, convId } = await mounted();
+    await wrapper.find(".achat-text").setValue("跑一个多步任务");
+    await wrapper.find(".achat-send:not(.stop)").trigger("click");
+    await nextTick();
+    // 运行中：工具消息落库 → 最新块自动展开
+    getConversations().append(convId, {
+      role: "tool",
+      content: "{}",
+      toolName: "scene.list",
+      toolCallId: "c1",
+    });
+    await nextTick();
+    expect(wrapper.find(".asteps-body").exists()).toBe(true);
+    // 点一次头部 → 收起（旧实现第一次点击只把块加进手动展开集合，收不起来）
+    await wrapper.find(".asteps-head").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".asteps-body").exists()).toBe(false);
+    // 再点 → 重新展开
+    await wrapper.find(".asteps-head").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".asteps-body").exists()).toBe(true);
+    resolveRun({ content: "完成", toolCalls: [] });
+    await flushPromises();
   });
 });

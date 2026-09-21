@@ -44,6 +44,9 @@ export type ChatFn = (args: StreamArgs) => Promise<AssistantReply>;
  * 1-2 步，24 轮才够一次完整交付；仍超限时走「继续」续跑。 */
 const MAX_ROUNDS = 24;
 const TOOL_RESULT_LIMIT = 4000;
+/** 空回复续跑预算：方言模型/不稳供应商一轮任务里可能空嗝多次——2 次不够会
+ * 频繁落兜底文案打断任务（用户被迫手动「继续」），给到 4 次 */
+const MAX_EMPTY_RESCUES = 4;
 
 /** 正文疑似工具调用但解析失败的痕迹（只认标签形态，普通 JSON 数据不误伤） */
 const TOOL_MARK_RE = /<\s*tool_call|<\s*invoke\b|<\s*function\b|<\/\s*(tool_call|invoke|function)>/;
@@ -91,7 +94,7 @@ export function buildSystemPrompt(
     `## 运行环境\n当前工作区：${currentProject || "通用（未绑定项目目录；可 project.create 新建，或让用户在左栏添加）"}\n` +
       [
         "工作区规则：项目目录即工作区——无需在编辑器打开，scene.list / asset.list / asset.read / asset.write 即可查询与读写该目录下的文件（含直读 .scene 文本）。",
-        "会话依赖：node.* 与 preview.* 只对「已在编辑器打开」的项目生效。project.create 只在磁盘建项目——建完必须先 project.open 打开它，才能 node.add / scene.save / 预览。多步建造任务按顺序推进：project.create → project.open → 场景/节点操作 → 保存。",
+        "会话依赖：node.* 与 preview.* 只对「已在编辑器打开」的项目生效。project.create 只在磁盘建项目——建完必须先 project.open 打开它，才能 node.add / scene.save / 预览。project.open 在没有编辑器窗口时会新开一个编辑器窗口加载（返回即已就绪），有编辑器窗口时切换其工作区。多步建造任务按顺序推进：project.create → project.open → 场景/节点操作 → 保存。",
         "项目未打开时 node.* 会报「没有活跃的编辑器窗口」，此时先 project.open，不要反复重试同一调用。",
         "改完文件即落盘；但 .scene 的节点图编辑建议项目在编辑器打开后用 node.* 走撤销历史。",
       ].join("\n"),
@@ -105,7 +108,8 @@ export function buildSystemPrompt(
       "brain.query 可查图谱能力（技能/命令/概念），brain.stats 查历史正确率与效能。每次工具执行的结果会自动回灌大脑进化策略，无需手动上报。",
       "调用方式：优先 function-calling 的 tool_calls；若当前模型不支持，则在正文中输出独立 JSON 对象（每块一个调用）：{\"tool\": \"方法名\", \"input\": {参数}}，系统会识别并代为执行。",
       "回合协议：不要输出「开始执行」「我将依次操作」之类的过渡宣言——纯文字回合会被视为任务结束。要么直接发起工具调用（无依赖的调用放同一轮并行），要么在全部步骤完成后输出含结果的最终总结。",
-      "防重复：每次发起调用前先看上文工具结果判断进度——已成功执行的步骤不要再次执行；报错的步骤先修正参数，也不要原样重发。",
+      "任务边界：每条新的用户消息是一个独立任务——brain.plan 的 task 与工具调用只描述本轮新指令；往期任务已完成的操作（见「会话进度备忘」）不要并入计划、也不要再次执行，需要先前成果时直接引用其结果（项目名/路径）。",
+      "防重复：每次发起调用前先看上文结果与「会话进度备忘」判断进度——已成功执行的步骤不要再次执行；报错的步骤先修正参数，也不要原样重发。",
     ].join("\n"),
     skillIndexPrompt(),
   ].join("\n\n");
@@ -141,12 +145,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS;
   const history: WireMessage[] = [...opts.messages];
   const stopped = (note: string): AssistantReply => ({ content: note, toolCalls: [] });
-  let nudged = false;
+  let nudges = 0;
+  const MAX_FORMAT_NUDGES = 2;
   /** 宣言救援已用次数 */
   let rescues = 0;
   /** 空回复续跑已用次数 */
-  let emptyRescues = 0;
-  for (let round = 0; round < maxRounds; round++) {
+  let emptyRescues = 0;  for (let round = 0; round < maxRounds; round++) {
     if (opts.shouldStop?.()) return stopped("已按要求停止。");
     const reply = await opts.chat({
       baseUrl: opts.baseUrl,
@@ -178,23 +182,33 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
       const parsed = parseInlineToolCalls(reply.content);
       calls = parsed.calls;
       if (calls.length) {
-        finalReply = { ...reply, content: cleanedContent(reply.content) };
-        history[history.length - 1].content = finalReply.content;
+        // 清洗后正文为空（模型只发调用没写字）时放占位文本：空 assistant 消息
+        // 会让部分供应商返回空回复，方言调用轮的历史里全是这种消息
+        let cleaned = cleanedContent(reply.content);
+        if (!cleaned.trim()) cleaned = "（已发起工具调用）";
+        finalReply = { ...reply, content: cleaned };
+        history[history.length - 1].content = cleaned;
       }
     }
     if (!calls.length) {
-      // 空回复自动续跑：空内容多半是供应商打嗝，拉回循环继续剩余步骤（最多 2 次）
+      // 空回复自动续跑：空内容多半是供应商打嗝，拉回循环继续剩余步骤（最多 4 次）
       if (reply.content.trim() === "") {
-        if (emptyRescues < 2) {
+        if (emptyRescues < MAX_EMPTY_RESCUES) {
           emptyRescues += 1;
           history.push({ role: "user", content: EMPTY_NUDGE });
           continue;
         }
         return reply; // 预算用尽：交由调用方的空回复兜底文案
       }
-      // 有工具调用痕迹但全部解析失败：注入纠偏提示让模型重发（单轮一次），而不是停轮
-      if (!nudged && TOOL_MARK_RE.test(reply.content)) {
-        nudged = true;
+      // 确认请求是合法终止态（needConfirm 策略门）：立即返回交给确认浮动条。
+      // 必须先于格式纠偏/宣言救援——「确认后我就开始」式请求含宣言特征词，
+      // 被救援拉回循环会让模型跳过用户批准直接执行。
+      if (looksLikeConfirmRequest(finalReply.content)) {
+        return finalReply;
+      }
+      // 有工具调用痕迹但全部解析失败：注入纠偏提示让模型重发（至多 2 次），而不是停轮
+      if (nudges < MAX_FORMAT_NUDGES && TOOL_MARK_RE.test(reply.content)) {
+        nudges += 1;
         history.push({ role: "user", content: TOOL_FORMAT_NUDGE });
         continue;
       }
@@ -267,10 +281,84 @@ export function toWire(msgs: Array<{ role: string; content: string }>): WireMess
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// 跨轮会话进度备忘：wire 历史不回放工具结果（toWire 丢弃工具轮），模型跨轮
+// 只见上一轮总结——规划时容易把往期任务并入 brain.plan 造成重复执行。发送时
+// 把「本会话已成功的写操作」列成一行短句注入 wire（不落库），给模型明确的
+// 防重复事实源。
+// ---------------------------------------------------------------------------
+
+/** 计入备忘的方法（写/会改变状态的操作；读操作重复无害，不列） */
+const WRITE_METHODS = new Set([
+  "project.create", "project.open",
+  "asset.write", "asset.create", "asset.delete", "asset.rename",
+  "node.add", "node.remove", "node.rename", "node.set",
+  "scene.open", "scene.save",
+]);
+/** 备忘摘要优先取的参数键（识别性强的短字段） */
+const ARG_DIGEST_KEYS = ["name", "path", "rel", "kind", "id", "parent"];
+
+function argDigest(argsJson: string): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(argsJson || "{}") as Record<string, unknown>;
+  } catch {
+    return "";
+  }
+  const keys = Object.keys(parsed).filter((k) => ARG_DIGEST_KEYS.includes(k));
+  const picked = (keys.length ? keys : Object.keys(parsed).slice(0, 1)).slice(0, 2);
+  return picked
+    .filter((k) => parsed[k] !== undefined && parsed[k] !== null && parsed[k] !== "")
+    .map((k) => `${k}=${String(parsed[k]).slice(0, 24)}`)
+    .join(", ");
+}
+
+/** 会话工具消息时间线 → 已成功写操作的备忘短句（无则空串）。
+ * 调用/结果按 toolCallId 配对（无 id 的历史孤儿按同名 FIFO 兜底）。 */
+export function doneWritesNote(
+  rows: Array<{ role: string; toolName?: string; toolCallId?: string; content: string; result?: boolean }>,
+): string {
+  const pending = new Map<string, { name: string; args: string }>();
+  const fifo = new Map<string, Array<{ name: string; args: string }>>();
+  const done: string[] = [];
+  for (const m of rows) {
+    if (m.role !== "tool" || !m.toolName || !WRITE_METHODS.has(m.toolName)) continue;
+    if (!m.result) {
+      const entry = { name: m.toolName, args: m.content };
+      if (m.toolCallId) pending.set(m.toolCallId, entry);
+      else {
+        const list = fifo.get(m.toolName) ?? [];
+        list.push(entry);
+        fifo.set(m.toolName, list);
+      }
+      continue;
+    }
+    let call = m.toolCallId ? pending.get(m.toolCallId) : undefined;
+    if (!call) call = fifo.get(m.toolName)?.shift();
+    if (!call) call = { name: m.toolName, args: "" }; // 孤儿结果：名字仍可列
+    let failed = false;
+    try {
+      const v = JSON.parse(m.content) as { error?: unknown };
+      failed = !!(v && typeof v === "object" && "error" in v);
+    } catch {
+      failed = false;
+    }
+    if (!failed) {
+      const entry = `${call.name}(${argDigest(call.args)})`;
+      if (done[done.length - 1] !== entry) done.push(entry);
+    }
+  }
+  if (!done.length) return "";
+  const list = done.slice(-6).join("；");
+  return `（系统）会话进度备忘——以下写操作已成功执行，不要重复执行，直接基于其结果继续本轮任务：${list}`;
+}
+
 /** 确认请求识别：最终回复是否在向用户要确认/批准（弹出确认浮动条的判据）。
- * 只认「要确认」的句式，不认一般性的"已确认/确认无误"等陈述。 */
+ * 只认「要确认」的句式，不认一般性的"已确认/确认无误"等陈述。长回复
+ * （needConfirm 的计划+完整脚本可达数千字）只看结尾段——确认问句总是收尾
+ * 出现；整体匹配会漏掉超长确认请求，弹窗因此不出现。 */
 export function looksLikeConfirmRequest(text: string): boolean {
-  if (!text || text.length > 2000) return false;
+  if (!text) return false;
   const patterns: RegExp[] = [
     /(回复|发送|输入|回)[「"'『『]?\s*(确认|同意|批准|确定|OK|ok)/,
     /(确认|批准|同意)(后|之后|再)(我|就|再|开始|执行)/,
@@ -279,5 +367,6 @@ export function looksLikeConfirmRequest(text: string): boolean {
     /等待(你|用户)?(确认|批准|同意)/,
     /请(你)?(确认|批准|同意)/,
   ];
-  return patterns.some((p) => p.test(text));
+  const scope = text.length > 2000 ? text.slice(-800) : text;
+  return patterns.some((p) => p.test(scope));
 }

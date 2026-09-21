@@ -101,6 +101,40 @@ describe("parseInlineToolCalls", () => {
     expect(cleaned).not.toContain("parameter");
   });
 
+  it("正常：<function=工具名> 裸等号方言 + 逐参数槽（多行值）——截图挂死现场", () => {
+    const text = [
+      "<tool_call>",
+      "  <function=asset.read>",
+      "    <parameter=path>",
+      "    assets/Main.scene",
+      "    </parameter>",
+      "  </function>",
+      "</tool_call>",
+      "<tool_call>",
+      "  <function=asset.read>",
+      "    <parameter=path>",
+      "    src/main.ts",
+      "    </parameter>",
+      "  </function>",
+      "</tool_call>",
+    ].join("\n");
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((c) => c.name)).toEqual(["asset.read", "asset.read"]);
+    expect(JSON.parse(calls[0].arguments).path).toBe("assets/Main.scene");
+    expect(JSON.parse(calls[1].arguments).path).toBe("src/main.ts");
+    expect(cleaned).not.toContain("tool_call");
+    expect(cleaned).not.toContain("asset.read");
+  });
+
+  it("正常：<function=工具名> 零参调用（无参数槽）同样发起", () => {
+    const text = "<tool_call>\n<function=node.list>\n</function>\n</tool_call>";
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("node.list");
+    expect(JSON.parse(calls[0].arguments)).toEqual({});
+  });
+
   it("正常：标准 invoke 且参数恰好名为 name——不得吞掉工具名", () => {
     const text =
       '<invoke name="project.create"><parameter name="name">RotCube</parameter></invoke>';

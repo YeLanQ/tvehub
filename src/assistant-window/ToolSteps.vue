@@ -2,8 +2,9 @@
 // 执行过程面板：一轮里的工具调用按「一次调用一行」折叠展示。
 // 行 = 方法名 + 参数摘要 + 状态（运行中转点 / ✓ / ✗）+ 结果摘要；
 // 全文走 title 悬浮。默认收敛成一行摘要（滚动收敛）；busy 且是最新块时
-// 自动展开跟随，展开后内容区限高滚动。
-import { computed } from "vue";
+// 自动展开跟随，展开后内容区限高滚动，运行中新步骤到达自动滚到容器底部
+//（不跟随的话最新行藏在可视区下方，多轮任务里看起来"没在容器内滚动"）。
+import { computed, nextTick, ref, watch } from "vue";
 
 export interface ToolStepItem {
   /** 行键：调用 id（结果原位更新到同一行） */
@@ -36,6 +37,24 @@ function brief(text: string | undefined, limit: number): string {
   const line = oneLine(text);
   return line.length > limit ? line.slice(0, limit) + "…" : line;
 }
+
+const bodyEl = ref<HTMLElement | null>(null);
+
+/** 运行中跟随尾部：新步骤行到达时把内容区滚动到容器底部 */
+async function followTail(): Promise<void> {
+  if (!props.open || !props.running) return;
+  await nextTick();
+  const el = bodyEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+watch(() => props.items.length, followTail);
+watch(
+  () => [props.open, props.running] as const,
+  ([open, running]) => {
+    if (open && running) void followTail();
+  },
+);
 </script>
 
 <template>
@@ -46,7 +65,7 @@ function brief(text: string | undefined, limit: number): string {
       <span v-if="running" class="asteps-dot" />
       <span class="asteps-arrow">{{ open ? "▾" : "▸" }}</span>
     </button>
-    <div v-if="open" class="asteps-body">
+    <div v-if="open" ref="bodyEl" class="asteps-body">
       <div v-for="t in items" :key="t.id" class="asteps-item">
         <b>{{ t.toolName }}</b>
         <span class="asteps-args" :title="t.args">{{ brief(t.args, ARGS_LIMIT) }}</span>
@@ -91,7 +110,7 @@ function brief(text: string | undefined, limit: number): string {
 @keyframes asteps-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 .asteps-arrow { margin-left: auto; }
 .asteps-body {
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
   border-top: 1px solid var(--border);
   padding: 4px 8px;

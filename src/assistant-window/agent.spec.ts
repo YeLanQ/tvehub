@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
-import type { AssistantReply } from "./agent";
+import type { AssistantReply, WireMessage } from "./agent";
 
 function cardFixture(over: Partial<AgentCard>): AgentCard {
   return {
@@ -222,6 +222,29 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toBe("然后写脚本。");
   });
 
+  it("正常：确认请求（needConfirm）立即返回，不被宣言救援拉回循环", async () => {
+    let n = 0;
+    const confirmReply: AssistantReply = {
+      content:
+        "计划如下，确认后我就开始：1) 创建项目 2) 添加立方体。是否按此计划执行？（回复「确认」即开始）",
+      toolCalls: [],
+    };
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "建个项目" }],
+      tools: assistantTools(),
+      chat: async () => {
+        n += 1;
+        return confirmReply;
+      },
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+    });
+    expect(reply.content).toBe(confirmReply.content);
+    expect(n).toBe(1);
+  });
+
   it("正常：空回复自动续跑，模型继续剩余步骤", async () => {
     let n = 0;
     const script: AssistantReply[] = [
@@ -246,12 +269,16 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toBe("全部完成");
   });
 
-  it("边界：空回复续跑最多 2 次，预算用尽后原样返回（交兜底文案）", async () => {
+  it("边界：空回复续跑预算 4 次，用尽后原样返回（交兜底文案）", async () => {
     const blank: AssistantReply = { content: "", toolCalls: [] };
+    let calls = 0;
     const reply = await runAgent({
       messages: [{ role: "user", content: "做事" }],
       tools: assistantTools(),
-      chat: async () => blank,
+      chat: async () => {
+        calls += 1;
+        return blank;
+      },
       baseUrl: "https://x/v1",
       apiKey: "k",
       model: "m",
@@ -259,6 +286,37 @@ describe("runAgent 工具循环", () => {
     });
     expect(reply.content).toBe("");
     expect(reply.toolCalls).toHaveLength(0);
+    expect(calls).toBe(5); // 首轮 + 4 次自动续跑，之后才落兜底文案
+  });
+
+  it("正常：内联调用无正文时，历史 assistant 消息用占位文本（防供应商空回复）", async () => {
+    let n = 0;
+    const seen: WireMessage[][] = [];
+    const script: AssistantReply[] = [
+      {
+        content: '<tool_call>{"name":"editor.state","arguments":{}}</tool_call>',
+        toolCalls: [],
+      },
+      { content: "全部完成", toolCalls: [] },
+    ];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "查状态" }],
+      tools: assistantTools(),
+      chat: async (args) => {
+        // 快照：runAgent 每轮传的是同一个 history 数组引用，不拷贝会互相污染
+        seen.push(args.messages.map((m) => ({ ...m })));
+        return script[Math.min(n++, script.length - 1)];
+      },
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+    });
+    expect(reply.content).toBe("全部完成");
+    // 第二轮请求里，上一轮"只发调用没写字"的 assistant 消息不能是空正文——
+    // 空 assistant 消息会让部分供应商返回空回复
+    const assistantMsgs = seen[1].filter((m) => m.role === "assistant");
+    expect(assistantMsgs[assistantMsgs.length - 1].content).toBe("（已发起工具调用）");
   });
 
   it("边界：连续工具轮达到上限后返回提示而非死循环", async () => {
@@ -444,5 +502,85 @@ describe("looksLikeConfirmRequest", () => {
 
   it("空值：空文本返回 false", () => {
     expect(looksLikeConfirmRequest("")).toBe(false);
+  });
+
+  it("边界：超长确认请求（计划+完整脚本 >2000 字）按结尾段识别", () => {
+    const script = "@property( type: nodeType ) target: string = '';\n".repeat(120);
+    expect(
+      looksLikeConfirmRequest(script + "是否按此计划执行？（回复「确认」即开始创建并保存。）"),
+    ).toBe(true);
+    expect(looksLikeConfirmRequest(script + "以上是本轮执行摘要，任务全部完成。")).toBe(false);
+  });
+});
+
+describe("doneWritesNote（跨轮防重复备忘）", () => {
+  /** 工具消息行桩（调用 + 结果成对，toolCallId 配对） */
+  function toolRows(
+    ...pairs: Array<{ name: string; args: string; ok: boolean }>
+  ): Array<{ role: string; toolName?: string; toolCallId?: string; content: string; result?: boolean }> {
+    const rows: Array<{ role: string; toolName?: string; toolCallId?: string; content: string; result?: boolean }> = [];
+    pairs.forEach((p, i) => {
+      const id = `call_${i}`;
+      rows.push({ role: "tool", toolName: p.name, toolCallId: id, content: p.args });
+      rows.push({
+        role: "tool",
+        toolName: p.name,
+        toolCallId: id,
+        content: p.ok ? '{"ok":true}' : '{"error":"目录已存在"}',
+        result: true,
+      });
+    });
+    return rows;
+  }
+
+  it("正常：已成功的写操作列进备忘，失败的不列", () => {
+    const note = doneWritesNote(
+      toolRows(
+        { name: "brain.plan", args: '{"task":"建项目"}', ok: true },
+        { name: "project.create", args: '{"name":"RotCube"}', ok: true },
+        { name: "project.create", args: '{"name":"RotCube"}', ok: false },
+      ),
+    );
+    expect(note).toContain("project.create(name=RotCube)");
+    expect(note).toContain("不要重复执行");
+    expect(note).not.toContain("brain.plan"); // 非写操作不列
+  });
+
+  it("正常：读操作（scene.list/asset.read）不列——重复无害", () => {
+    const note = doneWritesNote(
+      toolRows(
+        { name: "scene.list", args: "{}", ok: true },
+        { name: "asset.read", args: '{"path":"a.txt"}', ok: true },
+      ),
+    );
+    expect(note).toBe("");
+  });
+
+  it("边界：连续重复的同类成功只记一条，最多保留最近 6 条", () => {
+    const many = toolRows(
+      { name: "scene.save", args: "{}", ok: true },
+      { name: "scene.save", args: "{}", ok: true },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: "asset.write",
+        args: `{"path":"f${i}.ts"}`,
+        ok: true,
+      })),
+    );
+    const note = doneWritesNote(many);
+    expect(note.match(/asset\.write/g)?.length).toBe(6);
+    expect(note).not.toContain("scene.save"); // 被最近 6 条挤出
+  });
+
+  it("空值：空时间线 / 全失败 → 空串（发送时不注入）", () => {
+    expect(doneWritesNote([])).toBe("");
+    expect(doneWritesNote(toolRows({ name: "node.add", args: "{}", ok: false }))).toBe("");
+  });
+
+  it("边界：无 toolCallId 的历史孤儿按同名 FIFO 配对", () => {
+    const rows = [
+      { role: "tool", toolName: "node.add", content: '{"kind":"mesh"}' },
+      { role: "tool", toolName: "node.add", content: '{"ok":true}', result: true },
+    ];
+    expect(doneWritesNote(rows)).toContain("node.add(kind=mesh)");
   });
 });

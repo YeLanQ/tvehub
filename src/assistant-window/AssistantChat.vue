@@ -10,7 +10,7 @@ import { api } from "../lib/api";
 import { getAssistantStore } from "./store";
 import { parseFileRefs, isBinaryRef } from "./refs";
 import { getConversations, type ChatMessage } from "./conversations";
-import { buildSystemPrompt, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
 import { mergeStepRow } from "./steps";
@@ -69,12 +69,21 @@ const timeline = computed<Block[]>(() => {
 const lastBlockKey = computed(() => timeline.value[timeline.value.length - 1]?.key ?? "");
 
 const openSteps = reactive(new Set<string>());
+/** 手动收起的块：优先于运行中的自动展开——否则运行中的面板点头部只是
+ * 被加进 openSteps（视觉无变化），永远收不起来 */
+const collapsedSteps = reactive(new Set<string>());
 function stepsOpen(key: string): boolean {
+  if (collapsedSteps.has(key)) return false;
   return openSteps.has(key) || (busy.value && key === lastBlockKey.value);
 }
 function toggleSteps(key: string): void {
-  if (openSteps.has(key)) openSteps.delete(key);
-  else openSteps.add(key);
+  if (stepsOpen(key)) {
+    openSteps.delete(key);
+    collapsedSteps.add(key);
+  } else {
+    collapsedSteps.delete(key);
+    openSteps.add(key);
+  }
 }
 
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -259,10 +268,14 @@ async function send(textArg?: string | Event): Promise<void> {
   const attachments = refs.length ? await resolveRefAttachments(refs) : "";
   const history = toWire(messages.value);
   const card0 = card.value;
+  // 跨轮防重复备忘：本会话已成功的写操作（只进 wire 不落库）——跨轮历史不含
+  // 工具结果，没有它模型会把往期任务并入 brain.plan 重跑（如再次 project.create）
+  const note = doneWritesNote(messages.value);
   const wire = [
     { role: "system" as const, content: buildSystemPrompt(card0, convs.activeRoot) },
     // 历史末尾是刚追加的用户消息 → 替换为"原文 + 引用附件"版本
     ...history.slice(0, -1),
+    ...(note ? [{ role: "user" as const, content: note }] : []),
     { role: "user" as const, content: text + attachments },
   ];
   busy.value = true;
@@ -318,8 +331,11 @@ async function send(textArg?: string | Event): Promise<void> {
     busy.value = false;
     streamingText.value = "";
     reqId.value = "";
-    // 浅拷贝强制时间线重算（落盘的历史步骤块接管收尾）
-    messages.value = [...(await convs.ensureActiveMessages())];
+    // messages.value 必须与 conversations 缓存数组保持同一引用：convs.append
+    // 推的是缓存数组，此处若换成浅拷贝副本，时间线 computed 将收不到触发——
+    // 下一轮的用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡），
+    // 直到本轮收尾才一次性冒出来。
+    messages.value = await convs.ensureActiveMessages();
     scrollBottom();
   }
 }
