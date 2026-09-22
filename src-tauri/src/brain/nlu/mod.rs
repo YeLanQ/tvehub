@@ -239,6 +239,46 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
             detail: format!("识别 {} 个准确性原子任务（大脑直执行）", direct_hits),
         });
     }
+
+    // 隐式依赖补全：节点类直执行需要项目在编辑器打开（node.add 报
+    // 「没有活跃编辑器」），用户说"在项目中添加"时往往不会说"打开项目"——
+    // 自动插入 project.open：刚创建的引用 $prev.path，否则用当前工作区。
+    let has_node_direct = units
+        .iter()
+        .any(|u| u.exec == ExecMode::Direct && u.method.as_deref() == Some("node.add"));
+    let has_open = units.iter().any(|u| u.method.as_deref() == Some("project.open"));
+    if has_node_direct && !has_open {
+        let insert_at = units
+            .iter()
+            .position(|u| u.method.as_deref() == Some("project.create"))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let path = if insert_at > 0 {
+            Some("$prev.path".to_string())
+        } else {
+            root.map(|r| r.to_string())
+        };
+        if let Some(path) = path {
+            units.insert(
+                insert_at,
+                TaskUnit {
+                    index: 0,
+                    text: "在编辑器中打开项目".into(),
+                    method: Some("project.open".into()),
+                    source: Some("lexicon".into()),
+                    zone: Some(zones::zone_of("project.open")),
+                    phase: matcher::Phase::Act,
+                    refs: Vec::new(),
+                    exec: ExecMode::Direct,
+                    params: json!({ "path": path }),
+                },
+            );
+            direct_hits += 1;
+            for (i, u) in units.iter_mut().enumerate() {
+                u.index = i + 1; // 插入后重排序号
+            }
+        }
+    }
     traces.push(NluTrace {
         stage: "神经图检索".into(),
         detail: format!("命令命中：图谱 {graph_hits} 段 / 词典 {lexicon_hits} 段"),
@@ -353,6 +393,33 @@ mod tests {
         // 无方法预测 → assist
         let deco4 = decompose(&mut hot, "你好呀", 0, None);
         assert_eq!(deco4.units[0].exec, ExecMode::Assist);
+    }
+
+    #[test]
+    fn inserts_project_open_before_node_directs() {
+        // 回归：用户原话场景——「创建项目名为 aixosp,在项目中添加天空盒/平面/
+        // 方向光/环境光」缺"打开项目"动作,直执行 node.add 全数报无编辑器
+        let mut hot = graph();
+        let deco = decompose(
+            &mut hot,
+            "创建一个3D项目,项目名为:aixosp,在项目中添加一个天空盒,放置一个平面作为地面,添加一个方向光,一个环境光",
+            0,
+            None,
+        );
+        let methods: Vec<&str> = deco
+            .units
+            .iter()
+            .map(|u| u.method.as_deref().unwrap_or("?"))
+            .collect();
+        assert_eq!(methods[0], "project.create");
+        assert_eq!(methods[1], "project.open", "节点直执行前应自动补打开项目");
+        assert_eq!(deco.units[1].params["path"], "$prev.path");
+        assert!(methods.contains(&"node.add"));
+        assert!(deco.units.iter().filter(|u| u.method.as_deref() == Some("node.add")).count() >= 4);
+        // 无 create：用当前工作区 root 打开
+        let deco2 = decompose(&mut hot, "添加一个天空盒", 0, Some("P:/proj"));
+        assert_eq!(deco2.units[0].method.as_deref(), Some("project.open"));
+        assert_eq!(deco2.units[0].params["path"], "P:/proj");
     }
 
     #[test]

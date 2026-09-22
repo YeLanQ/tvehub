@@ -58,7 +58,9 @@ pub fn extract_name(seg: &str) -> Option<String> {
     for kw in ["项目名为", "项目名", "名字为", "名为", "名字叫", "叫"] {
         if let Some(i) = seg.find(kw) {
             let rest = seg[i + kw.len()..].trim_start_matches([':', '：', ' ']);
-            let end = rest.find(['，', '。', '；', '！', '？', '，']).unwrap_or(rest.len());
+            let end = rest
+                .find(['，', '。', '；', '！', '？', '，', ','])
+                .unwrap_or(rest.len());
             let n = rest[..end].trim().trim_end_matches(['的', '了']).trim();
             if !n.is_empty() {
                 return Some(n.to_string());
