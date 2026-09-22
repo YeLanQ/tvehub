@@ -481,7 +481,9 @@ function onInputKey(e: KeyboardEvent): void {
         @keydown="onInputKey"
       />
       <div class="achat-toolbar">
-        <button class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
+        <!-- @ 引用是工作区功能：通用会话（未绑定项目）没有可列/可读的项目文件，
+             按钮不渲染，也就不会触发「没有工作区项目」的选择浮层报错 -->
+        <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
         <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
         <button v-if="busy" class="achat-send stop" title="终止执行" @click="stopGeneration">
           停止

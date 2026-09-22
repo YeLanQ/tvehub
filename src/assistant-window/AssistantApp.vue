@@ -6,12 +6,13 @@
 // 打开项目；读改资产经 devtools 的 root 覆盖直达文件系统。
 // 项目清单永远只读自项目管理页（最近项目，project.list），面板不提供增删入口。
 // ---------------------------------------------------------------------------
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../lib/tauri-env";
 import { api } from "../lib/api";
 import { ToastHost, toastErr, toastOk } from "../ui-kit";
-import { getConversations } from "./conversations";
+import { getConversations, type ConvMeta } from "./conversations";
 
 interface ProjectRow {
   path: string;
@@ -24,6 +25,8 @@ const convs = getConversations();
 const settingsOpen = ref(false);
 const projects = ref<ProjectRow[]>([]);
 const editorProject = ref<string | null>(null);
+/** 收起的会话树（按工作区根；默认展开，仅本窗口会话内记忆） */
+const folded = ref<Set<string>>(new Set());
 
 const activeRoot = computed(() => convs.activeRoot);
 
@@ -32,7 +35,44 @@ onMounted(async () => {
   await convs.switchProject(convs.activeRoot);
   void refreshProjects();
   void refreshEditorState();
+  if (isTauri()) {
+    // 项目列表跨窗口同步：助手内建项目 / 首页与控制端增删改项目 → projects:changed
+    // 广播后即时重扫（防抖：一次操作可能连发多次广播）
+    void listen("projects:changed", () => {
+      clearTimeout(rescanTimer);
+      rescanTimer = setTimeout(() => {
+        void refreshProjects();
+        void refreshEditorState();
+      }, 300);
+    }).then((off) => (offProjectsChanged = off));
+  }
 });
+
+/** 项目列表外部变更防抖（同 HomeView 口径） */
+let rescanTimer: ReturnType<typeof setTimeout> | undefined;
+let offProjectsChanged: (() => void) | undefined;
+
+onBeforeUnmount(() => {
+  offProjectsChanged?.();
+  clearTimeout(rescanTimer);
+});
+
+/** 会话树折叠：点工作区卡左侧文件夹图标收起/展开其会话叶 */
+function isFolded(root: string): boolean {
+  return folded.value.has(root);
+}
+
+function toggleFold(root: string): void {
+  const next = new Set(folded.value);
+  if (next.has(root)) next.delete(root);
+  else next.add(root);
+  folded.value = next;
+}
+
+/** 模板用：折叠的工作区不渲染会话叶 */
+function visibleConvs(root: string): ConvMeta[] {
+  return isFolded(root) ? [] : convs.convsOf(root);
+}
 
 async function callDevtools(method: string, params?: Record<string, unknown>) {
   try {
@@ -213,6 +253,19 @@ defineExpose({ refreshProjects, refreshEditorState });
           :class="{ active: activeRoot === '' }"
         >
           <button
+            class="assistant-rail-fold"
+            :title="isFolded('') ? '展开会话' : '收起会话'"
+            @click="toggleFold('')"
+          >
+            <svg v-if="isFolded('')" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+              <path d="M2.2 4.4c0-.66.54-1.2 1.2-1.2h2.8c.37 0 .72.17.95.46l.75.94h4.1c.66 0 1.2.54 1.2 1.2v5.8c0 .66-.54 1.2-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2V4.4z" />
+            </svg>
+            <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+              <path d="M2.2 11.4V4.4c0-.66.54-1.2 1.2-1.2h2.8c.37 0 .72.17.95.46l.75.94h4.1c.66 0 1.2.54 1.2 1.2v1.5" />
+              <path d="M2.3 11.5l1.6-3.2c.2-.4.61-.66 1.06-.66h8.14c.63 0 1.06.62.86 1.2l-.95 2.86c-.17.48-.62.8-1.13.8H3.5a1.2 1.2 0 0 1-1.2-1z" />
+            </svg>
+          </button>
+          <button
             class="assistant-rail-item"
             title="未打开项目的通用对话"
             @click="pickWorkspace('')"
@@ -230,7 +283,7 @@ defineExpose({ refreshProjects, refreshEditorState });
         </div>
         <!-- 通用工作区的会话叶 -->
         <div
-          v-for="c in convs.convsOf('')"
+          v-for="c in visibleConvs('')"
           :key="c.id"
           class="assistant-rail-leaf"
           :class="{ active: activeRoot === '' && convs.activeConvIdOf('') === c.id }"
@@ -252,6 +305,19 @@ defineExpose({ refreshProjects, refreshEditorState });
               class="assistant-rail-itemwrap"
               :class="{ active: activeRoot === p.path }"
             >
+              <button
+                class="assistant-rail-fold"
+                :title="isFolded(p.path) ? '展开会话' : '收起会话'"
+                @click="toggleFold(p.path)"
+              >
+                <svg v-if="isFolded(p.path)" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+                  <path d="M2.2 4.4c0-.66.54-1.2 1.2-1.2h2.8c.37 0 .72.17.95.46l.75.94h4.1c.66 0 1.2.54 1.2 1.2v5.8c0 .66-.54 1.2-1.2 1.2H3.4a1.2 1.2 0 0 1-1.2-1.2V4.4z" />
+                </svg>
+                <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+                  <path d="M2.2 11.4V4.4c0-.66.54-1.2 1.2-1.2h2.8c.37 0 .72.17.95.46l.75.94h4.1c.66 0 1.2.54 1.2 1.2v1.5" />
+                  <path d="M2.3 11.5l1.6-3.2c.2-.4.61-.66 1.06-.66h8.14c.63 0 1.06.62.86 1.2l-.95 2.86c-.17.48-.62.8-1.13.8H3.5a1.2 1.2 0 0 1-1.2-1z" />
+                </svg>
+              </button>
               <button
                 class="assistant-rail-item"
                 :title="p.path"
@@ -281,9 +347,9 @@ defineExpose({ refreshProjects, refreshEditorState });
                 </button>
               </span>
             </div>
-            <!-- 该项目的会话叶 -->
+            <!-- 该项目的会话叶（点文件夹图标可收起） -->
             <div
-              v-for="c in convs.convsOf(p.path)"
+              v-for="c in visibleConvs(p.path)"
               :key="c.id"
               class="assistant-rail-leaf"
               :class="{ active: activeRoot === p.path && convs.activeConvIdOf(p.path) === c.id }"
@@ -416,10 +482,11 @@ export default { components: { AssistantChat, AssistantSettings } };
   flex-direction: column;
   align-items: stretch;
   gap: 1px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 0 6px 6px 0;
   background: transparent;
   color: var(--text-dim);
   text-align: left;
@@ -450,7 +517,26 @@ export default { components: { AssistantChat, AssistantSettings } };
 }
 .assistant-rail-itemwrap {
   position: relative;
+  display: flex;
+  align-items: stretch;
   &.active .assistant-rail-item { background: var(--bg-active); color: var(--text); }
+  &.active .assistant-rail-fold { background: var(--bg-active); color: var(--text); }
+  /* 文件夹折叠钮：点它收起/展开该工作区的会话叶（展开=开口文件夹，收起=闭合） */
+  .assistant-rail-fold {
+    flex: none;
+    width: 24px;
+    padding: 0; /* 全局 button 基础样式带 4px/11px 内边距，固定尺寸钮必须清零 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 6px 0 0 6px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    svg { flex: none; }
+    &:hover { background: var(--bg-hover); color: var(--text); }
+  }
   /* 悬停显示操作钮（展开文件 / 编辑器打开），盖在条目右侧 */
   .assistant-rail-acts {
     position: absolute;
@@ -535,12 +621,12 @@ export default { components: { AssistantChat, AssistantSettings } };
   font-size: 11px;
   color: var(--text-dim);
 }
-/* 会话叶：目录下的会话条目（缩进于所属目录） */
+/* 会话叶：目录下的会话条目（缩进对齐工作区名，即文件夹图标之后） */
 .assistant-rail-leaf {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin: 0 6px 1px 18px;
+  margin: 0 6px 1px 30px;
   padding: 4px 6px;
   border-radius: 5px;
   color: var(--text-dim);
