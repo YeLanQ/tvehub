@@ -580,7 +580,12 @@ export interface BrainStatsReport {
   nodesByKind: Record<string, number>;
   edges: number;
   chains: number;
+  /** 冷层条目数（未装载时为 0——结合 coldLoaded 区分"0 条"与"未装载"） */
   coldEntries: number;
+  /** 冷层是否已在内存装载 */
+  coldLoaded: boolean;
+  /** 磁盘上是否存在冷归档（未装载时的"有冷数据"信号） */
+  coldArchivePresent: boolean;
   vectorRawBytes: number;
   vectorStoredBytes: number;
   mergedTotal: number;

@@ -52,7 +52,9 @@ pub fn record(hot: &mut HotTier, task_text: &str, method: &str, ok: bool, now: u
         if ok { GAIN_CMD_OUTCOME } else { GAIN_CMD_OUTCOME * 0.4 },
         now,
     );
-    // 成功链路顺带强化 命令→命令 所在技能 的 Uses 边（技能侧证据）
+    // 访问加热：观测即访问，喂给冷热分层的温度计分。upsert 刻意不动访问史
+    //（保住幂等摄取的语义），加热统一由 record 负责——新节点 hits 0→1，
+    // 老节点在原值上续计。
     hot.touch(&task_id, now);
     hot.touch(&cmd_id, now);
 

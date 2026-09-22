@@ -41,6 +41,16 @@ impl ColdTier {
         self.entries.as_ref().map(|e| e.len()).unwrap_or(0)
     }
 
+    /// 冷层是否已在内存装载（未装载时 len()=0 是"未知"，不是"空"）
+    pub fn is_loaded(&self) -> bool {
+        self.entries.is_some()
+    }
+
+    /// 磁盘上是否存在冷归档（未装载时判断"有没有冷数据"的廉价探针，不读内容）
+    pub fn archive_present(&self) -> bool {
+        self.path.as_ref().is_some_and(|p| p.exists())
+    }
+
     /// 从归档文件装载（文件不存在 = 空冷层；损坏视为空并保留现场以便排查）
     fn ensure_loaded(&mut self) -> &mut HashMap<String, ColdEntry> {
         if self.entries.is_none() {

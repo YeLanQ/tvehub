@@ -38,14 +38,16 @@ pub fn known_methods() -> &'static [&'static str] {
     ALL_METHODS
 }
 
+/// 方法是否在区域表登记（门控用：未登记方法不吃审批豁免，见 execute::gate）
+pub fn is_known(method: &str) -> bool {
+    ALL_METHODS.contains(&method)
+}
+
 pub fn zone_of(method: &str) -> Zone {
     if GREEN_METHODS.contains(&method) {
         return Zone::Green;
     }
-    if ALL_METHODS.contains(&method) {
-        return Zone::Yellow;
-    }
-    Zone::Yellow // 未知方法兜底黄灯
+    Zone::Yellow // 已登记写操作与未登记方法一律黄灯（宁可多问，不可擅动）
 }
 
 /// devtools 方法全量登记（与前端 tools.ts CATALOG 同集；新增方法两处同步）

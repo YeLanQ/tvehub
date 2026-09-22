@@ -54,19 +54,25 @@ pub struct ExecOutcome {
     pub observe: Option<ObserveReport>,
 }
 
-/// 单调用门控（纯函数便于单测）：绿灯直接放行；黄灯须任务已获批准；
-/// 红灯拒绝（当前区域表无红灯项，未知方法兜底黄灯——宁可多问，不可擅动）。
-pub(crate) fn gate(zone: Zone, approved: bool) -> (Decision, String) {
+/// 单调用门控（纯函数便于单测）：绿灯直接放行；黄灯须任务已获批准；红灯拒绝。
+/// known = 方法是否在区域表登记：未登记方法即使任务已获批也不放行——大脑对它
+/// 没有效能与边界证据，审批豁免只覆盖"已登记的写操作"（devtools require_tool
+/// 仍会二次兜底拒绝；未登记一律宁可多问，不可擅动）。
+pub(crate) fn gate(zone: Zone, approved: bool, known: bool) -> (Decision, String) {
     match zone {
         Zone::Red => (Decision::Deny, "红灯操作，禁止自主执行".to_string()),
         Zone::Green => (Decision::AutoExecute, "只读绿灯操作，直接执行".to_string()),
-        Zone::Yellow if approved => (
+        Zone::Yellow if approved && known => (
             Decision::AutoExecute,
             "写操作（黄灯），任务已获用户批准".to_string(),
         ),
         Zone::Yellow => (
             Decision::NeedConfirm,
-            "写操作（黄灯区）：需用户批准后才执行，批准一次即覆盖本任务的后续调用".to_string(),
+            if known {
+                "写操作（黄灯区）：需用户批准后才执行，批准一次即覆盖本任务的后续调用".to_string()
+            } else {
+                "未登记方法（不在区域表内，无效能与边界证据）：需用户批准后才执行".to_string()
+            },
         ),
     }
 }
@@ -86,8 +92,9 @@ impl Brain {
             let now = now_ms();
             let approved = core.approved_at(&task).is_some_and(|exp| exp > now);
             let zone = zones::zone_of(&method);
+            let known = zones::is_known(&method);
             let score = budget::score(core.ledger.stat(&method), &method);
-            let (d, r) = gate(zone, approved);
+            let (d, r) = gate(zone, approved, known);
             match d {
                 Decision::AutoExecute => core.ledger.decisions.auto_execute += 1,
                 Decision::NeedConfirm => core.ledger.decisions.need_confirm += 1,
@@ -158,14 +165,24 @@ mod tests {
 
     #[test]
     fn gate_green_auto_yellow_needs_approval_red_denies() {
-        let (d, _) = gate(Zone::Green, false);
+        let (d, _) = gate(Zone::Green, false, true);
         assert_eq!(d, Decision::AutoExecute, "绿灯只读直接执行");
-        let (d, _) = gate(Zone::Yellow, false);
+        let (d, _) = gate(Zone::Yellow, false, true);
         assert_eq!(d, Decision::NeedConfirm, "黄灯未批准必须确认");
-        let (d, _) = gate(Zone::Yellow, true);
+        let (d, _) = gate(Zone::Yellow, true, true);
         assert_eq!(d, Decision::AutoExecute, "黄灯获批后放行");
-        let (d, _) = gate(Zone::Red, true);
+        let (d, _) = gate(Zone::Red, true, true);
         assert_eq!(d, Decision::Deny, "红灯即使获批也拒绝");
+    }
+
+    #[test]
+    fn unknown_method_needs_confirm_even_when_approved() {
+        // 未登记方法不吃审批豁免：大脑对它无效能与边界证据，宁可多问
+        let (d, r) = gate(Zone::Yellow, true, false);
+        assert_eq!(d, Decision::NeedConfirm);
+        assert!(r.contains("未登记"), "原因应点明未登记：{r}");
+        let (d, _) = gate(Zone::Yellow, true, true);
+        assert_eq!(d, Decision::AutoExecute, "已登记写操作获批后照常放行");
     }
 
     #[test]
@@ -189,7 +206,8 @@ mod tests {
         // 前端工具目录与后端区域表同源：绿灯自动执行、黄灯须批准、红灯拒绝
         for m in zones::known_methods() {
             let zone = zones::zone_of(m);
-            let (d, _) = gate(zone, false);
+            assert!(zones::is_known(m), "{m} 应登记在区域表");
+            let (d, _) = gate(zone, false, true);
             assert_eq!(
                 d == Decision::AutoExecute,
                 zone == Zone::Green,

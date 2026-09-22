@@ -215,10 +215,15 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
         stage: "神经图检索".into(),
         detail: format!("命令命中：图谱 {graph_hits} 段 / 词典 {lexicon_hits} 段"),
     });
-    let skills: Vec<String> = route::route(hot, task, 2, now)
-        .into_iter()
+    // 整任务粒度路由一次（top 6），技能关联与知识命中同源提取——原先两次
+    // 全图扫描只差 top_k，合并省一遍嵌入与余弦；轨迹展示仍取前 2 个技能，
+    // 与旧行为一致（top 6 ⊇ top 2，取前 2 后顺序不变）
+    let task_hits = route::route(hot, task, 6, now);
+    let skills: Vec<String> = task_hits
+        .iter()
         .filter(|h| h.kind == NodeKind::Skill)
-        .map(|h| h.label)
+        .take(2)
+        .map(|h| h.label.clone())
         .collect();
     if !skills.is_empty() {
         traces.push(NluTrace {
@@ -226,8 +231,7 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
             detail: format!("相近技能：{}", skills.join("、")),
         });
     }
-    // 整任务粒度的知识命中（技能 + docs 文档概念），结构化供直通路线注入
-    let refs = knowledge_hits(&route::route(hot, task, 6, now));
+    let refs = knowledge_hits(&task_hits);
     traces.push(NluTrace {
         stage: "单元化完成".into(),
         detail: format!("产出 {} 个单元任务，知识命中 {} 条", units.len(), refs.len()),

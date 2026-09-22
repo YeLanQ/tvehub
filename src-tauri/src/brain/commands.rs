@@ -73,10 +73,10 @@ pub fn brain_tick(state: State<'_, Brain>) -> Result<TickReport, String> {
 pub async fn brain_execute(app: tauri::AppHandle, args: ExecArgs) -> Result<ExecOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let brain = app.state::<Brain>();
-        Ok(brain.execute(&app, args))
+        brain.execute(&app, args)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// 登记任务审批会话：用户批准后调用，该任务的黄灯方法在有效期内直接放行

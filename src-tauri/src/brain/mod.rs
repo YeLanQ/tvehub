@@ -33,6 +33,13 @@ use vector::VectorIndex;
 
 /// 自动维护间隔：每 25 次观测触发一次 tick
 const TICK_EVERY: u32 = 25;
+/// 入参护栏：查询/任务文本上限（嵌入与分段都是 O(len)，超长输入直接截断；
+/// 与 execute/observe 对 task 的 200 字截断同思路，防大输入拖慢决策路径）
+const MAX_INPUT_CHARS: usize = 4096;
+
+fn clamp_input(s: &str) -> String {
+    s.chars().take(MAX_INPUT_CHARS).collect()
+}
 
 #[derive(Debug, Default)]
 struct BrainCore {
@@ -103,14 +110,14 @@ impl Brain {
     /// 语义检索（结构类节点：技能/命令/概念）
     pub fn query(&self, text: &str, top_k: usize) -> Vec<route::RouteHit> {
         let mut core = self.core.lock().expect("brain 锁");
-        route::route(&mut core.store.hot, text, top_k, now_ms())
+        route::route(&mut core.store.hot, &clamp_input(text), top_k, now_ms())
     }
 
     /// 策略规划（含效能门控决策）
     pub fn plan(&self, task: &str) -> Plan {
         let mut core = self.core.lock().expect("brain 锁");
         let BrainCore { store, ledger, .. } = &mut *core;
-        build_plan(&mut store.hot, ledger, task, now_ms())
+        build_plan(&mut store.hot, ledger, &clamp_input(task), now_ms())
     }
 
     /// 语义单元化：任务文本 → 分段 → 神经图检索 + 命令预测 → 单元任务与
@@ -118,7 +125,7 @@ impl Brain {
     /// 模糊单元转发助手推进，决策仍走 execute）
     pub fn decompose(&self, task: &str, root: Option<&str>) -> nlu::Decomposition {
         let mut core = self.core.lock().expect("brain 锁");
-        nlu::decompose(&mut core.store.hot, task, now_ms(), root)
+        nlu::decompose(&mut core.store.hot, &clamp_input(task), now_ms(), root)
     }
 
     /// 观测回写：记账 + 因果链进化；达到间隔自动 tick（自压缩/冷却/持久化）。
@@ -167,6 +174,8 @@ impl Brain {
             edges: core.store.hot.edges.len(),
             chains: core.store.hot.chains.len(),
             cold_entries: core.store.cold.len(),
+            cold_loaded: core.store.cold.is_loaded(),
+            cold_archive_present: core.store.cold.archive_present(),
             vector_raw_bytes: n * dim * 4,
             vector_stored_bytes: n * (dim + 8),
             merged_total: core.merged_total,
