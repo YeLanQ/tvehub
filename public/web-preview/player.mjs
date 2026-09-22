@@ -699,7 +699,9 @@ async function main() {
   if (hasNavNodes) {
     try {
       const { createNavRuntime } = await import("../engine/runtime/nav.mjs");
-      nav = createNavRuntime({ scene, nodes });
+      // onLog：区域烘焙统计 / 代理 startAgent 结果回传编辑器控制台——
+      // 导航装配失败（无可采样源/烘焙 0 可行走/寻路失败）曾全程静默，极难排查
+      nav = createNavRuntime({ scene, nodes, onLog: (m) => postLog("info", m) });
     } catch (e) {
       postLog("error", `导航运行时启动失败: ${e?.message ?? e}`);
     }

@@ -13,7 +13,9 @@
 //    NavSystem 代理推进（贴地/到达/清路径）与 SDF 滑移；
 // ⑤ 契约：层级菜单（导航分组 → node.add kind nav → 注册表）、nodeCommands 分支、
 //    同步器（refreshNavArea/__navMesh）、引擎（SCRIPT_NODE_BASE/addNavArea/nav.update/
-//    多源 providers）、检查器（NavArea/NavAgent 卡 + Sources 多选）、统一入口动态注册。
+//    多源 providers）、检查器（NavArea/NavAgent 卡 + Sources 多选）、统一入口动态注册；
+// ⑥ 运行时导航（预览 player 装配语义）：采样源不进障碍表（回归：地形带碰撞体曾
+//    被误当障碍 → 全图 blocked → 代理不动）、贴地高度按地形节点世界 Y 换算。
 // 运行：pnpm smoke nav
 // ---------------------------------------------------------------------------
 
@@ -27,6 +29,7 @@ import {
   NAV_AREA_LIMITS,
   bakeNavArea,
   mergeHeightFields,
+  navAgentPathVisuals,
   navAgentSettingsSig,
   navAreaSettingsSig,
   parseNavAgentSettings,
@@ -39,6 +42,7 @@ import {
 } from "../../../src/framework/navigation";
 import { findNavPath } from "../../../src/framework/navigation/pathfinding";
 import { NavSystem } from "../../../src/framework/navigation/NavSystem";
+import { createNavRuntime } from "../../../src/runtime/runtime/nav";
 import { createDefaultRegistry } from "../../../src/framework/prototype/PrototypeRegistry";
 import { NodeFactory } from "../../../src/framework/factory/NodeFactory";
 import { NavAgentNode, NavAreaNode } from "../../../src/framework/prototype/derived/Primitives";
@@ -525,6 +529,51 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
 
   const runner = resolve(process.cwd(), "scripts", "smoke", "runner.mjs");
   check("统一入口 runner.mjs 已就位（本脚本由其动态发现）", existsSync(runner));
+}
+
+// ===========================================================================
+console.log("[6] 运行时导航（预览 player 装配语义）：采样源不进障碍表");
+{
+  // 复刻预览 createNavRuntime 的回退语义：sourceIds 为空 → 自动采第一块地形；
+  // 地形自带 heightfield 碰撞体（项目常见配置）→ obstaclesMode auto 下，
+  // 采样源自身若被当作障碍会把全图判 blocked → 烘焙 0 可行走 → 代理不动
+  const terrainObj = new THREE.Group();
+  terrainObj.name = "__terrainMesh";
+  // 地形节点常被整体下移（起伏场地）：贴地高度必须按节点世界 Y 换算（与编辑器一致）
+  terrainObj.position.set(0, -14, 0);
+  const terrainMesh = new THREE.Mesh(new THREE.BoxGeometry(200, 4, 200));
+  terrainMesh.userData.terrainHeights = new Float32Array(33 * 33); // 平地高度场
+  terrainMesh.userData.terrainGridSize = 33;
+  terrainMesh.userData.terrainSize = 200;
+  terrainObj.add(terrainMesh);
+  const targetObj = new THREE.Group();
+  targetObj.position.set(10, 0, 0);
+  const scene6 = new THREE.Scene();
+  scene6.add(terrainObj, targetObj);
+  const nodes6 = [
+    { json: { id: "t1", type: "terrainNode", active: true, visible: true, components: [{ type: "collider", enabled: true }] }, obj: terrainObj },
+    { json: { id: "a1", type: "navAreaNode", active: true, visible: true, settings: { cellSize: 2, agentRadius: 0.5, maxSlope: 45, maxHeightStep: 1.2, sourceIds: [], obstaclesMode: "auto", display: "off" } }, obj: new THREE.Group() },
+    { json: { id: "ag1", type: "navAgentNode", active: true, visible: true, settings: { areaId: "a1", targetIds: ["p1"], moveMode: "sequence", loop: true, speed: 4, radius: 0.5 } }, obj: new THREE.Group() },
+    { json: { id: "p1", type: "meshNode", active: true, visible: true }, obj: targetObj },
+  ] as unknown as Parameters<typeof createNavRuntime>[0]["nodes"];
+  const nav6 = createNavRuntime({ scene: scene6, nodes: nodes6, onLog: () => {} });
+  const bake6 = (nodes6[1].obj as unknown as { userData: { navBake: { stats: { walkableCells: number; cells: number } } } }).userData.navBake;
+  check("运行时烘焙产物已生成", !!bake6);
+  check("采样源（带碰撞体的地形）不阻塞烘焙——可行走 > 0", !!bake6 && bake6.stats.walkableCells > 0,
+    `walkable=${bake6?.stats.walkableCells}/${bake6?.stats.cells}`);
+  check("烘焙后图内寻路可达", !!bake6 && nav6.pathBetween({ x: -10, z: 0 }, { x: 10, z: 0 }) !== null);
+  check("代理自动巡回启动成功", (() => {
+    // startAgent 结果不可直接观察（autoStart 在装配时执行）；用代理状态等价通道：
+    // 路径已发布 → 编辑器可视化注册表非空（与编辑器 NavSystem 同一注册表）
+    return navAgentPathVisuals.has("ag1");
+  })());
+  check("贴地高度按地形节点世界 Y 换算（高度场平地 0、节点 y=-14 → 烘焙高度 ≈ -14）", (() => {
+    const c = Math.floor(bake6!.stats.cells / 2);
+    return Math.abs(bake6!.heights[c] - (-14)) < 0.25;
+  })());
+  nav6.update(0.25);
+  check("代理推进后贴地（y ≈ -14 + 抬升）", nodes6[2].obj.position.y < -13, `y=${nodes6[2].obj.position.y.toFixed(2)}`);
+  nav6.dispose();
 }
 
 // ===========================================================================

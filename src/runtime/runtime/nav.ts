@@ -92,7 +92,9 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
       size,
       originX: origin.x,
       originZ: origin.z,
-      originY: 0,
+      // 节点世界 Y：贴地高度 = 相对高度 + originY（与编辑器 navHeightFieldOf 同语义，
+      // 硬编码 0 会让整体下移过的地形上代理悬空/入地）
+      originY: origin.y,
       sig: `${gridN}@${origin.x.toFixed(2)},${origin.z.toFixed(2)}`,
       bounds: { minX: origin.x - half, maxX: origin.x + half, minZ: origin.z - half, maxZ: origin.z + half },
     } as NavHeightField & { sig: string } & { bounds: XZBounds };
@@ -131,7 +133,7 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
     if (!terrains.length && !meshes.length) return null;
     if (!meshes.length && terrains.length === 1) {
       const f = terrainFieldOf(terrains[0]);
-      return f ? { heights: f.heights, gridN: f.gridN, size: f.size, originX: f.originX, originZ: f.originZ, originY: 0, sig: f.sig } : null;
+      return f ? { heights: f.heights, gridN: f.gridN, size: f.size, originX: f.originX, originZ: f.originZ, originY: f.originY, sig: f.sig } : null;
     }
     const bounds = boundsFor(entry, settings);
     if (!bounds) return null;
@@ -140,7 +142,7 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
     if (!raster) return null;
     mergeHeightFields(raster, terrains.map((t) => {
       const f = terrainFieldOf(t);
-      return { heights: f ? f.heights : new Float32Array(), gridN: f ? f.gridN : 0, size: f ? f.size : 0, originX: f ? f.originX : 0, originZ: f ? f.originZ : 0, originY: 0, sig: f ? f.sig : "" } as NavHeightField;
+      return { heights: f ? f.heights : new Float32Array(), gridN: f ? f.gridN : 0, size: f ? f.size : 0, originX: f ? f.originX : 0, originZ: f ? f.originZ : 0, originY: f ? f.originY : 0, sig: f ? f.sig : "" } as NavHeightField;
     }));
     let hasSurface = false;
     for (let k = 0; k < raster.heights.length; k++) {
@@ -158,6 +160,9 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
     for (const n of nodes) {
       const json = n.json;
       if (json.type === "navAreaNode" || json.type === "navAgentNode") continue;
+      // 采样源不进障碍表：地形/网格源常带碰撞体，其 AABB 覆盖整个烘焙范围，
+      // 误收会把全图判 blocked（可行走 0 → 代理永不移动）
+      if (exclude.has(json.id as string)) continue;
       if (json.active === false || json.visible === false) continue;
       const comps = Array.isArray(json.components) ? (json.components as Record<string, unknown>[]) : [];
       const hasCollider = comps.some((c) => c && c.type === "collider" && c.enabled !== false);
