@@ -71,11 +71,16 @@ impl Brain {
         }
         let report =
             skillsrc::ingest::ingest_all(&mut core.store.hot, skillsrc::embedded_skills(), now_ms());
+        // 启动即落基线快照：brain/ 目录随首启可见；低频使用（观测不足自动
+        // tick 间隔）时的积累也不只停留在内存。内存模式（None）为空操作。
+        let boot_saved = core.store.save(&core.ledger.by_method).is_ok();
+        let boot_flushed = core.store.cold.flush().is_ok();
         eprintln!(
-            "[brain] 就绪：内嵌技能 {} 条，热层节点 {}，边 {}",
+            "[brain] 就绪：内嵌技能 {} 条，热层节点 {}，边 {}，快照 {}",
             report.skills,
             core.store.hot.nodes.len(),
-            core.store.hot.edges.len()
+            core.store.hot.edges.len(),
+            if boot_saved && boot_flushed { "已落盘" } else { "落盘失败" }
         );
         Brain { core: Mutex::new(core) }
     }

@@ -1150,8 +1150,16 @@ pub fn run() {
             devtools::devtools_internal_call,
             toggle_assistant_window,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 退出保存：观测未满自动 tick 间隔的低频积累也在退出时落盘
+            //（一轮维护：因果修剪 → 向量合并 → 冷却下沉 → 快照+冷层 flush）
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                app.state::<brain::Brain>().tick();
+            }
+        });
 }
 
 #[cfg(test)]

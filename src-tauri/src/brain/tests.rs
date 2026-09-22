@@ -47,6 +47,26 @@ fn repeated_failures_demote_to_need_confirm() {
 }
 
 #[test]
+fn boot_persists_baseline_snapshot() {
+    let dir = std::env::temp_dir().join(format!("tve-brain-boot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("snapshot.json.gz");
+    {
+        let _brain = Brain::new(Some(path.clone()));
+        assert!(path.is_file(), "启动即应落基线快照（brain/ 目录随之可见）");
+    }
+    // 重启恢复：基线快照可读（技能摄取幂等，节点不重复）
+    let brain2 = Brain::new(Some(path.clone()));
+    let stats = brain2.stats();
+    assert!(
+        stats.nodes_by_kind.get("skill").copied().unwrap_or(0) >= 8,
+        "重启后技能节点应恢复：{:?}",
+        stats.nodes_by_kind
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn tick_compresses_and_persists_snapshot() {
     let dir = std::env::temp_dir().join(format!("tve-brain-snap-{}", std::process::id()));
     let path = dir.join("snapshot.json.gz");
