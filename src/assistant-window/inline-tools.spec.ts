@@ -4,6 +4,7 @@ import {
   hasInlineToolCalls,
   parseInlineToolCalls,
   streamingDisplay,
+  stripCallTags,
 } from "./inline-tools";
 
 describe("parseInlineToolCalls", () => {
@@ -228,6 +229,29 @@ describe("hasInlineToolCalls / cleanedContent", () => {
     expect(out).toContain("我先查状态。");
     expect(out).toContain("再执行。");
     expect(out).not.toMatch(/\n{3,}/);
+  });
+});
+
+describe("stripCallTags 残骸净化", () => {
+  it("回归：残缺方言块（tool_call 壳无闭合 + function=invoke 无工具名）整体剔除", () => {
+    const text = [
+      "<tool_call>",
+      "<function=invoke>",
+      '<parameter name="path">assets/Main.scene</parameter>',
+      "</invoke>",
+    ].join("\n");
+    const out = stripCallTags(text);
+    expect(out).not.toContain("tool_call");
+    expect(out).not.toContain("invoke");
+    expect(out).not.toContain("parameter");
+    expect(out).not.toContain("Main.scene");
+  });
+
+  it("边界：闭合完整块剔除、普通正文与数学比较符不误伤", () => {
+    expect(stripCallTags("结论：a<b 成立")).toBe("结论：a<b 成立");
+    expect(
+      stripCallTags('说明文字\n<invoke name="scene.open">\n<parameter name="rel">a.scene</parameter>\n</invoke>'),
+    ).toBe("说明文字");
   });
 });
 

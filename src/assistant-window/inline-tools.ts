@@ -240,6 +240,17 @@ export function hasInlineToolCalls(content: string): boolean {
   return parseInlineToolCalls(content).calls.length > 0;
 }
 
+/** 残骸净化（上屏出口用）：解析失败也绝不裸露调用标签块。含未闭合形态
+ * （<tool_call> 壳没有闭合、<function=invoke> 缺工具名这类方言残骸）——
+ * 从开标签删到文本尾。模型内部历史保留原文供自纠，这里只管用户看得见的。 */
+export function stripCallTags(text: string): string {
+  const out = text
+    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, "")
+    .replace(/<(?:invoke|function|parameter)\b[^>]*>[\s\S]*?(?:<\/(?:invoke|function|parameter)>|$)/g, "")
+    .replace(/<\/?(?:tool_call|invoke|function|parameter)\b[^>]*>/g, "");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /** 展示用净化正文：抠掉调用块、压掉多余空行 */
 export function cleanedContent(content: string): string {
   return parseInlineToolCalls(content).cleaned;
@@ -273,10 +284,10 @@ function unclosedCallStart(text: string): number {
     : -1;
 }
 
-/** 流式显示净化：完整调用块剔除；尾部未写完的调用载荷/调用标签不闪现。
- * 只动显示，不动历史（历史由 runAgent 的 cleaned 回写负责）。 */
+/** 流式显示净化：完整调用块与残骸标签剔除；尾部未写完的调用载荷/调用标签
+ * 不闪现。只动显示，不动历史（历史由 runAgent 的 cleaned 回写负责）。 */
 export function streamingDisplay(text: string): string {
-  const cleaned = cleanedContent(text);
+  const cleaned = stripCallTags(cleanedContent(text));
   const callStart = unclosedCallStart(cleaned);
   if (callStart >= 0) return cleaned.slice(0, callStart).trimEnd();
   const tagStart = cleaned.search(/<\s*(?:tool_call|invoke|function|parameter)\b[^<]*$/);

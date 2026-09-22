@@ -73,7 +73,7 @@ pub fn extract_name(seg: &str) -> Option<String> {
 /// 文件路径提取：@前缀 / 引号内 / 带扩展名的 token
 pub fn extract_path(seg: &str) -> Option<String> {
     for raw in seg.split(|c: char| {
-        c.is_whitespace() || matches!(c, '"' | '\'' | '“' | '”' | '「' | '」' | '，' | '。' | '、' | '，')
+        c.is_whitespace() || matches!(c, '"' | '\'' | '“' | '”' | '「' | '」' | '。' | '、' | '，')
     }) {
         let token = raw.strip_prefix('@').unwrap_or(raw);
         if token.is_empty() || !token.contains('.') {
@@ -91,7 +91,7 @@ pub fn extract_path(seg: &str) -> Option<String> {
     None
 }
 
-/// 目录/绝对路径提取（project.open 用）：含盘符冒号或路径分隔的 token。
+/// 目录/绝对路径提取（project.open 建议）：含盘符冒号或路径分隔的 token。
 /// 与 extract_path（扩展名启发）互补——"D:/work/demo" 无扩展名。
 pub fn extract_dir_path(seg: &str) -> Option<String> {
     for raw in seg.split(|c: char| {
@@ -106,13 +106,25 @@ pub fn extract_dir_path(seg: &str) -> Option<String> {
     None
 }
 
-/// project.open 的路径：段内有路径用之；没有则引用上一个直执行结果
-/// （"创建项目…然后打开"——unit_index > 1 才有前序可引用）
-pub fn open_params(seg: &str, unit_index: usize) -> Option<Value> {
-    if let Some(p) = extract_dir_path(seg).or_else(|| extract_path(seg)) {
-        return Some(json!({ "path": p }));
+/// 建议参数：大脑从自然语言段确定性提取的部分参数，随模糊单元下发给助手
+/// 校验使用——助手负责最终转换，建议只减幻觉不接管。
+pub fn suggest(method: &str, seg: &str) -> Option<Value> {
+    match method {
+        "project.create" => extract_name(seg).map(|name| json!({ "name": name })),
+        "project.open" => extract_dir_path(seg).map(|p| json!({ "path": p })),
+        "asset.read" => extract_path(seg).map(|p| json!({ "path": p })),
+        "node.add" => {
+            let mut ents = match_entities(seg);
+            // 仅单一实体时给建议（多实体由助手一轮并行处理）
+            if ents.len() == 1 {
+                let (kind, subtype) = ents.remove(0);
+                Some(node_params(kind, subtype))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
-    (unit_index > 1).then(|| json!({ "path": "$prev.path" }))
 }
 
 /// node.add 参数：单实体段（多实体由 decompose 展开为多单元）
@@ -143,31 +155,22 @@ mod tests {
     }
 
     #[test]
-    fn open_falls_back_to_prev_reference() {
+    fn suggest_builds_partial_params() {
         assert_eq!(
-            open_params("打开项目", 3).unwrap()["path"],
-            "$prev.path"
+            suggest("project.create", "创建一个3D项目,项目名为:aixosp").unwrap()["name"],
+            "aixosp"
         );
         assert_eq!(
-            open_params("打开项目 D:/work/demo", 9).unwrap()["path"],
-            "D:/work/demo"
+            suggest("asset.read", "读取 src/TweenMotion.ts").unwrap()["path"],
+            "src/TweenMotion.ts"
         );
-        assert!(open_params("打开项目", 1).is_none(), "首单元无前序不给占位");
-    }
-}
-
-#[cfg(test)]
-mod diag {
-    use super::*;
-    #[test]
-    fn diag_extract() {
-        println!("p1={:?}", extract_path("读取 src/TweenMotion.ts"));
-        println!("p2={:?}", extract_dir_diag("打开项目 D:/work/demo"));
-    }
-    fn extract_dir_diag(seg: &str) -> Option<String> {
-        for raw in seg.split(' ') {
-            println!("tok={raw} has_dot={} has_slash={}", raw.contains('.'), raw.contains('/'));
-        }
-        None
+        assert_eq!(
+            suggest("node.add", "添加一个方向光").unwrap()["subtype"],
+            "directional"
+        );
+        // 多实体段不给建议（助手一轮并行处理）
+        assert!(suggest("node.add", "添加一个方向光，一个环境光").is_none());
+        // 无参数可提取（写入内容无法规则提取）
+        assert!(suggest("asset.write", "写入一个脚本文件").is_none());
     }
 }

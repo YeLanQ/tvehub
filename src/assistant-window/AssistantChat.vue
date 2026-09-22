@@ -19,7 +19,6 @@ import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
-  resolvePrevRefs,
   runUnitPlan,
   usablePlan,
 } from "./nlu";
@@ -396,24 +395,22 @@ async function send(textArg?: string | Event): Promise<void> {
     // 准确性原子任务（绿灯只读）：大脑直接委托命令中心执行，不经助手；
     // 模糊原子任务留给助手细化。全走 brain_execute 门控与观测闭环。
     const directResults: string[] = [];
-    let prev: unknown = null; // 链式编排：上一个直执行结果（$prev 引用源）
     for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {
+      if (stopRequested.value) break; // 停止：剩余直执行单元不再发起
       markUnit(u.index, "running");
-      const resolved = resolvePrevRefs((u.params ?? {}) as Record<string, unknown>, prev);
       convs.append(convId, {
         role: "tool",
-        content: JSON.stringify(resolved),
+        content: JSON.stringify(u.params ?? {}),
         toolName: u.method!,
         toolCallId: `d_${u.index}`,
       });
       let ok = false;
       let digest = "";
       try {
-        // 经 execAssistantTool：决策中心门控照走（黄灯 needConfirm 弹批准，
-        // 批准一次同任务后续直执行自动放行——用户明确指令即授权）
+        // 绿色通道仅死板过程命令（无参绿灯查询）：仍经决策中心门控与观测
         const res = await execAssistantTool(
           u.method!,
-          JSON.stringify(resolved),
+          JSON.stringify(u.params ?? {}),
           convs.activeRoot || undefined,
           text,
           requestToolConfirm,
@@ -421,7 +418,6 @@ async function send(textArg?: string | Event): Promise<void> {
         const err = (res as { error?: unknown } | null)?.error;
         ok = !err;
         digest = JSON.stringify(res);
-        if (!err) prev = res;
       } catch (e) {
         digest = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
       }
@@ -434,7 +430,7 @@ async function send(textArg?: string | Event): Promise<void> {
         result: true,
       });
       directResults.push(
-        `- ${u.method}(${JSON.stringify(resolved)}) → ${ok ? "完成" : "失败"}：${digest.length > 160 ? digest.slice(0, 160) + "…" : digest}`,
+        `- ${u.method}(${JSON.stringify(u.params ?? {})}) → ${ok ? "完成" : "失败"}：${digest.length > 160 ? digest.slice(0, 160) + "…" : digest}`,
       );
     }
     directNote = directResults.length
@@ -681,8 +677,8 @@ function onInputKey(e: KeyboardEvent): void {
              按钮不渲染，也就不会触发「没有工作区项目」的选择浮层报错 -->
         <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
         <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
-        <button v-if="busy" class="achat-send stop" title="终止执行" @click="stopGeneration">
-          停止
+        <button v-if="busy" class="achat-send stop" :title="stopRequested ? '正在等待当前步骤结束' : '终止执行'" @click="stopGeneration">
+          {{ stopRequested ? "停止中…" : "停止" }}
         </button>
         <button v-else class="achat-send" :disabled="!canSend" @click="send()">发送</button>
       </div>

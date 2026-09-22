@@ -12,8 +12,6 @@ use crate::brain::skillsrc::ingest::top_tokens;
 use crate::brain::store::hot::HotTier;
 use std::sync::OnceLock;
 
-use serde::Deserialize;
-
 /// 与 build_docs.rs 的输出结构对应
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

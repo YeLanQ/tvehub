@@ -117,98 +117,6 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
         let hits = route::route(hot, &seg, 4, now);
         let refs = knowledge_hits(&hits);
         let phase = matcher::phase_of(&seg);
-
-        // 段内直执行命令展开（出现顺序）：建项目 → 开项目 → 实体 → 读文件
-        let mut covered: Vec<String> = Vec::new();
-        let mut push_direct = |units: &mut Vec<TaskUnit>,
-                               method: &str,
-                               params: Value,
-                               covered: &mut Vec<String>| {
-            direct_hits += 1;
-            covered.push(method.to_string());
-            units.push(TaskUnit {
-                index: units.len() + 1,
-                text: seg.clone(),
-                method: Some(method.to_string()),
-                source: Some("lexicon".into()),
-                zone: Some(zones::zone_of(method)),
-                phase: matcher::phase_of(&seg),
-                refs: refs.clone(),
-                exec: ExecMode::Direct,
-                params,
-            });
-        };
-
-        if seg.contains("项目") {
-            if let Some(name) = params::extract_name(&seg) {
-                if seg.contains("创建") || seg.contains("新建") || seg.contains("建") {
-                    push_direct(
-                        &mut units,
-                        "project.create",
-                        json!({ "name": name }),
-                        &mut covered,
-                    );
-                }
-            }
-            if seg.contains("打开") || seg.contains("载入") {
-                if let Some(p) = params::open_params(&seg, units.len() + 1) {
-                    push_direct(&mut units, "project.open", p, &mut covered);
-                }
-            }
-        }
-        for (kind, subtype) in params::match_entities(&seg) {
-            push_direct(
-                &mut units,
-                "node.add",
-                params::node_params(kind, subtype),
-                &mut covered,
-            );
-        }
-        if let Some(path) = params::extract_path(&seg) {
-            if seg.contains("读取") || seg.contains("查看") || seg.contains("@") {
-                push_direct(&mut units, "asset.read", json!({ "path": path }), &mut covered);
-            }
-        }
-        // 无参绿灯方法（查状态/列清单）：大脑代查
-        if let Some((m, src)) = matcher::predict_method(&seg, &hits) {
-            if DIRECT_NO_ARG.contains(&m.as_str()) && !covered.contains(&m) {
-                let mut p = serde_json::Map::new();
-                if matches!(m.as_str(), "scene.list" | "asset.list") {
-                    if let Some(r) = root {
-                        p.insert("root".into(), Value::String(r.into()));
-                    }
-                }
-                push_direct(&mut units, &m, Value::Object(p), &mut covered);
-                let _ = src;
-            }
-        }
-        if !covered.is_empty() {
-            // 直执行未覆盖的意图仍按预测补一个模糊单元（如"…再写个脚本"）
-            if let Some((m, src)) = matcher::predict_method(&seg, &hits) {
-                if !covered.contains(&m) {
-                    let z = zones::zone_of(&m);
-                    units.push(TaskUnit {
-                        index: units.len() + 1,
-                        text: seg.clone(),
-                        method: Some(m.clone()),
-                        source: Some(src.to_string()),
-                        zone: Some(z),
-                        phase,
-                        refs,
-                        exec: ExecMode::Assist,
-                        params: Value::Null,
-                    });
-                    if src == "graph" {
-                        graph_hits += 1;
-                    } else {
-                        lexicon_hits += 1;
-                    }
-                }
-            }
-            continue;
-        }
-
-        // 无直执行命中：预测 → 模糊单元（原路径）
         let (method, source, zone) = match matcher::predict_method(&seg, &hits) {
             Some((m, src)) => {
                 if src == "graph" {
@@ -221,6 +129,34 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
             }
             None => (None, None, None),
         };
+        // 绿色通道（唯一直执行例外）：死板过程命令——无参绿灯查询，大脑直接
+        // 委托命令中心，不经助手
+        if let Some(m) = &method {
+            if DIRECT_NO_ARG.contains(&m.as_str()) {
+                let mut p = serde_json::Map::new();
+                if matches!(m.as_str(), "scene.list" | "asset.list") {
+                    if let Some(r) = root {
+                        p.insert("root".into(), Value::String(r.into()));
+                    }
+                }
+                units.push(TaskUnit {
+                    index: units.len() + 1,
+                    text: seg,
+                    method: method.clone(),
+                    source: source.clone(),
+                    zone,
+                    phase,
+                    refs,
+                    exec: ExecMode::Direct,
+                    params: Value::Object(p),
+                });
+                direct_hits += 1;
+                continue;
+            }
+        }
+        // 其余原子任务一律经助手：助手把自然语言转换为精准命令（方法+参数）
+        // 后交决策中心派发。大脑提取的建议参数随单元下发，辅助助手精准转换。
+        let suggestion = method.as_deref().and_then(|m| params::suggest(m, &seg));
         units.push(TaskUnit {
             index: units.len() + 1,
             text: seg,
@@ -230,7 +166,7 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
             phase,
             refs,
             exec: ExecMode::Assist,
-            params: Value::Null,
+            params: suggestion.unwrap_or(Value::Null),
         });
     }
     if direct_hits > 0 {
@@ -240,43 +176,39 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) ->
         });
     }
 
-    // 隐式依赖补全：节点类直执行需要项目在编辑器打开（node.add 报
+    // 隐式依赖提示：节点类任务需要项目在编辑器打开（node.add 报
     // 「没有活跃编辑器」），用户说"在项目中添加"时往往不会说"打开项目"——
-    // 自动插入 project.open：刚创建的引用 $prev.path，否则用当前工作区。
-    let has_node_direct = units
-        .iter()
-        .any(|u| u.exec == ExecMode::Direct && u.method.as_deref() == Some("node.add"));
+    // 自动补一个 project.open 模糊单元（助手转换执行；绑定了工作区时附
+    // 路径建议，刚创建的场景下助手按上下文打开刚建的项目）。
+    let has_node_task = units.iter().any(|u| u.method.as_deref() == Some("node.add"));
     let has_open = units.iter().any(|u| u.method.as_deref() == Some("project.open"));
-    if has_node_direct && !has_open {
+    if has_node_task && !has_open {
         let insert_at = units
             .iter()
             .position(|u| u.method.as_deref() == Some("project.create"))
             .map(|i| i + 1)
             .unwrap_or(0);
-        let path = if insert_at > 0 {
-            Some("$prev.path".to_string())
+        let params = if insert_at == 0 {
+            root.map(|r| json!({ "path": r })).unwrap_or(Value::Null)
         } else {
-            root.map(|r| r.to_string())
+            Value::Null
         };
-        if let Some(path) = path {
-            units.insert(
-                insert_at,
-                TaskUnit {
-                    index: 0,
-                    text: "在编辑器中打开项目".into(),
-                    method: Some("project.open".into()),
-                    source: Some("lexicon".into()),
-                    zone: Some(zones::zone_of("project.open")),
-                    phase: matcher::Phase::Act,
-                    refs: Vec::new(),
-                    exec: ExecMode::Direct,
-                    params: json!({ "path": path }),
-                },
-            );
-            direct_hits += 1;
-            for (i, u) in units.iter_mut().enumerate() {
-                u.index = i + 1; // 插入后重排序号
-            }
+        units.insert(
+            insert_at,
+            TaskUnit {
+                index: 0,
+                text: "在编辑器中打开项目".into(),
+                method: Some("project.open".into()),
+                source: Some("lexicon".into()),
+                zone: Some(zones::zone_of("project.open")),
+                phase: matcher::Phase::Act,
+                refs: Vec::new(),
+                exec: ExecMode::Assist,
+                params,
+            },
+        );
+        for (i, u) in units.iter_mut().enumerate() {
+            u.index = i + 1; // 插入后重排序号
         }
     }
     traces.push(NluTrace {
@@ -378,27 +310,29 @@ mod tests {
     #[test]
     fn classifies_direct_and_assist_units() {
         let mut hot = graph();
-        // 准确性原子任务：绿灯无参方法 → direct，root 注入参数
+        // 绿色通道：死板过程命令（无参绿灯查询）→ direct，root 注入参数
         let deco = decompose(&mut hot, "列出资产", 0, Some("P:/proj"));
         let u = &deco.units[0];
         assert_eq!(u.exec, ExecMode::Direct);
         assert_eq!(u.params["root"], "P:/proj");
-        // 模糊原子任务：黄灯写操作 → 助手细化，不直执行
+        // 带参/写操作原子任务 → 助手转换（大脑建议参数随单元下发）
         let deco2 = decompose(&mut hot, "写入一个脚本文件", 0, None);
         assert_eq!(deco2.units[0].exec, ExecMode::Assist);
-        // 绿灯带参方法：路径可提取 → direct
+        assert!(deco2.units[0].params.is_null(), "无可提取参数不给建议");
+        // 参数可提取 → assist + 建议参数（助手校验后转换）
         let deco3 = decompose(&mut hot, "读取 src/TweenMotion.ts", 0, None);
-        assert_eq!(deco3.units[0].exec, ExecMode::Direct);
+        assert_eq!(deco3.units[0].exec, ExecMode::Assist);
         assert_eq!(deco3.units[0].params["path"], "src/TweenMotion.ts");
-        // 无方法预测 → assist
+        // 无方法预测 → assist 无建议
         let deco4 = decompose(&mut hot, "你好呀", 0, None);
         assert_eq!(deco4.units[0].exec, ExecMode::Assist);
+        assert!(deco4.units[0].params.is_null());
     }
 
     #[test]
     fn inserts_project_open_before_node_directs() {
-        // 回归：用户原话场景——「创建项目名为 aixosp,在项目中添加天空盒/平面/
-        // 方向光/环境光」缺"打开项目"动作,直执行 node.add 全数报无编辑器
+        // 用户原话场景——「创建项目名为 aixosp,在项目中添加天空盒/平面/
+        // 方向光/环境光」缺"打开项目"动作,自动补 project.open 模糊单元
         let mut hot = graph();
         let deco = decompose(
             &mut hot,
@@ -411,12 +345,11 @@ mod tests {
             .iter()
             .map(|u| u.method.as_deref().unwrap_or("?"))
             .collect();
+        // 整段一个模糊单元：助手一轮内并行转换全部精准命令（建/开/加节点）
+        assert_eq!(deco.units.len(), 1, "{:?}", deco.units);
         assert_eq!(methods[0], "project.create");
-        assert_eq!(methods[1], "project.open", "节点直执行前应自动补打开项目");
-        assert_eq!(deco.units[1].params["path"], "$prev.path");
-        assert!(methods.contains(&"node.add"));
-        assert!(deco.units.iter().filter(|u| u.method.as_deref() == Some("node.add")).count() >= 4);
-        // 无 create：用当前工作区 root 打开
+        assert_eq!(deco.units[0].params["name"], "aixosp");
+        // 无 create：open 建议用当前工作区路径
         let deco2 = decompose(&mut hot, "添加一个天空盒", 0, Some("P:/proj"));
         assert_eq!(deco2.units[0].method.as_deref(), Some("project.open"));
         assert_eq!(deco2.units[0].params["path"], "P:/proj");

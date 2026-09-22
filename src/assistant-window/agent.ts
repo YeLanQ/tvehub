@@ -5,7 +5,7 @@
 // tool_calls 的 tool 消息会被服务端拒绝）。
 
 import { skillIndexPrompt } from "./skills";
-import { cleanedContent, parseInlineToolCalls } from "./inline-tools";
+import { cleanedContent, parseInlineToolCalls, stripCallTags } from "./inline-tools";
 import { assistantTools, type OpenAITool } from "./tools";
 import type { AgentCard } from "./store";
 
@@ -84,7 +84,8 @@ const STALL_NOTE =
   "或换一种表述重新下达指令。";
 
 function stalled(content: string): AssistantReply {
-  const text = content.trim();
+  // 坏格式调用残骸不上屏（模型历史保留原文供自纠）
+  const text = stripCallTags(content);
   return {
     content: (text ? text + "\n\n" : "") + STALL_NOTE,
     toolCalls: [],
@@ -294,7 +295,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
         }
         return stalled(finalReply.content);
       }
-      return reply;
+      // 正常收尾：正文仍过一遍残骸净化（防调用标签碎片裸露）
+      return { content: stripCallTags(reply.content), toolCalls: [] };
     }
     if (opts.shouldStop?.()) {
       return stopped(

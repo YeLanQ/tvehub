@@ -6,7 +6,6 @@ import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
-  resolvePrevRefs,
   runUnitPlan,
   unitInstruction,
   usablePlan,
@@ -17,7 +16,13 @@ function hit(id: string, label: string): BrainKnowledgeHit {
   return { id, label };
 }
 
-function unit(index: number, text: string, method: string | null, refs: BrainKnowledgeHit[] = []): BrainTaskUnit {
+function unit(
+  index: number,
+  text: string,
+  method: string | null,
+  refs: BrainKnowledgeHit[] = [],
+  params: Record<string, unknown> | null = null,
+): BrainTaskUnit {
   return {
     index,
     text,
@@ -27,7 +32,7 @@ function unit(index: number, text: string, method: string | null, refs: BrainKno
     phase: "act",
     refs,
     exec: "assist",
-    params: null,
+    params,
   };
 }
 
@@ -114,15 +119,14 @@ describe("unitInstruction 单元指令", () => {
     expect(knowledgeNote(deco2)).toBe("");
   });
 
-  it("正常：resolvePrevRefs 解析链式占位（深遍历；无法解析原样保留）", () => {
-    const prev = { path: "P:/proj", rel: "assets/main.scene" };
-    expect(resolvePrevRefs({ path: "$prev.path" }, prev)).toEqual({ path: "P:/proj" });
-    expect(resolvePrevRefs({ path: "$prev", nested: { k: "$prev.rel" } }, prev)).toEqual({
-      path: prev,
-      nested: { k: "assets/main.scene" },
-    });
-    // 无前序：占位保留（调用失败如实回喂）
-    expect(resolvePrevRefs({ path: "$prev.path" }, null)).toEqual({ path: "$prev.path" });
+  it("正常：单元指令带大脑建议参数（校验后使用）", () => {
+    const msg = unitInstruction(
+      unit(1, "创建项目", "project.create", [], { name: "aixosp" }),
+      [],
+      1,
+    );
+    expect(msg).toContain('{"name":"aixosp"}');
+    expect(unitInstruction(unit(1, "随便", null), [], 1)).not.toContain("建议参数");
   });
 });
 

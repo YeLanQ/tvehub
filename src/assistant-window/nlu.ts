@@ -59,6 +59,9 @@ export function unitInstruction(
   if (unit.method) {
     lines.push(`预测入口工具：${unit.method}（建议首选；回执不符时按实际调整参数或改用其他工具）。`);
   }
+  if (unit.params && Object.keys(unit.params).length) {
+    lines.push(`大脑从指令提取的建议参数（请校验后使用）：${JSON.stringify(unit.params)}`);
+  }
   if (unit.refs?.length) {
     lines.push(KNOWLEDGE_HEADER, ...knowledgeLines(unit.refs));
   }
@@ -122,33 +125,6 @@ export function decomposeDigest(deco: BrainDecomposition): string {
     units: deco.units,
     traces: deco.traces,
   });
-}
-
-/** 链式占位解析："$prev" / "$prev.<key>" 引用上一个直执行单元的结果
- * （创建项目 → 打开项目 的编排）。无法解析时占位原样保留——调用会如实
- * 失败并回喂，错误对助手可见。 */
-export function resolvePrevRefs(
-  params: Record<string, unknown>,
-  prev: unknown,
-): Record<string, unknown> {
-  const walk = (v: unknown): unknown => {
-    if (typeof v === "string") {
-      if (v === "$prev") return prev ?? v;
-      if (v.startsWith("$prev.")) {
-        const key = v.slice("$prev.".length);
-        const obj = prev as Record<string, unknown> | null;
-        const hit = obj && typeof obj === "object" ? obj[key] : undefined;
-        return hit === undefined ? v : hit;
-      }
-      return v;
-    }
-    if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
-    }
-    return v;
-  };
-  return walk(params) as Record<string, unknown>;
 }
 
 /** 直通路线的知识注入：整任务粒度的图谱命中 → wire 追加消息（不落库）。
