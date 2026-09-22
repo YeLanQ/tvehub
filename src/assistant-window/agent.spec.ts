@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, doneWritesNote, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
 import type { AssistantReply, WireMessage } from "./agent";
@@ -75,7 +75,7 @@ describe("runAgent 工具循环", () => {
   it("正常：工具轮执行并把结果回喂下一轮", async () => {
     const script: AssistantReply[] = [
       { content: "", toolCalls: [{ id: "t1", name: "scene.list", arguments: "{}" }] },
-      { content: "有 2 个场景", toolCalls: [] },
+      { content: "查询完成，共有 2 个场景。", toolCalls: [] },
     ];
     const { chat, calls } = stubChat(script);
     const seen: string[] = [];
@@ -94,7 +94,7 @@ describe("runAgent 工具循环", () => {
       onEvent: (e) => events.push({ type: e.type, name: e.name }),
     });
     expect(seen).toEqual(["scene.list"]);
-    expect(reply.content).toBe("有 2 个场景");
+    expect(reply.content).toBe("查询完成，共有 2 个场景。");
     expect(calls()).toBe(2);
     expect(events.map((e) => e.type)).toEqual(["tool_start", "tool_result"]);
   });
@@ -102,7 +102,7 @@ describe("runAgent 工具循环", () => {
   it("异常：工具抛错以 {error} 回喂而非中断", async () => {
     const script: AssistantReply[] = [
       { content: "", toolCalls: [{ id: "t1", name: "node.add", arguments: "不是json" }] },
-      { content: "已改用默认参数", toolCalls: [] },
+      { content: "已改用默认参数，修正完成。", toolCalls: [] },
     ];
     const { chat } = stubChat(script);
     const results: string[] = [];
@@ -123,7 +123,7 @@ describe("runAgent 工具循环", () => {
       },
     });
     expect(results[0]).toContain("error");
-    expect(reply.content).toBe("已改用默认参数");
+    expect(reply.content).toBe("已改用默认参数，修正完成。");
   });
 
   it("正常：正文残缺 tool_call 壳被解析执行（不空停）", async () => {
@@ -158,7 +158,7 @@ describe("runAgent 工具循环", () => {
     const script: AssistantReply[] = [
       { content: '<tool_call>\n完全无法解析\n</tool_call>', toolCalls: [] },
       { content: '{ "tool": "editor.state", "input": {} }', toolCalls: [] },
-      { content: "好了", toolCalls: [] },
+      { content: "好了，全部完成。", toolCalls: [] },
     ];
     const executed: string[] = [];
     const reply = await runAgent({
@@ -174,7 +174,7 @@ describe("runAgent 工具循环", () => {
       },
     });
     expect(executed).toEqual(["editor.state"]);
-    expect(reply.content).toBe("好了");
+    expect(reply.content).toBe("好了，全部完成。");
   });
 
   it("正常：行动宣言（纯文字无调用）被拉回循环继续执行", async () => {
@@ -202,7 +202,7 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toContain("已创建");
   });
 
-  it("边界：宣言救援最多 3 次，之后纯文字按最终回答返回", async () => {
+  it("边界：宣言救援最多 3 次，之后纯文字附显式暂停注记返回（不静默终止）", async () => {
     let n = 0;
     const script: AssistantReply[] = [
       { content: "开始执行。", toolCalls: [] },
@@ -220,7 +220,120 @@ describe("runAgent 工具循环", () => {
       model: "m",
       execTool: async () => ({}),
     });
-    expect(reply.content).toBe("然后写脚本。");
+    expect(reply.content).toContain("然后写脚本。");
+    expect(reply.content).toContain("已在此暂停");
+  });
+
+  it("正常：工具回喂被模型复读时不终止，拉回循环继续推进", async () => {
+    const script: AssistantReply[] = [
+      // 第一轮：内联调用（产生「[工具 xx 执行结果]」回喂文本，成为复读基准）
+      { content: '{"tool": "scene.open", "input": {"rel": "a.scene"}}', toolCalls: [] },
+      // 第二轮：复读回喂文本（截图中「任务被自动终止」的形态）
+      {
+        content:
+          '[工具 scene.open 执行结果]\n{"ok":true,"scene":"a.scene"}\n（系统代为执行，请基于以上结果继续）',
+        toolCalls: [],
+      },
+      // 第三轮：被拉回后正常收尾
+      { content: "场景已打开。", toolCalls: [] },
+    ];
+    let n = 0;
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "打开场景" }],
+      tools: assistantTools(),
+      chat: async () => script[n++],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({ ok: true, scene: "a.scene" }),
+    });
+    expect(reply.content).toBe("场景已打开。");
+    expect(n).toBe(3);
+  });
+
+  it("边界：复读救援预算用尽后返回带暂停注记的复读文本", async () => {
+    const feed =
+      '[工具 scene.open 执行结果]\n{"ok":true,"scene":"assets/QuickStart.scene"}\n（系统代为执行，请基于以上结果继续）';
+    let n = 0;
+    const script: AssistantReply[] = [
+      { content: '{"tool": "scene.open", "input": {"rel": "a"}}', toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: feed, toolCalls: [] },
+      { content: "（不应走到这一条）", toolCalls: [] },
+    ];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "打开场景" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({ ok: true, scene: "assets/QuickStart.scene" }),
+    });
+    expect(reply.content).toContain("已在此暂停");
+    expect(n).toBe(10); // 首轮调用 + 8 次复读救援 + 终止轮
+  });
+
+  it("正常：回喂后的中途评论（无完成语义）自动续跑，不再要求用户手动「继续」", async () => {
+    const script: AssistantReply[] = [
+      { content: '{"tool": "asset.read", "input": {"path": "src/a.ts"}}', toolCalls: [] },
+      // 回喂后的中途评论：无调用、无完成词、无宣言词（旧版在这里停轮）
+      { content: "好的，我已经读完内容了。", toolCalls: [] },
+      {
+        content: '{"tool": "asset.write", "input": {"path": "src/a.ts", "content": "x"}}',
+        toolCalls: [],
+      },
+      // 完成语义：放行收尾
+      { content: "脚本已修正完成。", toolCalls: [] },
+    ];
+    let n = 0;
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "修脚本" }],
+      tools: assistantTools(),
+      chat: async () => script[n++],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({ ok: true }),
+    });
+    expect(reply.content).toContain("已修正完成");
+    expect(n).toBe(4);
+  });
+
+  it("边界：完成语义放行收尾；否定表述（未完成）不放行", () => {
+    expect(looksLikeCompletion("脚本已修正完成。")).toBe(true);
+    expect(looksLikeCompletion("全部完成，共 3 步。")).toBe(true);
+    expect(looksLikeCompletion("脚本还没有完成，需要继续。")).toBe(false);
+    expect(looksLikeCompletion("已定位到两个致命错误。")).toBe(false);
+    expect(looksLikeCompletion("")).toBe(false);
+  });
+
+  it("边界：正常最终总结不含暂停注记（复读判定不误伤）", async () => {
+    const script: AssistantReply[] = [
+      { content: '{"tool": "scene.open", "input": {"rel": "a.scene"}}', toolCalls: [] },
+      {
+        content: "场景打开成功。结果摘录：{\"ok\":true,\"scene\":\"a.scene\"}，已按你的要求完成。",
+        toolCalls: [],
+      },
+    ];
+    let n = 0;
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "打开场景" }],
+      tools: assistantTools(),
+      chat: async () => script[n++],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({ ok: true, scene: "a.scene" }),
+    });
+    expect(reply.content).not.toContain("已在此暂停");
   });
 
   it("正常：确认请求（needConfirm）立即返回，不被宣言救援拉回循环", async () => {
@@ -270,7 +383,7 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toBe("全部完成");
   });
 
-  it("边界：空回复续跑预算 4 次，用尽后原样返回（交兜底文案）", async () => {
+  it("边界：空回复续跑预算 8 次，用尽后原样返回（交兜底文案）", async () => {
     const blank: AssistantReply = { content: "", toolCalls: [] };
     let calls = 0;
     const reply = await runAgent({
@@ -287,7 +400,7 @@ describe("runAgent 工具循环", () => {
     });
     expect(reply.content).toBe("");
     expect(reply.toolCalls).toHaveLength(0);
-    expect(calls).toBe(5); // 首轮 + 4 次自动续跑，之后才落兜底文案
+    expect(calls).toBe(9); // 首轮 + 8 次自动续跑，之后才落兜底文案
   });
 
   it("正常：内联调用无正文时，历史 assistant 消息用占位文本（防供应商空回复）", async () => {
@@ -415,7 +528,7 @@ describe("runAgent 工具循环", () => {
           { id: "c", name: "editor.state", arguments: "{}" },
         ],
       },
-      { content: "都查完了", toolCalls: [] },
+      { content: "都查完了，任务完成。", toolCalls: [] },
     ];
     let running = 0;
     let peak = 0;
@@ -438,7 +551,7 @@ describe("runAgent 工具循环", () => {
       },
     });
     expect(peak).toBe(3);
-    expect(reply.content).toBe("都查完了");
+    expect(reply.content).toBe("都查完了，任务完成。");
     // 回喂顺序 = 调用顺序（与完成时间无关），保证 tool_call_id 配对稳定
     expect(order.sort()).toEqual(["asset.list", "editor.state", "scene.list"]);
   });
@@ -449,7 +562,7 @@ describe("runAgent 工具循环", () => {
         content: '我先查状态。\n{ "tool": "editor.state", "input": {} }',
         toolCalls: [],
       },
-      { content: "状态正常", toolCalls: [] },
+      { content: "检查完成，状态正常。", toolCalls: [] },
     ];
     const executed: string[] = [];
     const { chat } = stubChat(script);
@@ -466,7 +579,7 @@ describe("runAgent 工具循环", () => {
       },
     });
     expect(executed).toEqual(["editor.state"]);
-    expect(reply.content).toBe("状态正常");
+    expect(reply.content).toBe("检查完成，状态正常。");
   });
 
   it("终止：shouldStop 在轮边界生效，未执行的工具保持未执行", async () => {
