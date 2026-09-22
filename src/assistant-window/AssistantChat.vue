@@ -9,6 +9,7 @@ import { toastErr } from "../ui-kit";
 import { api } from "../lib/api";
 import { getAssistantStore } from "./store";
 import { parseFileRefs, isBinaryRef } from "./refs";
+import { buildFileTocBlock, shouldIndexInstead, type FileIndexBrief } from "./fileidx";
 import { getConversations, type ChatMessage } from "./conversations";
 import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire, type AgentEvent } from "./agent";
 import { createTauriTransport } from "./transport";
@@ -403,7 +404,26 @@ function pickPickerSel(): void {
   if (item) insertAsset(item.path);
 }
 
-/** 解析 @引用 → 附加到 wire 消息的注入块（文本全文；二进制仅文件名） */
+/** 大文件索引注入：file.index 建索引取模块目录；失败回退整包全文（降级不丢内容） */
+async function buildIndexedBlock(ref: string, fallbackContent?: string): Promise<string> {
+  const res = await execAssistantTool(
+    "file.index",
+    JSON.stringify({ path: ref }),
+    convs.activeRoot || undefined,
+  );
+  if (res && typeof res === "object" && !("error" in res)) {
+    return buildFileTocBlock(ref, res as FileIndexBrief);
+  }
+  const reason =
+    res && typeof res === "object" && "error" in res ? String(res.error) : "未知错误";
+  if (fallbackContent != null) {
+    return `\n\n--- 文件：${ref}（索引失败：${reason}，回退全文注入） ---\n${fallbackContent}\n--- 结束 ---`;
+  }
+  return `\n（引用文件：${ref}——索引失败：${reason}）`;
+}
+
+/** 解析 @引用 → 附加到 wire 消息的注入块：小文件全文；大文件索引目录+
+ * 按需 file.search；二进制仅文件名 */
 async function resolveRefAttachments(refs: string[]): Promise<string> {
   let block = "";
   for (const ref of refs) {
@@ -417,10 +437,19 @@ async function resolveRefAttachments(refs: string[]): Promise<string> {
       convs.activeRoot || undefined,
     );
     if (res && typeof res === "object" && "error" in res) {
+      // 超 512KB 拒读的大文件：跳过整读转索引模式（索引侧上限 2MB）
+      if (shouldIndexInstead(undefined, undefined, String(res.error))) {
+        block += await buildIndexedBlock(ref);
+        continue;
+      }
       block += `\n（引用文件：${ref}——读取失败：${String(res.error)}）`;
       continue;
     }
-    const doc = res as { path?: string; content?: string };
+    const doc = res as { path?: string; content?: string; truncated?: boolean };
+    if (shouldIndexInstead(doc?.content, doc?.truncated)) {
+      block += await buildIndexedBlock(ref, doc?.content);
+      continue;
+    }
     block += `\n\n--- 文件：${doc?.path ?? ref} ---\n${doc?.content ?? ""}\n--- 结束 ---`;
   }
   return block;

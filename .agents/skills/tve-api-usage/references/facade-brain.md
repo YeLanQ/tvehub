@@ -23,7 +23,12 @@ strategy 计划）、`brain/nlu/`（语义单元化：segment 分段 / matcher �
 mod 总装 decompose）、`brain/skillsrc/`（摄取构建期内嵌技能索引）、`brain/docsrc/`
 （**文档基图元**：public/docs submodule 的 22 篇手册经构建期 docs_index.json 内嵌，
 摄取为 Concept 节点群——Mentions 词元锚点 + Uses 已知命令，与技能共同保证冷启动
-检索底料非空）、`brain/execute.rs`
+检索底料非空）、`brain/fileidx/`（**文件内模块索引**：@ 引用的大文本文件经决策中心
+`file.index`/`file.search`（只读绿灯）建索引——split 三策略切分（md 标题/代码顶格
+声明/定窗）→ 抽取式摘要 → 量化向量，gzip 落盘 `<brain目录>/fileidx.json.gz`，内容
+哈希缓存失效自动重建、LRU 64 文件、单文件 ≤2MB、不存正文检索时重读切片；前端
+`assistant-window/fileidx.ts` 判定 >12K 字符/截断/512KB 拒读转索引模式，只注入
+摘要+模块目录，模型按需 file.search 取行号摘录）、`brain/execute.rs`
 （**决策中心执行器**：`Brain::execute` 三段式持锁——门控（锁）→ 派发（无锁，
 可等编辑器回填 60s）→ 观测（锁）；审批会话存 `BrainCore.approvals`）。
 

@@ -29,6 +29,8 @@ const GREEN_METHODS: &[&str] = &[
     "asset.read",
     "asset.select",
     "preview.screenshot",
+    "file.index",
+    "file.search",
 ];
 
 /// 登记过的全部方法（摄取时用于识别技能正文中的命令）
@@ -75,6 +77,8 @@ const ALL_METHODS: &[&str] = &[
     "asset.select",
     "asset.delete",
     "asset.rename",
+    "file.index",
+    "file.search",
 ];
 
 /// 能耗权重：按副作用强度估算每次调用的相对能耗（速度分与能耗分都基于它）

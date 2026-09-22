@@ -600,6 +600,29 @@ fn try_local(
         }
         "scene.tree" | "state.snapshot" => scene_doc_blocking(app),
         "scene.save" => scene_save_blocking(app).map(|_| serde_json::json!({ "ok": true })),
+        // 文件内模块索引（brain.fileidx）：大文本文件 @ 引用走"索引+按需检索"，
+        // 不整包进 LLM 上下文；file.search 索引失效自动重建
+        "file.index" | "file.search" => {
+            let Some(root) = workspace_root(app, params) else {
+                return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
+            };
+            let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+                return Some(Err("缺少 path 参数".to_string()));
+            };
+            let brain = app.state::<crate::brain::Brain>();
+            if method == "file.index" {
+                brain.fileidx_index(&root, path).map(|b| serde_json::to_value(b).expect("brief 可序列化"))
+            } else {
+                let query = params.get("query").and_then(|q| q.as_str()).unwrap_or("");
+                if query.trim().is_empty() {
+                    return Some(Err("缺少 query 参数".to_string()));
+                }
+                let top_k = params.get("topK").and_then(|k| k.as_u64()).unwrap_or(0) as usize;
+                brain
+                    .fileidx_search(&root, path, query, top_k)
+                    .map(|hits| serde_json::to_value(hits).expect("hits 可序列化"))
+            }
+        }
         _ => return None,
     })
 }
@@ -649,7 +672,8 @@ fn asset_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::V
 }
 
 /// 工作区相对路径安全化：拒空/穿越/反斜杠，返回 root 下的绝对路径
-fn workspace_path_of(root: &str, path: &str) -> Result<std::path::PathBuf, String> {
+/// （pub(crate)：brain.fileidx 索引/检索复用同一套路径安全规则）
+pub(crate) fn workspace_path_of(root: &str, path: &str) -> Result<std::path::PathBuf, String> {
     let path = path.trim().trim_start_matches('/');
     if path.is_empty() || path.contains("..") || path.contains('\\') {
         return Err("非法的资产路径".to_string());

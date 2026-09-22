@@ -61,6 +61,8 @@ const CATALOG: ToolSpec[] = [
   { method: "asset.select", description: "选中资产（检查器预览）。", params: { path: "资产相对路径" }, required: ["path"] },
   { method: "asset.delete", description: "删除资产。", params: { path: "资产相对路径" }, required: ["path"] },
   { method: "asset.rename", description: "重命名资产。", params: { path: "旧路径", newName: "新名称" }, required: ["path", "newName"] },
+  { method: "file.index", description: "为工作区大文本文件建模块索引（切分+摘要+向量化，落盘缓存），返回文件摘要与模块目录（标题/行号）。@引用的大文件发送时已自动建索引；文件改动后可用它刷新。", params: { path: "文件相对路径", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
+  { method: "file.search", description: "在已索引的大文件内按语义模糊匹配检索模块，返回相关段落摘录与行号——需要大文件的局部内容时优先用它，不要用 asset.read 整读。索引缺失/文件已变会自动重建。", params: { path: "文件相对路径", query: "检索关键词或语义描述", topK: "命中条数（缺省 2，上限 5）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "query"] },
 ];
 
 function specToTool(spec: ToolSpec): OpenAITool {
@@ -113,7 +115,16 @@ export function assistantTools(): OpenAITool[] {
 }
 
 /** 接受工作区 root 覆盖的方法（助手自动注入当前工作区项目根） */
-export const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.write"]);/** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出
+export const ROOT_METHODS = new Set([
+  "scene.list",
+  "asset.list",
+  "asset.read",
+  "asset.write",
+  "file.index",
+  "file.search",
+]);
+
+/** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出
  * 请求用户批准；resolve(true)=批准并重发，resolve(false)=用户拒绝。 */
 export type ConfirmFn = (info: { method: string; reason: string }) => Promise<boolean>;
 

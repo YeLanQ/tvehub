@@ -12,6 +12,7 @@ pub mod commands;
 pub mod docsrc;
 pub mod dto;
 pub mod execute;
+pub mod fileidx;
 pub mod graph;
 pub mod metrics;
 pub mod model;
@@ -54,11 +55,15 @@ impl BrainCore {
 
 pub struct Brain {
     core: Mutex<BrainCore>,
+    /// 文件内模块索引（@ 大文件的索引+按需检索；自有锁不与 core 竞争）
+    fileidx: Mutex<fileidx::FileIndexStore>,
 }
 
 impl Brain {
     /// 构造：恢复快照（若有）→ 幂等摄取内嵌技能图谱。
     pub fn new(snapshot_path: Option<std::path::PathBuf>) -> Brain {
+        let fileidx_path =
+            snapshot_path.as_ref().map(|p| p.with_file_name("fileidx.json.gz"));
         let mut core = BrainCore {
             store: HotColdStore::new(snapshot_path.clone()),
             ledger: OutcomeLedger::default(),
@@ -92,7 +97,7 @@ impl Brain {
             core.store.hot.edges.len(),
             if boot_saved && boot_flushed { "已落盘" } else { "落盘失败" }
         );
-        Brain { core: Mutex::new(core) }
+        Brain { core: Mutex::new(core), fileidx: Mutex::new(fileidx::FileIndexStore::new(fileidx_path)) }
     }
 
     /// 语义检索（结构类节点：技能/命令/概念）
