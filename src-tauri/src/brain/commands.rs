@@ -3,8 +3,9 @@
 // 全部同步命令（微秒级内存操作，不占异步线程）；入参出参 camelCase 对齐前端。
 // ---------------------------------------------------------------------------
 
-use tauri::State;
+use tauri::{Manager, State};
 
+use super::execute::{ExecArgs, ExecOutcome};
 use super::policy::strategy::Plan;
 use super::{Brain, BrainStats, ObserveReport, TickReport};
 
@@ -49,4 +50,26 @@ pub fn brain_stats(state: State<'_, Brain>) -> Result<BrainStats, String> {
 #[tauri::command]
 pub fn brain_tick(state: State<'_, Brain>) -> Result<TickReport, String> {
     Ok(state.tick())
+}
+
+/// 大脑决策中心执行：门控（三区 + 任务审批会话 + 效能比）→ devtools 命令模式
+/// 派发（权限门控 → Rust 直答 → 中控转发编辑器执行器）→ 观测回写。黄灯未批准
+/// 时返回 needConfirm（未执行），前端请求用户批准（brain_approve）后重发即可。
+/// 派发可阻塞至 60s（编辑器执行器回填），整段放阻塞线程池——异步命令线程属
+/// tokio 运行时，不能直接跑阻塞段。
+#[tauri::command]
+pub async fn brain_execute(app: tauri::AppHandle, args: ExecArgs) -> Result<ExecOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let brain = app.state::<Brain>();
+        Ok(brain.execute(&app, args))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 登记任务审批会话：用户批准后调用，该任务的黄灯方法在有效期内直接放行
+#[tauri::command]
+pub fn brain_approve(state: State<'_, Brain>, task: String) -> Result<(), String> {
+    state.approve_task(&task);
+    Ok(())
 }

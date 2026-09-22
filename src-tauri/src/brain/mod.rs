@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 pub mod commands;
 pub mod dto;
+pub mod execute;
 pub mod graph;
 pub mod metrics;
 pub mod model;
@@ -38,6 +39,15 @@ struct BrainCore {
     ticks: u64,
     /// 累计合并掉的向量数（自压缩统计）
     merged_total: u64,
+    /// 任务审批会话：任务文本 → 过期时刻（决策中心黄灯门控用；tick 清理过期项）
+    approvals: std::collections::HashMap<String, u64>,
+}
+
+impl BrainCore {
+    /// 任务当前审批的过期时刻（无审批或已过期返回 None）
+    fn approved_at(&self, task: &str) -> Option<u64> {
+        self.approvals.get(task).copied()
+    }
 }
 
 pub struct Brain {
@@ -53,6 +63,7 @@ impl Brain {
             events_since_tick: 0,
             ticks: 0,
             merged_total: 0,
+            approvals: std::collections::HashMap::new(),
         };
         if let Some(snap) = core.store.restore() {
             core.ledger.by_method = snap.ledger;
@@ -167,6 +178,8 @@ impl Brain {
 fn tick_locked(core: &mut BrainCore) -> TickReport {
     let started = std::time::Instant::now();
     let now = now_ms();
+    // 过期审批会话清理（approve_task 登记的黄灯豁免不能永久有效）
+    core.approvals.retain(|_, exp| *exp > now);
     let (pruned_edges, _) = evolve(&mut core.store.hot, now);
     let merged = merge_vectors(&mut core.store.hot);
     core.merged_total += merged as u64;

@@ -1,9 +1,11 @@
 pub mod assets;
+pub mod create_local;
 pub mod meta;
 pub mod path;
 pub mod scan;
 
 pub use assets::*;
+pub use create_local::*;
 pub use meta::*;
 pub use path::*;
 pub use scan::*;

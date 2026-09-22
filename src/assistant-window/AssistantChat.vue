@@ -34,6 +34,32 @@ const stopRequested = ref(false);
 const copiedId = ref("");
 /** 助手等待用户确认：在输入框上沿弹批准/自行输入/退出浮动条 */
 const pendingConfirm = ref(false);
+/** 当前任务的原文（大脑决策中心审批会话的键：批准计划时同步登记后端豁免） */
+const lastTask = ref("");
+/** 大脑决策中心的执行确认队列：黄灯写操作未批准时挂起等用户裁决；
+ * 同轮并行调用的多个请求合并为一次批准（一次裁决全部放行/拒绝） */
+interface ExecConfirmReq {
+  method: string;
+  reason: string;
+  resolve: (ok: boolean) => void;
+}
+const execConfirms = ref<ExecConfirmReq[]>([]);
+const execConfirmView = computed(() => execConfirms.value[0] ?? null);
+
+/** 工具执行确认回调（注入 execAssistantTool）：入队等浮动条裁决 */
+function requestToolConfirm(info: { method: string; reason: string }): Promise<boolean> {
+  return new Promise((resolve) => {
+    execConfirms.value.push({ ...info, resolve });
+    scrollBottom();
+  });
+}
+
+/** 裁决出队：同一批挂起的请求共用同一结论（批准一次覆盖同轮全部黄灯调用） */
+function resolveExecConfirm(ok: boolean): void {
+  const batch = execConfirms.value;
+  execConfirms.value = [];
+  for (const req of batch) req.resolve(ok);
+}
 
 /** 当前会话标题（首条用户消息自动命名，缺省"新会话"） */
 const activeTitle = computed(() => {
@@ -98,10 +124,12 @@ async function copyMsg(m: ChatMessage): Promise<void> {
   copyTimer = setTimeout(() => (copiedId.value = ""), 1200);
 }
 
-/** 终止：置停止标记（轮边界生效）+ 取消在途流式请求（ai:done cancelled 收尾） */
+/** 终止：置停止标记（轮边界生效）+ 取消在途流式请求（ai:done cancelled 收尾）；
+ * 挂起的执行确认一并拒绝（不再放行任何工具调用） */
 async function stopGeneration(): Promise<void> {
   stopRequested.value = true;
   pendingConfirm.value = false;
+  resolveExecConfirm(false);
   if (reqId.value) {
     try {
       await api.aiCancel(reqId.value);
@@ -112,11 +140,18 @@ async function stopGeneration(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 确认浮动条：批准 = 代发「确认」；自行输入 = 收起面板并聚焦输入框；
-// 退出 = 代发取消指令让模型终止本次任务
+// 确认浮动条：批准 = 登记大脑审批会话 + 代发「确认」；自行输入 = 收起面板
+// 并聚焦输入框；退出 = 代发取消指令让模型终止本次任务
 // ---------------------------------------------------------------------------
 
 function approveConfirm(): void {
+  // 同步登记后端审批会话：本任务的黄灯调用在有效期内直接放行（豁免与
+  // 代发的「确认」对应，模型重发的写操作不会被决策中心二次拦下）
+  if (lastTask.value) {
+    api.brainApprove(lastTask.value).catch(() => {
+      // 豁免登记失败不阻塞对话：工具调用会被 needConfirm 拦下再次询问
+    });
+  }
   void send("确认");
 }
 
@@ -260,6 +295,7 @@ async function send(textArg?: string | Event): Promise<void> {
   }
   if (!typed) input.value = "";
   pendingConfirm.value = false;
+  lastTask.value = text;
   const convId = convs.activeConvId();
   if (!convId) return;
   convs.append(convId, { role: "user", content: text });
@@ -287,7 +323,13 @@ async function send(textArg?: string | Event): Promise<void> {
       tools: assistantTools(),
       chat: createTauriTransport((id) => (reqId.value = id)),
       execTool: (name, argsJson) =>
-        execAssistantTool(name, argsJson, convs.activeRoot || undefined, text),
+        execAssistantTool(
+          name,
+          argsJson,
+          convs.activeRoot || undefined,
+          text,
+          requestToolConfirm,
+        ),
       baseUrl: prov.baseUrl,
       apiKey: prov.apiKey,
       model: card0?.model?.trim() ? card0.model.trim() : prov.model,
@@ -402,6 +444,29 @@ function onInputKey(e: KeyboardEvent): void {
         </button>
         <button class="achat-confirm-btn bad" title="终止本次任务" @click="cancelConfirm()">
           退出
+        </button>
+      </div>
+    </div>
+
+    <!-- 执行确认浮动条：大脑决策中心对黄灯写操作挂起等用户裁决（运行中可见） -->
+    <div v-if="execConfirmView" class="achat-confirm">
+      <span class="achat-confirm-text" :title="execConfirmView.reason">
+        大脑请求确认：执行「{{ execConfirmView.method }}」（写操作）——{{ execConfirmView.reason }}
+      </span>
+      <div class="achat-confirm-actions">
+        <button
+          class="achat-confirm-btn ok"
+          title="批准本次任务的写操作（后续同类调用不再逐个询问）"
+          @click="resolveExecConfirm(true)"
+        >
+          批准并执行
+        </button>
+        <button
+          class="achat-confirm-btn bad"
+          title="拒绝执行，助手会收到拒绝回执"
+          @click="resolveExecConfirm(false)"
+        >
+          拒绝
         </button>
       </div>
     </div>

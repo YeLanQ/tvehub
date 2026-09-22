@@ -1,11 +1,12 @@
 // 助手工具面：目录（OpenAI function-calling 格式）与执行器。
-// 所有编辑器操作统一经 devtools 内部桥（devtoolsCall）——与外部控制端同一
-// method → command 映射与工具权限门控；执行错误以 { error } 结构回喂模型自纠。
-// brain.* 大脑工具见 ./brain.ts（直连进程内 Rust 大脑，含执行后自动观测）。
+// 前端助手只做决策（调哪个工具 + 参数）；实际执行统一交后端大脑决策中心
+// （brain_execute）：门控（行动边界三区 + 任务审批会话）→ devtools 命令模式
+// 派发（权限门控 → Rust 直答 → 中控转发编辑器执行器）→ 观测回写。执行错误
+// 以 { error } 结构回喂模型自纠。brain.* 大脑工具见 ./brain.ts。
 
-import { api } from "../lib/api";
+import { api, type BrainExecOutcome } from "../lib/api";
 import { findSkill } from "./skills";
-import { BRAIN_CATALOG, execBrainTool, observeExecution, type ToolSpec } from "./brain";
+import { BRAIN_CATALOG, execBrainTool, type ToolSpec } from "./brain";
 
 export type { ToolSpec };
 
@@ -18,11 +19,11 @@ export interface OpenAITool {
   };
 }
 
-/** 编辑器操作目录（全部走内部 devtools；方法语义与 devtools 权限清单一致） */
+/** 编辑器操作目录（全部经大脑决策中心派发；方法语义与 devtools 权限清单一致） */
 const CATALOG: ToolSpec[] = [
   { method: "editor.state", description: "读编辑器当前状态：项目/场景/视图模式/选中/撤销栈。" },
   { method: "project.list", description: "列出最近项目（path/name/sceneCount）。" },
-  { method: "project.create", description: "新建项目（默认 3D 模板，含场景/脚本/配置，无需编辑器）。", params: { name: "项目名", parent: "父目录绝对路径；缺省用默认项目位置，再缺省弹目录选择" }, required: ["name"] },
+  { method: "project.create", description: "新建项目（默认 3D 模板，含场景/脚本/配置，无需编辑器）。", params: { name: "项目名", parent: "父目录绝对路径；缺省用默认项目位置（未设置时需显式提供）" }, required: ["name"] },
   { method: "project.open", description: "在编辑器中打开项目：无活跃编辑器窗口时新建一个编辑器窗口（等同首页打开，返回即就绪）；有活跃编辑器时切换其工作区。", params: { path: "项目绝对路径" }, required: ["path"] },
   { method: "project.close", description: "关闭当前项目回首页。" },
   { method: "scene.list", description: "列出项目内全部 .scene 场景（可带 root 指定工作区，无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
@@ -90,22 +91,51 @@ export function assistantTools(): OpenAITool[] {
 }
 
 /** 接受工作区 root 覆盖的方法（助手自动注入当前工作区项目根） */
-const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.write"]);
+export const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.write"]);
+
+/** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出
+ * 请求用户批准；resolve(true)=批准并重发，resolve(false)=用户拒绝。 */
+export type ConfirmFn = (info: { method: string; reason: string }) => Promise<boolean>;
+
+/** 注入工作区 root（纯函数便于单测）：目录内方法且调用方未显式指定时补上 */
+export function injectWorkspaceRoot(
+  name: string,
+  params: Record<string, unknown>,
+  workspaceRoot?: string,
+): Record<string, unknown> {
+  if (workspaceRoot && ROOT_METHODS.has(name) && !params.root) {
+    return { ...params, root: workspaceRoot };
+  }
+  return params;
+}
+
+/** 决策中心回执 → 工具结果（纯函数便于单测）：ok 透传 result；needConfirm
+ * 无确认回调时按错误回喂；denied/异常一律 { error } 结构让模型自行调整 */
+export function outcomeToToolResult(out: BrainExecOutcome, method: string): unknown {
+  if (out.status === "ok") {
+    return out.result ?? { error: `「${method}」执行回执缺少结果` };
+  }
+  if (out.status === "denied") {
+    return { error: `大脑拒绝执行「${method}」: ${out.reason}` };
+  }
+  return { error: `「${method}」需用户确认后执行: ${out.reason}` };
+}
 
 /**
  * 执行一个工具调用。永不抛错——失败返回 { error } 结构回喂模型自纠；
- * load_skill 读本地注册表；brain.* 直连大脑（不走 devtools，也不入观测）；
- * project.create 在前端完成（模板 fetch + 建项目，不依赖编辑器）；其余经
- * devtools 内部桥，自动注入当前工作区 root。每次执行结束后异步上报大脑
- * （任务/成败/耗时）——驱动因果链进化与效能门控，不阻塞工具返回。
+ * load_skill 读本地注册表；brain.* 直连大脑（决策咨询，不入观测）；
+ * 其余全部经后端大脑决策中心（brain_execute）：绿灯只读直接执行；黄灯写
+ * 操作未批准时返回 needConfirm——有确认回调则弹批准，批准登记审批会话后
+ * 自动重发（同任务后续黄灯调用在有效期内直接放行）；观测由后端在执行闭环
+ * 内回写，前端不再上报。
  */
 export async function execAssistantTool(
   name: string,
   argsJson: string,
   workspaceRoot?: string,
   task = "",
+  requestConfirm?: ConfirmFn,
 ): Promise<{ error: string } | unknown> {
-  const started = performance.now();
   try {
     if (name === "load_skill") {
       const args = JSON.parse(argsJson || "{}") as { id?: string };
@@ -120,44 +150,19 @@ export async function execAssistantTool(
     if (name.startsWith("brain.")) {
       return await execBrainTool(name, params, task);
     }
-    let result: { error: string } | unknown;
-    if (name === "project.create") {
-      result = await createWorkspaceProject(params);
-    } else {
-      if (workspaceRoot && ROOT_METHODS.has(name) && !params.root) {
-        params.root = workspaceRoot;
+    params = injectWorkspaceRoot(name, params, workspaceRoot);
+    let out = await api.brainExecute({ task, method: name, params });
+    if (out.status === "needConfirm" && requestConfirm) {
+      const approved = await requestConfirm({ method: name, reason: out.reason });
+      if (!approved) {
+        return { error: `用户拒绝执行「${name}」，请改为只读方案或终止任务` };
       }
-      result = await api.devtoolsCall(name, params);
+      // 批准登记审批会话（同任务后续黄灯调用直接放行），重发本次调用
+      await api.brainApprove(task);
+      out = await api.brainExecute({ task, method: name, params });
     }
-    observeExecution(name, started, result, task);
-    return result;
+    return outcomeToToolResult(out, name);
   } catch (e) {
-    const result = { error: e instanceof Error ? e.message : String(e) };
-    observeExecution(name, started, result, task);
-    return result;
+    return { error: e instanceof Error ? e.message : String(e) };
   }
-}
-
-/** 新建项目（前端流程）：默认 3D 模板 → fetch 模板文件 → Rust 脚手架 + 登记最近 */
-export async function createWorkspaceProject(
-  params: Record<string, unknown>,
-): Promise<{ error: string } | unknown> {
-  const name = String(params.name ?? "").trim();
-  if (!name) return { error: "缺少 name 参数" };
-  let parent = typeof params.parent === "string" ? params.parent.trim() : "";
-  if (!parent) {
-    const def = await api.getDefaultProjectDir();
-    parent = def ?? (await api.pickProjectFolder()) ?? "";
-  }
-  if (!parent) return { error: "未提供 parent 且用户取消了目录选择" };
-  const tplRes = await fetch("/templates/3d/template.json");
-  if (!tplRes.ok) return { error: `读取默认模板失败: HTTP ${tplRes.status}` };
-  const tpl = (await tplRes.json()) as { files?: string[] };
-  const files: Record<string, string> = {};
-  for (const rel of tpl.files ?? []) {
-    const res = await fetch(`/templates/3d/${rel}`);
-    if (!res.ok) return { error: `读取模板文件失败: ${rel} (HTTP ${res.status})` };
-    files[rel] = await res.text();
-  }
-  return await api.createProject(parent, name, "builtin:3d", files);
 }

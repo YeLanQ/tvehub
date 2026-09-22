@@ -17,8 +17,9 @@
 `devtoolsPush(event, data)`（事件广播给所有控制端）、`devtoolsRecentCalls()` →
 `DevCallLogEntry[]`（最近 50 条工具调用，助手内部桥 + 控制端 TCP/MCP 统一入账）。
 `DevToolsInfo { port, url, mcp_url, stdio_command, token, protocol }`（字段保持 snake_case）。
-**助手内部桥与服务的关系统一**：`devtools_internal_call`（助手工具执行唯一通道）现在
-要求开发者服务处于运行态——服务停用时助手调用被拒并提示开启；权限门控
+**助手内部桥与服务的关系统一**：`devtools_internal_call`（助手工具的底层执行通道；
+助手 LLM 工具调用经大脑决策中心 `brain_execute` 门控后也派发到这同一条命令链）
+现在要求开发者服务处于运行态——服务停用时调用被拒并提示开启；权限门控
 （`require_tool`）对助手与控制端同一份 `devtools_perms.json`。
 
 **局域网共享**（前端包装在 `src/app/lib/lan-share/`）：

@@ -440,6 +440,15 @@ export const api = {
     invoke<BrainObserveReport>("brain_observe", { args }),
   /** 大脑状态报表（节点分布/向量压缩/台账/决策计数） */
   brainStats: () => invoke<BrainStatsReport>("brain_stats"),
+  /**
+   * 大脑决策中心执行一个工具调用（助手工具统一入口）：后端门控（行动边界
+   * 三区 + 任务审批会话 + 效能比）→ devtools 命令模式派发 → 观测回写。黄灯
+   * 未批准返回 needConfirm（未执行），请求用户批准（brainApprove）后重发即可。
+   */
+  brainExecute: (args: { task: string; method: string; params?: Record<string, unknown> }) =>
+    invoke<BrainExecOutcome>("brain_execute", { args }),
+  /** 登记任务审批会话：批准后该任务的黄灯调用在有效期内直接放行 */
+  brainApprove: (task: string) => invoke<void>("brain_approve", { task }),
 };
 
 // ---------------------------------------------------------------------------
@@ -476,6 +485,20 @@ export interface BrainObserveReport {
   accuracy: number;
   autoEligible: boolean;
   ticked: unknown | null;
+}
+
+/** 大脑决策中心执行回执（与 Rust brain::execute::ExecOutcome 对应） */
+export interface BrainExecOutcome {
+  /** ok=已执行（结果在 result，工具失败以 result.error 表达）；
+   * needConfirm=黄灯未批准未执行；denied=拒绝执行 */
+  status: "ok" | "needConfirm" | "denied";
+  decision: "autoExecute" | "needConfirm" | "deny";
+  /** green 只读 / yellow 写操作 / red 禁止 */
+  zone: "green" | "yellow" | "red";
+  reason: string;
+  /** 该方法当前效能比（0..1） */
+  ratio: number;
+  result?: unknown;
 }
 
 export interface BrainStatsReport {

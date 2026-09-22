@@ -1144,6 +1144,8 @@ pub fn run() {
             brain::commands::brain_observe,
             brain::commands::brain_stats,
             brain::commands::brain_tick,
+            brain::commands::brain_execute,
+            brain::commands::brain_approve,
             devtools::devtools_internal_call,
             toggle_assistant_window,
         ])

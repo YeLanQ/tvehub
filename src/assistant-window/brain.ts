@@ -1,6 +1,7 @@
-// 助手大脑桥：brain.* 工具目录、直连执行器与观测上报。
-// brain.* 不走 devtools 内部桥（大脑是进程内 Rust 状态，非编辑器命令），
-// 也不入观测——观测本身是它喂给大脑的数据，避免自指循环。
+// 助手大脑桥：brain.* 工具目录与直连执行器。
+// brain.* 不走大脑决策中心的执行派发（它们本身就是对大脑的决策咨询——
+// 进程内 Rust 状态，非编辑器命令），也不入观测——观测是喂给大脑的数据，
+// 避免自指循环。编辑器类工具的执行与观测统一在 tools.ts 经后端决策中心。
 
 import { api, type BrainPlan, type BrainRouteHit, type BrainStatsReport } from "../lib/api";
 
@@ -53,18 +54,4 @@ export async function execBrainTool(
     return await api.brainStats();
   }
   return { error: `未知大脑方法: ${name}` };
-}
-
-/** 观测上报（fire-and-forget）：成败按 { error } 结构判定，大脑侧进化因果链 */
-export function observeExecution(
-  method: string,
-  started: number,
-  result: unknown,
-  task: string,
-): void {
-  api
-    .brainObserve({ task, method, ok: !(result && typeof result === "object" && "error" in result), ms: Math.round(performance.now() - started) })
-    .catch(() => {
-      // 观测失败不影响工具调用主链路
-    });
 }

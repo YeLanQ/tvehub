@@ -156,6 +156,7 @@ const TOOL_CATALOG: &[(&str, &str, &str)] = &[
     ("editor", "编辑器状态", "编辑器"),
     ("projectQuery", "查询项目", "编辑器"),
     ("projectOpen", "打开/关闭项目", "编辑器"),
+    ("projectCreate", "新建项目", "编辑器"),
     ("scene", "场景", "场景"),
     ("node", "节点选中", "节点"),
     ("nodeAdd", "添加节点", "节点"),
@@ -467,6 +468,9 @@ fn try_local(
 ) -> Option<Result<serde_json::Value, String>> {
     Some(match method {
         "project.list" => project_recent_list(app),
+        // project.create 本地直答：模板从 exe 旁（生产）/仓库（开发）public/templates
+        // 读取后脚手架——助手工具经大脑决策中心派发后执行权收归后端，不再走前端流程
+        "project.create" => crate::project::create_local(app, params),
         // project.open 本地兜底：无活跃编辑器时直接新开编辑器窗口交付项目
         // （等同首页「打开项目」）；有活跃编辑器 → None 走转发切换工作区
         "project.open" => match project_open_local(app, params) {
@@ -1085,6 +1089,7 @@ pub async fn devtools_recent_calls(
 /// 与控制服务器启停无关（不走 TCP runtime，internal_pending 直达 devtools_reply）。
 /// 本地直答会 block_on 异步锁，因此整段放进阻塞线程池执行——
 /// 异步命令线程属于 tokio 运行时，在其中 block_on 会 panic。
+/// pub(crate)：大脑决策中心（brain::execute）按命令模式派发时复用同一通道。
 #[tauri::command]
 pub async fn devtools_internal_call(
     app: AppHandle,
@@ -1097,7 +1102,7 @@ pub async fn devtools_internal_call(
         .map_err(|e| e.to_string())?
 }
 
-fn internal_call_blocking(
+pub(crate) fn internal_call_blocking(
     app: &AppHandle,
     method: String,
     params: serde_json::Value,
