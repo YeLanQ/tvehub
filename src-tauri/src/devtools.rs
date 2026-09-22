@@ -402,7 +402,18 @@ fn project_open_local(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
-    if let Err(e) = crate::open_window_with_project(app, &label, &info.path, &info.name, None) {
+    // 交付必须带 rel：编辑器窗口交接通道只认非空场景路径（main.ts 的
+    // takePendingProject 对 rel=null 不启动装载，窗口会永远停在布防蒙版 0%）
+    let rel = params
+        .get("rel")
+        .and_then(|p| p.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| resolve_boot_scene(&info.path));
+    if let Err(e) =
+        crate::open_window_with_project(app, &label, &info.path, &info.name, Some(rel))
+    {
         return Some(Err(format!("打开编辑器窗口失败: {e}")));
     }
     // 新窗口即路由目标：聚焦事件到来之前先标记活跃，后续 node.* 立即可路由
@@ -431,6 +442,85 @@ fn wait_listener_ready(label: &str, max_secs: u64) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// 解析项目启动场景（镜像前端 project.ts resolveProjectBoot 的候选顺序）：
+/// 1) project.config.json 的 mainScene（合法且文件存在）；2) assets/Main.scene；
+/// 3) 资产扫描到的第一个 .scene（排序取首）；全无时仍回默认路径（与首页
+/// 打开项目同口径：首次保存时创建项目的第一个场景）。
+fn resolve_boot_scene(root: &str) -> String {
+    const DEFAULT: &str = "assets/Main.scene";
+    let base = std::path::Path::new(root);
+    let cfg_main = std::fs::read_to_string(base.join("project.config.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| {
+            v.get("mainScene")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .filter(|rel| {
+            !rel.starts_with("internal/") && rel != "src" && !rel.starts_with("src/")
+        });
+    for candidate in cfg_main.into_iter().chain([DEFAULT.to_string()]) {
+        if base.join(&candidate).is_file() {
+            return candidate;
+        }
+    }
+    if let Ok(entries) = crate::project::scan_tree(base) {
+        let mut scenes: Vec<String> = entries
+            .into_iter()
+            .filter(|a| a.kind == "scene" && !a.path.ends_with('/'))
+            .map(|a| a.path)
+            .collect();
+        scenes.sort();
+        if let Some(first) = scenes.into_iter().next() {
+            return first;
+        }
+    }
+    DEFAULT.to_string()
+}
+
+#[cfg(test)]
+mod boot_scene_tests {
+    use super::resolve_boot_scene;
+
+    fn write(path: &std::path::Path, rel: &str, content: &str) {
+        let p = path.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, content).unwrap();
+    }
+
+    #[test]
+    fn prefers_config_main_scene_then_default_then_scan() {
+        let dir = std::env::temp_dir().join(format!("tve-boot-scene-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("p1");
+        std::fs::create_dir_all(&root).unwrap();
+        // 空项目：回默认路径（与首页打开项目同口径）
+        assert_eq!(resolve_boot_scene(root.to_str().unwrap()), "assets/Main.scene");
+        // 扫描兜底：无配置时取排序第一个 .scene
+        write(&root, "assets/Zeta.scene", "{}");
+        write(&root, "assets/Alpha.scene", "{}");
+        assert_eq!(
+            resolve_boot_scene(root.to_str().unwrap()),
+            "assets/Alpha.scene"
+        );
+        // config mainScene 优先，且指向不存在的文件时继续向后回退
+        write(&root, "project.config.json", r#"{"mainScene":"assets/Zeta.scene"}"#);
+        assert_eq!(
+            resolve_boot_scene(root.to_str().unwrap()),
+            "assets/Zeta.scene"
+        );
+        write(&root, "project.config.json", r#"{"mainScene":"assets/Gone.scene"}"#);
+        assert_eq!(
+            resolve_boot_scene(root.to_str().unwrap()),
+            "assets/Alpha.scene"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

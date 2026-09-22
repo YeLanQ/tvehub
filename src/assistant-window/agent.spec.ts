@@ -202,11 +202,12 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toContain("已创建");
   });
 
-  it("边界：宣言救援最多 2 次，之后纯文字按最终回答返回", async () => {
+  it("边界：宣言救援最多 3 次，之后纯文字按最终回答返回", async () => {
     let n = 0;
     const script: AssistantReply[] = [
       { content: "开始执行。", toolCalls: [] },
       { content: "接下来加节点。", toolCalls: [] },
+      { content: "我先并行添加基础节点。", toolCalls: [] },
       { content: "然后写脚本。", toolCalls: [] },
       { content: "（不应走到这一条）", toolCalls: [] },
     ];
@@ -317,6 +318,73 @@ describe("runAgent 工具循环", () => {
     // 空 assistant 消息会让部分供应商返回空回复
     const assistantMsgs = seen[1].filter((m) => m.role === "assistant");
     expect(assistantMsgs[assistantMsgs.length - 1].content).toBe("（已发起工具调用）");
+  });
+
+  it("边界：模型复读系统占位「（已发起工具调用）」不算任务结论，救援续跑", async () => {
+    // 回归：多步任务只推进第一轮就停——弱模型把上一轮系统写入历史的占位
+    // 正文当自己的状态汇报原样复读，runAgent 误当作最终总结结束循环
+    const nudges: string[] = [];
+    const script: AssistantReply[] = [
+      {
+        content: '<tool_call>{"name":"project.create","arguments":{"name":"Demo"}}</tool_call>',
+        toolCalls: [],
+      },
+      { content: "（已发起工具调用）", toolCalls: [] }, // 回声轮：必须被拉回而非停轮
+      { content: "项目与节点全部创建完成", toolCalls: [] },
+    ];
+    let n = 0;
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "建项目并加节点" }],
+      tools: assistantTools(),
+      chat: async (args) => {
+        // 记录每轮注入的系统救援提示（空回复/占位回声共用 EMPTY_NUDGE）
+        for (const m of args.messages) {
+          if (m.role === "user" && m.content.startsWith("（系统）你返回了空回复")) nudges.push(m.content);
+        }
+        return script[Math.min(n++, script.length - 1)];
+      },
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return { path: "D:/Demo" };
+      },
+    });
+    expect(executed).toEqual(["project.create"]);
+    expect(nudges).toHaveLength(1); // 占位回声轮应注入一次续跑提示
+    expect(reply.content).toBe("项目与节点全部创建完成");
+  });
+
+  it("边界：纯宣言措辞（「我先并行添加并验证…」）被救援拉回而非收尾", async () => {
+    // 回归：截图原句——模型宣布下一步计划却没带调用，措辞不在旧 ANNOUNCE_RE
+    // 里（无"我将/开始执行/第一步"），救援漏触发导致任务停在宣言上
+    const script: AssistantReply[] = [
+      { content: "", toolCalls: [{ id: "t1", name: "scene.tree", arguments: "{}" }] },
+      {
+        content: "为保证节点参数与变换设置正确，我先并行添加基础节点并验证 `node.add/node.set` 的参数能力。",
+        toolCalls: [],
+      },
+      { content: "", toolCalls: [{ id: "t2", name: "node.add", arguments: '{"kind":"mesh"}' }] },
+      { content: "节点已添加完毕，动画组件已挂载。", toolCalls: [] },
+    ];
+    let n = 0;
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "搭场景" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+    });
+    expect(executed).toEqual(["scene.tree", "node.add"]);
+    expect(reply.content).toContain("已添加完毕");
   });
 
   it("边界：连续工具轮达到上限后返回提示而非死循环", async () => {

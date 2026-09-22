@@ -56,9 +56,12 @@ const TOOL_FORMAT_NUDGE =
   "除调用外不要输出多余文字：\n" +
   '① 正文独立 JSON：{"tool": "方法名", "input": {参数}}\n' +
   '② <invoke name="方法名"><parameter name="参数名">值</parameter></invoke>';
-/** 行动宣言特征：模型宣布"要去做"却没带任何调用（拉回循环的判据） */
+/** 行动宣言特征：模型宣布"要去做"却没带任何调用（拉回循环的判据）。
+ * 措辞千变万化（"我先并行添加""先验证参数能力"…），宁可放宽——误救的代价
+ * 有界（提示模型别重复已完成步骤，至多烧掉救援预算后照常收尾），
+ * 漏救的代价是任务停在宣言上让用户手动「继续」。 */
 const ANNOUNCE_RE =
-  /(开始执行|现在开始|我将|我会|接下来|依次|确认后|请稍等|先建|先打开|第一步|然后加|然后写)/;
+  /(开始执行|现在开始|我将|我会|让我先|我先|接下来|依次|确认后|请稍等|第一步|然后加|然后写|先建|先打开|先并|先读取|先写|先添加|先创建|先执行|先调用|先发起|先验证|先检查|先搭建|先处理|准备执行|即将执行|分步执行|并行(添加|创建|执行|发起|调用|写入|搭建|验证)|计划如下|步骤如下|方案如下|执行计划|执行步骤)/;
 /** 取消/终止语义的回应（宣言救援必须避让，否则会把"好的我将停止"也拉回干活） */
 const CANCELLED_RE = /(取消|停止|退出|中止|不再执行|放弃本次)/;
 /** 宣言救援提示 */
@@ -69,8 +72,14 @@ const ANNOUNCE_NUDGE =
   "全部步骤执行完毕后，再输出包含结果的最终总结。在此之前不要输出纯文字回合。";
 /** 空回复续跑提示 */
 const EMPTY_NUDGE =
-  "（系统）你返回了空回复，任务尚未完成。请查看上文工具结果判断进度，" +
-  "继续发起剩余步骤的工具调用（已完成的不要重复）；全部完成后再输出最终总结。";
+  "（系统）你返回了空回复或没有任何实际内容的状态占位（如复读「（已发起工具调用）」），" +
+  "任务尚未完成。请查看上文工具结果判断进度，继续发起剩余步骤的工具调用（已完成的不要重复）；" +
+  "全部完成后再输出含结果的最终总结。";
+
+/** 内联调用轮写进历史的占位正文（模型只发调用没写字时防供应商空回复）。
+ * 弱模型会把这句占位当自己的"状态汇报"原样复读出来——那不是总结，
+ * 会被下方空回复救援识别并拉回循环，绝不能当作任务的最终结论。 */
+export const CALLS_PLACEHOLDER = "（已发起工具调用）";
 
 /** 系统提示词：卡片自定义 > 默认（身份+人设），再统一附加环境/工具/技能索引 */
 export function buildSystemPrompt(
@@ -96,6 +105,7 @@ export function buildSystemPrompt(
         "工作区规则：项目目录即工作区——无需在编辑器打开，scene.list / asset.list / asset.read / asset.write 即可查询与读写该目录下的文件（含直读 .scene 文本）。",
         "会话依赖：node.* 与 preview.* 只对「已在编辑器打开」的项目生效。project.create 只在磁盘建项目——建完必须先 project.open 打开它，才能 node.add / scene.save / 预览。project.open 在没有编辑器窗口时会新开一个编辑器窗口加载（返回即已就绪），有编辑器窗口时切换其工作区。多步建造任务按顺序推进：project.create → project.open → 场景/节点操作 → 保存。",
         "项目未打开时 node.* 会报「没有活跃的编辑器窗口」，此时先 project.open，不要反复重试同一调用。",
+        "参数缺省即有默认值时直接采用默认执行，不要为可选参数暂停询问；只有缺失会造成不可逆破坏（误删、覆盖已有成果）时才向用户确认。",
         "改完文件即落盘；但 .scene 的节点图编辑建议项目在编辑器打开后用 node.* 走撤销历史。",
       ].join("\n"),
     "## 可用工具\n" + toolLines.join("\n"),
@@ -186,14 +196,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
         // 清洗后正文为空（模型只发调用没写字）时放占位文本：空 assistant 消息
         // 会让部分供应商返回空回复，方言调用轮的历史里全是这种消息
         let cleaned = cleanedContent(reply.content);
-        if (!cleaned.trim()) cleaned = "（已发起工具调用）";
+        if (!cleaned.trim()) cleaned = CALLS_PLACEHOLDER;
         finalReply = { ...reply, content: cleaned };
         history[history.length - 1].content = cleaned;
       }
     }
     if (!calls.length) {
-      // 空回复自动续跑：空内容多半是供应商打嗝，拉回循环继续剩余步骤（最多 4 次）
-      if (reply.content.trim() === "") {
+      // 空回复自动续跑：空内容多半是供应商打嗝，占位回声（模型复读上一轮
+      // 系统写入的「（已发起工具调用）」）同理——都不是任务结论，拉回循环
+      // 继续剩余步骤（最多 4 次）
+      const text = reply.content.trim();
+      if (text === "" || text === CALLS_PLACEHOLDER) {
         if (emptyRescues < MAX_EMPTY_RESCUES) {
           emptyRescues += 1;
           history.push({ role: "user", content: EMPTY_NUDGE });
@@ -214,8 +227,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
         continue;
       }
       // 行动宣言救援：模型宣布"要执行"却没带调用——拉回循环真正发起调用
-      //（最多救 2 次；取消语义不救；真正的最终总结不含未来意图词，不受影响）
-      if (rescues < 2 && !CANCELLED_RE.test(reply.content) && ANNOUNCE_RE.test(reply.content)) {
+      //（最多救 3 次；取消语义不救；确认请求已在上方先行返回）
+      if (rescues < 3 && !CANCELLED_RE.test(reply.content) && ANNOUNCE_RE.test(reply.content)) {
         rescues += 1;
         history.push({ role: "user", content: ANNOUNCE_NUDGE });
         continue;
