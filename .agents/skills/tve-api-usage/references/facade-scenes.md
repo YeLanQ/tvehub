@@ -9,7 +9,7 @@
 | 方法 | 用途 |
 |---|---|
 | `transport()` → `SceneTransport` | SceneClient 写通道（项目打开时注入引擎） |
-| `open(root, rel)` → `SceneLoadResult` | 打开 .scene（读盘+迁移+建图，历史清零） |
+| `open(root, rel, force?)` → `SceneLoadResult` | 打开 .scene（读盘+迁移+建图，历史清零）；force=true 且会话已存在但干净 → 磁盘重装并广播 replace（asset.write 直写后重开即见磁盘版），脏会话仍复用 |
 | `loadDoc(doc, root?, rel?)` → `SceneLoadResult` | 前端文档整树替换会话（初始场景/兜底，不落盘） |
 | `save()` | 保存（后端序列化+写盘+清脏） |
 | `doc()` → unknown | 读当前完整文档（devtools/快照用） |

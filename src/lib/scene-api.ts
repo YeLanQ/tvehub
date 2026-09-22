@@ -62,9 +62,11 @@ const transport: SceneTransport = {
 export const sceneApi = {
   /** SceneClient 写通道（项目打开时注入引擎） */
   transport: (): SceneTransport => transport,
-  /** 打开项目内 .scene 资产（后端读盘 + 旧格式迁移 + 建图；历史清零） */
-  open: (root: string, rel: string) =>
-    invoke<SceneLoadResult>("scene_open", { root, rel }),
+  /** 打开项目内 .scene 资产（后端读盘 + 旧格式迁移 + 建图；历史清零）。
+   *  force：会话已存在且无未保存修改时强制从磁盘重装（asset.write 等外部直写后
+   *  重开场景即见磁盘版本）；有未保存修改由后端脏保护复用会话。 */
+  open: (root: string, rel: string, force = false) =>
+    invoke<SceneLoadResult>("scene_open", { root, rel, force }),
   /** 以前端构建的文档整树替换后端会话（初始场景/回退用；不落盘）；
    *  root/rel 提供时作为保存目标记录 */
   loadDoc: (doc: unknown, root?: string, rel?: string) =>

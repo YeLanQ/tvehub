@@ -251,8 +251,14 @@ fn emit_changes(app: &tauri::AppHandle, key: &SessionKey, core: &mut SessionCore
     }
 }
 
-/// 从文档 JSON 装载会话核心（信封提取 + 图重建 + 历史清零）
-fn load_core_from_doc(core: &mut SessionCore, doc: &Value, root_path: Option<PathBuf>, scene_rel: &str) {
+/// 从文档 JSON 装载会话核心（信封提取 + 图重建 + 历史清零）；返回整树 replace
+/// 变更（空图为 None），供磁盘重装时广播其他共享窗口。
+fn load_core_from_doc(
+    core: &mut SessionCore,
+    doc: &Value,
+    root_path: Option<PathBuf>,
+    scene_rel: &str,
+) -> Option<GraphChange> {
     let mut envelope = doc
         .as_object()
         .cloned()
@@ -268,15 +274,14 @@ fn load_core_from_doc(core: &mut SessionCore, doc: &Value, root_path: Option<Pat
     });
 
     core.graph = Graph::default();
-    if let Some(root) = root_node {
-        core.graph.replace_root(root);
-    }
+    let change = root_node.map(|root| core.graph.replace_root(root));
     core.history.clear();
     core.envelope = envelope;
     core.root_path = root_path;
     core.scene_rel = scene_rel.to_string();
     core.revision += 1;
     core.dirty = false;
+    change
 }
 
 fn collect_refs(doc: &Value) -> (Vec<String>, Vec<String>) {
@@ -298,15 +303,57 @@ fn load_result(core: &SessionCore, doc: &Value) -> SceneLoadResult {
     }
 }
 
+/// 会话装载：已存在会话时按 force 与脏标记决定「磁盘重装」或「复用」（复用保留
+/// 未保存修改与撤销历史）；不存在时读盘装载新会话。返回装载结果；第二个元素为
+/// Some 时表示发生了磁盘重装（调用方广播整树 replace，同步共享该会话的其他窗口）。
+fn upsert_session(
+    hub: &mut SceneHub,
+    label: &str,
+    key: SessionKey,
+    disk_doc: &Value,
+    root_path: Option<PathBuf>,
+    force: bool,
+) -> (SceneLoadResult, Option<GraphChange>) {
+    if hub.sessions.contains_key(&key) {
+        let dirty = hub
+            .sessions
+            .get(&key)
+            .map(|c| c.dirty)
+            .unwrap_or(false);
+        if force && !dirty {
+            // 强制重载（asset.write 等外部直写场景文件后重开）：会话干净才安全，
+            // 有未保存修改仍复用（脏保护与 fs-watch 的 .scene 策略一致）
+            let core = hub.sessions.get_mut(&key).expect("session exists");
+            let replace = load_core_from_doc(core, disk_doc, root_path, &key.rel);
+            hub.current.insert(label.to_string(), key.clone());
+            let core = hub.sessions.get(&key).expect("session exists");
+            let doc = build_doc(core);
+            return (load_result(core, &doc), replace);
+        }
+    } else {
+        let core = hub.sessions.entry(key.clone()).or_default();
+        load_core_from_doc(core, disk_doc, root_path, &key.rel);
+    }
+    hub.current.insert(label.to_string(), key.clone());
+    let core = hub.sessions.get(&key).expect("session exists");
+    let doc = build_doc(core);
+    (load_result(core, &doc), None)
+}
+
 /// 打开项目内 .scene 资产：读盘 → 旧格式迁移 → 图重建（历史清零）。
 /// 文件不存在/损坏返回 Err（前端回退初始场景）；root 非法（empty 标记）时
 /// 装载空图并按原文档返回（前端判断 doc.root 决定回退）。
+/// force：会话已存在且无未保存修改时强制从磁盘重装（asset.write 等外部直写
+/// 后，project.open / scene.open 重开场景即见磁盘版本），并广播 replace 事件
+/// 同步共享该会话的其他窗口；有未保存修改仍复用会话（脏保护）。
 #[tauri::command]
 pub async fn scene_open(
     webview: tauri::Webview,
+    app: tauri::AppHandle,
     state: tauri::State<'_, SceneSession>,
     root: String,
     rel: String,
+    force: Option<bool>,
 ) -> Result<SceneLoadResult, String> {
     let root_path = PathBuf::from(&root);
     let path = crate::project::resolve_in_root(&root_path, &rel)?;
@@ -326,23 +373,21 @@ pub async fn scene_open(
     // 复合键 (root, rel)：同一项目的同一场景全窗口共享会话（保留未保存修改与撤销历史）；
     // 不同项目天然隔离（key 不同），无需额外 same_root 校验。
     let key = SessionKey { root: Some(root.clone()), rel: rel.clone() };
-    if hub.sessions.contains_key(&key) {
-        hub.current
-            .insert(webview.label().to_string(), key.clone());
-        let core = hub.sessions.get(&key).expect("session exists");
-        let doc = build_doc(core);
-        return Ok(load_result(core, &doc));
+    let (result, replace) = upsert_session(
+        &mut hub,
+        webview.label(),
+        key.clone(),
+        &doc,
+        Some(root_path),
+        force.unwrap_or(false),
+    );
+    // 磁盘重装广播：共享该会话的其他窗口按 replace 整树重建镜像
+    if let Some(change) = replace {
+        if let Some(core) = hub.sessions.get_mut(&key) {
+            emit_changes(&app, &key, core, vec![change]);
+        }
     }
-    // 首次打开：读盘装载新会话
-    {
-        let core = hub.sessions.entry(key.clone()).or_default();
-        load_core_from_doc(core, &doc, Some(root_path), &rel);
-    }
-    hub.current
-        .insert(webview.label().to_string(), key.clone());
-    let core = hub.sessions.get(&key).expect("session exists");
-    let doc = build_doc(core);
-    Ok(load_result(core, &doc))
+    Ok(result)
 }
 
 /// 以前端构建的文档整树替换会话（初始场景/回退用；无历史、不落盘）。
@@ -865,6 +910,57 @@ mod tests {
             .and_then(Value::as_array)
             .map(|a| a.iter().map(count_nodes).sum())
             .unwrap_or(0)
+    }
+
+    /// upsert_session 首次装载：读盘建会话，返回 replace=None（无需广播）
+    #[test]
+    fn upsert_session_first_open_loads_from_disk() {
+        let mut hub = SceneHub::default();
+        let key = SessionKey { root: Some("P".into()), rel: "assets/Main.scene".into() };
+        let doc = serde_json::json!({
+            "type": "scene",
+            "root": { "id": "a", "name": "Disk", "type": "group", "children": [] }
+        });
+        let (result, replace) =
+            upsert_session(&mut hub, "w", key.clone(), &doc, Some(PathBuf::from("P")), false);
+        assert!(replace.is_none(), "首次装载不广播 replace");
+        assert_eq!(result.doc["root"]["name"], "Disk");
+        assert!(hub.current.get("w") == Some(&key), "窗口指针指向新会话");
+    }
+
+    /// upsert_session force 语义：干净会话磁盘重装（广播 replace）；脏会话复用
+    #[test]
+    fn upsert_session_force_reloads_clean_keeps_dirty() {
+        let mut hub = SceneHub::default();
+        let key = SessionKey { root: Some("P".into()), rel: "assets/Main.scene".into() };
+        let mk = |name: &str| {
+            serde_json::json!({
+                "type": "scene",
+                "root": { "id": "a", "name": name, "type": "group", "children": [] }
+            })
+        };
+        upsert_session(&mut hub, "w", key.clone(), &mk("Old"), Some(PathBuf::from("P")), false);
+
+        // 干净会话 + force：磁盘版本生效，history 清零，replace 待广播
+        let (result, replace) =
+            upsert_session(&mut hub, "w", key.clone(), &mk("New"), Some(PathBuf::from("P")), true);
+        assert!(replace.is_some(), "磁盘重装应返回 replace 变更");
+        assert_eq!(result.doc["root"]["name"], "New");
+        assert_eq!(replace.as_ref().map(|c| c.kind), Some("replace"));
+
+        // 脏会话（未保存修改）+ force：仍复用内存版本（脏保护）
+        hub.sessions.get_mut(&key).expect("session exists").dirty = true;
+        let (result, replace) =
+            upsert_session(&mut hub, "w", key.clone(), &mk("Disk"), Some(PathBuf::from("P")), true);
+        assert!(replace.is_none(), "脏会话不重装");
+        assert_eq!(result.doc["root"]["name"], "New");
+
+        // 不带 force（缺省）：干净会话也复用（历史行为）
+        hub.sessions.get_mut(&key).expect("session exists").dirty = false;
+        let (result, replace) =
+            upsert_session(&mut hub, "w", key, &mk("Disk"), Some(PathBuf::from("P")), false);
+        assert!(replace.is_none(), "缺省不重装");
+        assert_eq!(result.doc["root"]["name"], "New");
     }
 
     /// 真实模板场景（前端 TS 产物）→ Rust 解析建图 → 重建文档：

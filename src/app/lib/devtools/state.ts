@@ -74,7 +74,7 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "node.add", description: "在指定父节点下新增节点（type: group/mesh/light/camera/skybox；mesh 可带 geometry，light 可带 lightKind，skybox 可带 skyKind）" },
   { name: "node.remove", description: "删除节点" },
   { name: "node.rename", description: "重命名节点" },
-  { name: "node.set", description: "设置节点属性（写入节点 JSON 并走撤销历史）" },
+  { name: "node.set", description: "设置节点属性（{id,prop,value} 单属性或 {id,...字段} 字段包 name/visible/tag/transform…；transform 分量逐轴部分合并；写入节点 JSON 并走撤销历史）" },
   { name: "preview.open", description: "打开网页预览（导出并启动预览面板）" },
   { name: "preview.close", description: "关闭预览面板，返回场景编辑" },
   { name: "preview.start", description: "启动预览服务器（按现有导出产物）" },

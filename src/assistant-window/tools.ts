@@ -40,7 +40,15 @@ const CATALOG: ToolSpec[] = [
   },
   { method: "node.remove", description: "删除节点。", params: { id: "节点 id" }, required: ["id"] },
   { method: "node.rename", description: "重命名节点。", params: { id: "节点 id", name: "新名称" }, required: ["id", "name"] },
-  { method: "node.set", description: "设置节点属性（visible/active/tag 等）。", params: { id: "节点 id", prop: "属性名", value: "值" }, required: ["id", "prop", "value"] },
+  {
+    method: "node.set",
+    description:
+      "设置节点属性。两种写法任选：① {id, prop, value} 单属性；② {id, ...字段} 字段包" +
+      "（name/visible/active/tag/transform/position/rotation/scale 等可混写；transform 与" +
+      "position/rotation/scale 支持部分字段逐轴合并，未给的分量保持原值）。",
+    params: { id: "节点 id", prop: "属性名（写法①）", value: "值（写法①）" },
+    required: ["id"],
+  },
   { method: "preview.open", description: "导出并打开预览（切到预览视图）。" },
   { method: "preview.close", description: "关闭预览回场景视图。" },
   { method: "preview.start", description: "启动预览服务，返回 URL。" },

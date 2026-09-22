@@ -14,7 +14,10 @@ geometry/path/scriptRel/name，model 收 `position` 拖放落位）、`node.rena
 （`name`,`id?`）、`node.delete`（`id|ids[]`，根不可删）、`node.duplicate`
 （`id|ids[]`，复制子树一次撤销）、`node.reparent`（`moves[]`{id,newParentId,
 newIndex}，成环守卫）、`node.patch`（`id,before,after` 整节点补丁）、
-`node.setTransform`（`id,snapshot`）、`node.set`（`id,prop,value`，禁改 id/父子）、
+`node.setTransform`（`id,snapshot`）、`node.set`（`{id,prop,value}` 单属性或
+`{id,...字段}` 字段包：name/visible/active/tag/transform/position/rotation/scale
+任意混写，transform 与分量逐轴部分合并；解析/合并纯函数见 nodeSet.ts；禁改
+id/父子/children/type）、
 `node.alignCameraToViewport`（相机对齐视口）、`node.select`（`id` 空=取消）、
 `node.renameSelected`（弹框，F2 共用）。
 

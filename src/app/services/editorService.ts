@@ -286,8 +286,8 @@ export function mountEditor(container: HTMLElement): Promise<void> {
           const p = pendingProject;
           pendingProject = null;
           if (!(loaded && root === p.root && sceneRel === p.rel)) {
-            // 兜底路径可能已用 sceneRel 创建会话（hub.sessions[sceneRel] = 兜底场景），
-            // scene_open 会复用而非读盘 → 先关闭清除，确保 reloadEditorScene 读盘装载
+            // 兜底路径可能已用 sceneRel 创建兜底会话：reloadEditorScene 带 force
+            // 会从磁盘重装；这里先关闭再兜一手（兜底会话若异常残留可确保清除）
             if (!loaded) await sceneApi.close().catch(() => {});
             applyProjectSetup(engine, p.root);
             await reloadEditorScene(p.root, p.rel);
@@ -426,7 +426,10 @@ function collectRelsByExt(doc: JsonRecord, exts: readonly string[]): string[] {
   return [...rels];
 }
 
-/** 打开/切换项目内 .scene 资产：后端 scene_open 重装会话 + 镜像重建（无需重进编辑器） */
+/** 打开/切换项目内 .scene 资产：后端 scene_open 重装会话 + 镜像重建（无需重进编辑器）。
+ *  显式重开带 force：会话干净时从磁盘重装——asset.write 等外部直写场景文件后，
+ *  project.open / scene.open 重开即见磁盘版本，不必退出再从项目管理进入；
+ *  会话有未保存修改时后端脏保护复用内存版。 */
 export async function reloadEditorScene(root: string, rel: string): Promise<void> {
   const store = getEditorStore();
   const engine = store.engine;
@@ -434,7 +437,7 @@ export async function reloadEditorScene(root: string, rel: string): Promise<void
   const boot = getBootLoadingStore();
   try {
     boot.activate("scene");
-    const result = await sceneApi.open(root, rel);
+    const result = await sceneApi.open(root, rel, true);
     if (engine.isDisposed()) return;
     let ok = await applySceneLoadResult(engine, result);
     if (!ok && !engine.isDisposed()) {

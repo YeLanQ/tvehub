@@ -9,6 +9,7 @@ import { prompt } from "../lib/prompt";
 import { api } from "../../lib/api";
 import { registerCommand } from "./registry";
 import { isEditingText } from "./context";
+import { currentTransform, mergeTransformSnapshot, parseNodeSetArgs } from "./nodeSet";
 import type { MoveTarget } from "../../framework/scene/SceneClient";
 import type { JsonRecord, Vec3 } from "../../framework/prototype/types";
 
@@ -379,26 +380,41 @@ registerCommand({
   label: "设置节点属性",
   group: "节点",
   expose: true,
-  description: "设置节点属性（写入节点 JSON 并走撤销历史）",
+  description:
+    "设置节点属性（写入节点 JSON 并走撤销历史）。两种形式：{id, prop, value} 单属性，" +
+    "或 {id, ...字段} 字段包（name/visible/active/tag/transform/position/rotation/scale 等" +
+    "任意混写；transform 与分量支持部分字段逐轴合并，未给的分量保持原值）",
   run: (_ctx, args: any) => {
     const id = String(args?.id ?? "");
     const node = graph().get(id);
     if (!node) throw new Error(`未找到节点: ${id}`);
-    const prop = String(args?.prop ?? "");
-    if (!prop || prop === "id" || prop === "childIds" || prop === "parentId") {
-      throw new Error(`不支持设置的属性: ${prop || "(空)"}`);
+    const parsed = parseNodeSetArgs(args);
+    if ("error" in parsed) throw new Error(parsed.error);
+    const { name, transform, props } = parsed.patch;
+    const set: string[] = [];
+    if (name !== undefined) {
+      if (node.name !== name) graph().rename(id, name);
+      set.push("name");
     }
-    if (prop === "name") {
-      graph().rename(id, String(args?.value ?? ""));
-      return { ok: true, id, prop, value: args?.value };
+    if (transform) {
+      const merged = mergeTransformSnapshot(
+        currentTransform(node.transform.position, node.transform.rotation, node.transform.scale),
+        transform,
+      );
+      if ("error" in merged) throw new Error(merged.error);
+      engine().setTransform(id, merged.snapshot);
+      set.push("transform");
     }
-    const before = node.toJSON() as JsonRecord;
-    const after = {
-      ...(before as unknown as Record<string, unknown>),
-      [prop]: args?.value,
-    } as unknown as JsonRecord;
-    engine().patchNode(id, before, after, "开发者服务·设置节点");
-    return { ok: true, id, prop, value: args?.value };
+    if (props) {
+      const before = node.toJSON() as JsonRecord;
+      const after = {
+        ...(before as unknown as Record<string, unknown>),
+        ...props,
+      } as unknown as JsonRecord;
+      engine().patchNode(id, before, after, "开发者服务·设置节点");
+      set.push(...Object.keys(props));
+    }
+    return { ok: true, id, set };
   },
 });
 
