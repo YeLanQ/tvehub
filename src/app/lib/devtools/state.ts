@@ -71,7 +71,7 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "scene.save", description: "保存当前场景" },
   { name: "scene.tree", description: "获取当前场景的完整 JSON 文档" },
   { name: "node.select", description: "选中场景节点" },
-  { name: "node.add", description: "在指定父节点下新增节点（type: group/mesh/light/camera/skybox；mesh 可带 geometry，light 可带 lightKind，skybox 可带 skyKind）" },
+  { name: "node.add", description: "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/ui/script/model；mesh/light 可带 subtype；script 用 rel=脚本 .ts 路径；model/audio/terrain 用 path 资产路径；parentId/parent 指定父节点）" },
   { name: "node.remove", description: "删除节点" },
   { name: "node.rename", description: "重命名节点" },
   { name: "node.set", description: "设置节点属性（{id,prop,value} 单属性或 {id,...字段} 字段包 name/visible/tag/transform…；transform 分量逐轴部分合并；写入节点 JSON 并走撤销历史）" },

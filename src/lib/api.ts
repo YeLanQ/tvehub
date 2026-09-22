@@ -477,6 +477,9 @@ export const api = {
     invoke<{ id: string; title: string; summary: string; body: string } | null>("docs_read", {
       id,
     }),
+  /** 内嵌 docs 文档目录（id+title+summary，无正文）：load_doc 缺/错 id 时回喂 */
+  docsList: () =>
+    invoke<{ id: string; title: string; summary: string }[]>("docs_list"),
 };
 
 // ---------------------------------------------------------------------------

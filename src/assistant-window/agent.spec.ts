@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, doneWritesNote, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, compactToolHistory, doneWritesNote, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
 import type { AssistantReply, WireMessage } from "./agent";
@@ -763,5 +763,144 @@ describe("doneWritesNote（跨轮防重复备忘）", () => {
       { role: "tool", toolName: "node.add", content: '{"ok":true}', result: true },
     ];
     expect(doneWritesNote(rows)).toContain("node.add(kind=mesh)");
+  });
+});
+
+describe("compactToolHistory 结果压实", () => {
+  /** 构造 [user, 8 批结果（每批后夹一条 assistant 轮）] 的历史与批次起点 */
+  const build = () => {
+    const big = "y".repeat(1200);
+    const history: WireMessage[] = [{ role: "user", content: "任务" }];
+    const starts: number[] = [];
+    for (let b = 0; b < 8; b++) {
+      starts.push(history.length);
+      history.push({ role: "tool", content: big + b, tool_call_id: `t${b}` });
+      history.push({ role: "assistant", content: `第${b}步` });
+    }
+    return { history, starts, big };
+  };
+
+  it("正常：保留窗外的旧结果压为头部，窗内保全文（8 批 KEEP=6 → 前 2 批压）", () => {
+    const { history, starts, big } = build();
+    compactToolHistory(history, starts);
+    const c0 = history[starts[0]]?.content ?? "";
+    const c1 = history[starts[1]]?.content ?? "";
+    const c2 = history[starts[2]]?.content ?? "";
+    const c7 = history[starts[7]]?.content ?? "";
+    expect(c0.length).toBeLessThan(600);
+    expect(c1).toContain("已压实");
+    expect(c2).toBe(big + 2);
+    expect(c7).toBe(big + 7);
+  });
+
+  it("边界：批数不超保留窗时一律不动", () => {
+    const { history, starts, big } = build();
+    const small = starts.slice(0, 5);
+    compactToolHistory(history, small);
+    for (const i of small) expect(history[i]?.content).toContain(big);
+  });
+
+  it("正常：内联框架 user 结果轮同样压实；普通 user 发言不碰", () => {
+    const long = "z".repeat(1500);
+    const history: WireMessage[] = [
+      {
+        role: "user",
+        content: "[工具 scene.tree 执行结果]\n" + long + "\n（系统代为执行，请基于以上结果继续）",
+      },
+      { role: "user", content: "帮我把立方体变大一些" },
+    ];
+    compactToolHistory(history, [0, 1, 2, 3, 4, 5, 6]);
+    expect(history[0]?.content.length).toBeLessThan(600);
+    expect(history[1]?.content).toBe("帮我把立方体变大一些");
+  });
+
+  it("空值：无批次起点与空历史都不报错", () => {
+    expect(() => compactToolHistory([], [])).not.toThrow();
+    expect(() => compactToolHistory([{ role: "user", content: "x" }], [0])).not.toThrow();
+  });
+});
+
+describe("runAgent 重复调用守卫（省往返）", () => {
+  function loop(
+    script: AssistantReply[],
+    execTool: (name: string, argsJson: string) => Promise<unknown>,
+  ) {
+    const { chat } = stubChat(script);
+    const events: Array<{ type: string; name: string }> = [];
+    const done = runAgent({
+      messages: [{ role: "user", content: "跑个任务" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool,
+      onEvent: (e) => events.push({ type: e.type, name: e.name }),
+    });
+    return { done, events };
+  }
+  const call = (id: string, name: string, args: string) => ({ id, name, arguments: args });
+
+  it("正常：同参数纯加载第二次起不触达后端（全文仍在结果窗内）", async () => {
+    let execs = 0;
+    const { done, events } = loop(
+      [
+        { content: "", toolCalls: [call("t1", "load_skill", '{"id":"s1"}')] },
+        { content: "", toolCalls: [call("t2", "load_skill", '{"id":"s1"}')] },
+        { content: "任务完成", toolCalls: [] },
+      ],
+      async () => {
+        execs += 1;
+        return { id: "s1", name: "S1", content: "技能正文" };
+      },
+    );
+    const reply = await done;
+    expect(execs).toBe(1);
+    expect(reply.content).toContain("任务完成");
+    // 短路轮同样上屏成对事件（展示行不缺对）
+    expect(events.filter((e) => e.type === "tool_result")).toHaveLength(2);
+  });
+
+  it("异常：同参数连败从第三次起零往返回警告（前两次允许真实重试）", async () => {
+    let execs = 0;
+    const { done } = loop(
+      [
+        { content: "", toolCalls: [call("t1", "node.add", '{"kind":"script"}')] },
+        { content: "", toolCalls: [call("t2", "node.add", '{"kind":"script"}')] },
+        { content: "", toolCalls: [call("t3", "node.add", '{"kind":"script"}')] },
+        { content: "", toolCalls: [call("t4", "node.add", '{"kind":"script"}')] },
+        { content: "任务完成", toolCalls: [] },
+      ],
+      async () => {
+        execs += 1;
+        return { error: "脚本节点缺少脚本路径" };
+      },
+    );
+    const reply = await done;
+    expect(reply.content).toContain("任务完成");
+    expect(execs).toBe(2);
+  });
+
+  it("正常：环境补齐后同参数重试不受限（第二次失败仍真实执行）", async () => {
+    let execs = 0;
+    const seen: string[] = [];
+    const { done } = loop(
+      [
+        { content: "", toolCalls: [call("t1", "node.add", '{"kind":"group"}')] },
+        { content: "", toolCalls: [call("t2", "project.open", '{"path":"D:/p"}')] },
+        { content: "", toolCalls: [call("t3", "node.add", '{"kind":"group"}')] },
+        { content: "任务完成", toolCalls: [] },
+      ],
+      async (name) => {
+        execs += 1;
+        seen.push(name);
+        if (name === "node.add" && execs === 1) return { error: "没有活跃的编辑器窗口" };
+        return { ok: true };
+      },
+    );
+    const reply = await done;
+    expect(reply.content).toContain("任务完成");
+    expect(execs).toBe(3);
+    expect(seen).toEqual(["node.add", "project.open", "node.add"]);
   });
 });

@@ -58,11 +58,13 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 可带 subtype 脚本 rel，model/audio 需 path 资产路径）",
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 用 rel/path=脚本 .ts 相对路径，model/audio/terrain 用 path 或 rel 资产路径；parentId 或 parent 指定父节点，缺省挂根）",
   run: async (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
-    const parentId = args?.parentId ? String(args.parentId) : undefined;
+    // parent 别名：模型常写 parent（值可为节点 id 或 "root"），与 parentId 等价
+    const parentRaw = args?.parentId ?? args?.parent;
+    const parentId = parentRaw ? String(parentRaw) : undefined;
     const kind = String(args?.kind ?? args?.type ?? "group").toLowerCase();
     const subtype = args?.subtype !== undefined ? String(args.subtype) : undefined;
     let node;
@@ -106,8 +108,8 @@ registerCommand({
       case "audio":
       case "audionode": {
         // 可选 path：直接绑定音频资产（资产面板「添加到场景」）
-        const audioPath = args?.path !== undefined ? String(args.path) : "";
-        node = engine().addAudio(parentId, audioPath);
+        const audioSrc = args?.path ?? args?.rel;
+        node = engine().addAudio(parentId, audioSrc !== undefined && audioSrc !== null ? String(audioSrc) : "");
         break;
       }
       case "particle":
@@ -145,7 +147,8 @@ registerCommand({
       case "terrainnode": {
         // 可选 path：直接绑定 .terrain 资产（资产面板「添加到场景」/devtools），
         // 快照资产设置到节点（运行时不读资产文件，设置内嵌在节点上）
-        const terrainPath = args?.path !== undefined ? String(args.path) : "";
+        const terrainSrc = args?.path ?? args?.rel;
+        const terrainPath = terrainSrc !== undefined && terrainSrc !== null ? String(terrainSrc) : "";
         if (terrainPath) {
           if (!isTerrainAssetRel(terrainPath)) {
             throw new Error(`非地形资产: ${terrainPath}（应为 .terrain）`);
@@ -204,15 +207,20 @@ registerCommand({
       }
       case "script":
       case "scriptnode": {
-        const rel = subtype ?? args?.scriptRel;
-        if (!rel) throw new Error("脚本节点缺少 rel（脚本路径）");
+        // 脚本路径多别名：模型惯写 rel/path，与历史契约 scriptRel/subtype 等价
+        const rel = subtype ?? args?.scriptRel ?? args?.rel ?? args?.path;
+        if (!rel)
+          throw new Error(
+            "脚本节点缺少脚本路径：用 rel（或 path/scriptRel/subtype）= 如 src/Player.ts 的 .ts 资产相对路径",
+          );
         const nt = getScriptsStore().scriptNodeTypes().find((s) => s.rel === rel);
         node = engine().addScriptNode(String(rel), nt?.nodeType ?? { kind: "node" }, parentId);
         break;
       }
       case "model": {
-        const rel = args?.path;
-        if (!rel) throw new Error("模型节点缺少 path（模型资产相对路径）");
+        const rel = args?.path ?? args?.rel;
+        if (!rel)
+          throw new Error("模型节点缺少资产路径：用 path（或 rel）= 模型资产相对路径（.glb/.gltf）");
         node = engine().addModel(String(rel), parentId, asPosition(args?.position));
         break;
       }

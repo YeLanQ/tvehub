@@ -102,3 +102,25 @@ pub fn brain_skill_get(id: String) -> Result<Option<super::skillsrc::SkillEntry>
 pub fn docs_read(id: String) -> Result<Option<super::docsrc::DocEntry>, String> {
     Ok(super::docsrc::read(&id).cloned())
 }
+
+/// 内嵌文档目录（id+title+summary，不含正文）：load_doc 缺 id/未知 id 时回喂，
+/// 让模型一轮内自选正确文档，省掉「先 brain.query 再重试」的往返。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocBrief {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+}
+
+#[tauri::command]
+pub fn docs_list() -> Result<Vec<DocBrief>, String> {
+    Ok(super::docsrc::embedded_docs()
+        .iter()
+        .map(|d| DocBrief {
+            id: d.id.clone(),
+            title: d.title.clone(),
+            summary: d.summary.clone(),
+        })
+        .collect())
+}

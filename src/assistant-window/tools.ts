@@ -5,7 +5,7 @@
 // 以 { error } 结构回喂模型自纠。brain.* 大脑工具见 ./brain.ts。
 
 import { api, type BrainExecOutcome } from "../lib/api";
-import { findSkill } from "./skills";
+import { findSkill, routeSkill, SKILLS, type AssistantSkill } from "./skills";
 import { BRAIN_CATALOG, execBrainTool, type ToolSpec } from "./brain";
 
 export type { ToolSpec };
@@ -34,8 +34,8 @@ const CATALOG: ToolSpec[] = [
   {
     method: "node.add",
     description:
-      "添加节点。kind: group/mesh/light/camera/skybox/fog/audio/particle/nav/logic/terrain/ui/script/model；mesh 用 subtype(box/sphere/…)、light 用 subtype(point/directional/spot/ambient)、model 用 path（资产相对路径）。",
-    params: { kind: "节点类型", subtype: "子类型（mesh/light 用）", parentId: "父节点 id，缺省挂根", name: "名称", path: "模型资产路径（kind=model 时）" },
+      "添加节点。kind: group/mesh/light/camera/skybox/fog/audio/particle/nav/logic/terrain/ui/script/model；mesh 用 subtype(box/sphere/…)、light 用 subtype(point/directional/spot/ambient)、script 用 rel=脚本 .ts 相对路径（如 src/Player.ts）、model/audio/terrain 用 path=资产相对路径；parent/parentId 指定父节点（值可为节点 id 或 \"root\"，缺省挂根）。",
+    params: { kind: "节点类型", subtype: "子类型（mesh/light 用）", parentId: "父节点 id（或 parent）", name: "名称", path: "资产路径（model/audio/terrain）", rel: "脚本路径（script 用）" },
     required: ["kind"],
   },
   { method: "node.remove", description: "删除节点。", params: { id: "节点 id" }, required: ["id"] },
@@ -129,6 +129,51 @@ export function injectWorkspaceRoot(
   return params;
 }
 
+/**
+ * node.add 参数归一（纯函数便于单测；助手通道专用，devtools 直连命令层不经过）：
+ * ① rel 与 subtype 互补——模型惯写 rel 当脚本路径、惯写 subtype 当 kind 细分；
+ * ② parent → parentId 别名；③ name 半角逗号截断（名字里跟说明会把「跟随相机,
+ * 弹性」整段吞进名字）与首尾空白；未提供 name 时不注入空 name（保持引擎默认名）。
+ */
+export function normalizeNodeAddArgs(params: Record<string, unknown>): Record<string, unknown> {
+  const p = { ...params };
+  const hasSub = p.subtype != null && String(p.subtype).trim() !== "";
+  const hasRel = p.rel != null && String(p.rel).trim() !== "";
+  if (hasRel && !hasSub) p.subtype = String(p.rel).trim();
+  else if (!hasRel && hasSub) p.rel = String(p.subtype).trim();
+  if (p.parent != null && p.parentId == null) {
+    p.parentId = p.parent;
+    delete p.parent;
+  }
+  if (typeof p.name === "string") {
+    const name = p.name.split(/[,，]/)[0].trim();
+    if (name) p.name = name;
+    else delete p.name;
+  }
+  return p;
+}
+
+/** 技能加载参数解析（纯函数便于单测）：显式 id > 关键词路由（routeSkill）>
+ * 问句剥词元匹配注册表 id > 注册表首项。弱模型漏传 id 的 load_skill({}) 从
+ * 当前任务文本推断本意技能，省掉一次错误往返。 */
+export function parseAssistantSkill(
+  explicitId: unknown,
+  task: string,
+  registry: AssistantSkill[],
+): string {
+  const explicit = String(explicitId ?? "").trim();
+  if (explicit) return explicit;
+  const ids = new Set(registry.map((s) => s.id));
+  const routed = routeSkill(task);
+  if (routed && ids.has(routed.id)) return routed.id;
+  const tokens = String(task ?? "")
+    .split(/[\s,，。、:：；;()（）「」《》“”"']+/)
+    .filter((t) => t.length >= 2);
+  const wanted = new Set(tokens.map((t) => t.toLowerCase()));
+  const hit = registry.find((s) => wanted.has(s.id.toLowerCase()));
+  return hit?.id ?? registry[0]?.id ?? "";
+}
+
 /** 决策中心回执 → 工具结果（纯函数便于单测）：ok 透传 result；needConfirm
  * 无确认回调时按错误回喂；denied/异常一律 { error } 结构让模型自行调整 */
 export function outcomeToToolResult(out: BrainExecOutcome, method: string): unknown {
@@ -156,30 +201,45 @@ export async function execAssistantTool(
   task = "",
   requestConfirm?: ConfirmFn,
 ): Promise<{ error: string } | unknown> {
+  let params: Record<string, unknown> = {};
+  if (argsJson && argsJson.trim()) {
+    try {
+      params = JSON.parse(argsJson) as Record<string, unknown>;
+    } catch {
+      return { error: `参数 JSON 解析失败（工具 ${name}）：请重发合法 JSON` };
+    }
+  }
+  // 助手通道参数归一：node.add 别名（rel/parent/逗号名）集中在此，命令层兼容 devtools 旧契约
+  if (name === "node.add") params = normalizeNodeAddArgs(params);
   try {
     if (name === "load_skill") {
-      const args = JSON.parse(argsJson || "{}") as { id?: string };
-      const skill = findSkill(String(args.id ?? ""));
+      const id = parseAssistantSkill(params.id, task, SKILLS);
+      const skill = findSkill(id);
       if (skill) {
         return { id: skill.id, name: skill.name, content: skill.body };
       }
       // 前端注册表是硬编码子集；大脑注入的内嵌技能 id 以构建期为单一事实源
-      const embedded = await api.brainSkillGet(String(args.id ?? "")).catch(() => null);
+      const embedded = await api.brainSkillGet(id).catch(() => null);
       if (embedded) {
         return { id: embedded.id, name: embedded.name, content: embedded.body };
       }
-      return { error: `未知技能: ${args.id}` };
+      return { error: `未知技能: ${id}` };
     }
     if (name === "load_doc") {
-      const args = JSON.parse(argsJson || "{}") as { id?: string };
-      const id = String(args.id ?? "").replace(/^\/+|\.md$/g, "") + ".md";
+      const args = params as { id?: string };
+      const rawId = String(args.id ?? "").trim();
+      // 缺 id：回喂文档目录（而非只报错），模型一轮内即可选定正确文档
+      if (!rawId) {
+        const docs = await api.docsList().catch(() => []);
+        return { error: "缺少 id（文档相对路径）", docs };
+      }
+      const id = rawId.replace(/^\/+|\.md$/g, "") + ".md";
       const doc = await api.docsRead(id).catch(() => null);
-      if (!doc) return { error: `未知文档: ${args.id}（可用 brain.query 查可用文档）` };
+      if (!doc) {
+        const docs = await api.docsList().catch(() => []);
+        return { error: `未知文档: ${args.id}（id 需与下列目录一致，勿凭空构造）`, docs };
+      }
       return { id: doc.id, title: doc.title, content: doc.body };
-    }
-    let params: Record<string, unknown> = {};
-    if (argsJson && argsJson.trim()) {
-      params = JSON.parse(argsJson) as Record<string, unknown>;
     }
     if (name.startsWith("brain.")) {
       return await execBrainTool(name, params, task);

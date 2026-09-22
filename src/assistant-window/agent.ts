@@ -44,6 +44,16 @@ export type ChatFn = (args: StreamArgs) => Promise<AssistantReply>;
  * 1-2 步，24 轮才够一次完整交付；仍超限时走「继续」续跑。 */
 const MAX_ROUNDS = 24;
 const TOOL_RESULT_LIMIT = 4000;
+/** 重复调用守卫：同参数纯加载（load_skill/load_doc）刚成功且在结果保留窗内
+ *  再发 → 短路提示不重发请求——弱模型反复重载同一技能/文档是空转轮大头 */
+const PURE_LOAD_METHODS = new Set(["load_skill", "load_doc"]);
+/** 同参数连败 N 次后短路：前两次真实重试（环境补齐后同参可成，如先
+ *  project.open 再 node.*），第三次起原样重发必然再败，直接回警告 */
+const FAIL_SHORT_CIRCUIT_AFTER = 2;
+/** 结果保留窗：最近这么多批（轮）工具结果保全文，更早的大结果压实只留头部
+ *  ——建造任务 24 轮 prompt 滚到几十 KB，prefill 是弱模型每轮推理的主要开销 */
+const RESULT_KEEP_BATCHES = 6;
+const RESULT_HEAD_KEEP = 420;
 /** 空回复续跑预算：方言模型/不稳供应商一轮任务里可能空嗝多次——2 次不够会
  * 频繁落兜底文案打断任务（用户被迫手动「继续」），给到 4 次 */
 const MAX_EMPTY_RESCUES = 8;
@@ -195,6 +205,10 @@ export interface RunAgentOptions {
 export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   const maxRounds = opts.maxRounds ?? MAX_ROUNDS;
   const history: WireMessage[] = [...opts.messages];
+  /** 本次运行的调用台账：纯加载成功轮次 + 同参失败计数（重复守卫） */
+  const guard = { okLoads: new Map<string, number>(), fails: new Map<string, number>() };
+  /** 各批工具结果在 history 中的起始下标（压实保留窗基准） */
+  const batchStarts: number[] = [];
   const stopped = (note: string): AssistantReply => ({ content: note, toolCalls: [] });
   let nudges = 0;
   const MAX_FORMAT_NUDGES = 2;
@@ -208,6 +222,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   let lastWasFeed = false;
   for (let round = 0; round < maxRounds; round++) {
     if (opts.shouldStop?.()) return stopped("已按要求停止。");
+    // 每轮发送前压实保留窗外的旧工具结果（全文只在最近几批需要：更早的
+    // 结果模型基本不会再引用，却全额计入 prefill 拖慢弱模型推理）
+    compactToolHistory(history, batchStarts);
     const reply = await opts.chat({
       baseUrl: opts.baseUrl,
       apiKey: opts.apiKey,
@@ -305,7 +322,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
       );
     }
     // 同轮调用互相独立 → 并行执行；结果按调用顺序回喂，配对关系不变
-    const results = await Promise.all(calls.map((call) => execOne(opts, call, inline)));
+    batchStarts.push(history.length);
+    const results = await Promise.all(calls.map((call) => execOne(opts, call, inline, guard, round)));
     history.push(...results);
     // 复读检测基准 = 最近一次回喂文本头部（inline 与 native tool 通道都覆盖）
     lastFeedCore = results[results.length - 1]?.content?.slice(0, 200) ?? "";
@@ -317,20 +335,63 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   };
 }
 
-/** 执行单个调用：事件上屏 → 执行 → 截断 → 结果按通道回喂。
- * 原生 tool_calls 走 tool 角色；内联调用（模型不支持工具机制）以 user 角色
- * 框架化回喂，避免严格服务端拒绝无 tool_calls 的 tool 消息。 */
+/** 结果文本是否为 {error} 失败结构 */
+function isErrResultText(text: string): boolean {
+  if (!text.startsWith("{")) return false;
+  try {
+    const v = JSON.parse(text) as { error?: unknown };
+    return !!v && typeof v === "object" && v.error !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** 压实保留窗外的旧工具结果：只留头部；最新 RESULT_KEEP_BATCHES 批保全文 */
+export function compactToolHistory(history: WireMessage[], batchStarts: number[]): void {
+  if (batchStarts.length <= RESULT_KEEP_BATCHES) return;
+  const cutoff = batchStarts[batchStarts.length - RESULT_KEEP_BATCHES];
+  for (let i = 0; i < cutoff; i++) {
+    const m = history[i];
+    const isResult = m.role === "tool" || (m.role === "user" && m.content.startsWith("[工具 "));
+    if (!isResult || m.content.length <= RESULT_HEAD_KEEP * 2) continue;
+    history[i] = {
+      ...m,
+      content: m.content.slice(0, RESULT_HEAD_KEEP) + "…（旧工具结果已压实，最新几批保留全文）",
+    };
+  }
+}
+
+/** 执行单个调用：上屏 → 重复守卫短路或执行 → 截断 → 按通道回喂。
+ *  守卫：同参数纯加载在结果窗内已成功 → 不重发（全文仍在历史）；同参数
+ *  已连败 ≥FAIL_SHORT_CIRCUIT_AFTER 次 → 零往返回警告（环境补齐型重试仍有
+ *  前两次真实机会，第三次起纯属空转）。 */
 async function execOne(
   opts: RunAgentOptions,
   call: ToolCall,
   inline: boolean,
+  guard: { okLoads: Map<string, number>; fails: Map<string, number> },
+  round: number,
 ): Promise<WireMessage> {
   opts.onEvent?.({ type: "tool_start", name: call.name, args: call.arguments, callId: call.id });
+  const sig = call.name + String.fromCharCode(0) + (call.arguments ?? "").trim();
+  const fails = guard.fails.get(sig) ?? 0;
+  const okLoad = guard.okLoads.get(sig);
   let result: string;
-  try {
-    result = truncateResult(await opts.execTool(call.name, call.arguments));
-  } catch (e) {
-    result = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+  if (PURE_LOAD_METHODS.has(call.name) && okLoad !== undefined && round - okLoad < RESULT_KEEP_BATCHES) {
+    result = JSON.stringify({ note: `与上文完全相同的调用刚执行过（${call.name}），全文已在历史保留窗内，勿重复加载——直接继续下一步` });
+  } else if (fails >= FAIL_SHORT_CIRCUIT_AFTER) {
+    result = JSON.stringify({ error: `同一调用（${call.name} 相同参数）已连续失败 ${fails} 次，原样重发必然再失败：按前文错误提示修正参数或改用其他方法，无法修正则跳过该步并在总结中说明` });
+  } else {
+    try {
+      result = truncateResult(await opts.execTool(call.name, call.arguments));
+    } catch (e) {
+      result = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+    }
+    if (isErrResultText(result)) {
+      if (!PURE_LOAD_METHODS.has(call.name)) guard.fails.set(sig, fails + 1);
+    } else if (PURE_LOAD_METHODS.has(call.name)) {
+      guard.okLoads.set(sig, round);
+    }
   }
   opts.onEvent?.({ type: "tool_result", name: call.name, result, callId: call.id });
   return inline
