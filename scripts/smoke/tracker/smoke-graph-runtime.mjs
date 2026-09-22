@@ -1206,6 +1206,99 @@ console.log("[16b] 状态机容器：命名切换事件（transitions 事件>状
   handle.dispose();
 }
 
+console.log("[16c] 追击暂停恢复：导航移动「恢复续走」勾选——续走当前目标 vs 回首路径点重走");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  const gridN = 33;
+  const terrain = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  terrain.userData.terrainHeights = new Float32Array(gridN * gridN);
+  terrain.userData.terrainGridSize = gridN;
+  terrain.userData.terrainSize = 20;
+  scene.add(terrain);
+  const areaObj = new THREE.Group();
+  scene.add(areaObj);
+  // 两个代理 + 两个路径点（同路线：0 → 8 → -8 沿 x 贯穿全场）
+  const mkObj = (id, x) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4));
+    o.position.set(x, 0, 0);
+    o.userData.nodeId = id;
+    scene.add(o);
+    return o;
+  };
+  const agent1 = mkObj("agent-1", 0);
+  const agent2 = mkObj("agent-2", 0);
+  const wp1 = mkObj("wp-1", 8);
+  const wp2 = mkObj("wp-2", -8);
+  const { createNavRuntime } = await import(engine("runtime/nav.mjs"));
+  const agentSettings = { targetIds: ["wp-1", "wp-2"], moveMode: "sequence", loop: true, speed: 4, radius: 0.5 };
+  const navApi = createNavRuntime({
+    scene,
+    nodes: [
+      { json: { id: "terrain-1", type: "terrainNode", active: true, visible: true }, obj: terrain },
+      { json: { id: "area-1", type: "navAreaNode", active: true, visible: true, settings: {} }, obj: areaObj },
+      { json: { id: "wp-1", type: "meshNode", active: true, visible: true }, obj: wp1 },
+      { json: { id: "wp-2", type: "meshNode", active: true, visible: true }, obj: wp2 },
+      { json: { id: "agent-1", type: "navAgentNode", active: true, visible: true, settings: agentSettings }, obj: agent1 },
+      { json: { id: "agent-2", type: "navAgentNode", active: true, visible: true, settings: agentSettings }, obj: agent2 },
+    ],
+  });
+  // 走 3s：越过 wp1（x≈8，targetIdx=1，正走向 -8）；追击暂停（两边同冻结）
+  for (let i = 0; i < 180; i++) navApi.update(1 / 60);
+  navApi.setAgentPaused("agent-1", true);
+  navApi.setAgentPaused("agent-2", true);
+  const frozen1 = agent1.position.x;
+  ok(frozen1 > 2 && frozen1 < 8, `暂停时在 wp1→wp2 途中（x=${frozen1.toFixed(2)}）`);
+
+  // agent-1：导航移动卡勾选「恢复续走」（图侧驱动器上报）；agent-2：默认重走
+  navApi.setAgentResumeContinue("agent-1", true);
+  for (let i = 0; i < 30; i++) navApi.update(1 / 60);
+  navApi.setAgentPaused("agent-1", false);
+  navApi.setAgentPaused("agent-2", false);
+  for (let i = 0; i < 60; i++) navApi.update(1 / 60);
+  ok(agent1.position.x < frozen1 - 2, `恢复续走：继续朝 -8 前进（1s 内 x=${agent1.position.x.toFixed(2)}）`);
+  ok(agent2.position.x > frozen1 + 2, `默认重走：折返朝 wp1（1s 内 x=${agent2.position.x.toFixed(2)}）`);
+  navApi.dispose();
+
+  // 图侧接线：导航移动卡「恢复续走」勾选 → boot 上报 setAgentResumeContinue(代理, true)
+  const wired = [];
+  const fakeNav = {
+    setAgentPaused() {},
+    setAgentResumeContinue: (id, on) => wired.push(`${id}=${on}`),
+    pathBetween: () => null,
+  };
+  const agentObj = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4));
+  agentObj.userData.nodeId = "agent-9";
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-driver", version: 1 }],
+    nodes: [
+      { id: "pT", type: "entity.proto", x: 0, y: 0, entityId: "agent-9" },
+      { id: "pA", type: "entity.proto", x: 0, y: 0, entityId: "agent-9" },
+      { id: "nm", type: "op.navMove", x: 0, y: 0, opType: "op.navMove", params: { yOffset: 0, resumeContinue: true } },
+    ],
+    edges: [
+      { id: "w1", srcNode: "pT", srcPort: "out", dstNode: "nm", dstPort: "in" },
+      { id: "w2", srcNode: "pA", srcPort: "out", dstNode: "nm", dstPort: "agent" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  scene.add(agentObj);
+  const handle2 = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera: new THREE.PerspectiveCamera(50, 1, 0.1, 100),
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+    navApi: fakeNav,
+  });
+  handle2.update(1 / 60);
+  ok(wired.includes("agent-9=true"), `导航移动勾选经驱动器上报续走标记（${wired.join(", ") || "未上报"}）`);
+  handle2.dispose();
+}
+
 console.log("[17] 行为树容器：sequence 驱动器步进 / selector 条件配对 / parallel 每帧重跑");
 {
   posted.length = 0;

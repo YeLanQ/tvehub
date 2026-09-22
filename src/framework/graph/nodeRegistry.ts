@@ -397,7 +397,7 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
     type: "op.navMove",
     category: "driver",
     label: "导航移动",
-    desc: "被移动对象跟随导航代理位姿（代理由导航运行时沿路径点巡回驱动）；「导航代理」口接入 Nav Agent 原型卡，「目标」接要移动的对象",
+    desc: "被移动对象跟随导航代理位姿（代理由导航运行时沿路径点巡回驱动）；「导航代理」口接入 Nav Agent 原型卡，「目标」接要移动的对象。勾选「恢复续走」：代理被追击/中断暂停后恢复时，从当前位置继续走向当前路径点，不回第一个路径点重走",
     color: "#dcdcaa",
     trigger: "frame",
     inputs: [
@@ -406,7 +406,10 @@ const DRIVER_TYPES: GNodeTypeDef[] = [
       { id: "agent", label: "导航代理", direction: "in", dataType: "entity" },
     ],
     outputs: [P_ENTITIES_OUT, P_EXEC_OUT],
-    fields: [{ key: "yOffset", label: "高度偏移", kind: "number", fallback: 0, step: 0.1 }],
+    fields: [
+      { key: "yOffset", label: "高度偏移", kind: "number", fallback: 0, step: 0.1 },
+      { key: "resumeContinue", label: "恢复续走", kind: "boolean", fallback: false },
+    ],
     capabilities: { op: true, driver: true },
   },
   {

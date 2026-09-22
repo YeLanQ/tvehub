@@ -498,6 +498,11 @@ export function createCoreDriversModule(): GraphRuntimeModule {
       },
       // 导航移动：每帧贴合导航代理位姿（位置 + 朝向 + 高度偏移）
       "op.navMove": (k, node) => ({
+        boot() {
+          // 「恢复续走」勾选上报导航运行时：代理暂停后恢复时从当前目标续走
+          const agent = unwrapEntity(k.evalInput(node.id, "agent"));
+          if (agent) k.navApi?.setAgentResumeContinue?.(agent.id, k.boolP(node, "resumeContinue", false));
+        },
         step(_dt, targets) {
           const agent = unwrapEntity(k.evalInput(node.id, "agent"));
           if (!agent) {

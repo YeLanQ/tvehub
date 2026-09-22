@@ -195,6 +195,8 @@ export interface GraphBehaviorsCtx {
   /** 导航运行时（可选）：追击类驱动器借此暂停/恢复目标的导航巡回 */
   navApi?: {
     setAgentPaused(id: string, paused: boolean): void;
+    /** 恢复续走标记：代理被暂停后恢复时，从当前位置继续走向当前目标（而非回到第一个路径点重走） */
+    setAgentResumeContinue?(id: string, continueFromCurrent: boolean): void;
     /** 任意两点寻路（op.chase 用）：烘焙网格 A* 平滑路径点（世界系）；无可达路线/无区域 → null */
     pathBetween?(
       from: { x: number; z: number },

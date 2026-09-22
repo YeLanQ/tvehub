@@ -259,10 +259,11 @@ export class NavSystem {
   }
 
   /**
-   * 按设置启动代理移动（检查器「开始移动」）：sequence = 从第一个目标起依次
-   * 巡回（跳过缺失/不可达的）；nearest = 走向路径最短的可达目标。
+   * 按设置启动代理移动（检查器「开始移动」/暂停恢复）：sequence = 从 startIdx 起
+   * 依次巡回（跳过缺失/不可达的）；nearest = 走向路径最短的可达目标。
+   * continueFromCurrent：从当前巡回目标续走（中断恢复），不回到第一个目标重走。
    */
-  startAgent(agentNodeId: string): boolean {
+  startAgent(agentNodeId: string, opts?: { continueFromCurrent?: boolean }): boolean {
     const agent = this.agents.get(agentNodeId);
     if (!agent) return false;
     const area = this.resolveArea(agent);
@@ -270,9 +271,10 @@ export class NavSystem {
       agent.lastPathOk = false;
       return false;
     }
+    const startIdx = opts?.continueFromCurrent ? Math.max(0, agent.targetIdx) : 0;
     const ok = agent.settings.moveMode === "nearest"
       ? this.repathNearest(agent, area)
-      : this.repathSequenceFrom(agent, area, 0);
+      : this.repathSequenceFrom(agent, area, startIdx);
     if (ok) this.publishPath(agent);
     else this.resetPath(agent);
     return ok;

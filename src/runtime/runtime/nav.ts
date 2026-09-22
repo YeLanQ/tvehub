@@ -231,6 +231,8 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
 
   /** 被图追击驱动器暂停的代理（暂停 = 清路径停移动；恢复 = 重新寻路巡回） */
   const pausedAgents = new Set<string>();
+  /** 恢复续走标记（导航移动卡勾选）：恢复时从当前目标续走，不回第一个路径点重走 */
+  const resumeContinueAgents = new Set<string>();
 
   return {
     /** 每帧推进：刷新世界矩阵后沿路径移动代理 */
@@ -247,8 +249,13 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
         nav.clearPath(nodeId);
       } else if (!paused && was) {
         pausedAgents.delete(nodeId);
-        nav.startAgent(nodeId);
+        nav.startAgent(nodeId, { continueFromCurrent: resumeContinueAgents.has(nodeId) });
       }
+    },
+    /** 恢复续走标记（导航移动卡「恢复续走」勾选经驱动器上报） */
+    setAgentResumeContinue(nodeId: string, continueFromCurrent: boolean): void {
+      if (continueFromCurrent) resumeContinueAgents.add(nodeId);
+      else resumeContinueAgents.delete(nodeId);
     },
     /** 图追击驱动器寻路：任意两点的烘焙网格 A* 平滑路径（无可达路线/未烘焙 → null，驱动器回退直线） */
     pathBetween(from: { x: number; z: number }, to: { x: number; z: number }) {
