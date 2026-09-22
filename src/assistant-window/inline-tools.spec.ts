@@ -280,3 +280,34 @@ describe("streamingDisplay", () => {
     expect(streamingDisplay(data)).toBe(data);
   });
 });
+
+describe("parseInlineToolCalls Markdown 标签方言", () => {
+  it("回归（截图案例）：调用+伪结果正文抠出真调用，cleaned 只剩占位", () => {
+    const text =
+      "（已发起工具调用）\n\n" +
+      '**工具调用：** `load_skill` `{"id":"tve-scripting"}`\n\n' +
+      '**结果：** `{"id":"tve-scripting","title":"tve 脚本编写","content":"# 长文档"}`';
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("load_skill");
+    expect(JSON.parse(calls[0].arguments)).toEqual({ id: "tve-scripting" });
+    expect(cleaned).toBe("（已发起工具调用）");
+  });
+
+  it("边界：伪结果 JSON 不产生第二个调用", () => {
+    const text = '**工具调用：** `x.y` {"a":1}\n**结果：** {"name":"伪","args":{}}';
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("x.y");
+  });
+
+  it("streamingDisplay：半截标签调用不闪现，普通叙述保留", () => {
+    expect(streamingDisplay('我先发起\n**工具调用：** `load_skill` {"id":"tv')).toBe("我先发起");
+    expect(streamingDisplay("结论：一切正常")).toBe("结论：一切正常");
+  });
+
+  it("stripCallTags：救援耗尽后的方言残骸整行剔除", () => {
+    const out = stripCallTags('（已发起工具调用）\n\n**工具调用：** `load_skill` {"id":');
+    expect(out).toBe("（已发起工具调用）");
+  });
+});

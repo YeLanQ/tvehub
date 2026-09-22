@@ -11,7 +11,16 @@ import { getAssistantStore } from "./store";
 import { parseFileRefs, isBinaryRef } from "./refs";
 import { buildFileTocBlock, shouldIndexInstead, type FileIndexBrief } from "./fileidx";
 import { getConversations, type ChatMessage } from "./conversations";
-import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire, type AgentEvent } from "./agent";
+import {
+  buildSystemPrompt,
+  CALLS_PLACEHOLDER,
+  doneWritesNote,
+  looksLikeConfirmRequest,
+  runAgent,
+  toWire,
+  type AgentEvent,
+} from "./agent";
+import { hasLabeledCallTrace } from "./labeled-calls";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
 import { mergeStepRow } from "./steps";
@@ -155,16 +164,14 @@ const timeline = computed<Block[]>(() => {
 const lastBlockKey = computed(() => timeline.value[timeline.value.length - 1]?.key ?? "");
 
 const openSteps = reactive(new Set<string>());
-/** 手动收起的块：优先于运行中的自动展开——否则运行中的面板点头部只是
- * 被加进 openSteps（视觉无变化），永远收不起来 */
+/** 手动收起的块：优先于手动展开集合——面板默认收敛一行（不再随运行自动
+ * 展开，展开后内容区内部滚动），展开/收起完全由用户点击头部驱动 */
 const collapsedSteps = reactive(new Set<string>());
 function stepsOpen(key: string): boolean {
-  if (collapsedSteps.has(key)) return false;
-  return openSteps.has(key) || (busy.value && key === lastBlockKey.value);
+  return openSteps.has(key) && !collapsedSteps.has(key);
 }
 function toggleSteps(key: string): void {
   if (stepsOpen(key)) {
-    openSteps.delete(key);
     collapsedSteps.add(key);
   } else {
     collapsedSteps.delete(key);
@@ -182,6 +189,41 @@ async function copyMsg(m: ChatMessage): Promise<void> {
   copiedId.value = m.id;
   clearTimeout(copyTimer);
   copyTimer = setTimeout(() => (copiedId.value = ""), 1200);
+}
+
+// ---------------------------------------------------------------------------
+// 工具调用信息气泡：调用占位 / 标签方言调用 / 结果转储这类消息默认收敛成
+// 单行（无滚动条，滚轮左右平移），右侧箭头图标，点击向下展开全文、再点收起
+// ---------------------------------------------------------------------------
+
+/** 结果转储开头：整条消息以「结果：」类标签起头 */
+const RESULT_DUMP_RE =
+  /^[ \t]*(?:\*\*|__|\[|【)?[ \t]*(?:执行结果|调用结果|运行结果|返回结果|结果|输出|result|output)[ \t]*(?:\*\*|__|\]|\)|】)?[ \t]*[:：]/;
+
+function isToolCallInfo(m: ChatMessage): boolean {
+  if (m.role !== "assistant") return false;
+  const t = m.content.trim();
+  if (!t) return false;
+  return t === CALLS_PLACEHOLDER || hasLabeledCallTrace(t) || RESULT_DUMP_RE.test(t);
+}
+
+/** 展开状态（按消息 id）；展开 = 向下铺开全文，收敛 = 单行裁剪 */
+const toolInfoOpen = reactive(new Set<string>());
+function toolInfoIsOpen(m: ChatMessage): boolean {
+  return toolInfoOpen.has(m.id);
+}
+function toggleToolInfo(m: ChatMessage): void {
+  if (toolInfoOpen.has(m.id)) toolInfoOpen.delete(m.id);
+  else toolInfoOpen.add(m.id);
+}
+
+/** 收敛态滚轮左右平移（overflow:hidden 无滚动条，纵向滚轮转横向位移）；
+ * 展开态交还竖向滚动 */
+function wheelToolInfo(e: WheelEvent): void {
+  const el = e.currentTarget as HTMLElement;
+  if (el.classList.contains("open")) return;
+  e.preventDefault();
+  el.scrollLeft += e.deltaY;
 }
 
 /** 终止：置停止标记（轮边界生效）+ 取消在途流式请求（ai:done cancelled 收尾）；
@@ -743,12 +785,29 @@ function onInputKey(e: KeyboardEvent): void {
           class="achat-bubble achat-bubble-error"
         >{{ b.m.content }}</div>
         <div v-else-if="b.kind === 'msg'" class="achat-row" :class="b.m.role">
-          <div class="achat-bubble">
-            <span class="achat-content">{{ b.m.content }}</span>
+          <div
+            class="achat-bubble"
+            :class="{ 'achat-bubble-toolinfo': isToolCallInfo(b.m) }"
+            :title="isToolCallInfo(b.m) && !toolInfoIsOpen(b.m) ? b.m.content : undefined"
+          >
+            <template v-if="isToolCallInfo(b.m)">
+              <span
+                class="achat-content achat-toolinfo-line"
+                :class="{ open: toolInfoIsOpen(b.m) }"
+                @click="toggleToolInfo(b.m)"
+                @wheel="wheelToolInfo"
+              >{{ b.m.content }}</span>
+              <button
+                class="achat-toolinfo-arrow"
+                :title="toolInfoIsOpen(b.m) ? '收起' : '展开'"
+                @click.stop="toggleToolInfo(b.m)"
+              >{{ toolInfoIsOpen(b.m) ? "▾" : "▸" }}</button>
+            </template>
+            <span v-else class="achat-content">{{ b.m.content }}</span>
             <button
               class="achat-copy"
               :title="copiedId === b.m.id ? '已复制' : '复制'"
-              @click="copyMsg(b.m)"
+              @click.stop="copyMsg(b.m)"
             >{{ copiedId === b.m.id ? "✓" : "⧉" }}</button>
           </div>
         </div>
@@ -903,6 +962,47 @@ function onInputKey(e: KeyboardEvent): void {
   &:hover { background: var(--bg-hover); color: var(--text); }
 }
 .achat-bubble-error { border: 1px solid var(--err); color: var(--err); border-radius: 10px; padding: 7px 10px; margin: 6px 0; white-space: pre-wrap; user-select: text; }
+/* 工具调用信息气泡：收敛 = 单行裁剪（无滚动条，滚轮左右平移），右侧箭头；
+ * 展开 = 向下铺开全文（限高内部滚动） */
+.achat-bubble-toolinfo {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding-right: 26px;
+  cursor: pointer;
+  .achat-toolinfo-line {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    user-select: none;
+    &.open {
+      max-height: 240px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      user-select: text;
+      scrollbar-width: thin;
+      cursor: text;
+    }
+  }
+  .achat-toolinfo-arrow {
+    flex: none;
+    width: 16px;
+    height: 18px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    &:hover { color: var(--text); }
+  }
+}
 .achat-typing { display: inline-flex; gap: 4px; i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: atyp 1s infinite; &:nth-child(2) { animation-delay: 0.15s; } &:nth-child(3) { animation-delay: 0.3s; } } }
 @keyframes atyp { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 .achat-input-wrap { position: relative; flex: none; margin: 8px 10px 10px; }
@@ -1012,9 +1112,13 @@ function onInputKey(e: KeyboardEvent): void {
 }
 .achat-picker-meta { flex: none; margin: 0 0 6px; padding: 0 2px; font-size: 11px; color: var(--text-dim); }
 .achat-picker-list { overflow-y: auto; min-height: 96px; display: flex; flex-direction: column; gap: 2px; }
-.achat-picker-item { border: none; background: transparent; color: var(--text); text-align: left; padding: 6px 10px; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+.achat-picker-item {
+  /* 限高 flex 容器内禁止行收缩：item 自带 overflow:hidden 会把 flex 最小尺寸
+   * 归零，文件一多整列被等比压扁、文字竖向裁切且滚动失效（与步骤面板同坑） */
+  flex: none;
+  border: none; background: transparent; color: var(--text); text-align: left; padding: 6px 10px; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   b { color: var(--text-dim); font-weight: 400; font-size: 11px; margin-right: 8px; }
   &:hover, &.sel { background: var(--bg-hover); }
 }
-.achat-picker-empty { color: var(--text-dim); margin: 8px; }
+.achat-picker-empty { flex: none; color: var(--text-dim); margin: 8px; }
 </style>

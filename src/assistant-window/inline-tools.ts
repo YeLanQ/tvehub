@@ -1,33 +1,27 @@
 // 正文内联工具调用解析：部分模型/供应商不支持 function-calling，会把调用
 // 以文本形式写进回复正文。本模块把这类块抠出来转成 ToolCall，让 runAgent
 // 照常执行——指令任务因此不再"只聊天不干活"。
-// 支持三种形态：
+// 支持四种形态：
 //   1. JSON 对象：{"tool": "x", "input": {…}} / {"name": "x", "arguments": {…}}
 //   2. XML invoke：<invoke name="x"><parameter name="k">v</parameter>…</invoke>
 //   3. 包裹标签：<tool_call>{"name": …}</tool_call>（剥壳后按 JSON 解析）
+//   4. Markdown 标签：**工具调用：** `x` {…}（含伪结果块，见 ./labeled-calls）
 // 非调用形状的内容不误吞；cleaned 供展示净化（抠掉已识别块）。
 
 import type { ToolCall } from "./agent";
+import {
+  balancedObject,
+  makeCall,
+  parseObjectAt,
+  labeledTailStart,
+  scanLabeledCalls,
+  stripLabeledCalls,
+} from "./labeled-calls";
 
 export interface ParsedInline {
   calls: ToolCall[];
   /** 去掉已识别调用块后的正文（历史与展示都用净化版） */
   cleaned: string;
-}
-
-let seq = 0;
-
-function makeCall(name: string, args: unknown): ToolCall | null {
-  const trimmed = name.trim();
-  if (!trimmed || trimmed.length > 64) return null;
-  let argsJson: string;
-  try {
-    argsJson = typeof args === "string" ? args : JSON.stringify(args ?? {});
-  } catch {
-    return null;
-  }
-  seq += 1;
-  return { id: `inline_${Date.now().toString(36)}_${seq}`, name: trimmed, arguments: argsJson || "{}" };
 }
 
 /** JSON 对象形状校验：tool|name + input|arguments|args */
@@ -118,40 +112,6 @@ function callFromParams(params: Array<[string, string]>, blockName: string): Too
   return makeCall(cleanName, {});
 }
 
-/** 字符串感知的花括号配平扫描：返回 [start, end)（含 end）或 null */
-function balancedObject(text: string, start: number): [number, number] | null {
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === "{") depth++;
-    else if (c === "}") {
-      depth--;
-      if (depth === 0) return [start, i];
-    }
-  }
-  return null;
-}
-
-/** 在文本 start 起取第一个配平 JSON 对象并解析（失败返回 null） */
-function parseObjectAt(text: string, start: number): unknown {
-  const range = balancedObject(text, start);
-  if (!range) return null;
-  try {
-    return JSON.parse(text.slice(range[0], range[1] + 1));
-  } catch {
-    return null;
-  }
-}
-
 /** 从回复正文解析内联工具调用。
  * 策略：先吃形状完整的（宽松 function/invoke 块、内含有效调用 JSON 的
  * tool_call 壳——壳内捞不到有效调用就不消费，留给裸扫兜底），再在"挖掉
@@ -194,6 +154,12 @@ export function parseInlineToolCalls(content: string): ParsedInline {
     }
     if (found) ranges.push([s, e]);
   }
+
+  // 2.5 Markdown 标签方言：**工具调用：** `name` {json} + 紧随的伪结果块
+  //（弱模型把调用连同自己编的结果一起写进正文，见 ./labeled-calls）
+  const labeled = scanLabeledCalls(content, false);
+  calls.push(...labeled.calls);
+  ranges.push(...labeled.ranges);
 
   // 3. 裸 JSON 扫描（等长挖替身，offset 与原文一致）
   let scanText = content;
@@ -242,9 +208,10 @@ export function hasInlineToolCalls(content: string): boolean {
 
 /** 残骸净化（上屏出口用）：解析失败也绝不裸露调用标签块。含未闭合形态
  * （<tool_call> 壳没有闭合、<function=invoke> 缺工具名这类方言残骸）——
- * 从开标签删到文本尾。模型内部历史保留原文供自纠，这里只管用户看得见的。 */
+ * 从开标签删到文本尾；Markdown 标签方言残骸（**工具调用：** …）一并剔除。
+ * 模型内部历史保留原文供自纠，这里只管用户看得见的。 */
 export function stripCallTags(text: string): string {
-  const out = text
+  const out = stripLabeledCalls(text)
     .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, "")
     .replace(/<(?:invoke|function|parameter)\b[^>]*>[\s\S]*?(?:<\/(?:invoke|function|parameter)>|$)/g, "")
     .replace(/<\/?(?:tool_call|invoke|function|parameter)\b[^>]*>/g, "");
@@ -285,12 +252,15 @@ function unclosedCallStart(text: string): number {
 }
 
 /** 流式显示净化：完整调用块与残骸标签剔除；尾部未写完的调用载荷/调用标签
- * 不闪现。只动显示，不动历史（历史由 runAgent 的 cleaned 回写负责）。 */
+ * 不闪现（含 Markdown 标签方言的半截调用）。只动显示，不动历史（历史由
+ * runAgent 的 cleaned 回写负责）。 */
 export function streamingDisplay(text: string): string {
   const cleaned = stripCallTags(cleanedContent(text));
   const callStart = unclosedCallStart(cleaned);
   if (callStart >= 0) return cleaned.slice(0, callStart).trimEnd();
   const tagStart = cleaned.search(/<\s*(?:tool_call|invoke|function|parameter)\b[^<]*$/);
   if (tagStart >= 0) return cleaned.slice(0, tagStart).trimEnd();
+  const labelStart = labeledTailStart(cleaned);
+  if (labelStart >= 0) return cleaned.slice(0, labelStart).trimEnd();
   return cleaned;
 }

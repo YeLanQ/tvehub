@@ -155,7 +155,7 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
     await flushPromises();
   });
 
-  it("边界：运行中的执行过程面板点一次头部即可收起（手动收起优先于自动展开）", async () => {
+  it("边界：执行过程面板默认收敛一行，运行中也不自动展开（点击展开/再点收起）", async () => {
     const store = getAssistantStore();
     if (!store.providers.some((p) => p.id === "p1")) {
       store.providers.push({
@@ -181,7 +181,7 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
     await wrapper.find(".achat-text").setValue("跑一个多步任务");
     await wrapper.find(".achat-send:not(.stop)").trigger("click");
     await nextTick();
-    // 运行中：工具消息落库 → 最新块自动展开
+    // 运行中：工具消息落库 → 面板保持收敛一行（不再自动展开跟随）
     getConversations().append(convId, {
       role: "tool",
       content: "{}",
@@ -189,16 +189,60 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
       toolCallId: "c1",
     });
     await nextTick();
+    expect(wrapper.find(".asteps-body").exists()).toBe(false);
+    expect(wrapper.find(".asteps-head").exists()).toBe(true);
+    // 点头部展开 → 再点收起
+    await wrapper.find(".asteps-head").trigger("click");
+    await nextTick();
     expect(wrapper.find(".asteps-body").exists()).toBe(true);
-    // 点一次头部 → 收起（旧实现第一次点击只把块加进手动展开集合，收不起来）
     await wrapper.find(".asteps-head").trigger("click");
     await nextTick();
     expect(wrapper.find(".asteps-body").exists()).toBe(false);
-    // 再点 → 重新展开
-    await wrapper.find(".asteps-head").trigger("click");
-    await nextTick();
-    expect(wrapper.find(".asteps-body").exists()).toBe(true);
     resolveRun({ content: "完成", toolCalls: [] });
     await flushPromises();
+  });
+});
+
+describe("AssistantChat 工具调用信息气泡", () => {
+  it("正常：调用占位/标签方言/结果转储收敛为单行带箭头，点击向下展开/再点收起", async () => {
+    const { wrapper, convId } = await mounted();
+    const convs = getConversations();
+    convs.append(convId, {
+      role: "assistant",
+      content:
+        "（已发起工具调用）\n\n" +
+        '**工具调用：** `load_skill` `{"id":"tve-scripting"}`\n\n' +
+        '**结果：** `{"id":"tve-scripting","title":"tve 脚本编写"}`',
+    });
+    convs.append(convId, { role: "assistant", content: "（已发起工具调用）" });
+    convs.append(convId, { role: "assistant", content: "这是普通的总结回复，不受影响。" });
+    await nextTick();
+    const infoBubbles = wrapper.findAll(".achat-bubble-toolinfo");
+    expect(infoBubbles).toHaveLength(2);
+    expect(infoBubbles[0].text()).toContain("load_skill");
+    // 收敛态：单行裁剪（无 open），右侧箭头可展开
+    expect(infoBubbles[0].find(".achat-toolinfo-line.open").exists()).toBe(false);
+    expect(infoBubbles[0].find(".achat-toolinfo-arrow").text()).toBe("▸");
+    // 点箭头 → 向下展开全文（open），再点 → 收起
+    await infoBubbles[0].find(".achat-toolinfo-arrow").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line.open").exists()).toBe(true);
+    expect(wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-arrow").text()).toBe("▾");
+    await wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-arrow").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line.open").exists()).toBe(false);
+    // 点内容行同样可切换展开
+    await wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line.open").exists()).toBe(true);
+    await wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line").trigger("click");
+    await nextTick();
+    expect(wrapper.find(".achat-bubble-toolinfo .achat-toolinfo-line.open").exists()).toBe(false);
+    // 普通回复不带收敛类
+    const plain = wrapper
+      .findAll(".achat-row.assistant .achat-bubble")
+      .filter((b) => !b.classes().includes("achat-bubble-toolinfo"));
+    expect(plain).toHaveLength(1);
+    expect(plain[0].text()).toContain("普通的总结回复");
   });
 });

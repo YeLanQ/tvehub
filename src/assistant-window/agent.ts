@@ -6,6 +6,7 @@
 
 import { skillIndexPrompt } from "./skills";
 import { cleanedContent, parseInlineToolCalls, stripCallTags } from "./inline-tools";
+import { hasLabeledCallTrace } from "./labeled-calls";
 import { assistantTools, type OpenAITool } from "./tools";
 import type { AgentCard } from "./store";
 
@@ -99,8 +100,15 @@ export function fitWireBudget(wire: WireMessage[], budgetChars: number): WireMes
   return wire.filter((m, i) => m.role === "system" || i >= cut);
 }
 
-/** 正文疑似工具调用但解析失败的痕迹（只认标签形态，普通 JSON 数据不误伤） */
+/** 正文疑似工具调用但解析失败的痕迹（只认标签形态，普通 JSON 数据不误伤；
+ * Markdown 标签方言的痕迹判据在 labeled-calls，完整形态已被解析执行，
+ * 剩下的都是解析不了的坏格式）。 */
 const TOOL_MARK_RE = /<\s*tool_call|<\s*invoke\b|<\s*function\b|<\/\s*(tool_call|invoke|function)>/;
+
+/** 坏格式调用痕迹：调用标签或「工具调用：name {…}」方言痕迹（解析没产出时） */
+function hasUnparsedCallTrace(content: string): boolean {
+  return TOOL_MARK_RE.test(content) || hasLabeledCallTrace(content);
+}
 /** 格式纠偏提示（解析失败时作为 user 消息回灌） */
 const TOOL_FORMAT_NUDGE =
   "（系统）你上面的工具调用格式无法解析、没有被执行。请改用以下任一格式重新发起，" +
@@ -127,6 +135,12 @@ const EMPTY_NUDGE =
   "（系统）你返回了空回复、无内容占位，或只是复读了工具结果/上一轮回喂文本，" +
   "任务尚未推进。请查看上文工具结果判断进度，继续发起剩余步骤的工具调用（已完成的不要重复）；" +
   "如果任务已全部完成，请仅输出以「任务完成」开头的最终总结，不要再有其他内容。";
+/** 整批重复加载的拉回提示：弱模型复读「工具调用+结果」会把刚成功过的加载
+ * 原样再发——重复守卫短路后若整批仍是重复加载，教它直接用上文结果推进 */
+const DUP_LOAD_NUDGE =
+  "（系统）你刚才发起的调用与已执行过的加载完全相同，结果早已在上文，不要重复加载。" +
+  "请基于上文结果直接发起「剩余步骤」的工具调用；若全部步骤已完成，" +
+  "输出以「任务完成」开头的最终总结。";
 
 /** 终止注记：救援预算耗尽仍无工具推进时，给用户可见的暂停说明与继续指引——
  * 「任务被自动终止」必须是显式的、可恢复的，不允许静默停在半截 */
@@ -262,6 +276,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   let rescues = 0;
   /** 空回复续跑已用次数 */
   let emptyRescues = 0;
+  /** 连续「整批都是重复加载短路」的轮数（弱模型复读调用时的空转判据） */
+  let dupLoadRounds = 0;
   /** 最近一次工具回喂文本头部（复读检测基准；首轮无前序工具时为空） */
   let lastFeedCore = "";
   /** 上一轮是否为工具执行轮（回喂后紧跟的纯文本轮按"未完成"处理，见下） */
@@ -332,7 +348,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
         return finalReply;
       }
       // 有工具调用痕迹但全部解析失败：注入纠偏提示让模型重发（至多 2 次），而不是停轮
-      if (nudges < MAX_FORMAT_NUDGES && TOOL_MARK_RE.test(reply.content)) {
+      if (nudges < MAX_FORMAT_NUDGES && hasUnparsedCallTrace(reply.content)) {
         nudges += 1;
         history.push({ role: "user", content: TOOL_FORMAT_NUDGE });
         continue;
@@ -345,7 +361,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
         continue;
       }
       // 救援耗尽仍无推进（宣言/坏痕迹）：显式暂停注记，不再静默按"最终回答"返回
-      if (ANNOUNCE_RE.test(reply.content) || TOOL_MARK_RE.test(reply.content)) {
+      if (ANNOUNCE_RE.test(reply.content) || hasUnparsedCallTrace(reply.content)) {
         return stalled(finalReply.content);
       }
       // 弱模型「一步一轮」：工具回喂后输出一段中途评论就停，每步都要用户手动
@@ -374,6 +390,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
     // 复读检测基准 = 最近一次回喂文本头部（inline 与 native tool 通道都覆盖）
     lastFeedCore = results[results.length - 1]?.content?.slice(0, 200) ?? "";
     lastWasFeed = true;
+    // 整批都是重复加载短路 → 模型在复读调用空转：第 3 轮起注入教学提示拉回，
+    // 连续 4 轮仍无推进则显式暂停（短路无网络开销，代价有界）。
+    // 判定用 includes：内联通道的回喂包着 [工具 … 执行结果] 壳，两种通道都覆盖
+    dupLoadRounds = results.every((r) => r.content.includes('{"note":"与上文完全相同'))
+      ? dupLoadRounds + 1
+      : 0;
+    if (dupLoadRounds >= 4) return stalled(finalReply.content);
+    if (dupLoadRounds === 2) history.push({ role: "user", content: DUP_LOAD_NUDGE });
   }
   return {
     content: `已连续工具调用 ${maxRounds} 轮，暂停执行。告诉我「继续」可接着跑，或调整方向。`,

@@ -961,3 +961,83 @@ describe("runAgent 重复调用守卫（省往返）", () => {
     expect(seen).toEqual(["node.add", "project.open", "node.add"]);
   });
 });
+
+describe("runAgent 标签方言与重复空转守卫", () => {
+  it("回归：Markdown 标签方言调用被解析执行（复读调用+伪结果不再空转）", async () => {
+    const script: AssistantReply[] = [
+      {
+        content:
+          '**工具调用：** `load_skill` `{"id":"tve-scripting"}`\n\n**结果：** `{"id":"tve-scripting","title":"tve 脚本编写"}`',
+        toolCalls: [],
+      },
+      { content: "任务完成：脚本技能已加载。", toolCalls: [] },
+    ];
+    const { chat, calls } = stubChat(script);
+    const seen: Array<[string, string]> = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "修改角色控制脚本，添加对网格动画的控制" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name, args) => {
+        seen.push([name, args]);
+        return { id: "tve-scripting", title: "tve 脚本编写" };
+      },
+    });
+    expect(seen).toEqual([["load_skill", '{"id":"tve-scripting"}']]);
+    expect(calls()).toBe(2);
+    expect(reply.content).toContain("任务完成");
+  });
+
+  it("守卫：整批重复加载空转——首次真实执行其余短路，连续 4 轮显式暂停", async () => {
+    const dup: AssistantReply = { content: '**工具调用：** `load_skill` `{"id":"tve"}`', toolCalls: [] };
+    let n = 0;
+    const chat = async () => {
+      n += 1;
+      return dup;
+    };
+    let execs = 0;
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "加载技能" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => {
+        execs += 1;
+        return { id: "tve" };
+      },
+    });
+    expect(execs).toBe(1);
+    expect(n).toBe(5);
+    expect(reply.content).toContain("已在此暂停");
+  });
+
+  it("纠偏：方言痕迹解析失败注入纠偏提示，模型改对格式后执行", async () => {
+    const script: AssistantReply[] = [
+      { content: '**工具调用：** `load_skill` {"id":', toolCalls: [] },
+      { content: '{ "tool": "scene.list", "input": {} }', toolCalls: [] },
+      { content: "任务完成", toolCalls: [] },
+    ];
+    const { chat, calls } = stubChat(script);
+    const seen: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "列场景" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        seen.push(name);
+        return [];
+      },
+    });
+    expect(seen).toEqual(["scene.list"]);
+    expect(calls()).toBe(3);
+    expect(reply.content).toBe("任务完成");
+  });
+});
