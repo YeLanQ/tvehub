@@ -10,7 +10,7 @@ Rust 侧总装在 `src-tauri/src/brain/mod.rs`（Brain 状态，setup 阶段以
 |---|---|
 | `brainQuery(text, topK?)` → BrainRouteHit[] | 语义检索：任务文本 → 技能/命令/概念节点（余弦种子 + 一跳邻接加成，类型先验技能 > 命令 > 概念） |
 | `brainPlan(task)` → BrainPlan | 策略规划：主技能 + 推荐 steps（区域/效能比）+ 决策 `autoExecute / needConfirm / deny`；决策规则 = 任一步黄灯需确认、红灯拒绝、全绿且瓶颈效能比 ≥ 0.99 才可自主执行 |
-| `brainDecompose(task)` → BrainDecomposition | **语义单元化（自然语义处理层）**：任务文本 →（分段：连接词/序号/标点）→（逐段神经图检索 + 命令预测：图命中优先、词典兜底）→ 有序单元任务（text/method 预测/zone/phase）+ 处理轨迹 traces。前端把轨迹与单元上屏过程容器（NluSteps），拆解可用（≥2 单元且 ≥2 有预测）则逐单元驱动独立小 agent 会话（避免整任务长线思考），不可用回落整任务；单元内工具决策仍经 `brainExecute` |
+| `brainDecompose(task, root?)` → BrainDecomposition | **语义单元化（自然语义处理层）**：任务文本 →（分段：连接词/序号/标点）→（逐段神经图检索 + 命令预测：图命中优先、词典+动宾组合兜底）→ 有序单元任务（text/method 预测/zone/phase/refs 知识命中/exec 执行模式/params）+ 处理轨迹 + 整任务 refs。**执行分层**：`exec: direct`（准确性原子任务）= 绿灯只读 + 方法明确 + 参数可提取/可缺省——前端代大脑直接 `brainExecute` 委托命令中心，不经 LLM；`exec: assist`（模糊原子任务）= 写操作/参数不明——助手细化后仍经决策中心。拆解可用（assist ≥2 且 ≥2 有预测）则逐单元驱动独立小 agent 会话，不可用回落整任务；知识命中为目录式注入（load_skill/load_doc 按需拉取） |
 | `brainExecute({ task, method, params? })` → BrainExecOutcome | **决策中心执行（助手编辑器工具统一入口）**：门控（zones 三区 + 任务审批会话 + 效能比）→ devtools 命令模式派发（`internal_call_blocking`：权限门控 → Rust 直答 → 中控转发编辑器执行器）→ 观测回写闭环。status：`ok`（result 在 `result`，工具失败以 `result.error` 表达）/ `needConfirm`（黄灯未批准，未执行，批准后重发）/ `denied` |
 | `brainApprove(task)` → void | 登记任务审批会话：用户批准后调用，该任务的黄灯调用在有效期内（10 分钟）直接放行；tick 清理过期项 |
 | `brainObserve({ task, method, ok, ms })` → BrainObserveReport | 观测回写：记账台账 + 因果链进化（task→cmd→outcome 边强化，半衰期衰减）；每 25 次自动 tick（衰减修剪 → 向量近重复合并 → 情景冷却下沉 → 快照落盘）。**brain_execute 已内置观测闭环，前端不再手动上报——此命令保留供旁路观测** |
@@ -79,7 +79,9 @@ Rust 侧单测随模块内联（`cargo test --lib`，brain 域含执行域）：
   门槛 0.99 含边界）
 - `brain/graph/route.rs` — 语义路由命中/无关查询低分/访问加热
 - `brain/nlu/` — 分段（连接词/序号/标点/封顶去重）、命令预测（图命中优先/
-  词典加权/阶段推断）、总装（多单元拆解/方法与区域/空任务/闲聊无预测）
+  词典加权/动宾组合/阶段推断）、总装（多单元拆解/方法与区域/direct-assist
+  分层与参数提取/空任务/闲聊无预测）、knowledge_hits（只留技能与 docs 文档，
+  词元碎片过滤）
 - `brain/docsrc/` — 内嵌 docs 索引非空（≥20 篇/含 sdk/tween.md）、摄取建
   Concept 节点与 Mentions/Uses 边且幂等；`brain::tests` 锁 boot 概念计数
   （≥20）与 docs 检索命中（concept:doc:* 可被 query 命中）

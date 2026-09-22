@@ -109,10 +109,11 @@ impl Brain {
     }
 
     /// 语义单元化：任务文本 → 分段 → 神经图检索 + 命令预测 → 单元任务与
-    /// 处理轨迹（前端过程容器上屏；单元转发助手逐个推进，决策仍走 execute）
-    pub fn decompose(&self, task: &str) -> nlu::Decomposition {
+    /// 处理轨迹（前端过程容器上屏；准确性原子任务由前端代大脑直执行，
+    /// 模糊单元转发助手推进，决策仍走 execute）
+    pub fn decompose(&self, task: &str, root: Option<&str>) -> nlu::Decomposition {
         let mut core = self.core.lock().expect("brain 锁");
-        nlu::decompose(&mut core.store.hot, task, now_ms())
+        nlu::decompose(&mut core.store.hot, task, now_ms(), root)
     }
 
     /// 观测回写：记账 + 因果链进化；达到间隔自动 tick（自压缩/冷却/持久化）。

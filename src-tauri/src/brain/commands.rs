@@ -33,8 +33,9 @@ pub fn brain_plan(state: State<'_, Brain>, task: String) -> Result<Plan, String>
 pub fn brain_decompose(
     state: State<'_, Brain>,
     task: String,
+    root: Option<String>,
 ) -> Result<super::nlu::Decomposition, String> {
-    Ok(state.decompose(&task))
+    Ok(state.decompose(&task, root.as_deref()))
 }
 
 #[derive(serde::Deserialize)]

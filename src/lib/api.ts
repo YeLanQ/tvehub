@@ -448,8 +448,10 @@ export const api = {
     invoke<BrainRouteHit[]>("brain_query", { text, topK: topK ?? null }),
   /** 策略规划：任务 → 主技能 + 推荐步骤 + 效能门控决策 */
   brainPlan: (task: string) => invoke<BrainPlan>("brain_plan", { task }),
-  /** 语义单元化：任务 →（分段 → 神经图检索 → 命令预测）→ 单元任务 + 处理轨迹 */
-  brainDecompose: (task: string) => invoke<BrainDecomposition>("brain_decompose", { task }),
+  /** 语义单元化：任务 →（分段 → 神经图检索 → 命令预测）→ 单元任务 + 处理轨迹；
+   * root 为当前工作区（注入 scene.list/asset.list 直执行参数） */
+  brainDecompose: (task: string, root?: string) =>
+    invoke<BrainDecomposition>("brain_decompose", { task, root: root ?? null }),
   /** 观测回写：一次工具执行的耗时与成败（驱动因果链进化与效能统计） */
   brainObserve: (args: { task: string; method: string; ok: boolean; ms: number }) =>
     invoke<BrainObserveReport>("brain_observe", { args }),
@@ -528,6 +530,10 @@ export interface BrainTaskUnit {
   phase: "inspect" | "act" | "verify";
   /** 图谱参考知识：本段命中的技能/概念（转发给助手深查，不参与门控） */
   refs: BrainKnowledgeHit[];
+  /** 执行模式：direct 准确性原子任务（大脑直执行）/ assist 模糊原子任务（助手细化） */
+  exec: "direct" | "assist";
+  /** direct 单元的直执行参数（assist 为 null） */
+  params: Record<string, unknown> | null;
 }
 
 /** 处理轨迹短句（过程容器逐条上屏） */

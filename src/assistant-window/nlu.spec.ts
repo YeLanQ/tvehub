@@ -6,6 +6,7 @@ import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
+  resolvePrevRefs,
   runUnitPlan,
   unitInstruction,
   usablePlan,
@@ -17,7 +18,17 @@ function hit(id: string, label: string): BrainKnowledgeHit {
 }
 
 function unit(index: number, text: string, method: string | null, refs: BrainKnowledgeHit[] = []): BrainTaskUnit {
-  return { index, text, method, source: method ? "lexicon" : null, zone: method ? "yellow" : null, phase: "act", refs };
+  return {
+    index,
+    text,
+    method,
+    source: method ? "lexicon" : null,
+    zone: method ? "yellow" : null,
+    phase: "act",
+    refs,
+    exec: "assist",
+    params: null,
+  };
 }
 
 function deco(units: BrainTaskUnit[]): BrainDecomposition {
@@ -27,28 +38,27 @@ function deco(units: BrainTaskUnit[]): BrainDecomposition {
 describe("usablePlan 拆解质量守门", () => {
   it("正常：两个以上单元且过半有预测 → 可用", () => {
     const units = [unit(1, "建项目", "project.create"), unit(2, "打开", "project.open"), unit(3, "随意", null)];
-    expect(usablePlan(deco(units))).toEqual(units);
+    expect(usablePlan(units)).toEqual(units);
   });
 
   it("边界：恰好两个单元、全部有预测 → 可用", () => {
     const units = [unit(1, "a", "asset.list"), unit(2, "b", "asset.read")];
-    expect(usablePlan(deco(units))).toHaveLength(2);
+    expect(usablePlan(units)).toHaveLength(2);
   });
 
-  it("异常：null / 空单元 / 单单元 → 回落", () => {
-    expect(usablePlan(null)).toBeNull();
-    expect(usablePlan(deco([]))).toBeNull();
-    expect(usablePlan(deco([unit(1, "只有一段", "project.create")]))).toBeNull();
+  it("异常：空单元 / 单单元 → 回落", () => {
+    expect(usablePlan([])).toBeNull();
+    expect(usablePlan([unit(1, "只有一段", "project.create")])).toBeNull();
   });
 
   it("异常：预测不足两个 → 回落（纯闲聊拆解不驱动助手）", () => {
     const units = [unit(1, "你好", null), unit(2, "讲个笑话", null)];
-    expect(usablePlan(deco(units))).toBeNull();
+    expect(usablePlan(units)).toBeNull();
   });
 
   it("边界：超过 8 单元 → 回落（碎片化保护）", () => {
     const units = Array.from({ length: 9 }, (_, i) => unit(i + 1, `s${i}`, "asset.list"));
-    expect(usablePlan(deco(units))).toBeNull();
+    expect(usablePlan(units)).toBeNull();
   });
 });
 
@@ -102,6 +112,17 @@ describe("unitInstruction 单元指令", () => {
     expect(note).toContain("大脑知识命中");
     expect(note).toContain("load_skill");
     expect(knowledgeNote(deco2)).toBe("");
+  });
+
+  it("正常：resolvePrevRefs 解析链式占位（深遍历；无法解析原样保留）", () => {
+    const prev = { path: "P:/proj", rel: "assets/main.scene" };
+    expect(resolvePrevRefs({ path: "$prev.path" }, prev)).toEqual({ path: "P:/proj" });
+    expect(resolvePrevRefs({ path: "$prev", nested: { k: "$prev.rel" } }, prev)).toEqual({
+      path: prev,
+      nested: { k: "assets/main.scene" },
+    });
+    // 无前序：占位保留（调用失败如实回喂）
+    expect(resolvePrevRefs({ path: "$prev.path" }, null)).toEqual({ path: "$prev.path" });
   });
 });
 

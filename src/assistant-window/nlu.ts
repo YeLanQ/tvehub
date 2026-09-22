@@ -6,10 +6,9 @@ import type { BrainDecomposition, BrainKnowledgeHit, BrainTaskUnit } from "../li
 import type { AssistantReply, WireMessage } from "./agent";
 
 /** 可用判定：≥2 个单元且至少 2 个有方法预测（语义信号不足则回落整任务）。
- * 单元拆解是确定性规则（无 LLM），宁可回落也不拿垃圾计划驱动助手。 */
-export function usablePlan(deco: BrainDecomposition | null | undefined): BrainTaskUnit[] | null {
-  if (!deco || !Array.isArray(deco.units)) return null;
-  const units = deco.units;
+ * 单元拆解是确定性规则（无 LLM），宁可回落也不拿垃圾计划驱动助手。
+ * 入参是模糊原子任务子集（direct 已由大脑直执行消化）。 */
+export function usablePlan(units: BrainTaskUnit[]): BrainTaskUnit[] | null {
   if (units.length < 2 || units.length > 8) return null;
   const predicted = units.filter((u) => u.method).length;
   return predicted >= 2 ? units : null;
@@ -123,6 +122,33 @@ export function decomposeDigest(deco: BrainDecomposition): string {
     units: deco.units,
     traces: deco.traces,
   });
+}
+
+/** 链式占位解析："$prev" / "$prev.<key>" 引用上一个直执行单元的结果
+ * （创建项目 → 打开项目 的编排）。无法解析时占位原样保留——调用会如实
+ * 失败并回喂，错误对助手可见。 */
+export function resolvePrevRefs(
+  params: Record<string, unknown>,
+  prev: unknown,
+): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") {
+      if (v === "$prev") return prev ?? v;
+      if (v.startsWith("$prev.")) {
+        const key = v.slice("$prev.".length);
+        const obj = prev as Record<string, unknown> | null;
+        const hit = obj && typeof obj === "object" ? obj[key] : undefined;
+        return hit === undefined ? v : hit;
+      }
+      return v;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    }
+    return v;
+  };
+  return walk(params) as Record<string, unknown>;
 }
 
 /** 直通路线的知识注入：整任务粒度的图谱命中 → wire 追加消息（不落库）。

@@ -6,9 +6,11 @@
 // ---------------------------------------------------------------------------
 
 pub mod matcher;
+pub mod params;
 pub mod segment;
 
 use serde::Serialize;
+use serde_json::{json, Value};
 
 use crate::brain::graph::route;
 use crate::brain::model::NodeKind;
@@ -37,6 +39,17 @@ pub fn knowledge_hits(hits: &[route::RouteHit]) -> Vec<KnowledgeHit> {
         .collect()
 }
 
+/// 单元执行模式：
+/// - direct（准确性原子任务）：绿灯只读 + 方法明确 + 参数可提取/可缺省——
+///   大脑直接委托命令中心（brain_execute）执行，不经助手，省一轮推理；
+/// - assist（模糊原子任务）：写操作/参数不明——助手细化后仍经决策中心执行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecMode {
+    Direct,
+    Assist,
+}
+
 /// 一个单元任务：一段语义 + 预测入口 + 边界区域 + 阶段
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +69,10 @@ pub struct TaskUnit {
     /// 图谱参考知识：本段命中的技能/概念（含 docs 基图元）——转发给助手作
     /// 深查提示（load_skill / 权威摘要），不参与门控
     pub refs: Vec<KnowledgeHit>,
+    /// 执行模式：direct 大脑直执行 / assist 助手细化
+    pub exec: ExecMode,
+    /// direct 单元的直执行参数（assist 为 null）
+    pub params: serde_json::Value,
 }
 
 /// 处理轨迹：每个阶段的短句（前端过程容器逐条上屏）
@@ -77,8 +94,13 @@ pub struct Decomposition {
     pub refs: Vec<KnowledgeHit>,
 }
 
-/// 拆解一段任务（检索会 touch 命中节点——神经图的访问加热闭环）
-pub fn decompose(hot: &mut HotTier, task: &str, now: u64) -> Decomposition {
+/// 无参数的绿灯方法（大脑可直执行的最小集合；全部在 zones 绿灯表内）
+const DIRECT_NO_ARG: &[&str] = &["editor.state", "project.list", "scene.list", "asset.list"];
+
+/// 拆解一段任务（检索会 touch 命中节点——神经图的访问加热闭环）。
+/// 段内多命令展开：一段（逗号连排）可同时命中多个准确性原子任务
+/// （建项目/加实体/读文件……各自生成直执行单元）；其余按预测生成模糊单元。
+pub fn decompose(hot: &mut HotTier, task: &str, now: u64, root: Option<&str>) -> Decomposition {
     let mut traces: Vec<NluTrace> = Vec::new();
     let segs = segment::segment_text(task);
     traces.push(NluTrace {
@@ -86,13 +108,109 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64) -> Decomposition {
         detail: format!("任务拆为 {} 段语义", segs.len()),
     });
 
-    let mut units = Vec::with_capacity(segs.len());
+    let mut units: Vec<TaskUnit> = Vec::new();
     let mut graph_hits = 0usize;
     let mut lexicon_hits = 0usize;
-    for (i, seg) in segs.into_iter().enumerate() {
+    let mut direct_hits = 0usize;
+    for seg in segs.into_iter() {
         // 神经图检索：段文本 → 技能/命令/概念节点（命中即加热）
         let hits = route::route(hot, &seg, 4, now);
-        let (method, source, zone) = match matcher::predict_method(&seg, &hits) {            Some((m, src)) => {
+        let refs = knowledge_hits(&hits);
+        let phase = matcher::phase_of(&seg);
+
+        // 段内直执行命令展开（出现顺序）：建项目 → 开项目 → 实体 → 读文件
+        let mut covered: Vec<String> = Vec::new();
+        let mut push_direct = |units: &mut Vec<TaskUnit>,
+                               method: &str,
+                               params: Value,
+                               covered: &mut Vec<String>| {
+            direct_hits += 1;
+            covered.push(method.to_string());
+            units.push(TaskUnit {
+                index: units.len() + 1,
+                text: seg.clone(),
+                method: Some(method.to_string()),
+                source: Some("lexicon".into()),
+                zone: Some(zones::zone_of(method)),
+                phase: matcher::phase_of(&seg),
+                refs: refs.clone(),
+                exec: ExecMode::Direct,
+                params,
+            });
+        };
+
+        if seg.contains("项目") {
+            if let Some(name) = params::extract_name(&seg) {
+                if seg.contains("创建") || seg.contains("新建") || seg.contains("建") {
+                    push_direct(
+                        &mut units,
+                        "project.create",
+                        json!({ "name": name }),
+                        &mut covered,
+                    );
+                }
+            }
+            if seg.contains("打开") || seg.contains("载入") {
+                if let Some(p) = params::open_params(&seg, units.len() + 1) {
+                    push_direct(&mut units, "project.open", p, &mut covered);
+                }
+            }
+        }
+        for (kind, subtype) in params::match_entities(&seg) {
+            push_direct(
+                &mut units,
+                "node.add",
+                params::node_params(kind, subtype),
+                &mut covered,
+            );
+        }
+        if let Some(path) = params::extract_path(&seg) {
+            if seg.contains("读取") || seg.contains("查看") || seg.contains("@") {
+                push_direct(&mut units, "asset.read", json!({ "path": path }), &mut covered);
+            }
+        }
+        // 无参绿灯方法（查状态/列清单）：大脑代查
+        if let Some((m, src)) = matcher::predict_method(&seg, &hits) {
+            if DIRECT_NO_ARG.contains(&m.as_str()) && !covered.contains(&m) {
+                let mut p = serde_json::Map::new();
+                if matches!(m.as_str(), "scene.list" | "asset.list") {
+                    if let Some(r) = root {
+                        p.insert("root".into(), Value::String(r.into()));
+                    }
+                }
+                push_direct(&mut units, &m, Value::Object(p), &mut covered);
+                let _ = src;
+            }
+        }
+        if !covered.is_empty() {
+            // 直执行未覆盖的意图仍按预测补一个模糊单元（如"…再写个脚本"）
+            if let Some((m, src)) = matcher::predict_method(&seg, &hits) {
+                if !covered.contains(&m) {
+                    let z = zones::zone_of(&m);
+                    units.push(TaskUnit {
+                        index: units.len() + 1,
+                        text: seg.clone(),
+                        method: Some(m.clone()),
+                        source: Some(src.to_string()),
+                        zone: Some(z),
+                        phase,
+                        refs,
+                        exec: ExecMode::Assist,
+                        params: Value::Null,
+                    });
+                    if src == "graph" {
+                        graph_hits += 1;
+                    } else {
+                        lexicon_hits += 1;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // 无直执行命中：预测 → 模糊单元（原路径）
+        let (method, source, zone) = match matcher::predict_method(&seg, &hits) {
+            Some((m, src)) => {
                 if src == "graph" {
                     graph_hits += 1;
                 } else {
@@ -103,15 +221,22 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64) -> Decomposition {
             }
             None => (None, None, None),
         };
-        let phase = matcher::phase_of(&seg);
         units.push(TaskUnit {
-            index: i + 1,
+            index: units.len() + 1,
             text: seg,
             method,
             source,
             zone,
             phase,
-            refs: knowledge_hits(&hits),
+            refs,
+            exec: ExecMode::Assist,
+            params: Value::Null,
+        });
+    }
+    if direct_hits > 0 {
+        traces.push(NluTrace {
+            stage: "原子任务".into(),
+            detail: format!("识别 {} 个准确性原子任务（大脑直执行）", direct_hits),
         });
     }
     traces.push(NluTrace {
@@ -170,7 +295,7 @@ mod tests {
     #[test]
     fn builds_units_with_traces() {
         let mut hot = graph();
-        let deco = decompose(&mut hot, "创建一个项目,然后添加一个立方体,最后保存场景", 0);
+        let deco = decompose(&mut hot, "创建一个项目,然后添加一个立方体,最后保存场景", 0, None);
         assert!(!deco.traces.is_empty(), "应有处理轨迹");
         assert!(deco.units.len() >= 2, "应拆出多单元：{:?}", deco.units);
         assert_eq!(deco.units[0].index, 1);
@@ -186,7 +311,7 @@ mod tests {
     #[test]
     fn predicts_methods_and_zones() {
         let mut hot = graph();
-        let deco = decompose(&mut hot, "列出资产,然后写入一个脚本文件", 0);
+        let deco = decompose(&mut hot, "列出资产,然后写入一个脚本文件", 0, None);
         let u1 = &deco.units[0];
         assert_eq!(u1.method.as_deref(), Some("asset.list"));
         assert_eq!(u1.zone, Some(Zone::Green));
@@ -198,16 +323,36 @@ mod tests {
     #[test]
     fn empty_task_yields_empty_units() {
         let mut hot = graph();
-        let deco = decompose(&mut hot, "   ", 0);
+        let deco = decompose(&mut hot, "   ", 0, None);
         assert!(deco.units.is_empty());
     }
 
     #[test]
     fn chit_chat_unit_without_method() {
         let mut hot = graph();
-        let deco = decompose(&mut hot, "你好呀", 0);
+        let deco = decompose(&mut hot, "你好呀", 0, None);
         assert_eq!(deco.units.len(), 1);
         assert!(deco.units[0].method.is_none(), "闲聊不应有方法预测");
+    }
+
+    #[test]
+    fn classifies_direct_and_assist_units() {
+        let mut hot = graph();
+        // 准确性原子任务：绿灯无参方法 → direct，root 注入参数
+        let deco = decompose(&mut hot, "列出资产", 0, Some("P:/proj"));
+        let u = &deco.units[0];
+        assert_eq!(u.exec, ExecMode::Direct);
+        assert_eq!(u.params["root"], "P:/proj");
+        // 模糊原子任务：黄灯写操作 → 助手细化，不直执行
+        let deco2 = decompose(&mut hot, "写入一个脚本文件", 0, None);
+        assert_eq!(deco2.units[0].exec, ExecMode::Assist);
+        // 绿灯带参方法：路径可提取 → direct
+        let deco3 = decompose(&mut hot, "读取 src/TweenMotion.ts", 0, None);
+        assert_eq!(deco3.units[0].exec, ExecMode::Direct);
+        assert_eq!(deco3.units[0].params["path"], "src/TweenMotion.ts");
+        // 无方法预测 → assist
+        let deco4 = decompose(&mut hot, "你好呀", 0, None);
+        assert_eq!(deco4.units[0].exec, ExecMode::Assist);
     }
 
     #[test]

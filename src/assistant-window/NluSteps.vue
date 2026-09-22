@@ -14,6 +14,8 @@ export interface NluUnitRow {
   phase: "inspect" | "act" | "verify";
   /** 图谱参考知识命中（技能/文档，目录式：id + label） */
   refs?: Array<{ id: string; label: string }>;
+  /** direct = 准确性原子任务（大脑直执行）；assist = 助手细化 */
+  exec?: "direct" | "assist";
   status: "pending" | "running" | "ok" | "fail";
 }
 
@@ -96,6 +98,7 @@ watch(
         <b>{{ String(u.index).padStart(2, "0") }}</b>
         <span class="anlu-phase" :class="u.phase">{{ PHASE_SHORT[u.phase] }}</span>
         <span class="anlu-text">{{ unitText(u.text) }}</span>
+        <span v-if="u.exec === 'direct'" class="anlu-direct" title="准确性原子任务：大脑直接执行">⚡</span>
         <span v-if="u.method" class="anlu-method" :title="`预测入口：${u.method}`">→ {{ u.method }}</span>
         <span
           v-if="u.refs?.length"
@@ -183,6 +186,7 @@ watch(
 }
 .anlu-text { color: inherit; }
 .anlu-method { margin: 0 4px; color: var(--text-dim); }
+.anlu-direct { margin: 0 3px; color: var(--accent); }
 .anlu-refs { margin: 0 4px; color: var(--accent); opacity: 0.85; }
 .anlu-zone {
   flex: none;

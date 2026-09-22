@@ -19,6 +19,7 @@ import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
+  resolvePrevRefs,
   runUnitPlan,
   usablePlan,
 } from "./nlu";
@@ -74,6 +75,7 @@ function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: 
       zone: u.zone,
       phase: u.phase,
       refs: u.refs ?? [],
+      exec: u.exec,
       status: "pending" as const,
     })),
   };
@@ -382,16 +384,69 @@ async function send(textArg?: string | Event): Promise<void> {
   // 单元任务上屏过程容器；拆解可用则逐单元驱动独立小循环（每单元一次小
   // agent 会话，避免整任务长线思考），不可用回落整任务直通助手 ----
   let units: BrainTaskUnit[] | null = null;
-  /** 直通路线的大脑知识注入（单元路线由 unitInstruction 携带） */
+  /** 直通路线的知识注入（单元路线由 unitInstruction 携带） */
   let brainNote = "";
+  /** 大脑直执行结果的注入消息（两个路线都要带，防助手重复执行） */
+  let directNote = "";
+  let directInjected = false;
   const nluCallId = `nlu_${Date.now().toString(36)}`;
   try {
-    const deco = await api.brainDecompose(text);
+    const deco = await api.brainDecompose(text, convs.activeRoot || undefined);
     nluRun.value = toNluData(deco);
-    units = usablePlan(deco);
+    // 准确性原子任务（绿灯只读）：大脑直接委托命令中心执行，不经助手；
+    // 模糊原子任务留给助手细化。全走 brain_execute 门控与观测闭环。
+    const directResults: string[] = [];
+    let prev: unknown = null; // 链式编排：上一个直执行结果（$prev 引用源）
+    for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {
+      markUnit(u.index, "running");
+      const resolved = resolvePrevRefs((u.params ?? {}) as Record<string, unknown>, prev);
+      convs.append(convId, {
+        role: "tool",
+        content: JSON.stringify(resolved),
+        toolName: u.method!,
+        toolCallId: `d_${u.index}`,
+      });
+      let ok = false;
+      let digest = "";
+      try {
+        // 经 execAssistantTool：决策中心门控照走（黄灯 needConfirm 弹批准，
+        // 批准一次同任务后续直执行自动放行——用户明确指令即授权）
+        const res = await execAssistantTool(
+          u.method!,
+          JSON.stringify(resolved),
+          convs.activeRoot || undefined,
+          text,
+          requestToolConfirm,
+        );
+        const err = (res as { error?: unknown } | null)?.error;
+        ok = !err;
+        digest = JSON.stringify(res);
+        if (!err) prev = res;
+      } catch (e) {
+        digest = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+      }
+      markUnit(u.index, ok ? "ok" : "fail");
+      convs.append(convId, {
+        role: "tool",
+        content: digest.slice(0, 2000),
+        toolName: u.method!,
+        toolCallId: `d_${u.index}`,
+        result: true,
+      });
+      directResults.push(
+        `- ${u.method}(${JSON.stringify(resolved)}) → ${ok ? "完成" : "失败"}：${digest.length > 160 ? digest.slice(0, 160) + "…" : digest}`,
+      );
+    }
+    directNote = directResults.length
+      ? "（系统·大脑原子执行）以下只读原子任务已由大脑直接完成，不要重复执行，直接引用其结果：\n" +
+        directResults.join("\n")
+      : "";
+    // 模糊原子任务子集按守门条件决定单元路线或直通
+    const assist = deco.units.filter((u) => u.exec !== "direct");
+    units = usablePlan(assist);
     if (!units) {
       nluRun.value.traces.push({ stage: "直通", detail: "单元预测信号不足，整任务交由助手全权执行" });
-      brainNote = knowledgeNote(deco);
+      brainNote = [knowledgeNote(deco), directNote].filter(Boolean).join("\n");
     }
     // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
     convs.append(convId, {
@@ -460,8 +515,17 @@ async function send(textArg?: string | Event): Promise<void> {
     if (units) {
       // 单元路线：逐单元独立会话；工具决策仍在 execTool 内经决策中心门控
       const result = await runUnitPlan(units, {
-        runOnce: (extra) =>
-          runAgent({ ...agentCommon, messages: [...wire, ...extra], maxRounds: UNIT_MAX_ROUNDS }),
+        runOnce: (extra) => {
+          // 大脑直执行结果只注入第一条单元消息（后续单元经 doneNotes 传递）
+          const pre =
+            directNote && !directInjected ? [{ role: "user" as const, content: directNote }] : [];
+          directInjected = true;
+          return runAgent({
+            ...agentCommon,
+            messages: [...wire, ...pre, ...extra],
+            maxRounds: UNIT_MAX_ROUNDS,
+          });
+        },
         onUnitStart: (index) => markUnit(index, "running"),
         onUnitDone: (index, note) => {
           markUnit(index, "ok");
@@ -474,10 +538,12 @@ async function send(textArg?: string | Event): Promise<void> {
         convs.append(convId, { role: "assistant", content: finalText });
       }
     } else {
-      // 直通路线：大脑知识命中（技能/文档摘要）注入 wire，先校准再动手
-      const messages = brainNote
-        ? [...wire, { role: "user" as const, content: brainNote }]
-        : wire;
+      // 直通路线：大脑知识命中 + 原子执行结果注入 wire，先校准再动手
+      const note = [brainNote, directNote && !directInjected ? directNote : ""]
+        .filter(Boolean)
+        .join("\n");
+      directInjected = true;
+      const messages = note ? [...wire, { role: "user" as const, content: note }] : wire;
       const reply = await runAgent({ ...agentCommon, messages });
       // 空回复兜底：绝不让一轮运行无声无息地结束
       finalText =
