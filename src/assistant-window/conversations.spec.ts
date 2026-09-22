@@ -78,4 +78,13 @@ describe("conversations 会话工作区（按项目隔离）", () => {
     expect(msg.id).toBeTruthy();
     expect(() => convs.flush()).not.toThrow();
   });
+
+  it("回归：挂载并发的 ensureActiveMessages 共享建会话（不产出双会话）", async () => {
+    const convs = getConversations();
+    await convs.switchProject("P:/race");
+    // AssistantApp 与 AssistantChat 同时初始化的时序
+    const [a, b] = await Promise.all([convs.ensureActiveMessages(), convs.ensureActiveMessages()]);
+    expect(a).toBe(b);
+    expect(convs.convs()).toHaveLength(1);
+  });
 });

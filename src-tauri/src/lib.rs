@@ -4,6 +4,7 @@
 
 mod appdirs;
 mod ai;
+mod assistant_store;
 mod asset_protocol;
 mod brain;
 mod build;
@@ -946,6 +947,9 @@ pub fn run() {
                 "three-visual-editor:dock-layout:v3",
                 "tve:editor:dock-layout:v3",
             );
+            // 助手会话独立存储：ui-state 里的 conv 系列键一次性迁入
+            // assistant/conversations/（数据与界面状态分离；幂等）
+            assistant_store::migrate(app.handle());
             // 助手大脑：配置根下 brain/ 持久化（快照+冷层归档），启动即恢复并摄取内嵌技能
             let brain_dir = appdirs::config_root(app.handle()).join("brain");
             app.manage(brain::Brain::new(Some(brain_dir.join("snapshot.json.gz"))));
@@ -1149,6 +1153,11 @@ pub fn run() {
             brain::commands::brain_approve,
             devtools::devtools_internal_call,
             toggle_assistant_window,
+            assistant_store::assistant_conv_index_get,
+            assistant_store::assistant_conv_index_set,
+            assistant_store::assistant_conv_doc_get,
+            assistant_store::assistant_conv_doc_set,
+            assistant_store::assistant_conv_doc_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

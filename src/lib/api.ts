@@ -427,6 +427,19 @@ export const api = {
   devtoolsRecentCalls: () => invoke<DevCallLogEntry[]>("devtools_recent_calls"),
 
   // ---------------------------------------------------------------------------
+  // 助手会话独立存储（配置根/assistant/conversations/：index.json + conv-<id>.json，
+  // 原子写）。与 ui-state 分离：会话是数据不是界面状态，索引整体覆盖的事故
+  // 影响面收窄到单文件；历史 ui-state 键由后端 setup 一次性迁移。
+  // ---------------------------------------------------------------------------
+
+  assistantConvIndexGet: () => invoke<string | null>("assistant_conv_index_get"),
+  assistantConvIndexSet: (value: string) => invoke<void>("assistant_conv_index_set", { value }),
+  assistantConvDocGet: (id: string) => invoke<string | null>("assistant_conv_doc_get", { id }),
+  assistantConvDocSet: (id: string, value: string) =>
+    invoke<void>("assistant_conv_doc_set", { id, value }),
+  assistantConvDocDelete: (id: string) => invoke<void>("assistant_conv_doc_delete", { id }),
+
+  // ---------------------------------------------------------------------------
   // 助手大脑（Rust brain 模块）：知识图谱检索 / 策略门控 / 观测回写
   // ---------------------------------------------------------------------------
 

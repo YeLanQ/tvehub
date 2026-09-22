@@ -1,17 +1,17 @@
 // ---------------------------------------------------------------------------
 // 助手会话工作区（按项目隔离）：索引与消息文档分离——
-// - 索引 tve:ai:conv-index：{ projects: { [root]: { activeConvId, convs[] } } }，
+// - 索引 assistant/conversations/index.json：{ projects: { [root]: { activeConvId, convs[] } } }，
 //   启动全载；结构变更即时保存；
-// - 消息文档 tve:ai:conv:<id>：按需加载，改动 400ms 防抖保存。
+// - 消息文档 assistant/conversations/conv-<id>.json：按需加载，append 即时落盘
+//   （无防抖：退出/崩溃的丢失窗口缩到单条在途写入）。
 // root 为空串 = "通用"工作区（未打开项目）。非 Tauri 环境自动退化为纯内存。
+// 丢失防护：所有写路径先等 ensureLoaded()——组件挂载并发早于索引读取完成时，
+// 旧内存空副本会整体覆盖磁盘索引（历史丢会话根因），未加载完成绝不回写。
 // ---------------------------------------------------------------------------
 
 import { reactive } from "vue";
-import { uiStateGet, uiStateSet } from "../lib/ui-state";
+import { api } from "../lib/api";
 import { isTauri } from "../lib/tauri-env";
-
-const KEY_INDEX = "tve:ai:conv-index";
-const KEY_CONV = "tve:ai:conv:";
 
 export type ChatRole = "user" | "assistant" | "tool" | "error";
 
@@ -53,8 +53,48 @@ const state = reactive({
   loaded: false,
 });
 
-/** 消息文档保存防抖（convId -> timer） */
-const docTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** 索引加载 promise（并发挂载共享同一次读取；完成后才允许任何回写） */
+let loadPromise: Promise<void> | null = null;
+
+function ensureLoaded(): Promise<void> {
+  if (state.loaded) return Promise.resolve();
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      if (isTauri()) {
+        try {
+          const raw = await api.assistantConvIndexGet();
+          const doc = raw ? (JSON.parse(raw) as ConvIndex) : null;
+          if (doc?.projects) state.index = doc;
+        } catch {
+          /* 索引损坏按空索引处理（各会话文档仍在，可经会话树重建） */
+        }
+      }
+      state.loaded = true;
+    })();
+  }
+  return loadPromise;
+}
+
+function saveIndex(): void {
+  // 未加载完成绝不回写：磁盘索引会被内存空副本整体覆盖（丢会话根因）
+  if (!isTauri() || !state.loaded) return;
+  void api.assistantConvIndexSet(JSON.stringify(state.index)).catch(() => {
+    /* 存储不可用：仅本次会话有效 */
+  });
+}
+
+/** 消息文档即时落盘（每条消息一次小文件原子写） */
+function saveDoc(convId: string): void {
+  if (!isTauri()) return;
+  const msgs = state.cache.get(convId);
+  if (!msgs) return;
+  void api.assistantConvDocSet(convId, JSON.stringify({ messages: msgs })).catch(() => {
+    /* 存储不可用：仅本次会话有效 */
+  });
+}
+
+/** 并发挂载的建会话互斥：AssistantApp 与 AssistantChat 同时初始化时只建一次 */
+let creating: Promise<string> | null = null;
 
 function workspaceOf(root: string): Workspace {
   if (!state.index.projects[root]) {
@@ -63,23 +103,20 @@ function workspaceOf(root: string): Workspace {
   return state.index.projects[root];
 }
 
-function saveIndex(): void {
-  if (!isTauri()) return;
-  void uiStateSet(KEY_INDEX, state.index);
-}
-
-function scheduleSaveDoc(convId: string): void {
-  if (!isTauri()) return;
-  const prev = docTimers.get(convId);
-  if (prev) clearTimeout(prev);
-  docTimers.set(
-    convId,
-    setTimeout(() => {
-      docTimers.delete(convId);
-      const msgs = state.cache.get(convId);
-      if (msgs) void uiStateSet(KEY_CONV + convId, { messages: msgs });
-    }, 400),
-  );
+/** 读会话消息文档（缓存命中直接返回） */
+async function loadDoc(convId: string): Promise<void> {
+  if (state.cache.has(convId)) return;
+  if (isTauri()) {
+    try {
+      const raw = await api.assistantConvDocGet(convId);
+      const doc = raw ? (JSON.parse(raw) as { messages?: ChatMessage[] }) : null;
+      state.cache.set(convId, doc?.messages ?? []);
+    } catch {
+      state.cache.set(convId, []);
+    }
+  } else {
+    state.cache.set(convId, []);
+  }
 }
 
 export interface ConversationsStore {
@@ -141,12 +178,10 @@ export function getConversations(): ConversationsStore {
       return state.index;
     },
     async load() {
-      if (state.loaded) return;
-      const doc = await uiStateGet<ConvIndex>(KEY_INDEX);
-      if (doc?.projects) state.index = doc;
-      state.loaded = true;
+      await ensureLoaded();
     },
     async switchProject(root) {
+      await ensureLoaded();
       state.activeRoot = root;
       const ws = workspaceOf(root);
       if (!ws.activeConvId && ws.convs.length === 0) {
@@ -156,11 +191,7 @@ export function getConversations(): ConversationsStore {
         saveIndex();
       }
       if (ws.activeConvId) {
-        const id = ws.activeConvId;
-        if (!state.cache.has(id)) {
-          const doc = await uiStateGet<{ messages: ChatMessage[] }>(KEY_CONV + id);
-          state.cache.set(id, doc?.messages ?? []);
-        }
+        await loadDoc(ws.activeConvId);
       }
     },
     convs() {
@@ -170,26 +201,28 @@ export function getConversations(): ConversationsStore {
       return workspaceOf(state.activeRoot).activeConvId;
     },
     async ensureActiveMessages() {
+      await ensureLoaded();
       const ws = workspaceOf(state.activeRoot);
       if (!ws.activeConvId) {
-        await this.newConversation(state.activeRoot);
+        // 两路并发同时发现无会话：共享同一次建会话，避免双会话
+        if (!creating) {
+          creating = this.newConversation(state.activeRoot).finally(() => {
+            creating = null;
+          });
+        }
+        await creating;
       }
       const id = workspaceOf(state.activeRoot).activeConvId as string;
-      if (!state.cache.has(id)) {
-        const doc = await uiStateGet<{ messages: ChatMessage[] }>(KEY_CONV + id);
-        state.cache.set(id, doc?.messages ?? []);
-      }
+      await loadDoc(id);
       return state.cache.get(id) as ChatMessage[];
     },
     async selectConv(root, convId) {
+      await ensureLoaded();
       const ws = workspaceOf(root);
       if (!ws.convs.some((c) => c.id === convId)) return;
       ws.activeConvId = convId;
       saveIndex();
-      if (!state.cache.has(convId)) {
-        const doc = await uiStateGet<{ messages: ChatMessage[] }>(KEY_CONV + convId);
-        state.cache.set(convId, doc?.messages ?? []);
-      }
+      await loadDoc(convId);
     },
     convsOf(root) {
       return state.index.projects[root]?.convs ?? [];
@@ -198,6 +231,7 @@ export function getConversations(): ConversationsStore {
       return state.index.projects[root]?.activeConvId ?? null;
     },
     async newConversation(root, title) {
+      await ensureLoaded();
       const ws = workspaceOf(root);
       const conv: ConvMeta = {
         id: uid(),
@@ -221,10 +255,12 @@ export function getConversations(): ConversationsStore {
       state.cache.set(convId, msgs);
       // 标题只在默认名阶段被首条用户消息命名一次，之后保持稳定
       touch(convId, state.activeRoot, msg.role === "user" ? msg.content.slice(0, 24) : undefined);
-      scheduleSaveDoc(convId);
+      saveDoc(convId);
       return full;
     },
     remove(root, convId) {
+      // 未加载完成拒绝删除：内存副本不是磁盘真相，删了会在下次 load 复活
+      if (!state.loaded) return;
       const ws = workspaceOf(root);
       const i = ws.convs.findIndex((c) => c.id === convId);
       if (i < 0) return;
@@ -232,16 +268,10 @@ export function getConversations(): ConversationsStore {
       state.cache.delete(convId);
       if (ws.activeConvId === convId) ws.activeConvId = ws.convs[ws.convs.length - 1]?.id ?? null;
       saveIndex();
-      if (isTauri()) void uiStateSet(KEY_CONV + convId, null);
+      if (isTauri()) void api.assistantConvDocDelete(convId).catch(() => {});
     },
     flush() {
-      if (!isTauri()) return;
-      for (const [convId, timer] of docTimers) {
-        clearTimeout(timer);
-        const msgs = state.cache.get(convId);
-        if (msgs) void uiStateSet(KEY_CONV + convId, { messages: msgs });
-      }
-      docTimers.clear();
+      // 消息文档已即时落盘，这里只剩索引兜底
       saveIndex();
     },
   };
