@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, compactToolHistory, doneWritesNote, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, compactToolHistory, contextBudgetChars, doneWritesNote, fitWireBudget, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire, toolResultLimitFor } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
 import type { AssistantReply, WireMessage } from "./agent";
@@ -763,6 +763,63 @@ describe("doneWritesNote（跨轮防重复备忘）", () => {
       { role: "tool", toolName: "node.add", content: '{"ok":true}', result: true },
     ];
     expect(doneWritesNote(rows)).toContain("node.add(kind=mesh)");
+  });
+});
+
+describe("上下文预算（contextK → 预算/裁剪/截断放大）", () => {
+  it("正常：预算 = K×1024×1.5，未配置回落 128K", () => {
+    expect(contextBudgetChars(128)).toBe(196_608);
+    expect(contextBudgetChars(1024)).toBe(1_572_864);
+    expect(contextBudgetChars(undefined)).toBe(contextBudgetChars(128));
+  });
+
+  it("边界/异常：0 与负数回落默认窗口", () => {
+    expect(contextBudgetChars(0)).toBe(contextBudgetChars(128));
+    expect(contextBudgetChars(-5)).toBe(contextBudgetChars(128));
+  });
+
+  it("正常：工具结果上限随预算放大，小预算保底 4000、封顶 64K", () => {
+    expect(toolResultLimitFor(contextBudgetChars(128))).toBeGreaterThan(4000);
+    expect(toolResultLimitFor(1024)).toBe(4000);
+    expect(toolResultLimitFor(contextBudgetChars(1024))).toBe(65536);
+  });
+
+  it("正常：fitWireBudget 预算内原样返回，超预算裁最老历史、system 恒保留", () => {
+    const big = "x".repeat(900);
+    const wire: WireMessage[] = [
+      { role: "system", content: "系统提示词" },
+      { role: "user", content: big },
+      { role: "assistant", content: big },
+      { role: "user", content: "最新问题" },
+    ];
+    expect(fitWireBudget(wire, 4000)).toBe(wire);
+    const fitted = fitWireBudget(wire, 1500);
+    expect(fitted[0]?.role).toBe("system");
+    expect(fitted.some((m) => m.role === "user" && m.content === "最新问题")).toBe(true);
+    expect(fitted.some((m) => m.content === big && m.role === "user")).toBe(false);
+    // 传入数组不被改动（历史保持完整，工具配对不受影响）
+    expect(wire).toHaveLength(4);
+  });
+
+  it("空值：空 wire 与非法预算不报错", () => {
+    expect(fitWireBudget([], 1000)).toEqual([]);
+    const wire: WireMessage[] = [{ role: "user", content: "只有一条" }];
+    expect(fitWireBudget(wire, 0)).toBe(wire);
+  });
+
+  it("正常：大预算下压实保留窗放大（8 批全文 ≤ 预算一半 → 全保）", () => {
+    const big = "y".repeat(1200);
+    const history: WireMessage[] = [{ role: "user", content: "任务" }];
+    const starts: number[] = [];
+    for (let b = 0; b < 8; b++) {
+      starts.push(history.length);
+      history.push({ role: "tool", content: big + b, tool_call_id: `t${b}` });
+      history.push({ role: "assistant", content: `第${b}步` });
+    }
+    compactToolHistory(history, starts, contextBudgetChars(1024));
+    for (let b = 0; b < 8; b++) {
+      expect(history[starts[b]]?.content).toBe(big + b);
+    }
   });
 });
 

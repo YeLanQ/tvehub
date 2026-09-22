@@ -117,6 +117,7 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
         apiKey: "k",
         model: "m",
         models: ["m"],
+        contextK: 128,
       });
     }
     store.setActiveProvider("p1");
@@ -164,6 +165,7 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
         apiKey: "k",
         model: "m",
         models: ["m"],
+        contextK: 128,
       });
     }
     store.setActiveProvider("p1");

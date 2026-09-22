@@ -66,6 +66,14 @@ describe("assistant store（供应商）", () => {
     expect(s.activeProviderId).toBe("");
   });
 
+  it("正常：新供应商默认上下文窗口 128K，可改为 1M", () => {
+    const s = getAssistantStore();
+    const p = s.createProvider(makeProvider());
+    expect(s.providers[0].contextK).toBe(128);
+    s.updateProvider(p.id, { contextK: 1024 });
+    expect(s.activeProvider?.contextK).toBe(1024);
+  });
+
   it("异常：updateProvider 未知 id 静默；setActiveProvider 未知 id 不生效", () => {
     const s = getAssistantStore();
     const p = s.createProvider(makeProvider());

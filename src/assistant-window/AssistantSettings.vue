@@ -69,6 +69,12 @@ function setProviderField(
 function setProviderModel(value: string): void {
   if (activeProvider.value) store.updateProvider(activeProvider.value.id, { model: value });
 }
+function setProviderContextK(ev: Event): void {
+  const el = ev.target as HTMLInputElement;
+  const n = Number(el.value);
+  const k = Number.isFinite(n) && n > 0 ? Math.min(2048, Math.round(n)) : 0;
+  if (activeProvider.value) store.updateProvider(activeProvider.value.id, { contextK: k });
+}
 
 function exportCards(): void {
   const doc = JSON.stringify(store.cards, null, 2);
@@ -195,6 +201,7 @@ async function fetchModels(): Promise<void> {
         <label>API 地址（OpenAI 兼容，含 /v1）<input :value="activeProvider.baseUrl" placeholder="https://api.openai.com/v1" @change="setProviderField('baseUrl', $event)" /></label>
         <label>API Key（仅保存在本机）<div class="aset-keyrow"><input :type="showKey ? 'text' : 'password'" :value="activeProvider.apiKey" @change="setProviderField('apiKey', $event)" /><button @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button></div></label>
         <label>模型（可手填，或先「拉取模型列表」再选）<ComboBox :model-value="activeProvider.model" :options="activeProvider.models" placeholder="gpt-4o-mini / deepseek-chat / …" @update:model-value="setProviderModel" /></label>
+        <label>上下文窗口 K token（按模型实际窗口填，0 = 默认 128；1024 = 1M）<input :value="activeProvider.contextK ?? 128" type="number" min="0" max="2048" step="1" placeholder="128" @change="setProviderContextK" /></label>
         <div class="aset-actions">
           <button :disabled="fetching" @click="fetchModels">{{ fetching ? "拉取中…" : "拉取模型列表" }}</button>
         </div>

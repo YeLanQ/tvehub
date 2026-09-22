@@ -43,8 +43,7 @@ export type ChatFn = (args: StreamArgs) => Promise<AssistantReply>;
  * 建造类任务（建项目 → 开项目 → 逐个加节点 → 写脚本 → 预览）单轮通常只推进
  * 1-2 步，24 轮才够一次完整交付；仍超限时走「继续」续跑。 */
 const MAX_ROUNDS = 24;
-const TOOL_RESULT_LIMIT = 4000;
-/** 重复调用守卫：同参数纯加载（load_skill/load_doc）刚成功且在结果保留窗内
+const TOOL_RESULT_LIMIT = 4000;/** 重复调用守卫：同参数纯加载（load_skill/load_doc）刚成功且在结果保留窗内
  *  再发 → 短路提示不重发请求——弱模型反复重载同一技能/文档是空转轮大头 */
 const PURE_LOAD_METHODS = new Set(["load_skill", "load_doc"]);
 /** 同参数连败 N 次后短路：前两次真实重试（环境补齐后同参可成，如先
@@ -57,6 +56,48 @@ const RESULT_HEAD_KEEP = 420;
 /** 空回复续跑预算：方言模型/不稳供应商一轮任务里可能空嗝多次——2 次不够会
  * 频繁落兜底文案打断任务（用户被迫手动「继续」），给到 4 次 */
 const MAX_EMPTY_RESCUES = 8;
+
+// ---------------------------------------------------------------------------
+// 上下文预算：供应商按模型实际窗口配置 contextK（千 token，1024 = 1M）。
+// 预算内工具结果保全文、历史原样全发；装不下才裁最老历史/压实旧工具结果
+// ——大窗口模型（1M 级）不再被固定的 4000 字截断和 6 批保留窗卡住容量。
+// ---------------------------------------------------------------------------
+
+/** 未配置时的默认窗口（千 token） */
+export const DEFAULT_CONTEXT_K = 128;
+/** 预算的字符换算系数：中英混排保守估计，宁少勿超（超了供应商会 400/截断） */
+const CHARS_PER_TOKEN = 1.5;
+
+/** 上下文预算（字符）= K × 1024 × CHARS_PER_TOKEN；非法值回落默认窗口 */
+export function contextBudgetChars(contextK?: number): number {
+  const k = contextK && contextK > 0 ? contextK : DEFAULT_CONTEXT_K;
+  return Math.round(k * 1024 * CHARS_PER_TOKEN);
+}
+
+/** 工具结果单条上限随预算放大：预算/16，下限 TOOL_RESULT_LIMIT 上限 64K */
+export function toolResultLimitFor(budgetChars: number): number {
+  return Math.min(65536, Math.max(TOOL_RESULT_LIMIT, Math.floor(budgetChars / 16)));
+}
+
+/** 装不下预算才裁：从最新消息回溯累加，超出预算处之前的非 system 消息整体
+ * 裁掉（system 恒保留）。只裁发送视图，不改动传入数组——历史本身保持完整，
+ * 工具配对/批起点下标不受影响。 */
+export function fitWireBudget(wire: WireMessage[], budgetChars: number): WireMessage[] {
+  if (budgetChars <= 0 || wire.length === 0) return wire;
+  let used = 0;
+  let cut = 0;
+  for (let i = wire.length - 1; i >= 0; i--) {
+    const m = wire[i];
+    if (m.role === "system") continue;
+    used += m.content.length + 8;
+    if (used > budgetChars) {
+      cut = i + 1;
+      break;
+    }
+  }
+  if (cut === 0) return wire;
+  return wire.filter((m, i) => m.role === "system" || i >= cut);
+}
 
 /** 正文疑似工具调用但解析失败的痕迹（只认标签形态，普通 JSON 数据不误伤） */
 const TOOL_MARK_RE = /<\s*tool_call|<\s*invoke\b|<\s*function\b|<\/\s*(tool_call|invoke|function)>/;
@@ -194,6 +235,8 @@ export interface RunAgentOptions {
   apiKey: string;
   model: string;
   temperature?: number;
+  /** 供应商上下文窗口（千 token；缺省 128）——预算决定历史保留与结果截断 */
+  contextK?: number;
   onDelta?: (text: string) => void;
   onEvent?: (e: AgentEvent) => void;
   maxRounds?: number;
@@ -209,6 +252,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   const guard = { okLoads: new Map<string, number>(), fails: new Map<string, number>() };
   /** 各批工具结果在 history 中的起始下标（压实保留窗基准） */
   const batchStarts: number[] = [];
+  /** 上下文预算与随预算放大的单条工具结果上限 */
+  const budget = contextBudgetChars(opts.contextK);
+  const resultLimit = toolResultLimitFor(budget);
   const stopped = (note: string): AssistantReply => ({ content: note, toolCalls: [] });
   let nudges = 0;
   const MAX_FORMAT_NUDGES = 2;
@@ -222,15 +268,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   let lastWasFeed = false;
   for (let round = 0; round < maxRounds; round++) {
     if (opts.shouldStop?.()) return stopped("已按要求停止。");
-    // 每轮发送前压实保留窗外的旧工具结果（全文只在最近几批需要：更早的
+    // 每轮发送前压实保留窗外的旧工具结果（预算内多批全文保留：更早的
     // 结果模型基本不会再引用，却全额计入 prefill 拖慢弱模型推理）
-    compactToolHistory(history, batchStarts);
+    compactToolHistory(history, batchStarts, budget);
     const reply = await opts.chat({
       baseUrl: opts.baseUrl,
       apiKey: opts.apiKey,
       model: opts.model,
       temperature: opts.temperature,
-      messages: history,
+      messages: fitWireBudget(history, budget),
       onDelta: opts.onDelta,
     });
     history.push({
@@ -323,7 +369,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
     }
     // 同轮调用互相独立 → 并行执行；结果按调用顺序回喂，配对关系不变
     batchStarts.push(history.length);
-    const results = await Promise.all(calls.map((call) => execOne(opts, call, inline, guard, round)));
+    const results = await Promise.all(calls.map((call) => execOne(opts, call, inline, guard, round, resultLimit)));
     history.push(...results);
     // 复读检测基准 = 最近一次回喂文本头部（inline 与 native tool 通道都覆盖）
     lastFeedCore = results[results.length - 1]?.content?.slice(0, 200) ?? "";
@@ -346,10 +392,26 @@ function isErrResultText(text: string): boolean {
   }
 }
 
-/** 压实保留窗外的旧工具结果：只留头部；最新 RESULT_KEEP_BATCHES 批保全文 */
-export function compactToolHistory(history: WireMessage[], batchStarts: number[]): void {
-  if (batchStarts.length <= RESULT_KEEP_BATCHES) return;
-  const cutoff = batchStarts[batchStarts.length - RESULT_KEEP_BATCHES];
+/** 压实保留窗外的旧工具结果：只留头部；最新几批保全文。保留窗 = 至少
+ *  RESULT_KEEP_BATCHES 批；传入预算时按「最近各批全文总量 ≤ 预算一半」
+ *  放大——1M 窗口下几十批都能全保，装不下才压实省 prefill。 */
+export function compactToolHistory(history: WireMessage[], batchStarts: number[], budgetChars?: number): void {
+  let keep = RESULT_KEEP_BATCHES;
+  if (budgetChars && batchStarts.length > keep) {
+    const halfBudget = budgetChars / 2;
+    let used = 0;
+    let fit = 0;
+    for (let i = batchStarts.length - 1; i >= 0; i--) {
+      const from = batchStarts[i];
+      const to = i + 1 < batchStarts.length ? batchStarts[i + 1] : history.length;
+      for (let j = from; j < to; j++) used += history[j].content.length;
+      if (used > halfBudget) break;
+      fit = batchStarts.length - i;
+    }
+    keep = Math.max(keep, fit);
+  }
+  if (batchStarts.length <= keep) return;
+  const cutoff = batchStarts[batchStarts.length - keep];
   for (let i = 0; i < cutoff; i++) {
     const m = history[i];
     const isResult = m.role === "tool" || (m.role === "user" && m.content.startsWith("[工具 "));
@@ -371,6 +433,7 @@ async function execOne(
   inline: boolean,
   guard: { okLoads: Map<string, number>; fails: Map<string, number> },
   round: number,
+  resultLimit: number,
 ): Promise<WireMessage> {
   opts.onEvent?.({ type: "tool_start", name: call.name, args: call.arguments, callId: call.id });
   const sig = call.name + String.fromCharCode(0) + (call.arguments ?? "").trim();
@@ -383,7 +446,7 @@ async function execOne(
     result = JSON.stringify({ error: `同一调用（${call.name} 相同参数）已连续失败 ${fails} 次，原样重发必然再失败：按前文错误提示修正参数或改用其他方法，无法修正则跳过该步并在总结中说明` });
   } else {
     try {
-      result = truncateResult(await opts.execTool(call.name, call.arguments));
+      result = truncateResult(await opts.execTool(call.name, call.arguments), resultLimit);
     } catch (e) {
       result = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -402,14 +465,15 @@ async function execOne(
     : { role: "tool", content: result, tool_call_id: call.id };
 }
 
-function truncateResult(value: unknown): string {
+/** 结果超限截断（上限随上下文预算放大，见 toolResultLimitFor） */
+function truncateResult(value: unknown, limit: number): string {
   let text: string;
   try {
     text = typeof value === "string" ? value : JSON.stringify(value);
   } catch {
     text = String(value);
   }
-  return text.length > TOOL_RESULT_LIMIT ? text.slice(0, TOOL_RESULT_LIMIT) + "…（已截断）" : text;
+  return text.length > limit ? text.slice(0, limit) + "…（已截断）" : text;
 }
 
 /** 历史消息 → wire（丢弃工具/错误轮：工具结果仅在当轮内存中有效） */

@@ -37,6 +37,9 @@ export interface AiProvider {
   model: string;
   /** /models 拉取结果（可失败；手填模型合并去重） */
   models: string[];
+  /** 上下文窗口（千 token）：0 = 默认 128；1024 = 1M——按模型实际窗口填写，
+   *  助手据此放大工具结果上限与历史保留预算，装不下才裁最老历史 */
+  contextK: number;
 }
 
 interface CardsDoc {
@@ -216,6 +219,7 @@ export function getAssistantStore(): AssistantStore {
         apiKey: "",
         model: "",
         models: [],
+        contextK: 128,
         ...partial,
       };
       state.providers.push(provider);

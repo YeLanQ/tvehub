@@ -593,6 +593,7 @@ async function send(textArg?: string | Event): Promise<void> {
     apiKey: prov.apiKey,
     model: card0?.model?.trim() ? card0.model.trim() : prov.model,
     temperature: card0?.temperature ?? undefined,
+    contextK: prov.contextK,
     onDelta: (t: string) => {
       // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
       streamingText.value = streamingDisplay(t);

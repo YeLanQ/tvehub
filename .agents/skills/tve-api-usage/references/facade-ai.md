@@ -17,6 +17,11 @@
 启停无关）。`project.create` 已下沉为 Rust 直答（`project/create_local.rs`：exe 旁
 /仓库 public/templates 读内置 3D 模板 → 脚手架 + 登记最近 + 广播），不依赖编辑器；
 未传 parent 时取 prefs 默认项目目录，无默认则报错要求显式提供（后端不弹目录框）。
+供应商配置（`store.ts` `AiProvider.contextK`：上下文窗口千 token，默认 128，
+1024 = 1M）随 `uiStateSet(tve:ai:providers)` 持久化；`agent.ts` 按预算
+（`contextBudgetChars` = K×1024×1.5 字符）自适应：工具结果单条上限与压实保留窗
+随预算放大（上限 64K/条），超预算才由 `fitWireBudget` 裁最老历史（system 恒保留，
+只裁发送视图不动内存历史）——大窗口模型按实际窗口填写即可用满，不再被固定截断。
 
 ## 使用例
 
