@@ -41,6 +41,12 @@ export function unitInstruction(
   if (unit.method) {
     lines.push(`预测入口工具：${unit.method}（建议首选；回执不符时按实际调整参数或改用其他工具）。`);
   }
+  if (unit.refs?.length) {
+    lines.push(
+      `图谱参考：大脑在本单元命中了相关知识——${unit.refs.join("、")}。` +
+        "可用 load_skill 或 brain.query 深查后再动手。",
+    );
+  }
   if (doneNotes.length) {
     lines.push("已完成单元（不要重复执行）：", ...doneNotes.map((n) => `- ${n}`));
   }

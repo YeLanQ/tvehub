@@ -72,6 +72,7 @@ function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: 
       method: u.method,
       zone: u.zone,
       phase: u.phase,
+      refs: u.refs ?? [],
       status: "pending" as const,
     })),
   };
@@ -386,7 +387,7 @@ async function send(textArg?: string | Event): Promise<void> {
     nluRun.value = toNluData(deco);
     units = usablePlan(deco);
     if (!units) {
-      nluRun.value.traces.push({ stage: "降级", detail: "语义信号不足，整任务直通助手" });
+      nluRun.value.traces.push({ stage: "直通", detail: "单元预测信号不足，整任务交由助手全权执行" });
     }
     // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
     convs.append(convId, {

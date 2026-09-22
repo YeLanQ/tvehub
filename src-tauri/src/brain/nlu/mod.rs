@@ -31,6 +31,9 @@ pub struct TaskUnit {
     pub zone: Option<Zone>,
     /// 任务阶段：inspect 调研 / act 执行 / verify 验证
     pub phase: matcher::Phase,
+    /// 图谱参考知识：本段命中的技能/概念（含 docs 基图元）标签——转发给
+    /// 助手作深查提示（load_skill / brain.query），不参与门控
+    pub refs: Vec<String>,
 }
 
 /// 处理轨迹：每个阶段的短句（前端过程容器逐条上屏）
@@ -85,6 +88,7 @@ pub fn decompose(hot: &mut HotTier, task: &str, now: u64) -> Decomposition {
             source,
             zone,
             phase,
+            refs: matcher::knowledge_refs(&hits),
         });
     }
     traces.push(NluTrace {

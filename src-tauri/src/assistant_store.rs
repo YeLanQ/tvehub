@@ -9,7 +9,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 fn store_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::appdirs::config_root(app)

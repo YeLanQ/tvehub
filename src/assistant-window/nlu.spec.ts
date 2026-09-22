@@ -11,8 +11,8 @@ import {
   type UnitRunDeps,
 } from "./nlu";
 
-function unit(index: number, text: string, method: string | null): BrainTaskUnit {
-  return { index, text, method, source: method ? "lexicon" : null, zone: method ? "yellow" : null, phase: "act" };
+function unit(index: number, text: string, method: string | null, refs: string[] = []): BrainTaskUnit {
+  return { index, text, method, source: method ? "lexicon" : null, zone: method ? "yellow" : null, phase: "act", refs };
 }
 
 function deco(units: BrainTaskUnit[]): BrainDecomposition {
@@ -65,6 +65,14 @@ describe("unitInstruction 单元指令", () => {
     const msg = unitInstruction(unit(2, "b", "asset.list"), ["a → 完成"], 2);
     expect(msg).toContain("不要重复执行");
     expect(msg).toContain("- a → 完成");
+  });
+
+  it("正常：图谱参考进入指令提示深查；无参考不出现该行", () => {
+    const withRefs = unitInstruction(unit(1, "写一个tween动画脚本", "asset.write", ["tween 补间动画"]), [], 1);
+    expect(withRefs).toContain("图谱参考");
+    expect(withRefs).toContain("tween 补间动画");
+    expect(withRefs).toContain("load_skill");
+    expect(unitInstruction(unit(1, "随便做", null), [], 1)).not.toContain("图谱参考");
   });
 });
 

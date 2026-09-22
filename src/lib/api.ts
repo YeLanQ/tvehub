@@ -508,6 +508,8 @@ export interface BrainTaskUnit {
   zone: "green" | "yellow" | "red" | null;
   /** 任务阶段：inspect 调研 / act 执行 / verify 验证 */
   phase: "inspect" | "act" | "verify";
+  /** 图谱参考知识：本段命中的技能/概念标签（转发给助手深查，不参与门控） */
+  refs: string[];
 }
 
 /** 处理轨迹短句（过程容器逐条上屏） */

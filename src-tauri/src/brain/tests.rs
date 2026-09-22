@@ -12,8 +12,25 @@ fn brain_boots_with_embedded_skills_and_plans() {
         "内嵌技能组应有 8 个技能节点：{:?}",
         stats.nodes_by_kind
     );
+    // docs 基图元：手册全量入图，概念层保证检索底料非空
+    assert!(
+        stats.nodes_by_kind.get("concept").copied().unwrap_or(0) >= 20,
+        "docs 应为概念层提供足量节点：{:?}",
+        stats.nodes_by_kind
+    );
     let plan = brain.plan("帮我写一个旋转脚本组件");
     assert!(!plan.skills.is_empty(), "脚本任务应路由到技能");
+}
+
+#[test]
+fn routes_docs_queries_to_doc_nodes() {
+    let brain = Brain::new(None);
+    let hits = brain.query("补间动画 tween 缓动 easing", 6);
+    assert!(
+        hits.iter().any(|h| h.id.starts_with("concept:doc:")),
+        "docs 概念基图元应可被检索命中：{:?}",
+        hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>()
+    );
 }
 
 #[test]

@@ -12,6 +12,8 @@ export interface NluUnitRow {
   method?: string | null;
   zone?: "green" | "yellow" | "red" | null;
   phase: "inspect" | "act" | "verify";
+  /** 图谱参考知识标签（技能/概念命中） */
+  refs?: string[];
   status: "pending" | "running" | "ok" | "fail";
 }
 
@@ -95,6 +97,11 @@ watch(
         <span class="anlu-phase" :class="u.phase">{{ PHASE_SHORT[u.phase] }}</span>
         <span class="anlu-text">{{ unitText(u.text) }}</span>
         <span v-if="u.method" class="anlu-method" :title="`预测入口：${u.method}`">→ {{ u.method }}</span>
+        <span
+          v-if="u.refs?.length"
+          class="anlu-refs"
+          :title="`图谱参考：${u.refs.join('、')}`"
+        >◎ {{ u.refs[0] }}{{ u.refs.length > 1 ? ` +${u.refs.length - 1}` : "" }}</span>
         <span v-if="u.zone" class="anlu-zone" :class="u.zone" :title="u.zone === 'green' ? '只读' : u.zone === 'yellow' ? '写操作' : '禁止'" />
         <span v-if="running" class="anlu-mark" :class="u.status">{{ STATUS_MARK[u.status] }}</span>
       </div>
@@ -176,6 +183,7 @@ watch(
 }
 .anlu-text { color: inherit; }
 .anlu-method { margin: 0 4px; color: var(--text-dim); }
+.anlu-refs { margin: 0 4px; color: var(--accent); opacity: 0.85; }
 .anlu-zone {
   flex: none;
   width: 7px;

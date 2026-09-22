@@ -67,7 +67,7 @@ fn ingest_one(hot: &mut HotTier, s: &SkillEntry, now: u64, report: &mut IngestRe
 }
 
 /// 词元频次统计：中文按字/二元组、英文按词，取频次 Top-N（稳定排序）
-fn top_tokens(text: &str, n: usize) -> Vec<String> {
+pub(crate) fn top_tokens(text: &str, n: usize) -> Vec<String> {
     let mut freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for f in crate::brain::vector::embed::features(text) {
         *freq.entry(f).or_default() += 1;

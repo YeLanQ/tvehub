@@ -68,7 +68,7 @@ fn scan_skills(root: &Path) -> Vec<RawSkill> {
 }
 
 /// 手写 JSON 字符串转义（build.rs 不引 serde_json，控制构建依赖面）
-fn json_escape(s: &str) -> String {
+pub(crate) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {

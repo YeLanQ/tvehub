@@ -9,6 +9,7 @@
 use std::sync::Mutex;
 
 pub mod commands;
+pub mod docsrc;
 pub mod dto;
 pub mod execute;
 pub mod graph;
@@ -71,13 +72,22 @@ impl Brain {
         }
         let report =
             skillsrc::ingest::ingest_all(&mut core.store.hot, skillsrc::embedded_skills(), now_ms());
+        // 文档基图元：docs 手册全量入图（Concept 节点群）——与技能共同保证
+        // 语义检索的冷启动底料；任一索引缺失时另一层仍在
+        let doc_report = docsrc::ingest_docs(&mut core.store.hot, docsrc::embedded_docs(), now_ms());
         // 启动即落基线快照：brain/ 目录随首启可见；低频使用（观测不足自动
         // tick 间隔）时的积累也不只停留在内存。内存模式（None）为空操作。
         let boot_saved = core.store.save(&core.ledger.by_method).is_ok();
         let boot_flushed = core.store.cold.flush().is_ok();
+        if core.store.hot.nodes.is_empty() {
+            eprintln!(
+                "[brain] 警告：图谱为空（技能与文档索引均未摄取成功），语义检索将无命中"
+            );
+        }
         eprintln!(
-            "[brain] 就绪：内嵌技能 {} 条，热层节点 {}，边 {}，快照 {}",
+            "[brain] 就绪：内嵌技能 {} 条，文档 {} 篇，热层节点 {}，边 {}，快照 {}",
             report.skills,
+            doc_report.docs,
             core.store.hot.nodes.len(),
             core.store.hot.edges.len(),
             if boot_saved && boot_flushed { "已落盘" } else { "落盘失败" }

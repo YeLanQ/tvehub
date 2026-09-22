@@ -77,15 +77,49 @@ const INSPECT_WORDS: &[&str] = &[
 /// 验证语
 const VERIFY_WORDS: &[&str] = &["预览", "截图", "验证", "确认效果", "试玩", "测试运行"];
 
-/// 预测一个段的方法：图命中命令节点取最高分；否则词典加权（命中词长平方累加）。
-/// 返回 (方法, 来源："graph" | "lexicon")
+/// 组合规则：动宾分离的中文任务表述（"写一个tween动画脚本"——"写"与"脚本"
+/// 不相邻，连续词组匹配落空）。宾语集 × 动词集同段共现即命中。预测只是建议，
+/// 宽匹配的误伤代价有界（模型按工具回执自纠）。
+const COMBOS: &[(&[&str], &[&str], &str)] = &[
+    (
+        &["脚本", "代码", "组件"],
+        &["写", "编写", "生成", "创建", "新建", "改", "修", "加"],
+        "asset.write",
+    ),
+    (&["场景"], &["打开", "载入", "重载", "加载", "切换"], "scene.open"),
+    (&["项目"], &["打开", "载入", "切换"], "project.open"),
+    (&["资产", "文件"], &["列出", "列表", "看看", "有哪些"], "asset.list"),
+];
+
+/// 动宾组合预测（连续词组落空后的兜底）
+fn combo_predict(seg: &str) -> Option<(String, &'static str)> {
+    for (objects, verbs, method) in COMBOS {
+        if objects.iter().any(|o| seg.contains(o)) && verbs.iter().any(|v| seg.contains(v)) {
+            return Some((method.to_string(), "lexicon"));
+        }
+    }
+    None
+}
+
+/// 预测一个段的方法：图命中命令节点取最高分；否则词典加权（命中词长平方累加）；
+/// 再退到动宾组合。返回 (方法, 来源："graph" | "lexicon")
 pub fn predict_method(seg: &str, hits: &[RouteHit]) -> Option<(String, &'static str)> {
     if let Some(hit) = hits.iter().find(|h| h.kind == NodeKind::Command) {
         if let Some(method) = hit.id.strip_prefix("cmd:") {
             return Some((method.to_string(), "graph"));
         }
     }
-    lexicon_predict(seg)
+    lexicon_predict(seg).or_else(|| combo_predict(seg))
+}
+
+/// 图谱参考知识：非命令命中（技能/概念——docs 基图元在这里）的标签。
+/// 命中即说明图谱里有相关领域知识，随单元转发给助手深查（load_skill 等）。
+pub fn knowledge_refs(hits: &[RouteHit]) -> Vec<String> {
+    hits.iter()
+        .filter(|h| h.kind != NodeKind::Command)
+        .take(2)
+        .map(|h| h.label.clone())
+        .collect()
 }
 
 fn lexicon_predict(seg: &str) -> Option<(String, &'static str)> {
@@ -147,6 +181,26 @@ mod tests {
     #[test]
     fn no_prediction_for_chit_chat() {
         assert!(predict_method("你好呀", &[]).is_none());
+    }
+
+    #[test]
+    fn combo_matches_split_verb_object() {
+        // 回归：词典只认连续词组时，「写一个tween动画脚本」的"写"与"脚本"
+        // 被隔开，写脚本动作落空 → 单元降级
+        let (m, src) = predict_method("写一个tween动画脚本", &[]).expect("动宾组合应命中");
+        assert_eq!(m, "asset.write");
+        assert_eq!(src, "lexicon");
+    }
+
+    #[test]
+    fn knowledge_refs_skip_commands() {
+        let hits = [
+            hit("cmd:node.add", NodeKind::Command, 0.9),
+            hit("concept:doc:sdk/tween.md", NodeKind::Concept, 0.7),
+            hit("skill:script", NodeKind::Skill, 0.6),
+        ];
+        let refs = knowledge_refs(&hits);
+        assert_eq!(refs, vec!["concept:doc:sdk/tween.md", "skill:script"], "命令不进参考");
     }
 
     #[test]

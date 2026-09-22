@@ -20,7 +20,10 @@ Rust 侧总装在 `src-tauri/src/brain/mod.rs`（Brain 状态，setup 阶段以
 `brain/graph/`（图操作/因果链/语义路由）、`brain/vector/`（128 维哈希嵌入 → i8 量化，
 近重复 cos ≥ 0.999 合并）、`brain/policy/`（zones 三区表 / budget 效能比 /
 strategy 计划）、`brain/nlu/`（语义单元化：segment 分段 / matcher 命令预测 /
-mod 总装 decompose）、`brain/skillsrc/`（摄取构建期内嵌技能索引）、`brain/execute.rs`
+mod 总装 decompose）、`brain/skillsrc/`（摄取构建期内嵌技能索引）、`brain/docsrc/`
+（**文档基图元**：public/docs submodule 的 22 篇手册经构建期 docs_index.json 内嵌，
+摄取为 Concept 节点群——Mentions 词元锚点 + Uses 已知命令，与技能共同保证冷启动
+检索底料非空）、`brain/execute.rs`
 （**决策中心执行器**：`Brain::execute` 三段式持锁——门控（锁）→ 派发（无锁，
 可等编辑器回填 60s）→ 观测（锁）；审批会话存 `BrainCore.approvals`）。
 
@@ -77,6 +80,9 @@ Rust 侧单测随模块内联（`cargo test --lib`，brain 域含执行域）：
 - `brain/graph/route.rs` — 语义路由命中/无关查询低分/访问加热
 - `brain/nlu/` — 分段（连接词/序号/标点/封顶去重）、命令预测（图命中优先/
   词典加权/阶段推断）、总装（多单元拆解/方法与区域/空任务/闲聊无预测）
+- `brain/docsrc/` — 内嵌 docs 索引非空（≥20 篇/含 sdk/tween.md）、摄取建
+  Concept 节点与 Mentions/Uses 边且幂等；`brain::tests` 锁 boot 概念计数
+  （≥20）与 docs 检索命中（concept:doc:* 可被 query 命中）
 - `brain/store/` — 冷却下沉/结构类拒绝下沉/按 id 提升/gzip 归档往返
 
 前端 `src/assistant-window/tools.spec.ts` 覆盖 root 注入与决策中心回执 → 工具结果
