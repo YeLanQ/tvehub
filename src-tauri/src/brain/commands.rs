@@ -26,6 +26,17 @@ pub fn brain_plan(state: State<'_, Brain>, task: String) -> Result<Plan, String>
     Ok(plan)
 }
 
+/// 语义单元化（自然语义处理层）：任务文本 →（分段 → 神经图检索 → 命令预测）
+/// → 单元任务 + 处理轨迹。前端把轨迹与单元上屏过程容器，并把单元逐个转发
+/// 助手推进小循环；单元内的工具决策仍经 brain_execute 决策中心门控执行。
+#[tauri::command]
+pub fn brain_decompose(
+    state: State<'_, Brain>,
+    task: String,
+) -> Result<super::nlu::Decomposition, String> {
+    Ok(state.decompose(&task))
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObserveArgs {

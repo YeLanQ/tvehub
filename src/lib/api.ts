@@ -435,6 +435,8 @@ export const api = {
     invoke<BrainRouteHit[]>("brain_query", { text, topK: topK ?? null }),
   /** 策略规划：任务 → 主技能 + 推荐步骤 + 效能门控决策 */
   brainPlan: (task: string) => invoke<BrainPlan>("brain_plan", { task }),
+  /** 语义单元化：任务 →（分段 → 神经图检索 → 命令预测）→ 单元任务 + 处理轨迹 */
+  brainDecompose: (task: string) => invoke<BrainDecomposition>("brain_decompose", { task }),
   /** 观测回写：一次工具执行的耗时与成败（驱动因果链进化与效能统计） */
   brainObserve: (args: { task: string; method: string; ok: boolean; ms: number }) =>
     invoke<BrainObserveReport>("brain_observe", { args }),
@@ -477,6 +479,35 @@ export interface BrainPlan {
   ratio: number;
   skills: BrainRouteHit[];
   steps: BrainPlanStep[];
+}
+
+/** 语义单元任务（brain_decompose 产物；预测方法只是入口建议） */
+export interface BrainTaskUnit {
+  /** 1 起始序号 */
+  index: number;
+  /** 语义段原文 */
+  text: string;
+  /** 预测的 devtools 方法（无预测为 null） */
+  method: string | null;
+  /** 预测依据："graph"（神经图命令节点）| "lexicon"（关键词词典） */
+  source: string | null;
+  /** 该方法的行动边界（无预测为 null） */
+  zone: "green" | "yellow" | "red" | null;
+  /** 任务阶段：inspect 调研 / act 执行 / verify 验证 */
+  phase: "inspect" | "act" | "verify";
+}
+
+/** 处理轨迹短句（过程容器逐条上屏） */
+export interface BrainNluTrace {
+  stage: string;
+  detail: string;
+}
+
+/** 语义单元化产物：任务原文 + 单元序列 + 处理轨迹 */
+export interface BrainDecomposition {
+  task: string;
+  units: BrainTaskUnit[];
+  traces: BrainNluTrace[];
 }
 
 export interface BrainObserveReport {

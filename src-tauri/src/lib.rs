@@ -1141,6 +1141,7 @@ pub fn run() {
             ai::ai_list_models,
             brain::commands::brain_query,
             brain::commands::brain_plan,
+            brain::commands::brain_decompose,
             brain::commands::brain_observe,
             brain::commands::brain_stats,
             brain::commands::brain_tick,

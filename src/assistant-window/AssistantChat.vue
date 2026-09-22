@@ -10,13 +10,21 @@ import { api } from "../lib/api";
 import { getAssistantStore } from "./store";
 import { parseFileRefs, isBinaryRef } from "./refs";
 import { getConversations, type ChatMessage } from "./conversations";
-import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire } from "./agent";
+import { buildSystemPrompt, doneWritesNote, looksLikeConfirmRequest, runAgent, toWire, type AgentEvent } from "./agent";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
 import { mergeStepRow } from "./steps";
 import { assistantTools, execAssistantTool } from "./tools";
+import {
+  decomposeDigest,
+  parseStoredDecomposition,
+  runUnitPlan,
+  usablePlan,
+} from "./nlu";
 import { copyText } from "./clipboard";
 import ToolSteps, { type ToolStepItem } from "./ToolSteps.vue";
+import NluSteps, { type NluBlockData, type NluUnitRow } from "./NluSteps.vue";
+import type { BrainDecomposition, BrainNluTrace, BrainTaskUnit } from "../lib/api";
 
 const store = getAssistantStore();
 const convs = getConversations();
@@ -46,6 +54,34 @@ interface ExecConfirmReq {
 const execConfirms = ref<ExecConfirmReq[]>([]);
 const execConfirmView = computed(() => execConfirms.value[0] ?? null);
 
+// ---------------------------------------------------------------------------
+// 大脑语义单元化（运行中）：发送时先经 brainDecompose 拆解——轨迹与单元任务
+// 上屏过程容器（NluSteps），可用则逐单元驱动独立小循环（避免整任务长线思考），
+// 不可用回落整任务直通助手。单元内的工具决策仍经决策中心（brainExecute）。
+// ---------------------------------------------------------------------------
+const nluRun = ref<{ traces: BrainNluTrace[]; units: NluUnitRow[] } | null>(null);
+/** 单元小循环的轮上限（单元是小任务，远小于整任务的 24 轮） */
+const UNIT_MAX_ROUNDS = 10;
+
+function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: NluUnitRow[] } {
+  return {
+    traces: [...deco.traces],
+    units: deco.units.map((u) => ({
+      index: u.index,
+      text: u.text,
+      method: u.method,
+      zone: u.zone,
+      phase: u.phase,
+      status: "pending" as const,
+    })),
+  };
+}
+
+function markUnit(index: number, status: NluUnitRow["status"]): void {
+  const unit = nluRun.value?.units.find((u) => u.index === index);
+  if (unit) unit.status = status;
+}
+
 /** 工具执行确认回调（注入 execAssistantTool）：入队等浮动条裁决 */
 function requestToolConfirm(info: { method: string; reason: string }): Promise<boolean> {
   return new Promise((resolve) => {
@@ -67,14 +103,36 @@ const activeTitle = computed(() => {
   return convs.convs().find((c) => c.id === id)?.title ?? "新会话";
 });
 
-/** 消息时间线：连续工具消息按 toolCallId 合并为「一次调用一行」的步骤块 */
+/** 消息时间线：连续工具消息按 toolCallId 合并为「一次调用一行」的步骤块；
+ * brain.decompose 消息对合并为大脑单元化块（历史静态计划），运行中由
+ * nluRun 动态块代展（两者不同时出现，收尾后动态块消失、静态块接管）。 */
 type Block =
   | { kind: "msg"; key: string; m: ChatMessage }
-  | { kind: "steps"; key: string; rows: ToolStepItem[] };
+  | { kind: "steps"; key: string; rows: ToolStepItem[] }
+  | { kind: "nlu"; key: string; data: NluBlockData };
 
 const timeline = computed<Block[]>(() => {
   const out: Block[] = [];
+  const nluActive = nluRun.value != null;
   for (const m of messages.value) {
+    if (m.role === "tool" && m.toolName === "brain.decompose") {
+      if (nluActive) continue; // 运行中：动态块在末尾代展，避免同屏重复
+      if (m.result) {
+        const deco = parseStoredDecomposition(m.content);
+        if (deco) {
+          const data = toNluData(deco);
+          const open = [...out].reverse().find((b) => b.kind === "nlu");
+          if (open && open.kind === "nlu" && !open.data.units.length) {
+            open.data = data; // 填充未决的调用占位块
+          } else {
+            out.push({ kind: "nlu", key: `nlu_r_${m.id}`, data });
+          }
+        }
+        continue;
+      }
+      out.push({ kind: "nlu", key: `nlu_c_${m.toolCallId ?? m.id}`, data: { traces: [], units: [] } });
+      continue;
+    }
     const last = out[out.length - 1];
     if (m.role === "tool") {
       if (last && last.kind === "steps") {
@@ -88,6 +146,7 @@ const timeline = computed<Block[]>(() => {
       out.push({ kind: "msg", key: m.id, m });
     }
   }
+  if (nluRun.value) out.push({ kind: "nlu", key: "__nlu_run", data: nluRun.value });
   return out;
 });
 
@@ -317,52 +376,105 @@ async function send(textArg?: string | Event): Promise<void> {
   busy.value = true;
   streamingText.value = "";
   stopRequested.value = false;
+  // ---- 语义单元化：输入先过大脑（分段 → 神经图检索 → 命令预测），轨迹与
+  // 单元任务上屏过程容器；拆解可用则逐单元驱动独立小循环（每单元一次小
+  // agent 会话，避免整任务长线思考），不可用回落整任务直通助手 ----
+  let units: BrainTaskUnit[] | null = null;
+  const nluCallId = `nlu_${Date.now().toString(36)}`;
   try {
-    const reply = await runAgent({
-      messages: wire,
-      tools: assistantTools(),
-      chat: createTauriTransport((id) => (reqId.value = id)),
-      execTool: (name, argsJson) =>
-        execAssistantTool(
-          name,
-          argsJson,
-          convs.activeRoot || undefined,
-          text,
-          requestToolConfirm,
-        ),
-      baseUrl: prov.baseUrl,
-      apiKey: prov.apiKey,
-      model: card0?.model?.trim() ? card0.model.trim() : prov.model,
-      temperature: card0?.temperature ?? undefined,
-      onDelta: (t) => {
-        // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
-        streamingText.value = streamingDisplay(t);
-      },
-      onEvent: (e) => {
-        if (e.type === "tool_start") {
-          convs.append(convId, {
-            role: "tool",
-            content: e.args ?? "",
-            toolName: e.name,
-            toolCallId: e.callId,
-          });
-        } else if (e.type === "tool_result") {
-          convs.append(convId, {
-            role: "tool",
-            content: e.result ?? "",
-            toolName: e.name,
-            toolCallId: e.callId,
-            result: true,
-          });
-        }
-      },
-      shouldStop: () => stopRequested.value,
+    const deco = await api.brainDecompose(text);
+    nluRun.value = toNluData(deco);
+    units = usablePlan(deco);
+    if (!units) {
+      nluRun.value.traces.push({ stage: "降级", detail: "语义信号不足，整任务直通助手" });
+    }
+    // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
+    convs.append(convId, {
+      role: "tool",
+      content: text,
+      toolName: "brain.decompose",
+      toolCallId: nluCallId,
     });
-    // 空回复兜底：绝不让一轮运行无声无息地结束
-    const finalText =
-      reply.content.trim() ||
-      "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）";
-    convs.append(convId, { role: "assistant", content: finalText });
+    convs.append(convId, {
+      role: "tool",
+      content: decomposeDigest({
+        task: deco.task,
+        units: deco.units,
+        traces: nluRun.value.traces,
+      }),
+      toolName: "brain.decompose",
+      toolCallId: nluCallId,
+      result: true,
+    });
+    scrollBottom();
+  } catch {
+    units = null; // 大脑不可用：静默回落，不因拆解失败阻塞对话
+  }
+  const agentCommon = {
+    tools: assistantTools(),
+    chat: createTauriTransport((id) => (reqId.value = id)),
+    execTool: (name: string, argsJson: string) =>
+      execAssistantTool(
+        name,
+        argsJson,
+        convs.activeRoot || undefined,
+        text,
+        requestToolConfirm,
+      ),
+    baseUrl: prov.baseUrl,
+    apiKey: prov.apiKey,
+    model: card0?.model?.trim() ? card0.model.trim() : prov.model,
+    temperature: card0?.temperature ?? undefined,
+    onDelta: (t: string) => {
+      // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
+      streamingText.value = streamingDisplay(t);
+    },
+    onEvent: (e: AgentEvent) => {
+      if (e.type === "tool_start") {
+        convs.append(convId, {
+          role: "tool",
+          content: e.args ?? "",
+          toolName: e.name,
+          toolCallId: e.callId,
+        });
+      } else if (e.type === "tool_result") {
+        convs.append(convId, {
+          role: "tool",
+          content: e.result ?? "",
+          toolName: e.name,
+          toolCallId: e.callId,
+          result: true,
+        });
+      }
+    },
+    shouldStop: () => stopRequested.value,
+  };
+  try {
+    let finalText: string;
+    if (units) {
+      // 单元路线：逐单元独立会话；工具决策仍在 execTool 内经决策中心门控
+      const result = await runUnitPlan(units, {
+        runOnce: (extra) =>
+          runAgent({ ...agentCommon, messages: [...wire, ...extra], maxRounds: UNIT_MAX_ROUNDS }),
+        onUnitStart: (index) => markUnit(index, "running"),
+        onUnitDone: (index, note) => {
+          markUnit(index, "ok");
+          convs.append(convId, { role: "assistant", content: note.trim() || "（本单元无输出）" });
+        },
+        shouldStop: agentCommon.shouldStop,
+      });
+      finalText = result.reply.content.trim();
+      if (result.stopped) {
+        convs.append(convId, { role: "assistant", content: finalText });
+      }
+    } else {
+      const reply = await runAgent({ ...agentCommon, messages: wire });
+      // 空回复兜底：绝不让一轮运行无声无息地结束
+      finalText =
+        reply.content.trim() ||
+        "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）";
+      convs.append(convId, { role: "assistant", content: finalText });
+    }
     // 请求确认 → 输入框上沿弹批准/自行输入/退出浮动条
     pendingConfirm.value = !stopRequested.value && looksLikeConfirmRequest(finalText);
   } catch (e) {
@@ -373,6 +485,7 @@ async function send(textArg?: string | Event): Promise<void> {
     busy.value = false;
     streamingText.value = "";
     reqId.value = "";
+    nluRun.value = null; // 动态块退场：历史静态大脑块接管回放
     // messages.value 必须与 conversations 缓存数组保持同一引用：convs.append
     // 推的是缓存数组，此处若换成浅拷贝副本，时间线 computed 将收不到触发——
     // 下一轮的用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡），
@@ -411,11 +524,18 @@ function onInputKey(e: KeyboardEvent): void {
         :running="busy && b.key === lastBlockKey"
         @toggle="toggleSteps(b.key)"
       />
+      <NluSteps
+        v-else-if="b.kind === 'nlu' && (b.data.units.length || (busy && b.key === lastBlockKey))"
+        :data="b.data"
+        :open="stepsOpen(b.key)"
+        :running="busy && b.key === lastBlockKey"
+        @toggle="toggleSteps(b.key)"
+      />
         <div
-          v-else-if="b.m.role === 'error'"
+          v-else-if="b.kind === 'msg' && b.m.role === 'error'"
           class="achat-bubble achat-bubble-error"
         >{{ b.m.content }}</div>
-        <div v-else class="achat-row" :class="b.m.role">
+        <div v-else-if="b.kind === 'msg'" class="achat-row" :class="b.m.role">
           <div class="achat-bubble">
             <span class="achat-content">{{ b.m.content }}</span>
             <button

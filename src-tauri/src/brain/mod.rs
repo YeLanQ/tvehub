@@ -14,6 +14,7 @@ pub mod execute;
 pub mod graph;
 pub mod metrics;
 pub mod model;
+pub mod nlu;
 pub mod policy;
 pub mod skillsrc;
 pub mod store;
@@ -90,6 +91,13 @@ impl Brain {
         let mut core = self.core.lock().expect("brain 锁");
         let BrainCore { store, ledger, .. } = &mut *core;
         build_plan(&mut store.hot, ledger, task, now_ms())
+    }
+
+    /// 语义单元化：任务文本 → 分段 → 神经图检索 + 命令预测 → 单元任务与
+    /// 处理轨迹（前端过程容器上屏；单元转发助手逐个推进，决策仍走 execute）
+    pub fn decompose(&self, task: &str) -> nlu::Decomposition {
+        let mut core = self.core.lock().expect("brain 锁");
+        nlu::decompose(&mut core.store.hot, task, now_ms())
     }
 
     /// 观测回写：记账 + 因果链进化；达到间隔自动 tick（自压缩/冷却/持久化）。
