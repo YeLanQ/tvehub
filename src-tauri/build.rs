@@ -1,9 +1,11 @@
 // 构建期：把编辑器内置资源（public/<kind>/…）打包进二进制，
 // 运行时由 exe 启动时提取到其同级 public/<kind>（免安装便携），
 // 开发（debug）则直接读取仓库 public/<kind>。
-// kind = internal（内置只读资产）/ repos（创意工坊）/ templates（工程模板）/
-// exports（Web 导出模板）——这四类由 Rust 命令从 exe 旁磁盘读取，
-// 生产环境无随包资源目录，必须内嵌自带（docs/engine/web-preview 走前端产物，不在此列）。
+// kind = internal（内置只读资产）/ templates（工程模板）/ exports（Web 导出
+// 模板）——这三类由 Rust 命令从 exe 旁磁盘读取，生产环境无随包资源目录，
+// 必须内嵌自带（docs/engine/web-preview 走前端产物，不在此列）。
+// repos（创意工坊）不内嵌：体量大且用户会直接改写其中文件——release 构建
+// 由本脚本把 public/repos 拷贝到 exe 同级 public/repos（见 copy_repos_to_target）。
 // 归档格式：u32 条数 + 每条 [u32 pathLen][path][u32 dataLen][data]，
 // 其中 path 以 kind 为前缀（如 "internal/materials/Default.mat"）。
 //
@@ -127,6 +129,43 @@ fn collect_files(dir: &Path, base: &Path, prefix: &str, out: &mut Vec<(String, V
     }
 }
 
+/// repos（创意工坊）外置：release 构建把 public/repos 拷到 exe 同级
+/// public/repos（OUT_DIR 上溯三级 = <target>/<profile>）。只补缺失文件、
+/// 不覆盖已有文件——与运行时释放语义一致，用户写在 exe 旁的工坊文件不被
+/// 重构建冲掉；debug 开发直接读仓库目录，无需拷贝。
+fn copy_repos_to_target(manifest_dir: &str, out_dir: &str) {
+    let src = PathBuf::from(manifest_dir).join("../public/repos");
+    println!("cargo:rerun-if-changed={}", src.display());
+    if std::env::var("PROFILE").as_deref() != Ok("release") {
+        return;
+    }
+    let Some(profile_dir) = Path::new(out_dir).ancestors().nth(3) else {
+        println!("cargo:warning=无法从 OUT_DIR 定位 target 目录，跳过 repos 外置拷贝");
+        return;
+    };
+    let dest_root = profile_dir.join("public/repos");
+    fn walk(src: &Path, dest: &Path, copied: &mut usize) {
+        if !src.is_dir() {
+            return;
+        }
+        let _ = std::fs::create_dir_all(dest);
+        if let Ok(rd) = std::fs::read_dir(src) {
+            for entry in rd.flatten() {
+                let sp = entry.path();
+                let dp = dest.join(entry.file_name());
+                if sp.is_dir() {
+                    walk(&sp, &dp, copied);
+                } else if !dp.exists() && std::fs::copy(&sp, &dp).is_ok() {
+                    *copied += 1;
+                }
+            }
+        }
+    }
+    let mut copied = 0usize;
+    walk(&src, &dest_root, &mut copied);
+    println!("cargo:warning=repos externalized to {}: {copied} files copied", dest_root.display());
+}
+
 fn main() {
     tauri_build::build();
 
@@ -144,13 +183,17 @@ fn main() {
     let doc_count = build_docs::emit_docs_index(&manifest_dir, &out_dir);
     println!("cargo:warning=brain docs index: {doc_count} docs embedded");
 
+    // 内嵌资源：internal / templates / exports（repos 外置，见 copy_repos_to_target）
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    for kind in ["internal", "repos", "templates", "exports"] {
+    for kind in ["internal", "templates", "exports"] {
         let dir = PathBuf::from(&manifest_dir).join("../public").join(kind);
         println!("cargo:rerun-if-changed={}", dir.display());
         collect_files(&dir, &dir, kind, &mut entries);
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // repos 外置：release 构建拷贝 public/repos → exe 同级 public/repos
+    copy_repos_to_target(&manifest_dir, &out_dir);
 
     let mut raw: Vec<u8> = Vec::new();
     raw.extend_from_slice(&(entries.len() as u32).to_le_bytes());

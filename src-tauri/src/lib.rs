@@ -842,8 +842,10 @@ pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 内置资源目录（public/internal / repos / templates / exports）：开发读仓库目录；
-// 生产读 build.rs 打包、启动时释放到 exe 同级 public/<kind>（见 build.rs 的 kind 列表）。
+// 内置资源目录（public/internal / templates / exports）：开发读仓库目录；
+// 生产读 build.rs 打包、启动时释放到 exe 同级 public/<kind>（见 build.rs 的
+// kind 列表）。repos（创意工坊）不内嵌：体量大且用户会直接改写其中文件，
+// release 构建由 build.rs 直接把 public/repos 拷到 exe 同级（copy_repos_to_target）。
 // ---------------------------------------------------------------------------
 
 /// 内置资源根目录：开发为仓库 public/<kind>；生产为 exe 同级 public/<kind>。
@@ -858,8 +860,9 @@ fn builtin_root(kind: &str) -> PathBuf {
 pub(crate) fn internal_root() -> PathBuf {
     builtin_root("internal")
 }
-/// 创意工坊资源仓库根目录（public/repos；与内置资源同源：开发=仓库 public，
-/// 生产=exe 旁 public）。分类 = 子目录（code/effect/…），见 repos.rs。
+/// 创意工坊资源仓库根目录（public/repos；外置不内嵌：开发=仓库 public/repos，
+/// 生产=exe 旁 public/repos——release 构建由 build.rs 自动拷贝放置）。
+/// 分类 = 子目录（code/effect/…），见 repos.rs。
 pub(crate) fn repos_root() -> PathBuf {
     builtin_root("repos")
 }
@@ -1178,18 +1181,24 @@ pub fn run() {
 mod builtin_archive_tests {
     use super::{parse_builtin_archive, BUILTIN_ARCHIVE};
 
-    /// 归档必须包含全部四类内置资源（internal/repos/templates/exports）：
-    /// 这四类由 Rust 命令从 exe 旁磁盘读取，build.rs 的 kind 列表漏配会导致
-    /// release 版 exe 旁缺对应目录（如工坊/模板/导出模板为空）。
+    /// 归档必须包含全部内嵌内置资源（internal/templates/exports）：这三类由
+    /// Rust 命令从 exe 旁磁盘读取，build.rs 的 kind 列表漏配会导致 release 版
+    /// exe 旁缺对应目录（模板/导出模板/内置资产为空）。
+    /// repos 已外置（build.rs 不打进归档，release 构建直接拷到 exe 同级）——
+    /// 负向验证：归档里出现 repos 条目即为回归（exe 体积被工坊文件重新撑大）。
     #[test]
     fn archive_contains_all_builtin_kinds() {
         let entries = parse_builtin_archive(BUILTIN_ARCHIVE).expect("解析内置资源归档");
         assert!(!entries.is_empty(), "归档不应为空");
-        for kind in ["internal/", "repos/", "templates/", "exports/"] {
+        for kind in ["internal/", "templates/", "exports/"] {
             assert!(
                 entries.iter().any(|(p, _)| p.starts_with(kind)),
                 "归档缺少 {kind} 条目"
             );
         }
+        assert!(
+            !entries.iter().any(|(p, _)| p.starts_with("repos/")),
+            "repos 不应再内嵌进归档（已外置为 exe 同级目录）"
+        );
     }
 }

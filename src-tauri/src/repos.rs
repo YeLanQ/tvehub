@@ -7,6 +7,7 @@
 // - 文件描述写在首部注释 "// @desc: 描述"（可选，前 5 行内识别）；
 // - 目录定位与内置资源同源（builtin_root）：开发 = 仓库 public/repos，
 //   生产 = exe 同级 public/repos（用户文件写 exe 旁，不随构建覆盖）。
+//   repos 不内嵌进 exe：release 构建由 build.rs 直接拷贝放置（copy_repos_to_target）。
 // ---------------------------------------------------------------------------
 
 use std::fs;
