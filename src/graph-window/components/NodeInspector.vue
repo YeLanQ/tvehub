@@ -555,6 +555,13 @@ function commitStateName(raw: string): void {
             :placeholder="f.placeholder ?? ''"
             @update:model-value="commitParam(f.key, String($event))"
           />
+          <select
+            v-else-if="f.options"
+            :value="String(g.params?.[f.key] ?? f.fallback)"
+            @change="commitParam(f.key, ($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt === "" ? "默认" : opt }}</option>
+          </select>
           <input
             v-else
             :value="String(g.params?.[f.key] ?? '')"

@@ -121,4 +121,32 @@ describe("graph-window components/NodeInspector（比较卡字段）", () => {
     await select.trigger("change");
     expect(node.params?.operator).toBe("<");
   });
+
+  it("上下浮动：缓动曲线下拉列出全部内置曲线，选值写回 params.ease", async () => {
+    const node = {
+      id: "n-bob",
+      type: "op.bob",
+      params: { amplitude: 0.5, period: 2, ease: "" },
+    } as unknown as GNode;
+    const store = getGraphWindowStore();
+    store.canvas = makeCanvasBridge(node);
+    store.setSelection(null, false);
+    const w = mount(NodeInspector);
+    store.setSelection("n-bob", false);
+    await nextTick();
+    await nextTick();
+    const label = w.findAll("label").find((l) => l.text().includes("缓动曲线"));
+    expect(label, "检查器应渲染缓动曲线下拉").toBeDefined();
+    const select = label!.find("select");
+    expect(select.exists()).toBe(true);
+    // 选项含默认（空）与全部内置曲线名
+    const values = select.findAll("option").map((o) => o.element.value);
+    expect(values[0]).toBe("");
+    expect(values).toContain("linear");
+    expect(values).toContain("backInOut");
+    expect(values).toContain("bounceOut");
+    await select.setValue("backInOut");
+    await select.trigger("change");
+    expect(node.params?.ease).toBe("backInOut");
+  });
 });

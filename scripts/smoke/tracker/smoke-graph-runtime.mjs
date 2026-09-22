@@ -1350,6 +1350,68 @@ console.log("[16c] 追击暂停恢复：导航移动「恢复续走」勾选—�
   handle2.dispose();
 }
 
+console.log("[16d] 上下浮动缓动曲线：ease=linear 三角往返采样（默认保持正弦）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  const mkObj = (id) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4));
+    o.position.set(0, 0, 0);
+    o.userData.nodeId = id;
+    scene.add(o);
+    return o;
+  };
+  const host1 = mkObj("bob-ease-host");
+  const host2 = mkObj("bob-sine-host");
+  const host3 = mkObj("spin-ease-host");
+  const host4 = mkObj("spin-const-host");
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-driver", version: 1 }],
+    nodes: [
+      { id: "p1", type: "entity.proto", x: 0, y: 0, entityId: "bob-ease-host" },
+      { id: "p2", type: "entity.proto", x: 0, y: 0, entityId: "bob-sine-host" },
+      { id: "p3", type: "entity.proto", x: 0, y: 0, entityId: "spin-ease-host" },
+      { id: "p4", type: "entity.proto", x: 0, y: 0, entityId: "spin-const-host" },
+      { id: "bob1", type: "op.bob", x: 0, y: 0, opType: "op.bob", params: { amplitude: 1, period: 2, ease: "linear" } },
+      { id: "bob2", type: "op.bob", x: 0, y: 0, opType: "op.bob", params: { amplitude: 1, period: 2 } },
+      { id: "spin1", type: "op.spin", x: 0, y: 0, opType: "op.spin", params: { speedY: 360, period: 2, ease: "sineInOut" } },
+      { id: "spin2", type: "op.spin", x: 0, y: 0, opType: "op.spin", params: { speedY: 360 } },
+    ],
+    edges: [
+      { id: "d1", srcNode: "p1", srcPort: "out", dstNode: "bob1", dstPort: "in" },
+      { id: "d2", srcNode: "p2", srcPort: "out", dstNode: "bob2", dstPort: "in" },
+      { id: "d3", srcNode: "p3", srcPort: "out", dstNode: "spin1", dstPort: "in" },
+      { id: "d4", srcNode: "p4", srcPort: "out", dstNode: "spin2", dstPort: "in" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera: new THREE.PerspectiveCamera(50, 1, 0.1, 100),
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  // t=1/60s：linear 三角往返 tri≈0.0167 → y = 2·0.0167−1 ≈ −0.97（正弦此时 ≈ +0.05，二者可判）
+  handle.update(1 / 60);
+  ok(host1.position.y < -0.9, `linear 曲线周期起点在低端（y=${host1.position.y.toFixed(3)}）`);
+  // t=0.5s：sine 默认 host → sin(π/2)=1 → y=+1
+  for (let i = 0; i < 29; i++) handle.update(1 / 60);
+  ok(host2.position.y > 0.9, `默认正弦回归：0.5s 处 y=${host2.position.y.toFixed(3)}`);
+  // t=1.0s：linear phase=0.5 → tri=1 → y=+1
+  for (let i = 0; i < 30; i++) handle.update(1 / 60);
+  ok(host1.position.y > 0.9, `linear 半周期到顶端（y=${host1.position.y.toFixed(3)}）`);
+  // 旋转脉冲积分：sineInOut×period2×360°/s → 半周期 ≈180°（π rad）、整周期 ≈360°（2π rad）（恒速对照 720°=4π）
+  ok(host3.rotation.y > 2.9 && host3.rotation.y < 3.4, `旋转脉冲半周期 ≈180°（${(host3.rotation.y / Math.PI * 180).toFixed(0)}°）`);
+  for (let i = 0; i < 60; i++) handle.update(1 / 60);
+  ok(host3.rotation.y > 5.99 && host3.rotation.y < 6.57, `旋转脉冲整周期 ≈360°（${(host3.rotation.y / Math.PI * 180).toFixed(0)}°）`);
+  ok(Math.abs(host4.rotation.y - 4 * Math.PI) < 0.1, `恒速对照：2s 累计 720°（${(host4.rotation.y / Math.PI * 180).toFixed(0)}°）`);
+  handle.dispose();
+}
+
 console.log("[17] 行为树容器：sequence 驱动器步进 / selector 条件配对 / parallel 每帧重跑");
 {
   posted.length = 0;

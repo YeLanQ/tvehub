@@ -23,7 +23,24 @@ export interface GOpFieldDef {
   fallback: number | string | boolean;
   step?: number;
   placeholder?: string;
+  /** 预设候选（存在时检查器渲染为下拉选择而非自由输入） */
+  options?: string[];
 }
+
+/** 内置 Tween 缓动曲线名（与 runtime/core/tween.ts 的 EASING 表键一致） */
+export const G_EASING_CURVES = [
+  "linear",
+  "quadIn", "quadOut", "quadInOut",
+  "cubicIn", "cubicOut", "cubicInOut",
+  "quartIn", "quartOut", "quartInOut",
+  "quintIn", "quintOut", "quintInOut",
+  "sineIn", "sineOut", "sineInOut",
+  "expoIn", "expoOut", "expoInOut",
+  "circIn", "circOut", "circInOut",
+  "backIn", "backOut", "backInOut",
+  "elasticIn", "elasticOut", "elasticInOut",
+  "bounceIn", "bounceOut", "bounceInOut",
+] as const;
 
 export interface GOpDef {
   /** 注册表键（如 "op.spin"） */
@@ -88,18 +105,28 @@ export const GRAPH_OP_DEFS: GOpDef[] = [
   {
     type: "op.spin",
     label: "持续旋转",
-    desc: "每帧按角速度（度/秒）累计旋转",
+    desc: "每帧按角速度（度/秒）累计旋转。选「缓动曲线」后角速度按周期脉冲（曲线 × 角速度，linear≈恒速），留空恒速",
     trigger: "frame",
     color: "#dcdcaa",
-    fields: [F_N("speedX", "X 速度", 0, 1), F_N("speedY", "Y 速度", 45, 1), F_N("speedZ", "Z 速度", 0, 1)],
+    fields: [
+      F_N("speedX", "X 速度", 0, 1),
+      F_N("speedY", "Y 速度", 45, 1),
+      F_N("speedZ", "Z 速度", 0, 1),
+      F_N("period", "周期（秒）", 2, 0.1),
+      { key: "ease", label: "缓动曲线", kind: "string", fallback: "", options: ["", ...G_EASING_CURVES] },
+    ],
   },
   {
     type: "op.bob",
     label: "上下浮动",
-    desc: "每帧按正弦往复平移 Y（幅度 · 周期秒；以启动位置为基准）",
+    desc: "每帧按正弦往复平移 Y（幅度 · 周期秒；以启动位置为基准）。选「缓动曲线」后改为三角往返 × 内置 Tween 曲线（back/elastic 可越过幅度），留空保持正弦",
     trigger: "frame",
     color: "#dcdcaa",
-    fields: [F_N("amplitude", "幅度", 0.5, 0.1), F_N("period", "周期（秒）", 2, 0.1)],
+    fields: [
+      F_N("amplitude", "幅度", 0.5, 0.1),
+      F_N("period", "周期（秒）", 2, 0.1),
+      { key: "ease", label: "缓动曲线", kind: "string", fallback: "", options: ["", ...G_EASING_CURVES] },
+    ],
   },
   {
     type: "op.patrol",

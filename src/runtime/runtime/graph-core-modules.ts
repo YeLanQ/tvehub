@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import type * as THREE from "three";
+import { EASING } from "../core/tween";
 import { type GCustomNodeDef, type GNode } from "../../framework/graph";
 import {
   DEG,
@@ -283,10 +284,21 @@ export function createCoreDriversModule(): GraphRuntimeModule {
           const dx = k.numP(node, "speedX") * DEG * dt;
           const dy = k.numP(node, "speedY", 45) * DEG * dt;
           const dz = k.numP(node, "speedZ") * DEG * dt;
+          // 缓动曲线：角速度按周期脉冲（三角往返 × 曲线，linear≈恒速）；留空恒速
+          const ease = k.strP(node, "ease", "");
+          const fn = ease ? EASING[ease] : undefined;
+          let mul = 1;
+          if (fn) {
+            const period = k.numP(node, "period", 2);
+            if (period <= 0) return;
+            const phase = ((k.elapsed() / period) % 1 + 1) % 1;
+            const tri = phase < 0.5 ? phase * 2 : 2 - phase * 2;
+            mul = fn(tri);
+          }
           for (const t of targets) {
-            if (dx) t.obj.rotation.x += dx;
-            if (dy) t.obj.rotation.y += dy;
-            if (dz) t.obj.rotation.z += dz;
+            if (dx) t.obj.rotation.x += dx * mul;
+            if (dy) t.obj.rotation.y += dy * mul;
+            if (dz) t.obj.rotation.z += dz * mul;
           }
         },
       }),
@@ -302,7 +314,17 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             const amp = k.numP(node, "amplitude");
             const period = k.numP(node, "period", 2);
             if (period <= 0 || !amp) return;
-            const y = amp * Math.sin((k.elapsed() / period) * Math.PI * 2);
+            const ease = k.strP(node, "ease", "");
+            const fn = ease ? EASING[ease] : undefined;
+            let y: number;
+            if (fn) {
+              // 三角往返（0→1→0）× 缓动曲线（back/elastic 可越过幅度）；未知曲线名回退正弦
+              const phase = ((k.elapsed() / period) % 1 + 1) % 1;
+              const tri = phase < 0.5 ? phase * 2 : 2 - phase * 2;
+              y = amp * (2 * fn(tri) - 1);
+            } else {
+              y = amp * Math.sin((k.elapsed() / period) * Math.PI * 2);
+            }
             for (const t of targets) {
               const base = baseY.get(t.id) ?? t.obj.position.y;
               t.obj.position.y = base + y;
