@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../lib/tauri-env";
+import { uiStateGet, uiStateSet } from "../lib/ui-state";
 import { api } from "../lib/api";
 import { ToastHost, toastErr, toastOk } from "../ui-kit";
 import { getConversations, type ConvMeta } from "./conversations";
@@ -25,12 +26,16 @@ const convs = getConversations();
 const settingsOpen = ref(false);
 const projects = ref<ProjectRow[]>([]);
 const editorProject = ref<string | null>(null);
-/** 收起的会话树（按工作区根；默认展开，仅本窗口会话内记忆） */
+/** 收起的会话树（按工作区根；默认展开；持久化跨应用重启记忆） */
 const folded = ref<Set<string>>(new Set());
+/** 折叠状态持久化键（与会话索引同走 ui-state KV） */
+const KEY_FOLDED = "tve:ai:rail-folded";
 
 const activeRoot = computed(() => convs.activeRoot);
 
 onMounted(async () => {
+  const savedFolded = await uiStateGet<string[]>(KEY_FOLDED);
+  if (Array.isArray(savedFolded)) folded.value = new Set(savedFolded);
   await convs.load();
   await convs.switchProject(convs.activeRoot);
   void refreshProjects();
@@ -67,6 +72,8 @@ function toggleFold(root: string): void {
   if (next.has(root)) next.delete(root);
   else next.add(root);
   folded.value = next;
+  // 即时持久化（fire-and-forget；重启后左栏恢复同样的折叠状态）
+  void uiStateSet(KEY_FOLDED, [...next]);
 }
 
 /** 模板用：折叠的工作区不渲染会话叶 */
@@ -74,29 +81,36 @@ function visibleConvs(root: string): ConvMeta[] {
   return isFolded(root) ? [] : convs.convsOf(root);
 }
 
-async function callDevtools(method: string, params?: Record<string, unknown>) {
+async function callDevtools(
+  method: string,
+  params?: Record<string, unknown>,
+  silent = false,
+) {
   try {
     return await api.devtoolsCall(method, params);
   } catch (e) {
-    toastErr(e instanceof Error ? e.message : String(e));
+    // silent = 后台探查/刷新（挂载首扫、projects:changed 重扫）：无编辑器窗口
+    // 或开发者服务未开是常态，失败只落状态不弹错；用户主动操作才 toast
+    if (!silent) toastErr(e instanceof Error ? e.message : String(e));
     return null;
   }
 }
 
 async function refreshProjects(): Promise<void> {
   // devtools project.list 返回 { recent: [{path,name,sceneCount}] }
-  const doc = (await callDevtools("project.list")) as {
+  const doc = (await callDevtools("project.list", undefined, true)) as {
     recent?: ProjectRow[];
   } | null;
   projects.value = Array.isArray(doc?.recent) ? doc.recent : [];
 }
 
 async function refreshEditorState(): Promise<void> {
-  const st = await callDevtools("editor.state");
-  if (st && typeof st === "object") {
-    const path = (st as Record<string, unknown>).currentPath;
-    editorProject.value = typeof path === "string" && path ? path : null;
-  }
+  const st = await callDevtools("editor.state", undefined, true);
+  const path =
+    st && typeof st === "object"
+      ? (st as Record<string, unknown>).currentPath
+      : null;
+  editorProject.value = typeof path === "string" && path ? path : null;
 }
 
 /** 进入工作区：只切换对话/资产上下文，不启动编辑器 */
