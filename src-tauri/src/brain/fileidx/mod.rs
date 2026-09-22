@@ -121,7 +121,7 @@ impl FileIndexStore {
             }
         }
         let idx = self.map().get(&key).expect("刚确保存在");
-        let k = top_k.min(MAX_TOP_K).max(1);
+        let k = if top_k == 0 { DEFAULT_TOP_K } else { top_k.min(MAX_TOP_K) };
         let lines: Vec<&str> = content.lines().collect();
         Ok(search::search_modules(&idx.modules, &lines, query, k, MAX_EXCERPT_CHARS))
     }
@@ -309,6 +309,20 @@ mod tests {
         assert!(e.contains("超过"), "超大文件应拒绝：{e}");
         let e = st.index(&root, "Bin.txt", 10).unwrap_err();
         assert!(e.contains("二进制"), "非 UTF-8 应拒绝：{e}");
+    }
+
+    #[test]
+    fn top_k_zero_uses_default_two() {
+        let root = ws("topk");
+        let mut content = String::new();
+        for i in 0..4 {
+            content.push_str(&format!("## 旋转模块{i}\n旋转自转 rotate {i}\n"));
+        }
+        std::fs::write(format!("{root}/R.md"), &content).unwrap();
+        let mut st = FileIndexStore::new(None);
+        st.index(&root, "R.md", 10).expect("索引应成功");
+        let hits = st.search(&root, "R.md", "旋转 自转", 0, 11).expect("检索应成功");
+        assert_eq!(hits.len(), DEFAULT_TOP_K, "缺省 topK 应取默认值 2：{hits:?}");
     }
 
     #[test]
