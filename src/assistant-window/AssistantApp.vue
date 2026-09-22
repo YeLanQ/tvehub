@@ -393,10 +393,13 @@ defineExpose({ refreshProjects, refreshEditorState });
         </button>
       </aside>
 
-      <!-- 右栏：聊天 / 设置 -->
+      <!-- 右栏：聊天 / 设置。v-show 而非 v-if：设置面板打开时聊天组件必须
+           保持实例——v-if 会销毁 AssistantChat，运行中的任务虽在闭包里继续，
+           却失去全部视图与停止/确认入口，重挂载还会让同一会话并发开第二个
+           任务 -->
       <section class="assistant-main">
-        <AssistantSettings v-if="settingsOpen" @close="settingsOpen = false" />
-        <AssistantChat v-else />
+        <AssistantSettings v-show="settingsOpen" @close="settingsOpen = false" />
+        <AssistantChat v-show="!settingsOpen" />
       </section>
     </div>
       <!-- 浮动文件树：从右滑出 -->

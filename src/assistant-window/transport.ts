@@ -1,6 +1,7 @@
 // 助手流式传输：Tauri 事件流（ai:chunk / ai:done / ai:error）封装。
 // 从 agent.ts 拆出：传输层与决策循环解耦；onReqId 回调把请求 id 交还调用方，
-// 供「停止」按钮调 aiCancel 终止在途流。
+// 供「停止」按钮调 aiCancel 终止在途流。收尾事件驱动：done/error 监听器直接
+// settle 一个 Promise（不再 50ms 轮询），300s 兜底超时防事件丢失无限等待。
 
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
@@ -12,8 +13,15 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
     onReqId?.(reqId);
     let content = "";
     const calls = new Map<number, ToolCall & { argsBuf: string }>();
-    let done = false;
     let error: string | null = null;
+    // done → resolve；error/超时 → reject（重复 settle 是无操作）
+    let settle!: (ok: boolean) => void;
+    const finished = new Promise<void>((resolve, reject) => {
+      settle = (ok) => {
+        if (ok) resolve();
+        else reject(new Error(error ?? "未知错误"));
+      };
+    });
 
     const offChunk = await listen("ai:chunk", (e) => {
       const p = e.payload as { reqId?: string; delta?: string; toolCalls?: unknown };
@@ -35,11 +43,14 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
       }
     });
     const offDone = await listen("ai:done", (e) => {
-      if ((e.payload as { reqId?: string }).reqId === reqId) done = true;
+      if ((e.payload as { reqId?: string }).reqId === reqId) settle(true);
     });
     const offError = await listen("ai:error", (e) => {
       const p = e.payload as { reqId?: string; message?: string };
-      if (p.reqId === reqId) error = p.message ?? "未知错误";
+      if (p.reqId === reqId) {
+        error = p.message ?? "未知错误";
+        settle(false);
+      }
     });
     try {
       await api.aiChatStream({
@@ -50,17 +61,20 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
         messages: args.messages,
         temperature: args.temperature,
       });
-      const deadline = Date.now() + 300_000;
-      while (!done && error === null && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 50));
+      const deadline = setTimeout(() => {
+        if (error === null) error = "响应超时";
+        settle(false);
+      }, 300_000);
+      try {
+        await finished;
+      } finally {
+        clearTimeout(deadline);
       }
-      if (error === null && !done) error = "响应超时";
     } finally {
       offChunk();
       offDone();
       offError();
     }
-    if (error !== null) throw new Error(error);
     const toolCalls: ToolCall[] = [...calls.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([i, c]) => ({

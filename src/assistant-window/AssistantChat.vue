@@ -3,6 +3,8 @@
 // 助手聊天主区：消息流（用户/助手/工具芯片/错误）+ 流式增量 + 输入框。
 // 发送 = 组装 system(环境提示词+人设+工具+技能索引) + 历史 → 工具循环；
 // @插入：资产列表选择 → asset.read 文本 → fenced 块追加进输入框。
+// 运行态不在组件上：busy/流式/停止令牌/确认队列都挂在会话级 RunState
+//（./runs），切换会话或设置面板都不中断任务、不丢运行视图。
 // ---------------------------------------------------------------------------
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { toastErr } from "../ui-kit";
@@ -24,7 +26,7 @@ import { hasLabeledCallTrace } from "./labeled-calls";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
 import { mergeStepRow } from "./steps";
-import { assistantTools, execAssistantTool } from "./tools";
+import { assistantTools, execAssistantTool, type ConfirmFn } from "./tools";
 import {
   decomposeDigest,
   knowledgeNote,
@@ -32,6 +34,7 @@ import {
   planNote,
 } from "./nlu";
 import { copyText } from "./clipboard";
+import { getRun, type RunState } from "./runs";
 import ToolSteps, { type ToolStepItem } from "./ToolSteps.vue";
 import NluSteps, { type NluBlockData, type NluUnitRow } from "./NluSteps.vue";
 import type { BrainDecomposition, BrainNluTrace, BrainTaskUnit } from "../lib/api";
@@ -41,35 +44,26 @@ const convs = getConversations();
 
 const messages = ref<ChatMessage[]>([]);
 const input = ref("");
-const busy = ref(false);
-const streamingText = ref("");
 const scrollBox = ref<HTMLElement | null>(null);
 const textEl = ref<HTMLTextAreaElement | null>(null);
-/** 在途流式请求 id（终止用） */
-const reqId = ref("");
-const stopRequested = ref(false);
 /** 已复制消息 id（按钮 ✓ 反馈） */
 const copiedId = ref("");
-/** 助手等待用户确认：在输入框上沿弹批准/自行输入/退出浮动条 */
-const pendingConfirm = ref(false);
-/** 当前任务的原文（大脑决策中心审批会话的键：批准计划时同步登记后端豁免） */
-const lastTask = ref("");
-/** 大脑决策中心的执行确认队列：黄灯写操作未批准时挂起等用户裁决；
- * 同轮并行调用的多个请求合并为一次批准（一次裁决全部放行/拒绝） */
-interface ExecConfirmReq {
-  method: string;
-  reason: string;
-  resolve: (ok: boolean) => void;
-}
-const execConfirms = ref<ExecConfirmReq[]>([]);
-const execConfirmView = computed(() => execConfirms.value[0] ?? null);
+
+// ---------------------------------------------------------------------------
+// 当前查看会话的运行态（视图绑定它；后台任务的运行态挂在各自会话上，
+// 切走再切回原样恢复）。发送闭包捕获的是任务启动会话的 run，流式增量与
+// 停止令牌永不串会话。
+// ---------------------------------------------------------------------------
+const activeRun = computed<RunState | null>(() => {
+  const id = convs.activeConvId();
+  return id ? getRun(id) : null;
+});
 
 // ---------------------------------------------------------------------------
 // 大脑语义单元化（运行中）：发送时先经 brainDecompose 拆解——轨迹与单元任务
 // 上屏过程容器（NluSteps），可用则逐单元驱动独立小循环（避免整任务长线思考），
 // 不可用回落整任务直通助手。单元内的工具决策仍经决策中心（brainExecute）。
 // ---------------------------------------------------------------------------
-const nluRun = ref<{ traces: BrainNluTrace[]; units: NluUnitRow[] } | null>(null);
 
 function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: NluUnitRow[] } {
   return {
@@ -87,25 +81,17 @@ function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: 
   };
 }
 
-function markUnit(index: number, status: NluUnitRow["status"]): void {
-  const unit = nluRun.value?.units.find((u) => u.index === index);
-  if (unit) unit.status = status;
-}
-
-/** 工具执行确认回调（注入 execAssistantTool）：入队等浮动条裁决 */
-function requestToolConfirm(info: { method: string; reason: string }): Promise<boolean> {
-  return new Promise((resolve) => {
-    execConfirms.value.push({ ...info, resolve });
-    scrollBottom();
-  });
-}
-
 /** 裁决出队：同一批挂起的请求共用同一结论（批准一次覆盖同轮全部黄灯调用） */
 function resolveExecConfirm(ok: boolean): void {
-  const batch = execConfirms.value;
-  execConfirms.value = [];
+  const run = activeRun.value;
+  if (!run) return;
+  const batch = run.execConfirms;
+  run.execConfirms = [];
   for (const req of batch) req.resolve(ok);
 }
+
+/** 黄灯执行确认浮动条数据（当前查看会话的队首） */
+const execConfirmView = computed(() => activeRun.value?.execConfirms[0] ?? null);
 
 /** 当前会话标题（首条用户消息自动命名，缺省"新会话"） */
 const activeTitle = computed(() => {
@@ -123,7 +109,8 @@ type Block =
 
 const timeline = computed<Block[]>(() => {
   const out: Block[] = [];
-  const nluActive = nluRun.value != null;
+  const runNlu = activeRun.value?.nluRun ?? null;
+  const nluActive = runNlu != null;
   for (const m of messages.value) {
     if (m.role === "tool" && m.toolName === "brain.decompose") {
       if (nluActive) continue; // 运行中：动态块在末尾代展，避免同屏重复
@@ -156,7 +143,7 @@ const timeline = computed<Block[]>(() => {
       out.push({ kind: "msg", key: m.id, m });
     }
   }
-  if (nluRun.value) out.push({ kind: "nlu", key: "__nlu_run", data: nluRun.value });
+  if (runNlu) out.push({ kind: "nlu", key: "__nlu_run", data: runNlu });
   return out;
 });
 
@@ -226,15 +213,17 @@ function wheelToolInfo(e: WheelEvent): void {
   el.scrollLeft += e.deltaY;
 }
 
-/** 终止：置停止标记（轮边界生效）+ 取消在途流式请求（ai:done cancelled 收尾）；
- * 挂起的执行确认一并拒绝（不再放行任何工具调用） */
+/** 终止当前查看会话的任务：置停止标记（轮边界生效）+ 取消在途流式请求
+ *（ai:done cancelled 收尾）；挂起的执行确认一并拒绝（不再放行任何工具调用） */
 async function stopGeneration(): Promise<void> {
-  stopRequested.value = true;
-  pendingConfirm.value = false;
+  const run = activeRun.value;
+  if (!run) return;
+  run.stopRequested = true;
+  run.pendingConfirm = false;
   resolveExecConfirm(false);
-  if (reqId.value) {
+  if (run.reqId) {
     try {
-      await api.aiCancel(reqId.value);
+      await api.aiCancel(run.reqId);
     } catch {
       // 请求已结束：忽略
     }
@@ -249,8 +238,8 @@ async function stopGeneration(): Promise<void> {
 function approveConfirm(): void {
   // 同步登记后端审批会话：本任务的黄灯调用在有效期内直接放行（豁免与
   // 代发的「确认」对应，模型重发的写操作不会被决策中心二次拦下）
-  if (lastTask.value) {
-    api.brainApprove(lastTask.value).catch(() => {
+  if (activeRun.value?.lastTask) {
+    api.brainApprove(activeRun.value.lastTask).catch(() => {
       // 豁免登记失败不阻塞对话：工具调用会被 needConfirm 拦下再次询问
     });
   }
@@ -258,12 +247,12 @@ function approveConfirm(): void {
 }
 
 function customInput(): void {
-  pendingConfirm.value = false;
+  if (activeRun.value) activeRun.value.pendingConfirm = false;
   textEl.value?.focus();
 }
 
 function cancelConfirm(): void {
-  pendingConfirm.value = false;
+  if (activeRun.value) activeRun.value.pendingConfirm = false;
   void send("（用户已选择退出）终止本次任务，不要再执行任何工具操作，也不要再继续。");
 }
 
@@ -297,7 +286,7 @@ watch(pickerQuery, () => {
 
 const card = computed(() => store.cards.find((c) => c.id === store.activeCardId) ?? null);
 const provider = computed(() => store.providers.find((p) => p.id === store.activeProviderId) ?? null);
-const canSend = computed(() => !busy.value && !!input.value.trim() && !!provider.value);
+const canSend = computed(() => !activeRun.value?.busy && !!input.value.trim() && !!provider.value);
 
 onMounted(async () => {
   messages.value = await convs.ensureActiveMessages();
@@ -342,14 +331,16 @@ function insertRef(path: string, from?: number): void {
 watch(
   () => convs.activeConvId(),
   async () => {
-    pendingConfirm.value = false;
+    // pendingConfirm / 运行态归各会话的 run 管：切走再切回原样恢复，这里只切视图
     pickerOpen.value = false;
     messages.value = await convs.ensureActiveMessages();
     scrollBottom();
   },
 );
 
-watch([() => messages.value.length, streamingText], () => scrollBottom());
+watch([() => messages.value.length, () => activeRun.value?.streamingText ?? ""], () =>
+  scrollBottom(),
+);
 
 function scrollBottom(): void {
   void nextTick(() => {
@@ -447,11 +438,11 @@ function pickPickerSel(): void {
 }
 
 /** 大文件索引注入：file.index 建索引取模块目录；失败回退整包全文（降级不丢内容） */
-async function buildIndexedBlock(ref: string, fallbackContent?: string): Promise<string> {
+async function buildIndexedBlock(ref: string, root?: string, fallbackContent?: string): Promise<string> {
   const res = await execAssistantTool(
     "file.index",
     JSON.stringify({ path: ref }),
-    convs.activeRoot || undefined,
+    root,
   );
   if (res && typeof res === "object" && !("error" in res)) {
     return buildFileTocBlock(ref, res as FileIndexBrief);
@@ -464,37 +455,35 @@ async function buildIndexedBlock(ref: string, fallbackContent?: string): Promise
   return `\n（引用文件：${ref}——索引失败：${reason}）`;
 }
 
-/** 解析 @引用 → 附加到 wire 消息的注入块：小文件全文；大文件索引目录+
- * 按需 file.search；二进制仅文件名 */
-async function resolveRefAttachments(refs: string[]): Promise<string> {
-  let block = "";
-  for (const ref of refs) {
-    if (isBinaryRef(ref)) {
-      block += `\n（引用模型/数据文件：${ref}——二进制文件，仅按文件名引用，无内容）`;
-      continue;
-    }
-    const res = await execAssistantTool(
-      "asset.read",
-      JSON.stringify({ path: ref }),
-      convs.activeRoot || undefined,
-    );
-    if (res && typeof res === "object" && "error" in res) {
-      // 超 512KB 拒读的大文件：跳过整读转索引模式（索引侧上限 2MB）
-      if (shouldIndexInstead(undefined, undefined, String(res.error))) {
-        block += await buildIndexedBlock(ref);
-        continue;
-      }
-      block += `\n（引用文件：${ref}——读取失败：${String(res.error)}）`;
-      continue;
-    }
-    const doc = res as { path?: string; content?: string; truncated?: boolean };
-    if (shouldIndexInstead(doc?.content, doc?.truncated)) {
-      block += await buildIndexedBlock(ref, doc?.content);
-      continue;
-    }
-    block += `\n\n--- 文件：${doc?.path ?? ref} ---\n${doc?.content ?? ""}\n--- 结束 ---`;
+/** 单个 @引用 → 注入块：小文件全文；大文件索引目录+按需 file.search；二进制仅文件名 */
+async function resolveRefBlock(ref: string, root?: string): Promise<string> {
+  if (isBinaryRef(ref)) {
+    return `\n（引用模型/数据文件：${ref}——二进制文件，仅按文件名引用，无内容）`;
   }
-  return block;
+  const res = await execAssistantTool(
+    "asset.read",
+    JSON.stringify({ path: ref }),
+    root,
+  );
+  if (res && typeof res === "object" && "error" in res) {
+    // 超 512KB 拒读的大文件：跳过整读转索引模式（索引侧上限 2MB）
+    if (shouldIndexInstead(undefined, undefined, String(res.error))) {
+      return buildIndexedBlock(ref, root);
+    }
+    return `\n（引用文件：${ref}——读取失败：${String(res.error)}）`;
+  }
+  const doc = res as { path?: string; content?: string; truncated?: boolean };
+  if (shouldIndexInstead(doc?.content, doc?.truncated)) {
+    return buildIndexedBlock(ref, root, doc?.content);
+  }
+  return `\n\n--- 文件：${doc?.path ?? ref} ---\n${doc?.content ?? ""}\n--- 结束 ---`;
+}
+
+/** 解析 @引用 → 附加到 wire 消息的注入块。多引用并行读取（互不依赖），
+ * 结果按原顺序拼接——注入块的顺序要保持与引用书写顺序一致 */
+async function resolveRefAttachments(refs: string[], root?: string): Promise<string> {
+  const blocks = await Promise.all(refs.map((ref) => resolveRefBlock(ref, root)));
+  return blocks.join("");
 }
 
 /** 发送（textArg 供确认浮动条等程序化调用；模板 @click 必须写 send()） */
@@ -502,35 +491,48 @@ async function send(textArg?: string | Event): Promise<void> {
   const typed = typeof textArg === "string";
   const text = (typed ? textArg : input.value).trim();
   const prov = provider.value;
-  if (!text || busy.value || !prov) return;
+  if (!text || !prov) return;
+  const convId = convs.activeConvId();
+  if (!convId) return;
+  const run = getRun(convId);
+  // 会话级互斥：本会话任务未结束禁止再发送；其他会话的运行互不影响
+  if (run.busy) return;
   if (!prov.baseUrl.trim() || !prov.model.trim()) {
     toastErr("请先在「设置 → 供应商」填写地址与模型");
     return;
   }
   if (!typed) input.value = "";
-  pendingConfirm.value = false;
-  lastTask.value = text;
-  const convId = convs.activeConvId();
-  if (!convId) return;
+  run.pendingConfirm = false;
+  run.lastTask = text;
+  // 任务锚定启动时的工作区：运行中切走会话/工作区，工具仍读写本任务的工作区
+  const root = convs.activeRoot;
   convs.append(convId, { role: "user", content: text });
-  // @引用在发送时解析：文本文件全文注入 wire（不进可见消息）
   const refs = parseFileRefs(text);
-  const attachments = refs.length ? await resolveRefAttachments(refs) : "";
   const history = toWire(messages.value);
   const card0 = card.value;
   // 跨轮防重复备忘：本会话已成功的写操作（只进 wire 不落库）——跨轮历史不含
   // 工具结果，没有它模型会把往期任务并入 brain.plan 重跑（如再次 project.create）
   const note = doneWritesNote(messages.value);
-  const wire = [
-    { role: "system" as const, content: buildSystemPrompt(card0, convs.activeRoot) },
-    // 历史末尾是刚追加的用户消息 → 替换为"原文 + 引用附件"版本
+  const wireHead = [
+    { role: "system" as const, content: buildSystemPrompt(card0, root) },
+    // 历史末尾是刚追加的用户消息 → 占位剔除，稍后替换为"原文 + 引用附件"版本
     ...history.slice(0, -1),
     ...(note ? [{ role: "user" as const, content: note }] : []),
-    { role: "user" as const, content: text + attachments },
   ];
-  busy.value = true;
-  streamingText.value = "";
-  stopRequested.value = false;
+  run.busy = true;
+  run.streamingText = "";
+  run.stopRequested = false;
+  /** 任务级黄灯确认回调：闭包捕获 run——用户切走会话，裁决仍投递回本任务 */
+  const requestToolConfirm: ConfirmFn = (info) =>
+    new Promise((resolve) => {
+      run.execConfirms.push({ ...info, resolve });
+      scrollBottom();
+    });
+  /** 单元状态标记（作用于本任务会话的动态块） */
+  const markUnit = (index: number, status: NluUnitRow["status"]): void => {
+    const unit = run.nluRun?.units.find((u) => u.index === index);
+    if (unit) unit.status = status;
+  };
   // ---- 语义单元化：输入先过大脑（分段 → 神经图检索 → 命令预测），轨迹与
   // 单元任务上屏过程容器；绿色通道（死板过程命令）大脑直执行，模糊原子任务
   // 合并为一次助手会话按计划推进，纯对话/指令任务直通 ----
@@ -541,183 +543,206 @@ async function send(textArg?: string | Event): Promise<void> {
   let directNote = "";
   let deco: BrainDecomposition | null = null;
   const nluCallId = `nlu_${Date.now().toString(36)}`;
+  // 流式渲染节流：chunk 事件频率可能远高于帧率，streamingDisplay 的全文净化
+  // 扫描与 Vue 重渲染都按帧合并（latest 恒存最新值，不丢尾巴）
+  let rafPending = 0;
+  let latestText = "";
   try {
-    deco = await api.brainDecompose(text, convs.activeRoot || undefined);
-    nluRun.value = toNluData(deco);
-    // 绿色通道（死板过程命令）：大脑直接委托命令中心执行，不经助手；
-    // 模糊原子任务留给助手按计划转换。全走 brain_execute 门控与观测闭环。
-    for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {
-      if (stopRequested.value) break; // 停止：剩余直执行单元不再发起
-      markUnit(u.index, "running");
-      convs.append(convId, {
-        role: "tool",
-        content: JSON.stringify(u.params ?? {}),
-        toolName: u.method!,
-        toolCallId: `d_${u.index}`,
-      });
-      let ok = false;
-      let digest = "";
-      try {
-        // 绿色通道仅死板过程命令（无参绿灯查询）：仍经决策中心门控与观测
-        const res = await execAssistantTool(
-          u.method!,
-          JSON.stringify(u.params ?? {}),
-          convs.activeRoot || undefined,
-          text,
-          requestToolConfirm,
-        );
-        const err = (res as { error?: unknown } | null)?.error;
-        ok = !err;
-        digest = JSON.stringify(res);
-      } catch (e) {
-        digest = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
-      }
-      markUnit(u.index, ok ? "ok" : "fail");
-      convs.append(convId, {
-        role: "tool",
-        content: digest.slice(0, 2000),
-        toolName: u.method!,
-        toolCallId: `d_${u.index}`,
-        result: true,
-      });
-      directResults.push(
-        `- ${u.method}(${JSON.stringify(u.params ?? {})}) → ${ok ? "完成" : "失败"}：${digest.length > 160 ? digest.slice(0, 160) + "…" : digest}`,
-      );
-    }
-    directNote = directResults.length
-      ? "（系统·大脑原子执行）以下只读原子任务已由大脑直接完成，不要重复执行，直接引用其结果：\n" +
-        directResults.join("\n")
-      : "";
-    assistUnits = deco.units.filter((u) => u.exec !== "direct");
-    if (!assistUnits.length) {
-      nluRun.value.traces.push(
-        directResults.length
-          ? { stage: "零调用", detail: "任务已由大脑原子执行完成，无需助手" }
-          : { stage: "直通", detail: "纯对话/指令任务，直通助手" },
-      );
-      brainNote = knowledgeNote(deco);
-    }
-    // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
-    convs.append(convId, {
-      role: "tool",
-      content: text,
-      toolName: "brain.decompose",
-      toolCallId: nluCallId,
-    });
-    convs.append(convId, {
-      role: "tool",
-      content: decomposeDigest({
-        task: deco.task,
-        units: deco.units,
-        traces: nluRun.value.traces,
-        refs: deco.refs,
-      }),
-      toolName: "brain.decompose",
-      toolCallId: nluCallId,
-      result: true,
-    });
-    scrollBottom();
-  } catch {
-    assistUnits = []; // 大脑不可用：静默回落，不因拆解失败阻塞对话
-  }
-  const agentCommon = {
-    tools: assistantTools(),
-    chat: createTauriTransport((id) => (reqId.value = id)),
-    execTool: (name: string, argsJson: string) =>
-      execAssistantTool(
-        name,
-        argsJson,
-        convs.activeRoot || undefined,
-        text,
-        requestToolConfirm,
-      ),
-    baseUrl: prov.baseUrl,
-    apiKey: prov.apiKey,
-    model: card0?.model?.trim() ? card0.model.trim() : prov.model,
-    temperature: card0?.temperature ?? undefined,
-    contextK: prov.contextK,
-    onDelta: (t: string) => {
-      // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
-      streamingText.value = streamingDisplay(t);
-    },
-    onEvent: (e: AgentEvent) => {
-      if (e.type === "tool_start") {
+    // @引用解析与大脑拆解并行：两者互不依赖，串行等于白等一次完整往返；
+    // 拆解失败静默回落（deco = null → 直通助手），不因拆解失败阻塞对话
+    const [attachments, decoResult] = await Promise.all([
+      refs.length ? resolveRefAttachments(refs, root || undefined) : Promise.resolve(""),
+      api.brainDecompose(text, root || undefined).catch(() => null),
+    ]);
+    const wire = [...wireHead, { role: "user" as const, content: text + attachments }];
+    if (decoResult) {
+      deco = decoResult;
+      run.nluRun = toNluData(deco);
+      // 绿色通道（死板过程命令）：大脑直接委托命令中心执行，不经助手；
+      // 模糊原子任务留给助手按计划转换。全走 brain_execute 门控与观测闭环。
+      for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {
+        if (run.stopRequested) break; // 停止：剩余直执行单元不再发起
+        markUnit(u.index, "running");
         convs.append(convId, {
           role: "tool",
-          content: e.args ?? "",
-          toolName: e.name,
-          toolCallId: e.callId,
+          content: JSON.stringify(u.params ?? {}),
+          toolName: u.method!,
+          toolCallId: `d_${u.index}`,
         });
-      } else if (e.type === "tool_result") {
+        let ok = false;
+        let digest = "";
+        try {
+          // 绿色通道仅死板过程命令（无参绿灯查询）：仍经决策中心门控与观测
+          const res = await execAssistantTool(
+            u.method!,
+            JSON.stringify(u.params ?? {}),
+            root || undefined,
+            text,
+            requestToolConfirm,
+          );
+          const err = (res as { error?: unknown } | null)?.error;
+          ok = !err;
+          digest = JSON.stringify(res);
+        } catch (e) {
+          digest = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+        }
+        markUnit(u.index, ok ? "ok" : "fail");
         convs.append(convId, {
           role: "tool",
-          content: e.result ?? "",
-          toolName: e.name,
-          toolCallId: e.callId,
+          content: digest.slice(0, 2000),
+          toolName: u.method!,
+          toolCallId: `d_${u.index}`,
           result: true,
         });
+        directResults.push(
+          `- ${u.method}(${JSON.stringify(u.params ?? {})}) → ${ok ? "完成" : "失败"}：${digest.length > 160 ? digest.slice(0, 160) + "…" : digest}`,
+        );
       }
-    },
-    shouldStop: () => stopRequested.value,
-  };
-  try {
-    let finalText: string;
-    if (assistUnits.length) {
-      // 模糊原子单元合并为**一次会话**：执行计划注入后由模型在单个工具循环
-      // 内按序推进（自动续跑防停摆）——逐单元独立会话会让全量上下文往返
-      // 翻 N 倍，是通信慢的主因
-      const note = [
-        deco ? knowledgeNote(deco) : "",
-        directNote,
-        planNote(assistUnits),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      const messages = note ? [...wire, { role: "user" as const, content: note }] : wire;
-      for (const u of assistUnits) markUnit(u.index, "running");
-      const reply = await runAgent({ ...agentCommon, messages });
-      finalText = reply.content.trim();
-      const done = !stopRequested.value && finalText && !finalText.includes("已在此暂停");
-      for (const u of assistUnits) markUnit(u.index, done ? "ok" : "fail");
-      // 空回复兜底：绝不让一轮运行无声无息地结束
+      directNote = directResults.length
+        ? "（系统·大脑原子执行）以下只读原子任务已由大脑直接完成，不要重复执行，直接引用其结果：\n" +
+          directResults.join("\n")
+        : "";
+      assistUnits = deco.units.filter((u) => u.exec !== "direct");
+      if (!assistUnits.length && run.nluRun) {
+        run.nluRun.traces.push(
+          directResults.length
+            ? { stage: "零调用", detail: "任务已由大脑原子执行完成，无需助手" }
+            : { stage: "直通", detail: "纯对话/指令任务，直通助手" },
+        );
+        brainNote = knowledgeNote(deco);
+      }
+      // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
       convs.append(convId, {
-        role: "assistant",
-        content:
-          finalText ||
-          "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）",
+        role: "tool",
+        content: text,
+        toolName: "brain.decompose",
+        toolCallId: nluCallId,
       });
-    } else if (directResults.length) {
-      // 纯直执行任务：全部原子命令已由大脑完成，零 LLM 直接汇总
-      finalText =
-        "任务完成（大脑原子执行）：\n" + directResults.map((r) => r.replace(/：.*$/, "")).join("\n");
-      convs.append(convId, { role: "assistant", content: finalText });
-    } else {
-      // 直通路线：无原子单元的对话/指令任务，大脑知识命中注入后直通
-      const messages = brainNote ? [...wire, { role: "user" as const, content: brainNote }] : wire;
-      const reply = await runAgent({ ...agentCommon, messages });
-      // 空回复兜底：绝不让一轮运行无声无息地结束
-      finalText =
-        reply.content.trim() ||
-        "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）";
-      convs.append(convId, { role: "assistant", content: finalText });
+      convs.append(convId, {
+        role: "tool",
+        content: decomposeDigest({
+          task: deco.task,
+          units: deco.units,
+          traces: run.nluRun?.traces ?? [],
+          refs: deco.refs,
+        }),
+        toolName: "brain.decompose",
+        toolCallId: nluCallId,
+        result: true,
+      });
     }
-    // 请求确认 → 输入框上沿弹批准/自行输入/退出浮动条
-    pendingConfirm.value = !stopRequested.value && looksLikeConfirmRequest(finalText);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    convs.append(convId, { role: "error", content: msg });
-    toastErr(msg);
-  } finally {
-    busy.value = false;
-    streamingText.value = "";
-    reqId.value = "";
-    nluRun.value = null; // 动态块退场：历史静态大脑块接管回放
-    // messages.value 必须与 conversations 缓存数组保持同一引用：convs.append
-    // 推的是缓存数组，此处若换成浅拷贝副本，时间线 computed 将收不到触发——
-    // 下一轮的用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡），
-    // 直到本轮收尾才一次性冒出来。
-    messages.value = await convs.ensureActiveMessages();
     scrollBottom();
+    const agentCommon = {
+      tools: assistantTools(),
+      chat: createTauriTransport((id) => (run.reqId = id)),
+      execTool: (name: string, argsJson: string) =>
+        execAssistantTool(
+          name,
+          argsJson,
+          root || undefined,
+          text,
+          requestToolConfirm,
+        ),
+      baseUrl: prov.baseUrl,
+      apiKey: prov.apiKey,
+      model: card0?.model?.trim() ? card0.model.trim() : prov.model,
+      temperature: card0?.temperature ?? undefined,
+      contextK: prov.contextK,
+      onDelta: (t: string) => {
+        // 流式显示走净化：完整调用块被剔除、尾部疑似调用的半截对象不闪现
+        latestText = streamingDisplay(t);
+        if (!rafPending) {
+          rafPending = requestAnimationFrame(() => {
+            rafPending = 0;
+            run.streamingText = latestText;
+          });
+        }
+      },
+      onEvent: (e: AgentEvent) => {
+        if (e.type === "tool_start") {
+          convs.append(convId, {
+            role: "tool",
+            content: e.args ?? "",
+            toolName: e.name,
+            toolCallId: e.callId,
+          });
+        } else if (e.type === "tool_result") {
+          convs.append(convId, {
+            role: "tool",
+            content: e.result ?? "",
+            toolName: e.name,
+            toolCallId: e.callId,
+            result: true,
+          });
+        }
+      },
+      shouldStop: () => run.stopRequested,
+    };
+    try {
+      let finalText: string;
+      if (assistUnits.length) {
+        // 模糊原子单元合并为**一次会话**：执行计划注入后由模型在单个工具循环
+        // 内按序推进（自动续跑防停摆）——逐单元独立会话会让全量上下文往返
+        // 翻 N 倍，是通信慢的主因
+        const planNoteText = [
+          deco ? knowledgeNote(deco) : "",
+          directNote,
+          planNote(assistUnits),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        const messages = planNoteText
+          ? [...wire, { role: "user" as const, content: planNoteText }]
+          : wire;
+        for (const u of assistUnits) markUnit(u.index, "running");
+        const reply = await runAgent({ ...agentCommon, messages });
+        finalText = reply.content.trim();
+        const done = !run.stopRequested && finalText && !finalText.includes("已在此暂停");
+        for (const u of assistUnits) markUnit(u.index, done ? "ok" : "fail");
+        // 空回复兜底：绝不让一轮运行无声无息地结束
+        convs.append(convId, {
+          role: "assistant",
+          content:
+            finalText ||
+            "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）",
+        });
+      } else if (directResults.length) {
+        // 纯直执行任务：全部原子命令已由大脑完成，零 LLM 直接汇总
+        finalText =
+          "任务完成（大脑原子执行）：\n" + directResults.map((r) => r.replace(/：.*$/, "")).join("\n");
+        convs.append(convId, { role: "assistant", content: finalText });
+      } else {
+        // 直通路线：无原子单元的对话/指令任务，大脑知识命中注入后直通
+        const messages = brainNote ? [...wire, { role: "user" as const, content: brainNote }] : wire;
+        const reply = await runAgent({ ...agentCommon, messages });
+        // 空回复兜底：绝不让一轮运行无声无息地结束
+        finalText =
+          reply.content.trim() ||
+          "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）";
+        convs.append(convId, { role: "assistant", content: finalText });
+      }
+      // 请求确认 → 输入框上沿弹批准/自行输入/退出浮动条
+      run.pendingConfirm = !run.stopRequested && looksLikeConfirmRequest(finalText);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      convs.append(convId, { role: "error", content: msg });
+      toastErr(msg);
+    }
+  } finally {
+    if (rafPending) cancelAnimationFrame(rafPending);
+    run.busy = false;
+    run.streamingText = "";
+    run.reqId = "";
+    run.nluRun = null; // 动态块退场：历史静态大脑块接管回放
+    // 只在用户仍停留在本会话时才刷新时间线并滚底——后台任务收尾不惊扰当前会话
+    if (convs.activeConvId() === convId) {
+      // messages.value 必须与 conversations 缓存数组保持同一引用：convs.append
+      // 推的是缓存数组，此处若换成浅拷贝副本，时间线 computed 将收不到触发——
+      // 下一轮的用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡），
+      // 直到本轮收尾才一次性冒出来。
+      messages.value = await convs.ensureActiveMessages();
+      scrollBottom();
+    }
   }
 }
 
@@ -770,14 +795,14 @@ function onInputKey(e: KeyboardEvent): void {
         v-if="b.kind === 'steps'"
         :items="b.rows"
         :open="stepsOpen(b.key)"
-        :running="busy && b.key === lastBlockKey"
+        :running="!!activeRun?.busy && b.key === lastBlockKey"
         @toggle="toggleSteps(b.key)"
       />
       <NluSteps
-        v-else-if="b.kind === 'nlu' && (b.data.units.length || (busy && b.key === lastBlockKey))"
+        v-else-if="b.kind === 'nlu' && (b.data.units.length || (activeRun?.busy && b.key === lastBlockKey))"
         :data="b.data"
         :open="stepsOpen(b.key)"
-        :running="busy && b.key === lastBlockKey"
+        :running="!!activeRun?.busy && b.key === lastBlockKey"
         @toggle="toggleSteps(b.key)"
       />
         <div
@@ -812,14 +837,14 @@ function onInputKey(e: KeyboardEvent): void {
           </div>
         </div>
       </template>
-      <div v-if="busy" class="achat-row assistant">
-        <div v-if="streamingText" class="achat-bubble">{{ streamingText }}▌</div>
+      <div v-if="activeRun?.busy" class="achat-row assistant">
+        <div v-if="activeRun.streamingText" class="achat-bubble">{{ activeRun.streamingText }}▌</div>
         <div v-else class="achat-bubble achat-typing"><i /><i /><i /></div>
       </div>
     </div>
 
     <!-- 确认浮动条：助手请求确认时贴合在输入框上沿 -->
-    <div v-if="pendingConfirm && !busy" class="achat-confirm">
+    <div v-if="activeRun?.pendingConfirm && !activeRun.busy" class="achat-confirm">
       <span class="achat-confirm-text">助手请求确认，以继续执行待确认的操作</span>
       <div class="achat-confirm-actions">
         <button class="achat-confirm-btn ok" title="回复「确认」并继续执行" @click="approveConfirm()">
@@ -894,7 +919,7 @@ function onInputKey(e: KeyboardEvent): void {
         </div>
       </div>
 
-      <div class="achat-input" :class="{ joined: pendingConfirm && !busy }">
+      <div class="achat-input" :class="{ joined: activeRun?.pendingConfirm && !activeRun.busy }">
         <textarea
           ref="textEl"
           v-model="input"
@@ -909,10 +934,10 @@ function onInputKey(e: KeyboardEvent): void {
         <div class="achat-toolbar">
           <!-- @ 引用是工作区功能：通用会话（未绑定项目）没有可列/可读的项目文件，
                按钮不渲染，也就不会触发「没有工作区项目」的选择浮层报错 -->
-          <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
+          <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="activeRun?.busy" @click="openPicker">@</button>
           <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
-          <button v-if="busy" class="achat-send stop" :title="stopRequested ? '正在等待当前步骤结束' : '终止执行'" @click="stopGeneration">
-            {{ stopRequested ? "停止中…" : "停止" }}
+          <button v-if="activeRun?.busy" class="achat-send stop" :title="activeRun.stopRequested ? '正在等待当前步骤结束' : '终止执行'" @click="stopGeneration">
+            {{ activeRun.stopRequested ? "停止中…" : "停止" }}
           </button>
           <button v-else class="achat-send" :disabled="!canSend" @click="send()">发送</button>
         </div>
