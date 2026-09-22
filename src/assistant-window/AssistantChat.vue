@@ -234,11 +234,23 @@ function autoGrow(): void {
 
 watch(input, () => void nextTick(autoGrow));
 
-/** @插入的资产选择浮层 */
+/** @插入的资产选择浮层（锚定输入框上方的 popover）。
+ *  两种打开方式：button = 点 @ 按钮自由搜索；inline = 输入框敲 @ 实时补全
+ *  （搜索词跟随 @token，↑/↓/Enter/Esc 在 textarea 键盘拦截，焦点不离开输入框） */
 const pickerOpen = ref(false);
 const pickerQuery = ref("");
 const pickerList = ref<Array<{ path: string; kind: string }>>([]);
 const pickerLoading = ref(false);
+/** 键盘可达：↑/↓ 移动高亮、Enter 选中、Esc 关闭 */
+const pickerQEl = ref<HTMLInputElement | null>(null);
+const pickerSel = ref(0);
+const pickerMode = ref<"button" | "inline">("button");
+/** inline 模式下 @token 在输入框中的起始位置（选中后整段替换） */
+const atFrom = ref(-1);
+// 搜索词变化后高亮回到首项，避免 ↑/↓ 停在已被过滤掉的行
+watch(pickerQuery, () => {
+  pickerSel.value = 0;
+});
 
 const card = computed(() => store.cards.find((c) => c.id === store.activeCardId) ?? null);
 const provider = computed(() => store.providers.find((p) => p.id === store.activeProviderId) ?? null);
@@ -260,19 +272,35 @@ onBeforeUnmount(() => window.removeEventListener("assistant:insert-file", onInse
 
 // @文件引用解析（令牌格式 / 二进制判定 / 发送时附件注入）在 ./refs 纯函数模块
 
-/** 插入一条引用令牌（含空格的路径自动加方括号） */
-function insertRef(path: string): void {
+/** 插入一条引用令牌（含空格的路径自动加方括号）。
+ *  from 提供时为 inline 补全：替换输入框 [from, 光标) 的 @token 片段，光标落到插入末尾 */
+function insertRef(path: string, from?: number): void {
   if (!path) return;
   const token = path.includes(" ") ? `@[${path}]` : `@${path}`;
-  const needSpace = input.value.length > 0 && !/\s$/.test(input.value);
-  input.value += (needSpace ? " " : "") + token + " ";
+  if (from != null && from >= 0) {
+    const el = textEl.value;
+    const cursor = el?.selectionStart ?? input.value.length;
+    input.value = input.value.slice(0, from) + token + " " + input.value.slice(cursor);
+    void nextTick(() => {
+      if (el) {
+        const pos = from + token.length + 1;
+        el.setSelectionRange(pos, pos);
+        el.focus();
+      }
+    });
+  } else {
+    const needSpace = input.value.length > 0 && !/\s$/.test(input.value);
+    input.value += (needSpace ? " " : "") + token + " ";
+  }
   pickerOpen.value = false;
+  atFrom.value = -1;
 }
 
 watch(
   () => convs.activeConvId(),
   async () => {
     pendingConfirm.value = false;
+    pickerOpen.value = false;
     messages.value = await convs.ensureActiveMessages();
     scrollBottom();
   },
@@ -287,12 +315,10 @@ function scrollBottom(): void {
   });
 }
 
-async function openPicker(): Promise<void> {
-  pickerOpen.value = true;
-  pickerQuery.value = "";
+/** 拉取工作区资产清单（浮层两种打开方式共用；与文件树同源：无需编辑器打开项目） */
+async function loadPickerList(): Promise<void> {
   pickerLoading.value = true;
   try {
-    // 与文件树同源：显式携带当前工作区 root，无需编辑器打开项目
     const res = await execAssistantTool("asset.list", "{}", convs.activeRoot || undefined);
     if (res && typeof res === "object" && "error" in res) {
       throw new Error(String(res.error));
@@ -308,15 +334,73 @@ async function openPicker(): Promise<void> {
   }
 }
 
+/** 点 @ 按钮：自由搜索模式 */
+async function openPicker(): Promise<void> {
+  pickerMode.value = "button";
+  atFrom.value = -1;
+  pickerOpen.value = true;
+  pickerQuery.value = "";
+  pickerSel.value = 0;
+  void nextTick(() => pickerQEl.value?.focus());
+  if (!pickerList.value.length) await loadPickerList();
+}
+
+/**
+ * 输入框 @ 语法实时补全：光标左侧是「行首/空白 + @ + 无空白 token」时打开
+ * 浮层（搜索词跟随 token），token 打空格/删除 @ 即收起。input/keyup/click
+ * 都会重估（覆盖输入、方向键移光标、点选光标三种路径）。
+ */
+function updateAtState(): void {
+  const el = textEl.value;
+  if (!el || !convs.activeRoot) return;
+  const before = input.value.slice(0, el.selectionStart ?? input.value.length);
+  const m = /(?:^|\s)@([^\s@]*)$/.exec(before);
+  if (m) {
+    const changed = !pickerOpen.value || pickerMode.value !== "inline";
+    pickerMode.value = "inline";
+    atFrom.value = (el.selectionStart ?? input.value.length) - m[1].length - 1;
+    pickerQuery.value = m[1];
+    if (changed) {
+      pickerSel.value = 0;
+      pickerOpen.value = true;
+      if (!pickerList.value.length && !pickerLoading.value) void loadPickerList();
+    }
+  } else if (pickerOpen.value && pickerMode.value === "inline") {
+    pickerOpen.value = false;
+    atFrom.value = -1;
+  }
+}
+
 function filteredPicker(): Array<{ path: string; kind: string }> {
   const q = pickerQuery.value.trim().toLowerCase();
   if (!q) return pickerList.value;
   return pickerList.value.filter((a) => a.path.toLowerCase().includes(q));
 }
 
-/** 选择浮层点文件：插入引用令牌（不展开内容；内容在发送时解析） */
+/** 选择浮层点文件：插入引用令牌（不展开内容；内容在发送时解析）。
+ *  inline 补全模式替换 @token 片段，按钮模式追加到末尾 */
 function insertAsset(path: string): void {
-  insertRef(path);
+  insertRef(path, pickerMode.value === "inline" ? atFrom.value : undefined);
+  textEl.value?.focus();
+}
+
+/** 关闭浮层并把焦点还给输入框 */
+function closePicker(): void {
+  pickerOpen.value = false;
+  atFrom.value = -1;
+  textEl.value?.focus();
+}
+
+/** ↑/↓ 移动高亮（循环）；Enter 选中当前高亮项 */
+function movePickerSel(delta: number): void {
+  const n = filteredPicker().length;
+  if (!n) return;
+  pickerSel.value = (pickerSel.value + delta + n) % n;
+}
+
+function pickPickerSel(): void {
+  const item = filteredPicker()[pickerSel.value];
+  if (item) insertAsset(item.path);
 }
 
 /** 解析 @引用 → 附加到 wire 消息的注入块（文本全文；二进制仅文件名） */
@@ -566,6 +650,29 @@ async function send(textArg?: string | Event): Promise<void> {
 }
 
 function onInputKey(e: KeyboardEvent): void {
+  // @ 实时补全打开时优先接管：↑/↓ 移高亮、Enter 选中（不发送）、Esc 收起
+  if (pickerOpen.value && pickerMode.value === "inline") {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      movePickerSel(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      movePickerSel(-1);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closePicker();
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      pickPickerSel();
+      return;
+    }
+  }
   if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
   e.preventDefault();
   void send();
@@ -661,46 +768,64 @@ function onInputKey(e: KeyboardEvent): void {
       </div>
     </div>
 
-    <div class="achat-input" :class="{ joined: pendingConfirm && !busy }">
-      <textarea
-        ref="textEl"
-        v-model="input"
-        class="achat-text"
-        rows="1"
-        placeholder="Enter 发送，Shift+Enter 换行"
-        @keydown="onInputKey"
-      />
-      <div class="achat-toolbar">
-        <!-- @ 引用是工作区功能：通用会话（未绑定项目）没有可列/可读的项目文件，
-             按钮不渲染，也就不会触发「没有工作区项目」的选择浮层报错 -->
-        <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
-        <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
-        <button v-if="busy" class="achat-send stop" :title="stopRequested ? '正在等待当前步骤结束' : '终止执行'" @click="stopGeneration">
-          {{ stopRequested ? "停止中…" : "停止" }}
-        </button>
-        <button v-else class="achat-send" :disabled="!canSend" @click="send()">发送</button>
-      </div>
-    </div>
+    <!-- 点外部关闭（透明层；浮层锚定输入框上方，无遮罩变暗） -->
+    <div v-if="pickerOpen" class="achat-picker-backdrop" @click="pickerOpen = false"></div>
 
-    <div v-if="pickerOpen" class="achat-picker" @click.self="pickerOpen = false">
-      <div class="achat-picker-box">
-        <div class="achat-picker-head">
-          <span>插入项目文件（文本）</span>
-          <button @click="pickerOpen = false">×</button>
-        </div>
-        <input v-model="pickerQuery" class="achat-picker-q" placeholder="搜索路径…" />
+    <div class="achat-input-wrap">
+      <!-- 插入项目文件浮层：贴输入框上方的 popover（点 @ 自由搜索 / 输入 @ 实时补全） -->
+      <div v-if="pickerOpen" class="achat-picker">
+        <input
+          v-show="pickerMode === 'button'"
+          ref="pickerQEl"
+          v-model="pickerQuery"
+          class="achat-picker-q"
+          placeholder="搜索路径…"
+          @keydown.esc.stop.prevent="closePicker"
+          @keydown.down.prevent="movePickerSel(1)"
+          @keydown.up.prevent="movePickerSel(-1)"
+          @keydown.enter.prevent="pickPickerSel"
+        />
+        <p v-if="pickerMode === 'inline'" class="achat-picker-meta">
+          @ 引用工作区文件 · ↑↓ 选择 · Enter 插入 · Esc 关闭
+        </p>
         <div class="achat-picker-list">
           <button
-            v-for="a in filteredPicker()"
+            v-for="(a, i) in filteredPicker()"
             :key="a.path"
             class="achat-picker-item"
+            :class="{ sel: i === pickerSel }"
             :title="a.path"
             @click="insertAsset(a.path)"
+            @mousemove="pickerSel = i"
           >
             <b>{{ a.kind }}</b> {{ a.path }}
           </button>
           <p v-if="pickerLoading" class="achat-picker-empty">读取中…</p>
           <p v-else-if="!filteredPicker().length" class="achat-picker-empty">无匹配</p>
+        </div>
+      </div>
+
+      <div class="achat-input" :class="{ joined: pendingConfirm && !busy }">
+        <textarea
+          ref="textEl"
+          v-model="input"
+          class="achat-text"
+          rows="1"
+          placeholder="Enter 发送，Shift+Enter 换行；@ 引用项目文件"
+          @keydown="onInputKey"
+          @input="updateAtState"
+          @keyup="updateAtState"
+          @click="updateAtState"
+        />
+        <div class="achat-toolbar">
+          <!-- @ 引用是工作区功能：通用会话（未绑定项目）没有可列/可读的项目文件，
+               按钮不渲染，也就不会触发「没有工作区项目」的选择浮层报错 -->
+          <button v-if="convs.activeRoot" class="achat-at" title="插入项目文件" :disabled="busy" @click="openPicker">@</button>
+          <span class="achat-hint">Enter 发送 · Shift+Enter 换行</span>
+          <button v-if="busy" class="achat-send stop" :title="stopRequested ? '正在等待当前步骤结束' : '终止执行'" @click="stopGeneration">
+            {{ stopRequested ? "停止中…" : "停止" }}
+          </button>
+          <button v-else class="achat-send" :disabled="!canSend" @click="send()">发送</button>
         </div>
       </div>
     </div>
@@ -750,10 +875,10 @@ function onInputKey(e: KeyboardEvent): void {
 .achat-bubble-error { border: 1px solid var(--err); color: var(--err); border-radius: 10px; padding: 7px 10px; margin: 6px 0; white-space: pre-wrap; user-select: text; }
 .achat-typing { display: inline-flex; gap: 4px; i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: atyp 1s infinite; &:nth-child(2) { animation-delay: 0.15s; } &:nth-child(3) { animation-delay: 0.3s; } } }
 @keyframes atyp { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.achat-input-wrap { position: relative; flex: none; margin: 8px 10px 10px; }
 .achat-input {
   display: flex;
   flex-direction: column;
-  margin: 8px 10px 10px;
   padding: 8px 8px 6px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -834,11 +959,32 @@ function onInputKey(e: KeyboardEvent): void {
     cursor: pointer;
     &:hover { background: var(--err); color: var(--bg); }
   } }
-.achat-picker { position: fixed; inset: 0; background: rgb(0 0 0 / 0.45); display: flex; align-items: center; justify-content: center; }
-.achat-picker-box { width: 82%; max-height: 70%; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
-.achat-picker-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--text); button { border: none; background: transparent; color: var(--text-dim); font-size: 16px; cursor: pointer; } }
-.achat-picker-q { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--text); padding: 6px 8px; margin-bottom: 8px; }
-.achat-picker-list { overflow-y: auto; min-height: 120px; display: flex; flex-direction: column; gap: 2px; }
-.achat-picker-item { border: none; background: transparent; color: var(--text); text-align: left; padding: 5px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; b { color: var(--text-dim); font-weight: 400; margin-right: 6px; } &:hover { background: var(--bg-hover); } }
+/* 插入项目文件浮层：锚定输入框上方的 popover（无标题栏；点外部/Esc 关闭） */
+.achat-picker-backdrop { position: fixed; inset: 0; z-index: 30; background: transparent; }
+.achat-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+.achat-picker-q { flex: none; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-input); color: var(--text); padding: 7px 10px; margin-bottom: 6px;
+  &::placeholder { color: var(--text-dim); }
+  &:focus { outline: none; border-color: var(--btn-hover); }
+}
+.achat-picker-meta { flex: none; margin: 0 0 6px; padding: 0 2px; font-size: 11px; color: var(--text-dim); }
+.achat-picker-list { overflow-y: auto; min-height: 96px; display: flex; flex-direction: column; gap: 2px; }
+.achat-picker-item { border: none; background: transparent; color: var(--text); text-align: left; padding: 6px 10px; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  b { color: var(--text-dim); font-weight: 400; font-size: 11px; margin-right: 8px; }
+  &:hover, &.sel { background: var(--bg-hover); }
+}
 .achat-picker-empty { color: var(--text-dim); margin: 8px; }
 </style>
