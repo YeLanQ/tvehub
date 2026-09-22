@@ -1003,6 +1003,57 @@ console.log("[15] 追击寻路：有导航区域 → 沿烘焙网格 A* 绕行�
   handle.dispose();
 }
 
+console.log("[15b] 追击最小距离：stopDistance 截停不重叠（0 = 不限制）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  const mkObj = (id, x) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4));
+    o.position.set(x, 0, 0);
+    o.userData.nodeId = id;
+    scene.add(o);
+    return o;
+  };
+  const prey = mkObj("prey-b", 6);
+  const chaser1 = mkObj("chaser-b1", 0);
+  const chaser2 = mkObj("chaser-b2", 0);
+  const doc = {
+    formatVersion: 2,
+    modules: [{ id: "core-entity", version: 1 }, { id: "core-driver", version: 1 }],
+    nodes: [
+      { id: "pP", type: "entity.proto", x: 0, y: 0, entityId: "prey-b" },
+      { id: "pC1", type: "entity.proto", x: 0, y: 0, entityId: "chaser-b1" },
+      { id: "pC2", type: "entity.proto", x: 0, y: 0, entityId: "chaser-b2" },
+      { id: "chs1", type: "op.chase", x: 0, y: 0, opType: "op.chase", params: { speed: 4, stopDistance: 2 } },
+      { id: "chs2", type: "op.chase", x: 0, y: 0, opType: "op.chase", params: { speed: 4 } },
+    ],
+    edges: [
+      { id: "b1", srcNode: "pC1", srcPort: "out", dstNode: "chs1", dstPort: "in" },
+      { id: "b2", srcNode: "pP", srcPort: "out", dstNode: "chs1", dstPort: "prey" },
+      { id: "b3", srcNode: "pC2", srcPort: "out", dstNode: "chs2", dstPort: "in" },
+      { id: "b4", srcNode: "pP", srcPort: "out", dstNode: "chs2", dstPort: "prey" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera: new THREE.PerspectiveCamera(50, 1, 0.1, 100),
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  for (let i = 0; i < 300; i++) handle.update(1 / 60);
+  const dist = (o) => Math.hypot(o.position.x - 6, o.position.z);
+  ok(approx(dist(chaser1), 2, 0.1), `最小距离 2 → 稳定停在 2（dist=${dist(chaser1).toFixed(3)}）`);
+  const before = dist(chaser1);
+  for (let i = 0; i < 30; i++) handle.update(1 / 60);
+  ok(Math.abs(dist(chaser1) - before) < 0.02, "停稳：边界处不再移动");
+  ok(dist(chaser2) < 0.5, `未设最小距离照常贴脸（dist=${dist(chaser2).toFixed(3)}）`);
+  handle.dispose();
+}
+
 console.log("[16] 状态机容器：迁移守卫（from>to）+ 同状态去重/可重入（多状态切换）");
 {
   posted.length = 0;

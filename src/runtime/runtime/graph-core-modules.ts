@@ -429,6 +429,8 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             }
             const speed = k.numP(node, "speed", 3);
             const face = k.boolP(node, "faceMove", true);
+            // 最小距离：与目标小于该值时停止移动（避免重叠）；0 = 仅保留防抖下限
+            const stop = Math.max(CHASE_STOP, k.numP(node, "stopDistance", 0));
             const pathBetween = k.navApi?.pathBetween?.bind(k.navApi);
             for (const t of targets) {
               // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
@@ -436,7 +438,9 @@ export function createCoreDriversModule(): GraphRuntimeModule {
               const moverWorld = worldPos(t.obj);
               const preyWorld = worldPos(prey.obj);
               const worldDist = Math.hypot(moverWorld.x - preyWorld.x, moverWorld.y - preyWorld.y, moverWorld.z - preyWorld.z);
-              if (worldDist < CHASE_STOP) continue;
+              if (worldDist <= stop) continue;
+              // 本帧移动不得跨进最小距离边界（防单帧步长过大造成重叠）
+              const remain = worldDist - stop;
 
               // 寻路跟随：按间隔（或目标位移超限）重寻路；路径点贴地，绕行障碍
               let moved = false;
@@ -469,7 +473,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
                   const dz = target.z - t.obj.position.z;
                   const wpDist = Math.hypot(moverWorld.x - cur.x, moverWorld.y - cur.y, moverWorld.z - cur.z);
                   if (wpDist > 1e-6) {
-                    const step = (speed * dt) / wpDist;
+                    const step = (Math.min(speed * dt, remain) / wpDist);
                     t.obj.position.x += dx * step;
                     t.obj.position.y += dy * step;
                     t.obj.position.z += dz * step;
@@ -486,7 +490,7 @@ export function createCoreDriversModule(): GraphRuntimeModule {
                 const dx = target.x - t.obj.position.x;
                 const dy = target.y - t.obj.position.y;
                 const dz = target.z - t.obj.position.z;
-                const step = (speed * dt) / worldDist;
+                const step = Math.min(speed * dt, remain) / worldDist;
                 t.obj.position.x += dx * step;
                 t.obj.position.y += dy * step;
                 t.obj.position.z += dz * step;
