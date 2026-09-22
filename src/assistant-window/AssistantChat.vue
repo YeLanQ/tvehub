@@ -19,8 +19,7 @@ import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
-  runUnitPlan,
-  usablePlan,
+  planNote,
 } from "./nlu";
 import { copyText } from "./clipboard";
 import ToolSteps, { type ToolStepItem } from "./ToolSteps.vue";
@@ -61,8 +60,6 @@ const execConfirmView = computed(() => execConfirms.value[0] ?? null);
 // 不可用回落整任务直通助手。单元内的工具决策仍经决策中心（brainExecute）。
 // ---------------------------------------------------------------------------
 const nluRun = ref<{ traces: BrainNluTrace[]; units: NluUnitRow[] } | null>(null);
-/** 单元小循环的轮上限（单元是小任务，远小于整任务的 24 轮） */
-const UNIT_MAX_ROUNDS = 10;
 
 function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: NluUnitRow[] } {
   return {
@@ -380,21 +377,20 @@ async function send(textArg?: string | Event): Promise<void> {
   streamingText.value = "";
   stopRequested.value = false;
   // ---- 语义单元化：输入先过大脑（分段 → 神经图检索 → 命令预测），轨迹与
-  // 单元任务上屏过程容器；拆解可用则逐单元驱动独立小循环（每单元一次小
-  // agent 会话，避免整任务长线思考），不可用回落整任务直通助手 ----
-  let units: BrainTaskUnit[] | null = null;
-  /** 直通路线的知识注入（单元路线由 unitInstruction 携带） */
+  // 单元任务上屏过程容器；绿色通道（死板过程命令）大脑直执行，模糊原子任务
+  // 合并为一次助手会话按计划推进，纯对话/指令任务直通 ----
+  let assistUnits: BrainTaskUnit[] = [];
+  const directResults: string[] = [];
+  /** 直通/计划路线的知识注入 */
   let brainNote = "";
-  /** 大脑直执行结果的注入消息（两个路线都要带，防助手重复执行） */
   let directNote = "";
-  let directInjected = false;
+  let deco: BrainDecomposition | null = null;
   const nluCallId = `nlu_${Date.now().toString(36)}`;
   try {
-    const deco = await api.brainDecompose(text, convs.activeRoot || undefined);
+    deco = await api.brainDecompose(text, convs.activeRoot || undefined);
     nluRun.value = toNluData(deco);
-    // 准确性原子任务（绿灯只读）：大脑直接委托命令中心执行，不经助手；
-    // 模糊原子任务留给助手细化。全走 brain_execute 门控与观测闭环。
-    const directResults: string[] = [];
+    // 绿色通道（死板过程命令）：大脑直接委托命令中心执行，不经助手；
+    // 模糊原子任务留给助手按计划转换。全走 brain_execute 门控与观测闭环。
     for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {
       if (stopRequested.value) break; // 停止：剩余直执行单元不再发起
       markUnit(u.index, "running");
@@ -437,12 +433,14 @@ async function send(textArg?: string | Event): Promise<void> {
       ? "（系统·大脑原子执行）以下只读原子任务已由大脑直接完成，不要重复执行，直接引用其结果：\n" +
         directResults.join("\n")
       : "";
-    // 模糊原子任务子集按守门条件决定单元路线或直通
-    const assist = deco.units.filter((u) => u.exec !== "direct");
-    units = usablePlan(assist);
-    if (!units) {
-      nluRun.value.traces.push({ stage: "直通", detail: "单元预测信号不足，整任务交由助手全权执行" });
-      brainNote = [knowledgeNote(deco), directNote].filter(Boolean).join("\n");
+    assistUnits = deco.units.filter((u) => u.exec !== "direct");
+    if (!assistUnits.length) {
+      nluRun.value.traces.push(
+        directResults.length
+          ? { stage: "零调用", detail: "任务已由大脑原子执行完成，无需助手" }
+          : { stage: "直通", detail: "纯对话/指令任务，直通助手" },
+      );
+      brainNote = knowledgeNote(deco);
     }
     // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
     convs.append(convId, {
@@ -465,7 +463,7 @@ async function send(textArg?: string | Event): Promise<void> {
     });
     scrollBottom();
   } catch {
-    units = null; // 大脑不可用：静默回落，不因拆解失败阻塞对话
+    assistUnits = []; // 大脑不可用：静默回落，不因拆解失败阻塞对话
   }
   const agentCommon = {
     tools: assistantTools(),
@@ -508,38 +506,38 @@ async function send(textArg?: string | Event): Promise<void> {
   };
   try {
     let finalText: string;
-    if (units) {
-      // 单元路线：逐单元独立会话；工具决策仍在 execTool 内经决策中心门控
-      const result = await runUnitPlan(units, {
-        runOnce: (extra) => {
-          // 大脑直执行结果只注入第一条单元消息（后续单元经 doneNotes 传递）
-          const pre =
-            directNote && !directInjected ? [{ role: "user" as const, content: directNote }] : [];
-          directInjected = true;
-          return runAgent({
-            ...agentCommon,
-            messages: [...wire, ...pre, ...extra],
-            maxRounds: UNIT_MAX_ROUNDS,
-          });
-        },
-        onUnitStart: (index) => markUnit(index, "running"),
-        onUnitDone: (index, note) => {
-          markUnit(index, "ok");
-          convs.append(convId, { role: "assistant", content: note.trim() || "（本单元无输出）" });
-        },
-        shouldStop: agentCommon.shouldStop,
-      });
-      finalText = result.reply.content.trim();
-      if (result.stopped) {
-        convs.append(convId, { role: "assistant", content: finalText });
-      }
-    } else {
-      // 直通路线：大脑知识命中 + 原子执行结果注入 wire，先校准再动手
-      const note = [brainNote, directNote && !directInjected ? directNote : ""]
+    if (assistUnits.length) {
+      // 模糊原子单元合并为**一次会话**：执行计划注入后由模型在单个工具循环
+      // 内按序推进（自动续跑防停摆）——逐单元独立会话会让全量上下文往返
+      // 翻 N 倍，是通信慢的主因
+      const note = [
+        deco ? knowledgeNote(deco) : "",
+        directNote,
+        planNote(assistUnits),
+      ]
         .filter(Boolean)
-        .join("\n");
-      directInjected = true;
+        .join("\n\n");
       const messages = note ? [...wire, { role: "user" as const, content: note }] : wire;
+      for (const u of assistUnits) markUnit(u.index, "running");
+      const reply = await runAgent({ ...agentCommon, messages });
+      finalText = reply.content.trim();
+      const done = !stopRequested.value && finalText && !finalText.includes("已在此暂停");
+      for (const u of assistUnits) markUnit(u.index, done ? "ok" : "fail");
+      // 空回复兜底：绝不让一轮运行无声无息地结束
+      convs.append(convId, {
+        role: "assistant",
+        content:
+          finalText ||
+          "（模型这一轮返回了空回复。回复「继续」让它接着执行；若反复出现，请检查供应商返回内容。）",
+      });
+    } else if (directResults.length) {
+      // 纯直执行任务：全部原子命令已由大脑完成，零 LLM 直接汇总
+      finalText =
+        "任务完成（大脑原子执行）：\n" + directResults.map((r) => r.replace(/：.*$/, "")).join("\n");
+      convs.append(convId, { role: "assistant", content: finalText });
+    } else {
+      // 直通路线：无原子单元的对话/指令任务，大脑知识命中注入后直通
+      const messages = brainNote ? [...wire, { role: "user" as const, content: brainNote }] : wire;
       const reply = await runAgent({ ...agentCommon, messages });
       // 空回复兜底：绝不让一轮运行无声无息地结束
       finalText =

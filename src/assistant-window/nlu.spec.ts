@@ -1,15 +1,12 @@
-// nlu 纯逻辑单测：拆解质量守门 / 单元指令文案 / 单元循环 / 落库摘要往返。
-// 无 vi.mock：runOnce 依赖注入（tve-unit-testing 注入风格）。
+// nlu 纯逻辑单测：拆解质量守门 / 计划注入 / 落库摘要往返。
+// 无 vi.mock：依赖注入（tve-unit-testing 注入风格）。
 import { describe, expect, it } from "vitest";
 import type { BrainDecomposition, BrainKnowledgeHit, BrainTaskUnit } from "../lib/api";
 import {
   decomposeDigest,
   knowledgeNote,
   parseStoredDecomposition,
-  runUnitPlan,
-  unitInstruction,
-  usablePlan,
-  type UnitRunDeps,
+  planNote,
 } from "./nlu";
 
 function hit(id: string, label: string): BrainKnowledgeHit {
@@ -40,135 +37,40 @@ function deco(units: BrainTaskUnit[]): BrainDecomposition {
   return { task: "T", units, traces: [{ stage: "语义解析", detail: "ok" }], refs: [] };
 }
 
-describe("usablePlan 拆解质量守门", () => {
-  it("正常：两个以上单元且过半有预测 → 可用", () => {
-    const units = [unit(1, "建项目", "project.create"), unit(2, "打开", "project.open"), unit(3, "随意", null)];
-    expect(usablePlan(units)).toEqual(units);
+describe("planNote 执行计划注入", () => {
+  it("正常：单元逐行列出，含建议工具/建议参数/知识参考", () => {
+    const note = planNote([
+      unit(1, "创建一个3D项目", "project.create", [], { name: "aixosp" }),
+      unit(2, "添加一个方向光", "node.add", [hit("concept:doc:sdk/tween.md", "tween 补间动画")]),
+    ]);
+    expect(note).toContain("拆解为 2 个单元任务");
+    expect(note).toContain("单元 1（建议工具：project.create）");
+    expect(note).toContain('{"name":"aixosp"}');
+    expect(note).toContain("tween 补间动画");
+    expect(note).toContain("「任务完成」开头");
   });
 
-  it("边界：恰好两个单元、全部有预测 → 可用", () => {
-    const units = [unit(1, "a", "asset.list"), unit(2, "b", "asset.read")];
-    expect(usablePlan(units)).toHaveLength(2);
-  });
-
-  it("异常：空单元 / 单单元 → 回落", () => {
-    expect(usablePlan([])).toBeNull();
-    expect(usablePlan([unit(1, "只有一段", "project.create")])).toBeNull();
-  });
-
-  it("异常：预测不足两个 → 回落（纯闲聊拆解不驱动助手）", () => {
-    const units = [unit(1, "你好", null), unit(2, "讲个笑话", null)];
-    expect(usablePlan(units)).toBeNull();
-  });
-
-  it("边界：超过 8 单元 → 回落（碎片化保护）", () => {
-    const units = Array.from({ length: 9 }, (_, i) => unit(i + 1, `s${i}`, "asset.list"));
-    expect(usablePlan(units)).toBeNull();
+  it("边界：无建议参数/参考时不出现对应行", () => {
+    const note = planNote([unit(1, "随便做做", null)]);
+    expect(note).not.toContain("建议参数");
+    expect(note).not.toContain("知识参考");
+    expect(note).toContain("自行选择");
   });
 });
 
-describe("unitInstruction 单元指令", () => {
-  it("正常：含序号进度、阶段、预测入口与只做本单元约束", () => {
-    const msg = unitInstruction(unit(2, "打开项目", "project.open"), [], 3);
-    expect(msg).toContain("语义单元 2/3");
-    expect(msg).toContain("打开项目");
-    expect(msg).toContain("project.open");
-    expect(msg).toContain("只完成当前单元");
-  });
-
-  it("边界：无预测方法时不出现入口行", () => {
-    const msg = unitInstruction(unit(1, "你好", null), [], 1);
-    expect(msg).not.toContain("预测入口");
-  });
-
-  it("正常：已完成摘要进入指令且标注不要重复", () => {
-    const msg = unitInstruction(unit(2, "b", "asset.list"), ["a → 完成"], 2);
-    expect(msg).toContain("不要重复执行");
-    expect(msg).toContain("- a → 完成");
-  });
-
-  it("正常：图谱参考进入指令提示深查；无参考不出现该行", () => {
-    const withRefs = unitInstruction(
-      unit(1, "写一个tween动画脚本", "asset.write", [
-        hit("skill:tve-sdk-scripting", "tve 脚本编写"),
-        hit("concept:doc:sdk/tween.md", "tween 补间动画"),
-      ]),
-      [],
-      1,
-    );
-    expect(withRefs).toContain("大脑知识命中");
-    expect(withRefs).toContain('load_skill({"id": "tve-sdk-scripting"})');
-    expect(withRefs).toContain('load_doc({"id": "sdk/tween.md"})');
-    expect(withRefs).toContain("不要凭记忆猜测");
-    // 目录式注入：不预载任何内容
-    expect(withRefs).not.toContain("声明式补间 API");
-    expect(unitInstruction(unit(1, "随便做", null), [], 1)).not.toContain("大脑知识命中");
-  });
-
-  it("正常：knowledgeNote 直通注入（技能给 id、文档给入口；空命中为空串）", () => {
-    const deco2 = deco([
-      unit(1, "a", null),
-      unit(2, "b", null),
-    ]);
-    const note = knowledgeNote({
-      ...deco2,
-      refs: [hit("skill:tve-sdk-scripting", "tve 脚本编写")],
-    });
+describe("knowledgeNote 直通注入", () => {
+  it("正常：技能给 id、文档给入口；空命中为空串", () => {
+    const d = deco([unit(1, "a", null), unit(2, "b", null)]);
+    const note = knowledgeNote({ ...d, refs: [hit("skill:tve-sdk-scripting", "tve 脚本编写")] });
     expect(note).toContain("大脑知识命中");
     expect(note).toContain("load_skill");
-    expect(knowledgeNote(deco2)).toBe("");
-  });
-
-  it("正常：单元指令带大脑建议参数（校验后使用）", () => {
-    const msg = unitInstruction(
-      unit(1, "创建项目", "project.create", [], { name: "aixosp" }),
-      [],
-      1,
-    );
-    expect(msg).toContain('{"name":"aixosp"}');
-    expect(unitInstruction(unit(1, "随便", null), [], 1)).not.toContain("建议参数");
-  });
-});
-
-describe("runUnitPlan 单元循环", () => {
-  function deps(log: string[], replies: string[], stopAfter = -1): UnitRunDeps & { events: string[] } {
-    return {
-      events: log,
-      runOnce: async (extra) => {
-        log.push(`run:${extra[0]?.content ?? ""}`);
-        return { content: replies[log.filter((l) => l.startsWith("run:")).length - 1] ?? "", toolCalls: [] };
-      },
-      onUnitStart: (i) => log.push(`start:${i}`),
-      onUnitDone: (i) => log.push(`done:${i}`),
-      shouldStop: () =>
-        stopAfter >= 0 && log.filter((l) => l.startsWith("start:")).length === stopAfter + 1,
-    };
-  }
-
-  it("正常：逐单元推进，doneNotes 串入后续指令", async () => {
-    const log: string[] = [];
-    const units = [unit(1, "a", "x.a"), unit(2, "b", "x.b")];
-    const d = deps(log, ["第一完成", "第二完成"]);
-    const r = await runUnitPlan(units, d);
-    expect(r.stopped).toBe(false);
-    expect(r.completed).toBe(2);
-    expect(log.filter((l) => l.startsWith("start:"))).toEqual(["start:1", "start:2"]);
-    expect(log.filter((l) => l.startsWith("done:"))).toEqual(["done:1", "done:2"]);
-    expect(r.reply.content).toBe("第二完成");
-    // 第二单元的指令带进度与第一单元结果摘要（跨单元衔接）
-    const second = log.find((l) => l.includes("语义单元 2/2")) ?? "";
-    expect(second).toContain("第一完成");
-    expect(second).toContain("不要重复执行");
-  });
-
-  it("异常：shouldStop 中断 → 返回停止文案与完成数", async () => {
-    const log: string[] = [];
-    const units = [unit(1, "a", "x.a"), unit(2, "b", "x.b")];
-    const d = deps(log, ["一"], 0); // 第 2 单元开始前停
-    const r = await runUnitPlan(units, d);
-    expect(r.stopped).toBe(true);
-    expect(r.completed).toBe(1);
-    expect(r.reply.content).toContain("已按要求停止");
+    expect(note).not.toContain("load_doc");
+    expect(knowledgeNote(d)).toBe("");
+    const withDoc = knowledgeNote({
+      ...d,
+      refs: [hit("concept:doc:sdk/tween.md", "tween 补间动画")],
+    });
+    expect(withDoc).toContain('load_doc({"id": "sdk/tween.md"})');
   });
 });
 
