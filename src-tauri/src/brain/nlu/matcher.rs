@@ -112,16 +112,6 @@ pub fn predict_method(seg: &str, hits: &[RouteHit]) -> Option<(String, &'static 
     lexicon_predict(seg).or_else(|| combo_predict(seg))
 }
 
-/// 图谱参考知识：非命令命中（技能/概念——docs 基图元在这里）的标签。
-/// 命中即说明图谱里有相关领域知识，随单元转发给助手深查（load_skill 等）。
-pub fn knowledge_refs(hits: &[RouteHit]) -> Vec<String> {
-    hits.iter()
-        .filter(|h| h.kind != NodeKind::Command)
-        .take(2)
-        .map(|h| h.label.clone())
-        .collect()
-}
-
 fn lexicon_predict(seg: &str) -> Option<(String, &'static str)> {
     let mut best: Option<(f32, &str)> = None;
     for (word, method) in LEXICON {
@@ -190,17 +180,6 @@ mod tests {
         let (m, src) = predict_method("写一个tween动画脚本", &[]).expect("动宾组合应命中");
         assert_eq!(m, "asset.write");
         assert_eq!(src, "lexicon");
-    }
-
-    #[test]
-    fn knowledge_refs_skip_commands() {
-        let hits = [
-            hit("cmd:node.add", NodeKind::Command, 0.9),
-            hit("concept:doc:sdk/tween.md", NodeKind::Concept, 0.7),
-            hit("skill:script", NodeKind::Skill, 0.6),
-        ];
-        let refs = knowledge_refs(&hits);
-        assert_eq!(refs, vec!["concept:doc:sdk/tween.md", "skill:script"], "命令不进参考");
     }
 
     #[test]

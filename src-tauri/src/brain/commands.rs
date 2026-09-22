@@ -84,3 +84,20 @@ pub fn brain_approve(state: State<'_, Brain>, task: String) -> Result<(), String
     state.approve_task(&task);
     Ok(())
 }
+
+/// 内嵌技能全文（load_skill 的后端兜底源）：前端技能注册表是硬编码的子集，
+/// 助手按大脑注入的内嵌 id 深查时以此为准——技能单一事实源收口到构建链。
+#[tauri::command]
+pub fn brain_skill_get(id: String) -> Result<Option<super::skillsrc::SkillEntry>, String> {
+    Ok(super::skillsrc::embedded_skills()
+        .iter()
+        .find(|s| s.id == id)
+        .cloned())
+}
+
+/// 内嵌文档全文（load_doc 直答）：public/docs 手册内嵌进二进制，助手读官方
+/// 文档不依赖编辑器会话与磁盘布局。只读无副作用，不走决策中心门控。
+#[tauri::command]
+pub fn docs_read(id: String) -> Result<Option<super::docsrc::DocEntry>, String> {
+    Ok(super::docsrc::read(&id).cloned())
+}

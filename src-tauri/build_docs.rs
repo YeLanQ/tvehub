@@ -16,6 +16,8 @@ struct RawDoc {
     id: String,
     title: String,
     summary: String,
+    /// 全文（load_doc 工具直答用；315KB 量级，内嵌无压力）
+    body: String,
 }
 
 /// 提取标题（首个 `# ` 行，无则用文件名）与纯文本摘要
@@ -39,7 +41,7 @@ fn parse_doc(rel: &str, text: &str) -> Option<RawDoc> {
             .unwrap_or(rel)
             .to_string();
     }
-    Some(RawDoc { id: rel.to_string(), title, summary })
+    Some(RawDoc { id: rel.to_string(), title, summary, body: text.to_string() })
 }
 
 /// markdown → 粗纯文本：跳过代码块与 HTML 行，剥离记号与表格分隔，压空白
@@ -118,10 +120,11 @@ pub fn emit_docs_index(manifest_dir: &str, out_dir: &str) -> usize {
             json.push(',');
         }
         json.push_str(&format!(
-            "{{\"id\":\"{}\",\"title\":\"{}\",\"summary\":\"{}\"}}",
+            "{{\"id\":\"{}\",\"title\":\"{}\",\"summary\":\"{}\",\"body\":\"{}\"}}",
             super::build_skills::json_escape(&d.id),
             super::build_skills::json_escape(&d.title),
-            super::build_skills::json_escape(&d.summary)
+            super::build_skills::json_escape(&d.summary),
+            super::build_skills::json_escape(&d.body)
         ));
     }
     json.push(']');

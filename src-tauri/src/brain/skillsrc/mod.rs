@@ -8,10 +8,10 @@ pub mod ingest;
 
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// 与 build_skills.rs 的输出结构对应
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillEntry {
     pub id: String,

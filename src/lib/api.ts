@@ -464,6 +464,17 @@ export const api = {
     invoke<BrainExecOutcome>("brain_execute", { args }),
   /** 登记任务审批会话：批准后该任务的黄灯调用在有效期内直接放行 */
   brainApprove: (task: string) => invoke<void>("brain_approve", { task }),
+  /** 内嵌技能全文（load_skill 兜底源：前端注册表是子集，id 以构建期内嵌表为准） */
+  brainSkillGet: (id: string) =>
+    invoke<{ id: string; name: string; description: string; body: string } | null>(
+      "brain_skill_get",
+      { id },
+    ),
+  /** 内嵌 docs 文档全文（load_doc 直答，只读无副作用，不经决策中心） */
+  docsRead: (id: string) =>
+    invoke<{ id: string; title: string; summary: string; body: string } | null>("docs_read", {
+      id,
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -494,6 +505,13 @@ export interface BrainPlan {
   steps: BrainPlanStep[];
 }
 
+/** 图谱命中的权威知识（技能/文档）：只给「是什么+怎么取」，全文按需拉取 */
+export interface BrainKnowledgeHit {
+  /** 节点 id："skill:<id>" / "concept:doc:<path>" */
+  id: string;
+  label: string;
+}
+
 /** 语义单元任务（brain_decompose 产物；预测方法只是入口建议） */
 export interface BrainTaskUnit {
   /** 1 起始序号 */
@@ -508,8 +526,8 @@ export interface BrainTaskUnit {
   zone: "green" | "yellow" | "red" | null;
   /** 任务阶段：inspect 调研 / act 执行 / verify 验证 */
   phase: "inspect" | "act" | "verify";
-  /** 图谱参考知识：本段命中的技能/概念标签（转发给助手深查，不参与门控） */
-  refs: string[];
+  /** 图谱参考知识：本段命中的技能/概念（转发给助手深查，不参与门控） */
+  refs: BrainKnowledgeHit[];
 }
 
 /** 处理轨迹短句（过程容器逐条上屏） */
@@ -518,11 +536,13 @@ export interface BrainNluTrace {
   detail: string;
 }
 
-/** 语义单元化产物：任务原文 + 单元序列 + 处理轨迹 */
+/** 语义单元化产物：任务原文 + 单元序列 + 处理轨迹 + 整任务知识命中 */
 export interface BrainDecomposition {
   task: string;
   units: BrainTaskUnit[];
   traces: BrainNluTrace[];
+  /** 整任务粒度的图谱知识命中（直通路线注入助手上下文的来源） */
+  refs: BrainKnowledgeHit[];
 }
 
 export interface BrainObserveReport {

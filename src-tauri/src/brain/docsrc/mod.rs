@@ -15,13 +15,15 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 /// 与 build_docs.rs 的输出结构对应
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocEntry {
     /// 相对路径，如 "editor/scene.md" / "sdk/tween.md"
     pub id: String,
     pub title: String,
     pub summary: String,
+    /// 全文（docs_read 直答用，不参与嵌入词料）
+    pub body: String,
 }
 
 fn load_index() -> &'static [DocEntry] {
@@ -38,6 +40,11 @@ fn load_index() -> &'static [DocEntry] {
 /// 内嵌文档清单（构建期快照）
 pub fn embedded_docs() -> &'static [DocEntry] {
     load_index()
+}
+
+/// 按 id 读一篇内嵌文档全文（docs_read 直答）
+pub fn read(id: &str) -> Option<&'static DocEntry> {
+    embedded_docs().iter().find(|d| d.id == id)
 }
 
 /// 每篇文档摄取的概念锚点上限（防长摘要撑爆图）

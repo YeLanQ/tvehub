@@ -1,9 +1,10 @@
 // nlu 纯逻辑单测：拆解质量守门 / 单元指令文案 / 单元循环 / 落库摘要往返。
 // 无 vi.mock：runOnce 依赖注入（tve-unit-testing 注入风格）。
 import { describe, expect, it } from "vitest";
-import type { BrainDecomposition, BrainTaskUnit } from "../lib/api";
+import type { BrainDecomposition, BrainKnowledgeHit, BrainTaskUnit } from "../lib/api";
 import {
   decomposeDigest,
+  knowledgeNote,
   parseStoredDecomposition,
   runUnitPlan,
   unitInstruction,
@@ -11,12 +12,16 @@ import {
   type UnitRunDeps,
 } from "./nlu";
 
-function unit(index: number, text: string, method: string | null, refs: string[] = []): BrainTaskUnit {
+function hit(id: string, label: string): BrainKnowledgeHit {
+  return { id, label };
+}
+
+function unit(index: number, text: string, method: string | null, refs: BrainKnowledgeHit[] = []): BrainTaskUnit {
   return { index, text, method, source: method ? "lexicon" : null, zone: method ? "yellow" : null, phase: "act", refs };
 }
 
 function deco(units: BrainTaskUnit[]): BrainDecomposition {
-  return { task: "T", units, traces: [{ stage: "语义解析", detail: "ok" }] };
+  return { task: "T", units, traces: [{ stage: "语义解析", detail: "ok" }], refs: [] };
 }
 
 describe("usablePlan 拆解质量守门", () => {
@@ -68,11 +73,35 @@ describe("unitInstruction 单元指令", () => {
   });
 
   it("正常：图谱参考进入指令提示深查；无参考不出现该行", () => {
-    const withRefs = unitInstruction(unit(1, "写一个tween动画脚本", "asset.write", ["tween 补间动画"]), [], 1);
-    expect(withRefs).toContain("图谱参考");
-    expect(withRefs).toContain("tween 补间动画");
-    expect(withRefs).toContain("load_skill");
-    expect(unitInstruction(unit(1, "随便做", null), [], 1)).not.toContain("图谱参考");
+    const withRefs = unitInstruction(
+      unit(1, "写一个tween动画脚本", "asset.write", [
+        hit("skill:tve-sdk-scripting", "tve 脚本编写"),
+        hit("concept:doc:sdk/tween.md", "tween 补间动画"),
+      ]),
+      [],
+      1,
+    );
+    expect(withRefs).toContain("大脑知识命中");
+    expect(withRefs).toContain('load_skill({"id": "tve-sdk-scripting"})');
+    expect(withRefs).toContain('load_doc({"id": "sdk/tween.md"})');
+    expect(withRefs).toContain("不要凭记忆猜测");
+    // 目录式注入：不预载任何内容
+    expect(withRefs).not.toContain("声明式补间 API");
+    expect(unitInstruction(unit(1, "随便做", null), [], 1)).not.toContain("大脑知识命中");
+  });
+
+  it("正常：knowledgeNote 直通注入（技能给 id、文档给入口；空命中为空串）", () => {
+    const deco2 = deco([
+      unit(1, "a", null),
+      unit(2, "b", null),
+    ]);
+    const note = knowledgeNote({
+      ...deco2,
+      refs: [hit("skill:tve-sdk-scripting", "tve 脚本编写")],
+    });
+    expect(note).toContain("大脑知识命中");
+    expect(note).toContain("load_skill");
+    expect(knowledgeNote(deco2)).toBe("");
   });
 });
 

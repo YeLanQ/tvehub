@@ -17,6 +17,7 @@ import { mergeStepRow } from "./steps";
 import { assistantTools, execAssistantTool } from "./tools";
 import {
   decomposeDigest,
+  knowledgeNote,
   parseStoredDecomposition,
   runUnitPlan,
   usablePlan,
@@ -381,6 +382,8 @@ async function send(textArg?: string | Event): Promise<void> {
   // 单元任务上屏过程容器；拆解可用则逐单元驱动独立小循环（每单元一次小
   // agent 会话，避免整任务长线思考），不可用回落整任务直通助手 ----
   let units: BrainTaskUnit[] | null = null;
+  /** 直通路线的大脑知识注入（单元路线由 unitInstruction 携带） */
+  let brainNote = "";
   const nluCallId = `nlu_${Date.now().toString(36)}`;
   try {
     const deco = await api.brainDecompose(text);
@@ -388,6 +391,7 @@ async function send(textArg?: string | Event): Promise<void> {
     units = usablePlan(deco);
     if (!units) {
       nluRun.value.traces.push({ stage: "直通", detail: "单元预测信号不足，整任务交由助手全权执行" });
+      brainNote = knowledgeNote(deco);
     }
     // 拆解过程落库：历史回放为静态大脑块（轨迹 + 单元计划）
     convs.append(convId, {
@@ -402,6 +406,7 @@ async function send(textArg?: string | Event): Promise<void> {
         task: deco.task,
         units: deco.units,
         traces: nluRun.value.traces,
+        refs: deco.refs,
       }),
       toolName: "brain.decompose",
       toolCallId: nluCallId,
@@ -469,7 +474,11 @@ async function send(textArg?: string | Event): Promise<void> {
         convs.append(convId, { role: "assistant", content: finalText });
       }
     } else {
-      const reply = await runAgent({ ...agentCommon, messages: wire });
+      // 直通路线：大脑知识命中（技能/文档摘要）注入 wire，先校准再动手
+      const messages = brainNote
+        ? [...wire, { role: "user" as const, content: brainNote }]
+        : wire;
+      const reply = await runAgent({ ...agentCommon, messages });
       // 空回复兜底：绝不让一轮运行无声无息地结束
       finalText =
         reply.content.trim() ||

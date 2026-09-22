@@ -2,7 +2,7 @@
 // 职责：拆解质量守门（可用才走单元路线，否则回落整任务）、单元指令文案、
 // 逐单元小循环驱动。每单元一次独立的 agent 会话——模型每次只面对一个小任务，
 // 避免整任务长线思考；跨单元衔接靠已完成单元的一句话结果摘要。
-import type { BrainDecomposition, BrainTaskUnit } from "../lib/api";
+import type { BrainDecomposition, BrainKnowledgeHit, BrainTaskUnit } from "../lib/api";
 import type { AssistantReply, WireMessage } from "./agent";
 
 /** 可用判定：≥2 个单元且至少 2 个有方法预测（语义信号不足则回落整任务）。
@@ -27,6 +27,25 @@ const PHASE_LABEL: Record<BrainTaskUnit["phase"], string> = {
   verify: "验证",
 };
 
+/** 图谱知识命中 → 目录式指引：一行一条「是什么 + 怎么取」，全文由助手按需
+ * load_skill / load_doc 拉取——不预载内容撑大任务上下文。 */
+function knowledgeLines(hits: BrainKnowledgeHit[]): string[] {
+  return hits.map((r) => {
+    if (r.id.startsWith("skill:")) {
+      return `- 技能「${r.label}」→ load_skill({"id": "${r.id.slice("skill:".length)}"})`;
+    }
+    if (r.id.startsWith("concept:doc:")) {
+      return `- 官方文档「${r.label}」→ load_doc({"id": "${r.id.slice("concept:doc:".length)}"})`;
+    }
+    return `- 相关知识「${r.label}」`;
+  });
+}
+
+const KNOWLEDGE_HEADER =
+  "（系统·大脑知识命中）大脑在本任务的知识图谱中命中了以下权威资料。" +
+  "涉及 API 用法/操作规范时，先读取对应资料校准再动手，不要凭记忆猜测，也不要用项目内旧示例当唯一依据。" +
+  "只有在资料与当前步骤相关时才读取，无关则跳过：";
+
 /** 单元指令：追加在原任务 wire 之后的 user 消息。只描述当前单元 + 已完成
  * 摘要；预测方法作为入口建议（模型按工具回执自纠），不禁止它用别的工具。 */
 export function unitInstruction(
@@ -42,10 +61,7 @@ export function unitInstruction(
     lines.push(`预测入口工具：${unit.method}（建议首选；回执不符时按实际调整参数或改用其他工具）。`);
   }
   if (unit.refs?.length) {
-    lines.push(
-      `图谱参考：大脑在本单元命中了相关知识——${unit.refs.join("、")}。` +
-        "可用 load_skill 或 brain.query 深查后再动手。",
-    );
+    lines.push(KNOWLEDGE_HEADER, ...knowledgeLines(unit.refs));
   }
   if (doneNotes.length) {
     lines.push("已完成单元（不要重复执行）：", ...doneNotes.map((n) => `- ${n}`));
@@ -109,13 +125,20 @@ export function decomposeDigest(deco: BrainDecomposition): string {
   });
 }
 
+/** 直通路线的知识注入：整任务粒度的图谱命中 → wire 追加消息（不落库）。
+ * 空命中返回空串（不加消息）。 */
+export function knowledgeNote(deco: BrainDecomposition): string {
+  if (!deco.refs?.length) return "";
+  return [KNOWLEDGE_HEADER, ...knowledgeLines(deco.refs)].join("\n");
+}
+
 /** 历史消息 → 拆解结果（只认本模块落库的 JSON 形态；其余返回 null） */
 export function parseStoredDecomposition(content: string): BrainDecomposition | null {
   if (!content.startsWith("{")) return null;
   try {
     const v = JSON.parse(content) as { units?: unknown; traces?: unknown };
     if (!Array.isArray(v.units) || !Array.isArray(v.traces)) return null;
-    return { task: "", units: v.units as BrainTaskUnit[], traces: v.traces as BrainDecomposition["traces"] };
+    return { task: "", units: v.units as BrainTaskUnit[], traces: v.traces as BrainDecomposition["traces"], refs: [] };
   } catch {
     return null;
   }

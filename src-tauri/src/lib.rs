@@ -1151,6 +1151,8 @@ pub fn run() {
             brain::commands::brain_tick,
             brain::commands::brain_execute,
             brain::commands::brain_approve,
+            brain::commands::brain_skill_get,
+            brain::commands::docs_read,
             devtools::devtools_internal_call,
             toggle_assistant_window,
             assistant_store::assistant_conv_index_get,

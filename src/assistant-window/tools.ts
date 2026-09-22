@@ -70,7 +70,7 @@ function specToTool(spec: ToolSpec): OpenAITool {
   };
 }
 
-/** 全量工具目录（devtools 方法 + brain 大脑工具 + load_skill），发给 LLM 的 tools 数组 */
+/** 全量工具目录（devtools 方法 + brain 大脑工具 + load_skill/load_doc），发给 LLM 的 tools 数组 */
 export function assistantTools(): OpenAITool[] {
   return [
     ...CATALOG.map(specToTool),
@@ -87,13 +87,25 @@ export function assistantTools(): OpenAITool[] {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "load_doc",
+        description:
+          "读取应用内置官方文档全文（编辑器操作/SDK API，如 sdk/tween.md、editor/scene.md）。" +
+          "大脑知识命中给出的文档摘要需要展开时用它，不要用 asset.read 读应用目录。",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "string", description: "文档相对路径，如 sdk/tween.md" } },
+          required: ["id"],
+        },
+      },
+    },
   ];
 }
 
 /** 接受工作区 root 覆盖的方法（助手自动注入当前工作区项目根） */
-export const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.write"]);
-
-/** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出
+export const ROOT_METHODS = new Set(["scene.list", "asset.list", "asset.read", "asset.write"]);/** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出
  * 请求用户批准；resolve(true)=批准并重发，resolve(false)=用户拒绝。 */
 export type ConfirmFn = (info: { method: string; reason: string }) => Promise<boolean>;
 
@@ -140,8 +152,22 @@ export async function execAssistantTool(
     if (name === "load_skill") {
       const args = JSON.parse(argsJson || "{}") as { id?: string };
       const skill = findSkill(String(args.id ?? ""));
-      if (!skill) return { error: `未知技能: ${args.id}` };
-      return { id: skill.id, name: skill.name, content: skill.body };
+      if (skill) {
+        return { id: skill.id, name: skill.name, content: skill.body };
+      }
+      // 前端注册表是硬编码子集；大脑注入的内嵌技能 id 以构建期为单一事实源
+      const embedded = await api.brainSkillGet(String(args.id ?? "")).catch(() => null);
+      if (embedded) {
+        return { id: embedded.id, name: embedded.name, content: embedded.body };
+      }
+      return { error: `未知技能: ${args.id}` };
+    }
+    if (name === "load_doc") {
+      const args = JSON.parse(argsJson || "{}") as { id?: string };
+      const id = String(args.id ?? "").replace(/^\/+|\.md$/g, "") + ".md";
+      const doc = await api.docsRead(id).catch(() => null);
+      if (!doc) return { error: `未知文档: ${args.id}（可用 brain.query 查可用文档）` };
+      return { id: doc.id, title: doc.title, content: doc.body };
     }
     let params: Record<string, unknown> = {};
     if (argsJson && argsJson.trim()) {

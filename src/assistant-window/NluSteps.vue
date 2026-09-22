@@ -12,8 +12,8 @@ export interface NluUnitRow {
   method?: string | null;
   zone?: "green" | "yellow" | "red" | null;
   phase: "inspect" | "act" | "verify";
-  /** 图谱参考知识标签（技能/概念命中） */
-  refs?: string[];
+  /** 图谱参考知识命中（技能/文档，目录式：id + label） */
+  refs?: Array<{ id: string; label: string }>;
   status: "pending" | "running" | "ok" | "fail";
 }
 
@@ -100,8 +100,8 @@ watch(
         <span
           v-if="u.refs?.length"
           class="anlu-refs"
-          :title="`图谱参考：${u.refs.join('、')}`"
-        >◎ {{ u.refs[0] }}{{ u.refs.length > 1 ? ` +${u.refs.length - 1}` : "" }}</span>
+          :title="`图谱知识：${u.refs.map((r) => r.label).join('、')}`"
+        >◎ {{ u.refs[0].label }}{{ u.refs.length > 1 ? ` +${u.refs.length - 1}` : "" }}</span>
         <span v-if="u.zone" class="anlu-zone" :class="u.zone" :title="u.zone === 'green' ? '只读' : u.zone === 'yellow' ? '写操作' : '禁止'" />
         <span v-if="running" class="anlu-mark" :class="u.status">{{ STATUS_MARK[u.status] }}</span>
       </div>
