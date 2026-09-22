@@ -62,7 +62,19 @@ watch(
 <template>
   <div class="anlu" :class="{ running }">
     <button class="anlu-head" :title="open ? '收起大脑过程' : '展开大脑过程'" @click="emit('toggle')">
-      <span class="anlu-icon">🧠</span>
+      <span class="anlu-icon">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+          <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+          <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+          <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+          <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+          <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+          <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+          <path d="M6 18a4 4 0 0 1-1.967-.516" />
+          <path d="M19.967 17.484A4 4 0 0 1 18 18" />
+        </svg>
+      </span>
       <span>{{ label }} · {{ data.units.length }} 单元</span>
       <span v-if="running" class="anlu-dot" />
       <span class="anlu-arrow">{{ open ? "▾" : "▸" }}</span>
@@ -112,7 +124,9 @@ watch(
   cursor: pointer;
   &:hover { color: var(--text); background: var(--bg-hover); }
 }
-.anlu-icon { font-size: 11px; }
+.anlu-icon { font-size: 11px; display: inline-flex;
+  svg { flex: none; display: block; }
+}
 .anlu-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--accent);
@@ -130,6 +144,7 @@ watch(
   gap: 3px;
 }
 .anlu-trace {
+  flex: none; /* 限高容器内禁止行收缩，保住溢出滚动 */
   font: 11px/1.6 ui-monospace, Consolas, monospace;
   color: var(--text-dim);
   white-space: nowrap;
@@ -138,6 +153,7 @@ watch(
   .anlu-stage { margin-right: 6px; opacity: 0.75; &::after { content: "·"; margin-left: 6px; } }
 }
 .anlu-unit {
+  flex: none;
   font: 11px/1.6 ui-monospace, Consolas, monospace;
   color: var(--text);
   white-space: nowrap;

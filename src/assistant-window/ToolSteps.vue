@@ -60,7 +60,12 @@ watch(
 <template>
   <div class="asteps" :class="{ running }">
     <button class="asteps-head" :title="open ? '收起执行过程' : '展开执行过程'" @click="emit('toggle')">
-      <span class="asteps-icon">⚙</span>
+      <span class="asteps-icon">
+        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="2.4" />
+          <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" />
+        </svg>
+      </span>
       <span>{{ label }} · {{ items.length }} 步</span>
       <span v-if="running" class="asteps-dot" />
       <span class="asteps-arrow">{{ open ? "▾" : "▸" }}</span>
@@ -101,7 +106,9 @@ watch(
   cursor: pointer;
   &:hover { color: var(--text); background: var(--bg-hover); }
 }
-.asteps-icon { font-size: 11px; }
+.asteps-icon { font-size: 11px; display: inline-flex;
+  svg { flex: none; display: block; }
+}
 .asteps-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--accent);
@@ -119,6 +126,9 @@ watch(
   gap: 3px;
 }
 .asteps-item {
+  /* flex 容器限高后子项默认收缩——不锁 flex:none 时行被上下压扁，
+   * 溢出永远不会触发，滚动因此“失效” */
+  flex: none;
   font: 11px/1.6 ui-monospace, Consolas, monospace;
   color: var(--text);
   white-space: nowrap;
