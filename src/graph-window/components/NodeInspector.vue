@@ -8,6 +8,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { getGraphWindowStore } from "../graphStore";
+import { api } from "../../lib/api";
 import {
   G_COMPARE_OPERATORS,
   G_OP_TRIGGER_LABEL,
@@ -189,10 +190,11 @@ function commitVarId(varId: string): void {
 
 function commitFlowParam(key: string, raw: string): void {
   if (!g.value?.type.startsWith("flow.")) return;
+  // 写入类型按注册表字段收敛（number/string），与运行时求值语义一致
+  const kind = flowDef.value?.fields?.find((f) => f.key === key)?.kind;
   store.canvas?.requestSnapshot();
   if (!g.value.params) g.value.params = {};
-  if (key === "operator") g.value.params[key] = String(raw);
-  else g.value.params[key] = Number(raw) || 0;
+  g.value.params[key] = kind === "number" ? Number(raw) || 0 : String(raw);
   store.markGraphDirty();
 }
 
@@ -266,7 +268,16 @@ function commitContainerSize(key: "w" | "h", raw: string): void {
 
 // ----- 容器内子节点的状态归属（所属容器为 FSM 时显示） -----
 
-const childStateInfo = computed<{ states: string[] } | null>(() => {
+interface ChildStateInfo {
+  /** 状态列表 */
+  states: string[];
+  /** 容器「切换事件」全部事件名（含映射目标已失效的） */
+  events: string[];
+  /** 「切换事件」中映射目标仍在状态列表内的事件（运行时真实可切） */
+  mappedEvents: string[];
+}
+
+const childStateInfo = computed<ChildStateInfo | null>(() => {
   // 嵌套容器也可打状态归属：容器随父级调度（所属状态非当前 → 帧驱动整体停摆）
   if (!g.value?.containerId) return null;
   const parent = store.canvas?.serializeDoc()?.nodes.find((n) => n.id === g.value?.containerId);
@@ -276,8 +287,101 @@ const childStateInfo = computed<{ states: string[] } | null>(() => {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return { states };
+  const events: string[] = [];
+  const mappedEvents: string[] = [];
+  for (const rule of (parent.params?.transitions ?? "").toString().split(/[，,]/)) {
+    const gt = rule.indexOf(">");
+    if (gt <= 0) continue;
+    const evt = rule.slice(0, gt).trim();
+    const st = rule.slice(gt + 1).trim();
+    if (!evt) continue;
+    events.push(evt);
+    if (states.includes(st)) mappedEvents.push(evt);
+  }
+  return { states, events, mappedEvents };
 });
+
+/** 比较卡「触发事件名」候选：只列事件，不列状态名——
+ * 作用域绑定了 .fsm 时以资产迁移事件为准；否则用容器「切换事件」中映射仍有效的事件 */
+const compareEventOptions = computed<string[]>(() => {
+  const info = childStateInfo.value;
+  if (!info) return [];
+  if (fsmAssetEvents.value.length) return fsmAssetEvents.value.map((f) => f.event);
+  return info.mappedEvents;
+});
+
+// ----- 比较卡触发事件候选：作用域实体 .fsm 资产的切换事件 -----
+
+interface FsmAssetEvent {
+  event: string;
+  /** .fsm 迁移的目标状态名 */
+  to: string;
+}
+
+const fsmAssetEvents = ref<FsmAssetEvent[]>([]);
+
+/** 所属状态机容器「作用域」接入的实体上挂载的 .fsm 资产相对路径 */
+const fsmScopeAssets = computed<string[]>(() => {
+  const parentId = g.value?.containerId;
+  if (!parentId) return [];
+  const doc = store.canvas?.serializeDoc();
+  const parent = doc?.nodes.find((n) => n.id === parentId);
+  if (!parent || parent.type !== "fsm.container") return [];
+  const scopeEntityIds = (doc?.edges ?? [])
+    .filter((e) => e.dstNode === parentId && e.dstPort === "in")
+    .map((e) => doc?.nodes.find((n) => n.id === e.srcNode))
+    .filter((n): n is GNode => !!n && n.type === "entity.proto")
+    .map((n) => n.entityId ?? "");
+  const assets = new Set<string>();
+  for (const id of scopeEntityIds) {
+    const ent = store.sceneEntities.find((x) => x.id === id);
+    if (ent?.logic?.kind === "fsm" && ent.logic.asset) assets.add(ent.logic.asset);
+  }
+  return [...assets];
+});
+
+watch(fsmScopeAssets, (assets) => {
+  void (async () => {
+    const root = store.root;
+    const out: FsmAssetEvent[] = [];
+    const seen = new Set<string>();
+    for (const rel of assets) {
+      if (!root) break;
+      try {
+        const parsed = JSON.parse(await api.readText(root, rel)) as {
+          graph?: {
+            states?: { id: string; name: string }[];
+            transitions?: { event?: string; to?: string }[];
+          };
+        };
+        const nameOf = (sid: string) => parsed.graph?.states?.find((s) => s.id === sid)?.name ?? sid;
+        for (const t of parsed.graph?.transitions ?? []) {
+          if (!t.event || seen.has(t.event)) continue;
+          seen.add(t.event);
+          out.push({ event: t.event, to: nameOf(t.to ?? "") });
+        }
+      } catch {
+        /* 资产缺失/解析失败：该来源无事件候选（加载失败静默） */
+      }
+    }
+    fsmAssetEvents.value = out;
+  })();
+}, { immediate: true });
+
+/** 选中 .fsm 事件时自动把「事件>目标状态」并入容器「切换事件」（目标状态须在状态列表内） */
+function commitCompareEvent(raw: string): void {
+  commitFlowParam("event", raw);
+  const hit = fsmAssetEvents.value.find((f) => f.event === raw);
+  const parentId = g.value?.containerId;
+  if (!hit || !parentId || !childStateInfo.value?.states.includes(hit.to)) return;
+  const parent = store.canvas?.serializeDoc()?.nodes.find((n) => n.id === parentId);
+  const cur = (parent?.params?.transitions ?? "").toString();
+  const mapped = cur.split(/[，,]/).some((r) => r.split(">")[0]?.trim() === raw);
+  if (mapped) return;
+  const next = cur.trim() ? `${cur.replace(/[，,]\s*$/, "")},${raw}>${hit.to}` : `${raw}>${hit.to}`;
+  store.canvas?.patchNodeParams(parentId, { transitions: next });
+  store.markGraphDirty();
+}
 
 function commitStateName(raw: string): void {
   if (!g.value) return;
@@ -515,6 +619,26 @@ function commitStateName(raw: string): void {
             <option v-for="op in G_COMPARE_OPERATORS" :key="op" :value="op">{{ op }}</option>
           </select>
         </label>
+        <!-- Compare: B 未连线时的参数值 -->
+        <label v-if="g.type === 'flow.compare'" class="gfield">
+          <span class="gfield-label">B 值（未连线时）</span>
+          <input
+            type="number"
+            :step="0.1"
+            :value="Number(g.params?.b ?? 0)"
+            @change="commitFlowParam('b', ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <!-- Compare: 触发事件名（接入状态机「条件」口时必填；候选 = 所属状态机切换事件 + 状态名） -->
+        <label v-if="g.type === 'flow.compare'" class="gfield">
+          <span class="gfield-label">触发事件名</span>
+          <ComboBox
+            :model-value="String(g.params?.event ?? '')"
+            :options="compareEventOptions"
+            placeholder="如 start_chase>Chase 里的 start_chase"
+            @update:model-value="commitCompareEvent(String($event))"
+          />
+        </label>
         <!-- For: start/end/step -->
         <template v-if="g.type === 'flow.for'">
           <label class="gfield">
@@ -537,7 +661,7 @@ function commitStateName(raw: string): void {
         </label>
       </div>
       <div class="ginsp-desc">{{ flowDef.desc }}</div>
-      <div v-if="g.type === 'flow.compare'" class="ginsp-hint">纯数据节点：比较 A 与 B，结果从「结果」引脚输出。连到 Branch 的「条件」引脚做条件分支。</div>
+      <div v-if="g.type === 'flow.compare'" class="ginsp-hint">纯数据节点：比较 A 与 B，结果从「结果」引脚输出。连到 Branch 的「条件」引脚做条件分支；连到状态机容器的「条件」口时，「触发事件名」填要触发的事件（条件从假变真的上升沿触发一次）：候选 = 容器「切换事件」里的事件名 + 状态名——事件名经「切换事件」映射到目标状态，状态名则直接切换。</div>
       <div v-else-if="g.type === 'flow.branch'" class="ginsp-hint">条件为真走「真」分支，否则走「假」分支。条件从数据入引脚拉取（可连 Compare 结果或 var.get）。</div>
       <div v-else-if="g.type === 'flow.for'" class="ginsp-hint">从起始到结束步进，每次触发「循环」分支。「索引」引脚输出当前迭代值。结束后走「完成」分支。</div>
       <div v-else-if="g.type === 'flow.forEach'" class="ginsp-hint">遍历实体集，每次触发「循环」分支。「当前」引脚输出当前实体。结束后走「完成」分支。</div>

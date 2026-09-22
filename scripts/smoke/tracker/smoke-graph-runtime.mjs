@@ -1120,6 +1120,92 @@ console.log("[16] 状态机容器：迁移守卫（from>to）+ 同状态去重/�
   handle.dispose();
 }
 
+console.log("[16b] 状态机容器：命名切换事件（transitions 事件>状态，事件名≠状态名）");
+{
+  posted.length = 0;
+  const scene = new THREE.Scene();
+  buildSceneTree(
+    {
+      id: "root",
+      type: "sceneNode",
+      name: "Scene",
+      children: [
+        // host-3：position.x 编码状态（100=a 250=b）；mover 复用巡逻腿制造比较上升沿
+        { id: "host-3", type: "meshNode", name: "Host3", source: "primitive", geometry: "box", size: { x: 0.5, y: 0.5, z: 0.5 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        // mover-6：speed 2 → t≈2.5s 越过 5（触发 go_b）；mover-7：speed 4 → t≈1.25s（触发 nope_x，未映射）
+        { id: "mover-6", type: "meshNode", name: "Mover6", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+        { id: "mover-7", type: "meshNode", name: "Mover7", source: "primitive", geometry: "box", size: { x: 0.3, y: 0.3, z: 0.3 }, transform: { position: { x: 0, y: 0, z: 0 } } },
+      ],
+    },
+    scene,
+    { materialParams: new Map(), models: new Map() },
+  );
+  scene.updateMatrixWorld(true);
+  const doc = {
+    formatVersion: 2,
+    modules: [
+      { id: "core-entity", version: 1 }, { id: "core-event", version: 1 },
+      { id: "core-op", version: 1 }, { id: "core-flow", version: 1 }, { id: "core-containers", version: 1 },
+    ],
+    nodes: [
+      { id: "eb3", type: "event.onBegin", x: 0, y: 0 },
+      // fsm3：事件名与状态名解耦——go_b 经切换事件映射到状态 b；nope_x 未映射应告警不切换
+      { id: "fsm3", type: "fsm.container", x: 0, y: 0, params: { states: "a,b", initial: "a", transitions: "go_b>b" } },
+      { id: "pH3", type: "entity.proto", x: 0, y: 0, entityId: "host-3" },
+      { id: "set3A", type: "op.set", x: 0, y: 0, containerId: "fsm3", stateName: "a", opType: "op.set", params: { property: "position.x", value: 100 } },
+      { id: "set3B", type: "op.set", x: 0, y: 0, containerId: "fsm3", stateName: "b", opType: "op.set", params: { property: "position.x", value: 250 } },
+      { id: "pM6", type: "entity.proto", x: 0, y: 0, entityId: "mover-6" },
+      { id: "pM7", type: "entity.proto", x: 0, y: 0, entityId: "mover-7" },
+      { id: "prop6", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "prop7", type: "entity.prop", x: 0, y: 0, params: { property: "position.x" } },
+      { id: "cmp3", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5, event: "go_b" } },
+      { id: "cmp4", type: "flow.compare", x: 0, y: 0, params: { operator: ">", b: 5, event: "nope_x" } },
+      { id: "pt6", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 2, axis: "x", distance: 20 } },
+      { id: "pt7", type: "op.patrol", x: 0, y: 0, opType: "op.patrol", params: { speed: 4, axis: "x", distance: 20 } },
+    ],
+    edges: [
+      { id: "f0", srcNode: "eb3", srcPort: "next", dstNode: "fsm3", dstPort: "exec" },
+      { id: "f1", srcNode: "pH3", srcPort: "out", dstNode: "set3A", dstPort: "in" },
+      { id: "f2", srcNode: "pH3", srcPort: "out", dstNode: "set3B", dstPort: "in" },
+      { id: "f3", srcNode: "pM6", srcPort: "out", dstNode: "prop6", dstPort: "target" },
+      { id: "f4", srcNode: "pM7", srcPort: "out", dstNode: "prop7", dstPort: "target" },
+      { id: "f5", srcNode: "pM6", srcPort: "out", dstNode: "pt6", dstPort: "in" },
+      { id: "f6", srcNode: "pM7", srcPort: "out", dstNode: "pt7", dstPort: "in" },
+      { id: "f7", srcNode: "prop6", srcPort: "value", dstNode: "cmp3", dstPort: "a" },
+      { id: "f8", srcNode: "prop7", srcPort: "value", dstNode: "cmp4", dstPort: "a" },
+      { id: "f9", srcNode: "cmp3", srcPort: "result", dstNode: "fsm3", dstPort: "condition" },
+      { id: "f10", srcNode: "cmp4", srcPort: "result", dstNode: "fsm3", dstPort: "condition" },
+    ],
+    comments: [],
+    variables: [],
+    customNodes: [],
+  };
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.updateMatrixWorld(true);
+  const handle = createGraphBehaviors({
+    scene,
+    dom: { addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) },
+    camera,
+    logicApi: { fire() {}, setParam() {} },
+    graph: doc,
+  });
+  const host3 = scene.getObjectByProperty("name", "Host3");
+
+  handle.update(1 / 60);
+  ok(approx(host3.position.x, 100), `进入激活初始状态 a（x=${host3.position.x}）`);
+
+  // t≈1.25s mover-7 越过 5 → 事件 nope_x 未映射 → 告警且不切换
+  advance(handle, 2);
+  ok(approx(host3.position.x, 100), `未映射事件不切换（t=2s x=${host3.position.x}）`);
+  ok(warnLines().some((l) => l.includes("nope_x") && l.includes("切换事件")), "未映射事件有可定位告警");
+
+  // t≈2.5s mover-6 越过 5 → 事件 go_b 经切换事件映射 → 切到状态 b
+  advance(handle, 1);
+  ok(approx(host3.position.x, 250), `命名事件 go_b 切到状态 b（t=3s x=${host3.position.x}）`);
+  ok(infoLines().some((l) => l.includes("(fsm3)") && l.includes("状态「b」") && !l.includes("忽略")), "切换有日志");
+  handle.dispose();
+}
+
 console.log("[17] 行为树容器：sequence 驱动器步进 / selector 条件配对 / parallel 每帧重跑");
 {
   posted.length = 0;

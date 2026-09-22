@@ -621,7 +621,7 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
     type: "fsm.container",
     category: "logic",
     label: "状态机容器",
-    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；「事件」入端口按事件名切换状态，「条件」入端口接入比较结果（结果为真时切换为比较卡「触发事件名」指定的状态）；进入状态时执行归属该状态的子节点链；迁移守卫（from>to 列表）限制指定迁移只允许从某状态出发，未列出的迁移不受限；重复切到当前状态默认忽略（勾选「重复进入」可重入）；支持嵌套",
+    desc: "状态机容器：把携带 .fsm 的原型卡连到「作用域」即自动读取其状态；「事件」入端口按事件名切换状态，「条件」入端口接入比较结果（结果为真时按比较卡「触发事件名」切换：事件名是状态名则直接切换，否则经「切换事件」映射到目标状态）；进入状态时执行归属该状态的子节点链；迁移守卫（from>to 列表）限制指定迁移只允许从某状态出发，未列出的迁移不受限；重复切到当前状态默认忽略（勾选「重复进入」可重入）；支持嵌套",
     color: "#569cd6",
     inputs: [
       P_EXEC_IN, // 进入容器（激活 initial 状态）
@@ -637,6 +637,7 @@ const LOGIC_TYPES: GNodeTypeDef[] = [
       { key: "states", label: "状态列表", kind: "string", fallback: "idle,run", placeholder: "逗号分隔，如 idle,run,attack" },
       { key: "initial", label: "初始状态", kind: "string", fallback: "idle" },
       { key: "guards", label: "迁移守卫", kind: "string", fallback: "", placeholder: "from>to 逗号分隔，如 patrol>attack（只列要限制方向的迁移；留空不限制）" },
+      { key: "transitions", label: "切换事件", kind: "string", fallback: "", placeholder: "事件>状态 逗号分隔，如 start_chase>Chase（比较卡「触发事件名」填事件名即可切到对应状态；留空则事件名即状态名）" },
       { key: "reentry", label: "重复进入", kind: "boolean", fallback: false },
     ],
     capabilities: { container: true },

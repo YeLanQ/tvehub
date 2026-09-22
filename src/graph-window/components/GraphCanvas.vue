@@ -563,6 +563,7 @@ onConnect((params) => {
 interface FsmAssetGraph {
   states?: { id?: string; name?: string }[];
   entry?: string;
+  transitions?: { event?: string; to?: string }[];
 }
 
 interface BtAssetNode {
@@ -608,8 +609,20 @@ async function importFsmStatesIfWired(sourceId: string, targetId: string, dstPor
       if (!container.params || typeof container.params !== "object") container.params = {};
       container.params.states = names.join(",");
       container.params.initial = names.includes(entryState) ? entryState : names[0];
+      // 切换事件：迁移事件名>目标状态名（目标状态不在状态列表内的迁移跳过）
+      const nameOf = (sid: string) => (graph.states ?? []).find((s) => s.id === sid)?.name ?? sid;
+      const rows: string[] = [];
+      const seenEvents = new Set<string>();
+      for (const t of Array.isArray(graph.transitions) ? graph.transitions : []) {
+        const evt = typeof t.event === "string" ? t.event.trim() : "";
+        const to = nameOf(typeof t.to === "string" ? t.to : "").trim();
+        if (!evt || seenEvents.has(evt) || !names.includes(to)) continue;
+        seenEvents.add(evt);
+        rows.push(`${evt}>${to}`);
+      }
+      container.params.transitions = rows.join(",");
       store.markGraphDirty();
-      store.showToast(`状态机容器已读取状态：${names.join(" / ")}`, "ok");
+      store.showToast(`状态机容器已读取状态：${names.join(" / ")}${rows.length ? `；切换事件 ${rows.length} 个` : ""}`, "ok");
       return;
     }
     // bt.container：模式取树根类型；统计树节点构成写入摘要 chips
@@ -799,6 +812,13 @@ onMounted(() => {
       const sel = getSelectedNodes.value;
       if (sel.length !== 1 || sel[0].type !== "gcomment") return null;
       return (sel[0].data?.c as GComment) ?? null;
+    },
+    patchNodeParams: (nodeId, patch) => {
+      const g = findNode(nodeId)?.data?.g as GNode | undefined;
+      if (!g) return false;
+      if (!g.params || typeof g.params !== "object") g.params = {};
+      Object.assign(g.params, patch);
+      return true;
     },
   });
 });

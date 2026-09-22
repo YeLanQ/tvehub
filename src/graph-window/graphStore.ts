@@ -68,6 +68,8 @@ export interface GraphCanvasBridge {
   /** 当前选中的图节点/注释框（活动引用；检查器直接改它） */
   getSelectedNode(): GNode | null;
   getSelectedComment(): GComment | null;
+  /** 就地更新任意节点的 params（活引用；返回是否找到节点） */
+  patchNodeParams(nodeId: string, patch: Record<string, unknown>): boolean;
 }
 
 /** 简易模态输入/确认（Tauri WebView 无可靠原生 prompt/confirm） */

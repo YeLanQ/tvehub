@@ -875,15 +875,28 @@ export function createCoreContainersModule(): GraphRuntimeModule {
     const initial = k.strP(node, "initial", states[0]) || states[0];
     let target: string;
     if (viaDstPort === "event" || viaDstPort === "condition") {
-      if (!evName || !states.includes(evName)) {
-        // 非状态事件忽略（拼错事件名/比较卡未填触发事件名时的静默失效可定位）
+      // 命名切换事件：容器「切换事件」表（事件>状态）把事件名映射到目标状态，
+      // 事件名因此可与状态名解耦；事件名恰为状态名时直接按状态切换（向后兼容）
+      const byEvent = new Map<string, string>();
+      for (const rule of k.strP(node, "transitions").split(/[，,]/)) {
+        const gt = rule.indexOf(">");
+        if (gt <= 0) continue;
+        const evt = rule.slice(0, gt).trim();
+        const st = rule.slice(gt + 1).trim();
+        if (evt && states.includes(st)) byEvent.set(evt, st);
+      }
+      if (evName && byEvent.has(evName)) {
+        target = byEvent.get(evName)!;
+      } else if (evName && states.includes(evName)) {
+        target = evName;
+      } else {
+        // 非状态事件且无映射忽略（拼错事件名/比较卡未填触发事件名时的静默失效可定位）
         k.warnOnce(
           `fsm-bad-event:${node.id}:${evName}`,
-          `[graph] 状态机容器 (${node.id}) 收到事件「${evName || "(空)"}」，不在状态列表（${states.join(", ")}）——检查来源卡片的事件名/比较卡「触发事件名」`,
+          `[graph] 状态机容器 (${node.id}) 收到事件「${evName || "(空)"}」，既不是状态名也不在「切换事件」映射里（状态：${states.join(", ")}）——检查来源卡片的事件名/比较卡「触发事件名」/容器「切换事件」`,
         );
         return;
       }
-      target = evName;
     } else {
       target = states.includes(initial) ? initial : states[0];
     }
