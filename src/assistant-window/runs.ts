@@ -26,6 +26,8 @@ export interface RunState {
   busy: boolean;
   /** 流式增量净化文本（本会话气泡显示用） */
   streamingText: string;
+  /** 模型思考过程（本轮 LLM 调用内聚合；单行滚动条显示，收尾清空） */
+  reasoningText: string;
   /** 在途流式请求 id（「停止」按钮调 aiCancel 终止用） */
   reqId: string;
   /** 停止标记：轮边界生效 */
@@ -46,6 +48,7 @@ function create(): RunState {
   return {
     busy: false,
     streamingText: "",
+    reasoningText: "",
     reqId: "",
     stopRequested: false,
     pendingConfirm: false,

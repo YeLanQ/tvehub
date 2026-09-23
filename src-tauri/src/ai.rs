@@ -153,6 +153,19 @@ async fn run_stream(
                 }
                 _ => {}
             }
+            // 思考增量（ reasoning_content：DeepSeek/GLM/Qwen 系；reasoning：
+            // OpenRouter 系）——单独字段下发，前端以 `ai:chunk` 的 reasoning
+            // 通道聚合；不发思考的模型没有该键，零开销
+            for key in ["reasoning_content", "reasoning"] {
+                if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
+                    if !s.is_empty() {
+                        let _ = app.emit(
+                            "ai:chunk",
+                            json!({ "reqId": args.req_id, "reasoning": s }),
+                        );
+                    }
+                }
+            }
             // 工具调用增量（name/arguments 可能分多帧到达，前端按 index 聚合）
             if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                 if !tcs.is_empty() {

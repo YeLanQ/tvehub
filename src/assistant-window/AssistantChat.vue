@@ -216,6 +216,26 @@ function wheelToolInfo(e: WheelEvent): void {
   el.scrollLeft += e.deltaY;
 }
 
+// ---------------------------------------------------------------------------
+// 思考过程单行条：单行裁剪自动跟随最新（每次增量滚到最右，模型永远"正在
+// 说的"可见），滚轮左右回看前文；运行收尾随 RunState 清空整体退场
+// ---------------------------------------------------------------------------
+
+const thinkEl = ref<HTMLElement | null>(null);
+watch(
+  () => activeRun.value?.reasoningText ?? "",
+  () => {
+    void nextTick(() => {
+      const el = thinkEl.value;
+      if (el) el.scrollLeft = el.scrollWidth;
+    });
+  },
+);
+function wheelThink(e: WheelEvent): void {
+  e.preventDefault();
+  (e.currentTarget as HTMLElement).scrollLeft += e.deltaY;
+}
+
 /** 终止当前查看会话的任务：置停止标记（轮边界生效）+ 取消在途流式请求
  *（ai:done cancelled 收尾）；挂起的执行确认一并拒绝（不再放行任何工具调用） */
 async function stopGeneration(): Promise<void> {
@@ -529,6 +549,7 @@ async function send(textArg?: string | Event): Promise<void> {
   ];
   run.busy = true;
   run.streamingText = "";
+  run.reasoningText = "";
   run.stopRequested = false;
   /** 任务级黄灯确认回调：闭包捕获 run——用户切走会话，裁决仍投递回本任务 */
   const requestToolConfirm: ConfirmFn = (info) =>
@@ -555,6 +576,8 @@ async function send(textArg?: string | Event): Promise<void> {
   // 扫描与 Vue 重渲染都按帧合并（latest 恒存最新值，不丢尾巴）
   let rafPending = 0;
   let latestText = "";
+  let rafThink = 0;
+  let latestReasoning = "";
   try {
     // 语言归一化前置层：助手先把自然语言翻译成大脑可检索的结构（任务类型/
     // 检索锚点/提及文件）。文件只对工作区清单做存在性校验（不读内容）；
@@ -688,6 +711,17 @@ async function send(textArg?: string | Event): Promise<void> {
           });
         }
       },
+      onReasoning: (t: string) => {
+        // 思考通道：每轮 LLM 调用的聚合全文直接覆盖上屏（单行条永远跟随
+        // 当前思考），同样按帧合并防高频重渲染
+        latestReasoning = t;
+        if (!rafThink) {
+          rafThink = requestAnimationFrame(() => {
+            rafThink = 0;
+            run.reasoningText = latestReasoning;
+          });
+        }
+      },
       onEvent: (e: AgentEvent) => {
         if (e.type === "tool_start") {
           convs.append(convId, {
@@ -760,8 +794,10 @@ async function send(textArg?: string | Event): Promise<void> {
     }
   } finally {
     if (rafPending) cancelAnimationFrame(rafPending);
+    if (rafThink) cancelAnimationFrame(rafThink);
     run.busy = false;
     run.streamingText = "";
+    run.reasoningText = "";
     run.reqId = "";
     run.nluRun = null; // 动态块退场：历史静态大脑块接管回放
     // 只在用户仍停留在本会话时才刷新时间线并滚底——后台任务收尾不惊扰当前会话
@@ -867,9 +903,17 @@ function onInputKey(e: KeyboardEvent): void {
           </div>
         </div>
       </template>
-      <div v-if="activeRun?.busy" class="achat-row assistant">
+      <div v-if="activeRun?.busy" class="achat-row assistant achat-runrow">
+        <div
+          v-if="activeRun.reasoningText"
+          class="achat-think"
+          :title="activeRun.reasoningText"
+        >
+          <span class="achat-think-tag">思考</span>
+          <span ref="thinkEl" class="achat-think-line" @wheel="wheelThink">{{ activeRun.reasoningText }}</span>
+        </div>
         <div v-if="activeRun.streamingText" class="achat-bubble">{{ activeRun.streamingText }}▌</div>
-        <div v-else class="achat-bubble achat-typing"><i /><i /><i /></div>
+        <div v-else-if="!activeRun.reasoningText" class="achat-bubble achat-typing"><i /><i /><i /></div>
       </div>
     </div>
 
@@ -1060,6 +1104,31 @@ function onInputKey(e: KeyboardEvent): void {
 }
 .achat-typing { display: inline-flex; gap: 4px; i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: atyp 1s infinite; &:nth-child(2) { animation-delay: 0.15s; } &:nth-child(3) { animation-delay: 0.3s; } } }
 @keyframes atyp { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+/* 运行中行改纵向堆叠：思考单行条在上、流式气泡在下 */
+.achat-runrow { flex-direction: column; align-items: flex-start; gap: 4px; }
+/* 思考过程单行条：单行裁剪（无滚动条，滚轮左右回看），自动跟随最新 */
+.achat-think {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 88%;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  cursor: default;
+}
+.achat-think-tag { flex: none; font-size: 11px; color: var(--text-dim); }
+.achat-think-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+  user-select: none;
+  scrollbar-width: none;
+}
 .achat-input-wrap { position: relative; flex: none; margin: 8px 10px 10px; }
 .achat-input {
   display: flex;

@@ -12,6 +12,7 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
     const reqId = `r_${Date.now().toString(36)}${Math.floor(Math.random() * 1e8).toString(36)}`;
     onReqId?.(reqId);
     let content = "";
+    let reasoning = "";
     const calls = new Map<number, ToolCall & { argsBuf: string }>();
     let error: string | null = null;
     // done → resolve；error/超时 → reject（重复 settle 是无操作）
@@ -24,11 +25,16 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
     });
 
     const offChunk = await listen("ai:chunk", (e) => {
-      const p = e.payload as { reqId?: string; delta?: string; toolCalls?: unknown };
+      const p = e.payload as { reqId?: string; delta?: string; reasoning?: string; toolCalls?: unknown };
       if (p.reqId !== reqId) return;
       if (typeof p.delta === "string" && p.delta) {
         content += p.delta;
         args.onDelta?.(content);
+      }
+      // 思考通道：与正文同事件不同字段，本轮内聚合为全文回调
+      if (typeof p.reasoning === "string" && p.reasoning) {
+        reasoning += p.reasoning;
+        args.onReasoning?.(reasoning);
       }
       if (Array.isArray(p.toolCalls)) {
         for (const raw of p.toolCalls as Array<Record<string, any>>) {

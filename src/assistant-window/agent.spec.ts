@@ -72,6 +72,27 @@ describe("runAgent 工具循环", () => {
     expect(events).toEqual([]);
   });
 
+  it("正常：onReasoning 透传给传输层并按增量回调", async () => {
+    const seen: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "hi" }],
+      tools: assistantTools(),
+      chat: async (args) => {
+        // 模拟 transport 的思考通道：本轮内聚合全文逐次回调
+        args.onReasoning?.("先看");
+        args.onReasoning?.("先看一下上下文");
+        return { content: "答案", toolCalls: [] };
+      },
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+      onReasoning: (t) => seen.push(t),
+    });
+    expect(reply.content).toBe("答案");
+    expect(seen).toEqual(["先看", "先看一下上下文"]);
+  });
+
   it("正常：工具轮执行并把结果回喂下一轮", async () => {
     const script: AssistantReply[] = [
       { content: "", toolCalls: [{ id: "t1", name: "scene.list", arguments: "{}" }] },

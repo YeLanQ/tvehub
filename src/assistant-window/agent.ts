@@ -37,6 +37,8 @@ export interface StreamArgs {
   temperature?: number;
   messages: WireMessage[];
   onDelta?: (cumulative: string) => void;
+  /** 思考增量（本轮内聚合全文；不返回思考的模型/供应商不会回调） */
+  onReasoning?: (cumulative: string) => void;
 }
 
 export type ChatFn = (args: StreamArgs) => Promise<AssistantReply>;
@@ -257,6 +259,7 @@ export interface RunAgentOptions {
   /** 供应商上下文窗口（千 token；缺省 128）——预算决定历史保留与结果截断 */
   contextK?: number;
   onDelta?: (text: string) => void;
+  onReasoning?: (text: string) => void;
   onEvent?: (e: AgentEvent) => void;
   maxRounds?: number;
   /** 返回 true 时在轮边界/工具执行前尽快终止（配合「停止」按钮） */
@@ -299,6 +302,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
       temperature: opts.temperature,
       messages: fitWireBudget(history, budget),
       onDelta: opts.onDelta,
+      onReasoning: opts.onReasoning,
     });
     history.push({
       role: "assistant",
