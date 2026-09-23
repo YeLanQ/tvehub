@@ -122,27 +122,14 @@ async function callDevtools(
   }
 }
 
-/** 项目目录是否已消失（被删）：根目录不在 + 父位置可达（盘/网络不可达时
- *  保守保留，不销毁会话——可能只是临时离线） */
-async function rootGone(root: string): Promise<boolean> {
-  try {
-    if (await api.workspacePathExists(root)) return false;
-    const parent = root.replace(/[\\/]+[^\\/]+[\\/]?$/, "");
-    if (parent && (await api.workspacePathExists(parent))) return true;
-  } catch {
-    /* 探测失败：保守保留 */
-  }
-  return false;
-}
-
 async function refreshProjects(): Promise<void> {
-  // devtools project.list 返回 { recent: [{path,name,sceneCount}] }
+  // devtools project.list 返回 { recent: [{path,name,sceneCount}] }（后端已滤掉
+  // 不存在的项目目录）。已删项目的工作区索引条目保留不销毁——其会话叶因项目
+  // 行消失而自然不再渲染（数据红线：会话历史永不因启发式探测被清理）
   const doc = (await callDevtools("project.list", undefined, true)) as {
     recent?: ProjectRow[];
   } | null;
   projects.value = Array.isArray(doc?.recent) ? doc.recent : [];
-  // 已删项目的会话清出索引（残留根因：索引按根持久，项目删除后永远挂着）
-  await convs.pruneMissing(rootGone);
 }
 
 async function refreshEditorState(): Promise<void> {

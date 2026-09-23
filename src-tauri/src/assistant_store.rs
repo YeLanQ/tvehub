@@ -84,16 +84,6 @@ pub fn assistant_conv_doc_delete(app: AppHandle, id: String) -> Result<(), Strin
     }
 }
 
-/// 轻量路径探测（助手工作区清理用）：目录是否存在。metadata 微秒级，同步
-/// fs 即可；目录不存在/不可达统一返回 false（由调用方决定保守策略）。
-#[tauri::command]
-pub fn workspace_path_exists(path: String) -> Result<bool, String> {
-    if path.trim().is_empty() {
-        return Ok(false);
-    }
-    Ok(fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false))
-}
-
 /// setup 一次性迁移：ui-state 目录中 conv 系列键搬入独立会话目录。
 /// 返回迁移的文档数（含索引）。幂等：目标已存在时只清旧键文件。
 pub fn migrate(app: &AppHandle) -> usize {

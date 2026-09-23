@@ -1167,7 +1167,6 @@ pub fn run() {
             assistant_store::assistant_conv_doc_get,
             assistant_store::assistant_conv_doc_set,
             assistant_store::assistant_conv_doc_delete,
-            assistant_store::workspace_path_exists,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

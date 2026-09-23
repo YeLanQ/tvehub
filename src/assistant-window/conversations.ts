@@ -145,9 +145,9 @@ export interface ConversationsStore {
   append: (convId: string, msg: Omit<ChatMessage, "id" | "createdAt">) => ChatMessage;
   /** 删除会话（清理缓存与文档） */
   remove: (root: string, convId: string) => void;
-  /** 清理已删除项目的工作区（exists=false = 该项目目录已消失）：其全部会话
-   *  与文档一并清除；激活工作区命中时回落通用。返回被清理的根清单。 */
-  pruneMissing: (exists: (root: string) => Promise<boolean>) => Promise<string[]>;
+  // 设计红线：会话索引永不因启发式探测被批量销毁——项目删除后面板残留由
+  // 渲染层解决（工作区列表刷新后其会话叶自然不再渲染），索引条目保留
+  //（项目恢复/重新添加时历史仍在）。
   /** 立即写盘全部待保存文档（窗口关闭前调用） */
   flush: () => void;
 }
@@ -272,29 +272,6 @@ export function getConversations(): ConversationsStore {
       if (ws.activeConvId === convId) ws.activeConvId = ws.convs[ws.convs.length - 1]?.id ?? null;
       saveIndex();
       if (isTauri()) void api.assistantConvDocDelete(convId).catch(() => {});
-    },
-    async pruneMissing(exists) {
-      await ensureLoaded();
-      const gone: string[] = [];
-      for (const root of Object.keys(state.index.projects)) {
-        if (!root) continue; // 通用工作区不参与探测
-        if (await exists(root)) continue;
-        gone.push(root);
-      }
-      if (!gone.length) return [];
-      for (const root of gone) {
-        for (const c of state.index.projects[root].convs) {
-          state.cache.delete(c.id);
-          if (isTauri()) void api.assistantConvDocDelete(c.id).catch(() => {});
-        }
-        delete state.index.projects[root];
-      }
-      if (state.activeRoot && gone.includes(state.activeRoot)) {
-        await this.switchProject("");
-      } else {
-        saveIndex();
-      }
-      return gone;
     },
     flush() {
       // 消息文档已即时落盘，这里只剩索引兜底

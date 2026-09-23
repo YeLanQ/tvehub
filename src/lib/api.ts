@@ -442,8 +442,6 @@ export const api = {
   assistantConvDocSet: (id: string, value: string) =>
     invoke<void>("assistant_conv_doc_set", { id, value }),
   assistantConvDocDelete: (id: string) => invoke<void>("assistant_conv_doc_delete", { id }),
-  /** 轻量路径探测（助手清理已删项目工作区用）：目录是否存在 */
-  workspacePathExists: (path: string) => invoke<boolean>("workspace_path_exists", { path }),
 
   // ---------------------------------------------------------------------------
   // 助手大脑（Rust brain 模块）：知识图谱检索 / 策略门控 / 观测回写

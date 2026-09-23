@@ -48,32 +48,6 @@ describe("conversations 会话工作区（按项目隔离）", () => {
     void messages;
   });
 
-  it("正常：pruneMissing 清掉已删除项目的工作区，其余与通用区不受影响", async () => {
-    const dead = await open("P:/dead-proj");
-    dead.convs.append(dead.convs.activeConvId() as string, { role: "user", content: "将随项目消失" });
-    const alive = await open("P:/alive-proj");
-    alive.convs.append(alive.convs.activeConvId() as string, { role: "user", content: "保留" });
-    const convs = alive.convs;
-    // 探测口径注入：仅 P:/dead-proj 已消失
-    const gone = await convs.pruneMissing(async (root) => root !== "P:/dead-proj");
-    expect(gone).toEqual(["P:/dead-proj"]);
-    expect(convs.convsOf("P:/dead-proj")).toEqual([]);
-    expect(convs.convsOf("P:/alive-proj").length).toBeGreaterThan(0);
-  });
-
-  it("边界：激活工作区被清理时回落通用；无消失项目时索引原样", async () => {
-    const dying = await open("P:/dying");
-    const fallen = await dying.convs.pruneMissing(async (root) => root !== "P:/dying");
-    expect(fallen).toEqual(["P:/dying"]);
-    expect(dying.convs.activeRoot).toBe("");
-    expect(dying.convs.convs().length).toBeGreaterThan(0);
-
-    const { convs } = await open("P:/keep");
-    const before = JSON.stringify(convs.index.projects["P:/keep"]);
-    expect(await convs.pruneMissing(async () => true)).toEqual([]);
-    expect(JSON.stringify(convs.index.projects["P:/keep"])).toBe(before);
-  });
-
   it("正常：convsOf/activeConvIdOf 按工作区读取（会话树数据源）", async () => {
     const { convs } = await open("P:/tree-1");
     await convs.newConversation("P:/tree-1");
