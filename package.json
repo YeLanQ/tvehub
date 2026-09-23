@@ -28,6 +28,7 @@
     "gen:preview-files": "node scripts/gen-web-preview-files.mjs",
     "gen:licenses": "node scripts/sync-licenses.mjs",
     "gen:api-docs": "node scripts/gen-api-docs.mjs",
+    "docs:test": "node scripts/docs-tests/cli.mjs",
     "changelog": "node scripts/gen-changelog.mjs",
     "qr:check": "node scripts/qr-selfcheck-run.mjs",
     "version:sync": "node scripts/sync-version.mjs",

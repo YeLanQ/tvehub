@@ -3,6 +3,8 @@
 //
 // 步骤（默认）：
 //   skills  = node scripts/check-skills.mjs        技能文档漂移校验（自演化检测网）
+//   docs    = pnpm gen:api-docs && pnpm docs:test  文档再生成（示例覆盖门禁）+
+//                                                  文档代码块测试（类型+真实执行）
 //   types   = pnpm exec vue-tsc --noEmit           类型检查（根 tsconfig strict）
 //   layers  = node scripts/check-layers.mjs        分层门禁（仅 src/lib 可碰 Tauri API）
 //   audit   = node scripts/audit/scan.mjs          质量+安全统一扫描（密钥/XSS/穿越/
@@ -37,6 +39,12 @@ const skip = typeof flag("--skip") === "string" ? flag("--skip").split(",") : []
 /** 步骤表：cmd 为 shell 字符串（Windows 下经 shell 解析 .cmd/.cmd 垫片） */
 const STEPS = [
   { name: "skills", title: "技能文档校验", cmd: "node scripts/check-skills.mjs" },
+  {
+    name: "docs",
+    title: "文档生成与代码块测试",
+    cmd: "pnpm gen:api-docs && pnpm docs:test",
+    hint: "缺示例/坏块定位 scripts/api-docs/examples/ 与 scripts/docs-tests/README.md",
+  },
   { name: "types", title: "类型检查", cmd: "pnpm exec vue-tsc --noEmit" },
   { name: "layers", title: "分层门禁", cmd: "node scripts/check-layers.mjs" },
   {

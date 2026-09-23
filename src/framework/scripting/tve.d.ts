@@ -119,6 +119,8 @@ export type ScriptNodeKind =
  * （未选择为 null）：
  *
  * ```ts
+ * import { Component, property, MeshNode } from "tve";
+ *
  * export default class Game extends Component {
  *   @property({ type: MeshNode, label: "目标网格" })
  *   target: MeshNode | null = null;   // 运行期指向被引用的网格节点
@@ -135,6 +137,8 @@ export type ScriptNodeKind =
  * 检查器中；运行期宿主在本实体上 get-or-create 对应组件并把门面绑定到字段：
  *
  * ```ts
+ * import { Component, property, AnimationClip } from "tve";
+ *
  * export default class Punch extends Component {
  *   @property(AnimationClip)
  *   anim!: AnimationClip;            // 运行期 = 实体上的关键帧动画剪辑组件
@@ -163,6 +167,12 @@ export function property(options?: {
   max?: number;
   step?: number;
 }): PropertyDecorator;
+/**
+ * 组件引用速记重载：装饰器实参直接传内置组件门面类（等价
+ * `@property({ type: AnimationClip })`）——声明组件引用字段，不出现在检查器，
+ * 运行期宿主 get-or-create 绑定门面。
+ */
+export function property(component: ComponentClass): PropertyDecorator;
 
 /**
  * 节点类型装饰器（类装饰器，可选）：声明脚本类同时作为一种可创建的节点类型，
@@ -170,6 +180,8 @@ export function property(options?: {
  * 挂上本脚本组件（以脚本定义节点行为）。
  *
  * ```ts
+ * import { Component, nodeType } from "tve";
+ *
  * @nodeType({ kind: "meshNode", label: "敌人" })
  * export default class Enemy extends Component {
  *   // ...
@@ -261,7 +273,7 @@ export interface ComponentLifecycle {
  * 脚本组件基类（装饰器声明式写法，推荐）：
  *
  * ```ts
- * import { Component, property, engine } from "tve";
+ * import { Component, nodeType, property, engine } from "tve";
  *
  * @nodeType({ kind: "node", label: "旋转体" })
  * export default class Spin extends Component {
@@ -295,11 +307,15 @@ export interface ComponentLifecycle {
  * 没有则动态创建并立即进入生命周期（按需自动挂载依赖组件）：
  *
  * ```ts
- * import type CameraFollow from "./CameraFollow";   // type-only：编译期擦除
+ * import { Component, math } from "tve";
+ *
+ * // 跨脚本文件时用 import type 只引类型（编译期擦除）；下例同文件演示
+ * class CameraFollow extends Component {
+ *   offset = math.v3(0, 0, 0);
+ * }
  *
  * export default class Enemy extends Component {
  *   follow!: CameraFollow;   // 自动绑定/创建本实体上的 CameraFollow 组件
- *   hp!: HPBar;
  *
  *   onStart() {
  *     this.follow.offset = math.v3(0, 3, 5);
@@ -392,17 +408,17 @@ export class Entity {
   get visible(): boolean;
   set visible(value: boolean);
 
-  /** 本地位置（读取返回快照副本；写入接受部分字段） */
+  /** 本地位置（读取返回快照副本；写入接受部分字段——缺省分量保持不变） */
   get position(): Vec3;
-  set position(value: Vec3);
+  set position(value: Partial<Vec3>);
 
   /** 本地旋转（度制欧拉角 XYZ；读取返回快照副本；写入接受部分字段） */
   get rotation(): Vec3;
-  set rotation(value: Vec3);
+  set rotation(value: Partial<Vec3>);
 
   /** 本地缩放（读取返回快照副本；写入接受部分字段） */
   get scale(): Vec3;
-  set scale(value: Vec3);
+  set scale(value: Partial<Vec3>);
 
   /** 世界位置（只读快照） */
   get worldPosition(): Vec3;
@@ -509,9 +525,16 @@ export class MeshNode extends Entity {}
  * 这是场景**节点**句柄（extends Entity），不是组件——不能用 `getComponent(LightNode)`。
  * 灯光属性（intensity/color/kind/...）通过组件门面 `Light` 访问：
  * ```ts
- * const light = this.entity.getComponent(Light);      // ✅ 组件门面
- * const light = this.entity.getComponent("light");    // ✅ 字符串键
- * // this.entity.getComponent(LightNode)              // ❌ LightNode 是节点句柄，非组件
+ * import { Component, Light } from "tve";
+ *
+ * export default class Torch extends Component {
+ *   onStart() {
+ *     const light = this.entity.getComponent(Light);   // ✅ 组件门面
+ *     // const light2 = this.entity.getComponent("light"); // ✅ 字符串键
+ *     // this.entity.getComponent(LightNode)          // ❌ LightNode 是节点句柄，非组件
+ *     if (light) light.intensity = 2;
+ *   }
+ * }
  * ```
  * 引用灯光节点本身（变换/层级）用 `@property({ type: LightNode })` 声明字段，
  * 或 `engine.scene.find("name")` 后以 `instanceof LightNode` 收窄。
@@ -599,6 +622,8 @@ export interface ParticleState {
  * 发射参数读写（运行态生效，不回写场景文件）。
  *
  * ```ts
+ * import { Component, property, ParticleSystemNode } from "tve";
+ *
  * export default class Explode extends Component {
  *   @property({ type: ParticleSystemNode, label: "爆炸特效" })
  *   fx: ParticleSystemNode | null = null;
@@ -663,6 +688,8 @@ export class ParticleSystemNode extends Entity {
  * （脚本把物体摆到地表、按坡度撒放植被/装饰物用）。
  *
  * ```ts
+ * import { Component, property, TerrainNode } from "tve";
+ *
  * export default class Drop extends Component {
  *   @property({ type: TerrainNode, label: "地形" })
  *   ground: TerrainNode | null = null;
@@ -798,10 +825,20 @@ export interface LogicApi {
    * 同一动作叶（续行，session.seq 不变）；动作重新开始时 seq 自增，据此复位：
    *
    * ```ts
-   * engine.logic.onAction(this.entity, "walkTo", (leaf, session) => {
-   *   if (session.seq !== this.lastSeq) { this.lastSeq = session.seq; this.step = 0; }
-   *   return ++this.step >= 10 ? "success" : "running";
-   * });
+   * import { Component, engine } from "tve";
+   *
+   * export default class Walk extends Component {
+   *   private lastSeq = -1;
+   *   private step = 0;
+   *
+   *   onStart() {
+   *     engine.logic.onAction(this.entity, "walkTo", (leaf, session) => {
+   *       void leaf.id;
+   *       if (session.seq !== this.lastSeq) { this.lastSeq = session.seq; this.step = 0; }
+   *       return ++this.step >= 10 ? "success" : "running";
+   *     });
+   *   }
+   * }
    * ```
    */
   onAction(entity: Entity, name: string, handler: BTActionHandler): () => void;
@@ -1132,7 +1169,7 @@ export type TweenValue = number | Partial<Vec3> & Record<string, number | undefi
  * 同一语句内的链式配置全部生效），脚本不要直接 new。
  *
  * ```ts
- * import { tween, Component } from "tve";
+ * import { tween, engine, Component } from "tve";
  *
  * export default class Punch extends Component {
  *   onStart() {
@@ -1262,7 +1299,7 @@ export const tween: TweenApi;
  * 用于把"某件事发生"广播给多个订阅者——组件间解耦通信的标准设施：
  *
  * ```ts
- * import { Delegate, Component } from "tve";
+ * import { Delegate, Component, engine } from "tve";
  *
  * export class GameEvents extends Component {
  *   static readonly onScore = new Delegate<(delta: number) => void>();
@@ -1398,7 +1435,7 @@ export interface DataCenterStats {
  *     dataCenter.set("score", 0);            // 写即热
  *   }
  *   onEnemyKilled() {
- *     const score = dataCenter.get<number>("score", 0);
+ *     const score = dataCenter.get<number>("score") ?? 0;
  *     dataCenter.set("score", score + 10);   // 其他组件可随时读取
  *   }
  *   onDestroy() {
