@@ -412,6 +412,10 @@ export const api = {
     model: string;
     messages: unknown;
     temperature?: number;
+    /** 思考模式（缺省 = 不传参）：on/off 显式开关，方言在后端组装 */
+    thinking?: "on" | "off";
+    /** 思考强度（thinking = on 时随 reasoning_effort 下发） */
+    thinkingEffort?: "low" | "medium" | "high" | "xhigh";
   }) => invoke<void>("ai_chat_stream", { args }),
   /** 取消进行中的流式对话（幂等） */
   aiCancel: (reqId: string) => invoke<void>("ai_cancel", { reqId }),

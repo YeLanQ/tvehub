@@ -34,6 +34,10 @@ pub struct AiChatArgs {
     /// OpenAI messages 数组（含 system/user/assistant/tool）
     messages: serde_json::Value,
     temperature: Option<f64>,
+    /// 思考模式：缺省/default = 不传参；on = 显式开启；off = 显式关闭
+    thinking: Option<String>,
+    /// 思考强度：low / medium / high（thinking = on 时随请求下发）
+    thinking_effort: Option<String>,
 }
 
 /// 去除尾斜杠的 base 归一（"https://host/v1/" 与 "https://host/v1" 等价）
@@ -72,12 +76,13 @@ pub async fn ai_chat_stream(
     Ok(())
 }
 
-async fn run_stream(
-    app: &AppHandle,
-    args: &AiChatArgs,
-    cancel: &AtomicBool,
-) -> Result<(), String> {
-    let url = format!("{}/chat/completions", normalize_base(&args.base_url));
+/// 组装 /chat/completions 请求体（含思考参数方言；纯函数便于单测）。
+/// 思考方言按主流 OpenAI 兼容端点并发三套：
+/// - thinking.type：GLM/Zhipu 系（enabled / disabled）
+/// - enable_thinking：Qwen/DashScope/SiliconFlow 系（true / false）
+/// - reasoning_effort：OpenAI o系/GPT-5、vLLM、Gemini 兼容层（low/medium/high/xhigh）
+/// 不支持额外字段的严格端点会 400——前端以「默认（不传参）」兜底。
+fn build_chat_body(args: &AiChatArgs) -> serde_json::Value {
     let mut body = json!({
         "model": args.model,
         "messages": args.messages,
@@ -86,6 +91,33 @@ async fn run_stream(
     if let Some(t) = args.temperature {
         body["temperature"] = json!(t);
     }
+    match args.thinking.as_deref() {
+        Some("on") => {
+            body["thinking"] = json!({ "type": "enabled" });
+            body["enable_thinking"] = json!(true);
+            // 档位白名单 = 前端强度下拉的四档；各家模型档位不齐（低/中/高、
+            // 低/高、低/高/最高），不支持的档位由用户换档，不在后端猜测夹值
+            let effort = args.thinking_effort.as_deref().unwrap_or("medium");
+            if matches!(effort, "low" | "medium" | "high" | "xhigh") {
+                body["reasoning_effort"] = json!(effort);
+            }
+        }
+        Some("off") => {
+            body["thinking"] = json!({ "type": "disabled" });
+            body["enable_thinking"] = json!(false);
+        }
+        _ => {} // 缺省/未知值：不改请求体，跟随供应商与模型默认
+    }
+    body
+}
+
+async fn run_stream(
+    app: &AppHandle,
+    args: &AiChatArgs,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let url = format!("{}/chat/completions", normalize_base(&args.base_url));
+    let body = build_chat_body(args);
     let resp = reqwest::Client::new()
         .post(url)
         .json(&body)
@@ -218,4 +250,72 @@ pub async fn ai_list_models(base_url: String, api_key: String) -> Result<Vec<Str
     ids.sort();
     ids.dedup();
     Ok(ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(thinking: Option<&str>, effort: Option<&str>) -> AiChatArgs {
+        AiChatArgs {
+            req_id: "r_test".into(),
+            base_url: "https://x/v1".into(),
+            api_key: String::new(),
+            model: "m".into(),
+            messages: json!([]),
+            temperature: None,
+            thinking: thinking.map(String::from),
+            thinking_effort: effort.map(String::from),
+        }
+    }
+
+    #[test]
+    fn body_default_sends_no_thinking_keys() {
+        let body = build_chat_body(&args(None, None));
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["stream"], json!(true));
+    }
+
+    #[test]
+    fn body_on_enables_all_dialects_with_effort() {
+        let body = build_chat_body(&args(Some("on"), Some("high")));
+        assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+        assert_eq!(body["enable_thinking"], json!(true));
+        assert_eq!(body["reasoning_effort"], json!("high"));
+    }
+
+    #[test]
+    fn body_on_without_effort_falls_back_medium() {
+        let body = build_chat_body(&args(Some("on"), None));
+        assert_eq!(body["reasoning_effort"], json!("medium"));
+    }
+
+    #[test]
+    fn body_on_xhigh_passes_through() {
+        let body = build_chat_body(&args(Some("on"), Some("xhigh")));
+        assert_eq!(body["reasoning_effort"], json!("xhigh"));
+    }
+
+    #[test]
+    fn body_off_disables_without_effort() {
+        let body = build_chat_body(&args(Some("off"), Some("low")));
+        assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+        assert_eq!(body["enable_thinking"], json!(false));
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn body_unknown_thinking_value_is_ignored() {
+        let body = build_chat_body(&args(Some("bogus"), None));
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("enable_thinking").is_none());
+    }
+
+    #[test]
+    fn body_invalid_effort_is_dropped() {
+        let body = build_chat_body(&args(Some("on"), Some("max")));
+        assert!(body.get("reasoning_effort").is_none());
+    }
 }

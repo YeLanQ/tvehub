@@ -75,6 +75,16 @@ function setProviderContextK(ev: Event): void {
   const k = Number.isFinite(n) && n > 0 ? Math.min(2048, Math.round(n)) : 0;
   if (activeProvider.value) store.updateProvider(activeProvider.value.id, { contextK: k });
 }
+function setProviderThinking(ev: Event): void {
+  const el = ev.target as HTMLSelectElement;
+  const v = el.value as AiProvider["thinking"];
+  if (activeProvider.value) store.updateProvider(activeProvider.value.id, { thinking: v });
+}
+function setProviderThinkingEffort(ev: Event): void {
+  const el = ev.target as HTMLSelectElement;
+  const v = el.value as AiProvider["thinkingEffort"];
+  if (activeProvider.value) store.updateProvider(activeProvider.value.id, { thinkingEffort: v });
+}
 
 function exportCards(): void {
   const doc = JSON.stringify(store.cards, null, 2);
@@ -202,6 +212,29 @@ async function fetchModels(): Promise<void> {
         <label>API Key（仅保存在本机）<div class="aset-keyrow"><input :type="showKey ? 'text' : 'password'" :value="activeProvider.apiKey" @change="setProviderField('apiKey', $event)" /><button @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button></div></label>
         <label>模型（可手填，或先「拉取模型列表」再选）<ComboBox :model-value="activeProvider.model" :options="activeProvider.models" placeholder="gpt-4o-mini / deepseek-chat / …" @update:model-value="setProviderModel" /></label>
         <label>上下文窗口 K token（按模型实际窗口填，0 = 默认 128；1024 = 1M）<input :value="activeProvider.contextK ?? 128" type="number" min="0" max="2048" step="1" placeholder="128" @change="setProviderContextK" /></label>
+        <div class="aset-grid">
+          <label title="显式开关按主流方言并发（GLM thinking / Qwen enable_thinking / o系 reasoning_effort）；个别严格校验的供应商可能报错，届时选回「默认」">
+            思考（推理过程；关闭更快、省 token）
+            <select :value="activeProvider.thinking ?? 'default'" @change="setProviderThinking">
+              <option value="default">默认（跟随模型，不传参）</option>
+              <option value="on">开启（显式启用思考）</option>
+              <option value="off">关闭（显式停用思考）</option>
+            </select>
+          </label>
+          <label title="各家模型档位不齐：低/中/高通用；部分模型只有低/高；xhigh 仅 GPT-5.1-Codex-Max 等支持。不支持的档位可能被夹或报错，换一档即可">
+            思考强度（「开启」时生效）
+            <select
+              :value="activeProvider.thinkingEffort ?? 'medium'"
+              :disabled="(activeProvider.thinking ?? 'default') !== 'on'"
+              @change="setProviderThinkingEffort"
+            >
+              <option value="low">低（最省时省 token）</option>
+              <option value="medium">中（默认强度）</option>
+              <option value="high">高（更深、更慢）</option>
+              <option value="xhigh">最高（xhigh，仅部分模型支持）</option>
+            </select>
+          </label>
+        </div>
         <div class="aset-actions">
           <button :disabled="fetching" @click="fetchModels">{{ fetching ? "拉取中…" : "拉取模型列表" }}</button>
         </div>
@@ -229,8 +262,10 @@ async function fetchModels(): Promise<void> {
     &:hover:not(:disabled) { background: var(--btn-hover); color: var(--text); }
     &:disabled { opacity: 0.45; cursor: default; } } }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim);
-  input, textarea { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--text); padding: 6px 8px; font: inherit; resize: vertical;
-    &:focus { outline: none; border-color: var(--accent); } } }
+  input, textarea, select { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--text); padding: 6px 8px; font: inherit; resize: vertical;
+    &:focus { outline: none; border-color: var(--accent); } }
+  select { resize: none; cursor: pointer; &:disabled { opacity: 0.45; cursor: default; } }
+  select option { background: var(--bg-panel); color: var(--text); } }
 .aset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .aset-keyrow { display: flex; gap: 6px; input { flex: 1; } button { flex: none; border: 1px solid var(--border); background: var(--btn); color: var(--text-dim); border-radius: 6px; cursor: pointer; &:hover { background: var(--btn-hover); color: var(--text); } } }
 .aset-activate { align-self: flex-start; border: 1px solid var(--accent); background: var(--bg-active); color: var(--text); border-radius: 6px; padding: 6px 12px; cursor: pointer; }

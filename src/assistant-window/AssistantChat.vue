@@ -687,7 +687,12 @@ async function send(textArg?: string | Event): Promise<void> {
     scrollBottom();
     const agentCommon = {
       tools: assistantTools(),
-      chat: createTauriTransport((id) => (run.reqId = id)),
+      // 思考参数随供应商设置下发（default 不传参）；nl-normalize 前置层独立
+      // 传输不带思考——结构化抽取不需要推理，也不吃方言参数的 400 风险
+      chat: createTauriTransport((id) => (run.reqId = id), {
+        mode: prov.thinking ?? "default",
+        effort: prov.thinkingEffort ?? "medium",
+      }),
       execTool: (name: string, argsJson: string) =>
         execAssistantTool(
           name,

@@ -7,7 +7,16 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
 import type { ChatFn, ToolCall } from "./agent";
 
-export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn {
+/** 思考参数（供应商设置下发；default = 不传参跟随模型默认） */
+export interface ThinkingCfg {
+  mode: "default" | "on" | "off";
+  effort: "low" | "medium" | "high" | "xhigh";
+}
+
+export function createTauriTransport(
+  onReqId?: (reqId: string) => void,
+  thinking?: ThinkingCfg,
+): ChatFn {
   return async (args) => {
     const reqId = `r_${Date.now().toString(36)}${Math.floor(Math.random() * 1e8).toString(36)}`;
     onReqId?.(reqId);
@@ -66,6 +75,10 @@ export function createTauriTransport(onReqId?: (reqId: string) => void): ChatFn 
         model: args.model,
         messages: args.messages,
         temperature: args.temperature,
+        // 思考参数随请求下发（default 不传参）；方言组装在后端 ai_chat_stream
+        ...(thinking && thinking.mode !== "default"
+          ? { thinking: thinking.mode, thinkingEffort: thinking.effort }
+          : {}),
       });
       const deadline = setTimeout(() => {
         if (error === null) error = "响应超时";

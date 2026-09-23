@@ -40,6 +40,14 @@ export interface AiProvider {
   /** 上下文窗口（千 token）：0 = 默认 128；1024 = 1M——按模型实际窗口填写，
    *  助手据此放大工具结果上限与历史保留预算，装不下才裁最老历史 */
   contextK: number;
+  /** 思考模式：default = 不传参跟随模型默认；on = 显式开启；off = 显式关闭
+   *  （关闭更快更省 token）。显式开关按主流方言并发（GLM/Qwen/o系），
+   *  个别严格校验的供应商可能 400，届时选回 default */
+  thinking?: "default" | "on" | "off";
+  /** 思考强度（thinking = on 时随 reasoning_effort 下发）；各家档位不一：
+   *  低/中/高 通用，xhigh 仅部分模型（GPT-5.1-Codex-Max 等），低/高两档模型
+   *  传 medium 可能被夹或报错——换一档即可 */
+  thinkingEffort?: "low" | "medium" | "high" | "xhigh";
 }
 
 interface CardsDoc {
@@ -220,6 +228,8 @@ export function getAssistantStore(): AssistantStore {
         model: "",
         models: [],
         contextK: 128,
+        thinking: "default",
+        thinkingEffort: "medium",
         ...partial,
       };
       state.providers.push(provider);
