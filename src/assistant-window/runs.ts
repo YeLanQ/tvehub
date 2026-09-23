@@ -12,6 +12,9 @@ import type { NluUnitRow } from "./NluSteps.vue";
 export interface RunNlu {
   traces: Array<{ stage: string; detail: string }>;
   units: NluUnitRow[];
+  /** 本任务 brain.decompose 的 toolCallId：运行中时间线据此只隐藏当前任务
+   *  的静态消息对（由末尾动态块代展），先前任务的大脑块照常保留在会话 */
+  callId?: string;
 }
 
 /** 黄灯写操作确认队列项：同批并行调用的多个请求合并为一次裁决 */

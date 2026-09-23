@@ -25,7 +25,6 @@ import {
 import { hasLabeledCallTrace } from "./labeled-calls";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
-import { mergeStepRow } from "./steps";
 import { fetchLoadableCatalogs } from "./loadable-index";
 import { filterExistingFiles, normalizeNaturalLanguage } from "./nl-normalize";
 import type { BrainNormSpec } from "../lib/api";
@@ -33,14 +32,14 @@ import { assistantTools, execAssistantTool, type ConfirmFn } from "./tools";
 import {
   decomposeDigest,
   knowledgeNote,
-  parseStoredDecomposition,
   planNote,
 } from "./nlu";
 import { copyText } from "./clipboard";
 import { getRun, type RunState } from "./runs";
-import ToolSteps, { type ToolStepItem } from "./ToolSteps.vue";
-import NluSteps, { type NluBlockData, type NluUnitRow } from "./NluSteps.vue";
-import type { BrainDecomposition, BrainNluTrace, BrainTaskUnit } from "../lib/api";
+import { buildTimeline, toNluData, type Block } from "./timeline";
+import ToolSteps from "./ToolSteps.vue";
+import NluSteps, { type NluUnitRow } from "./NluSteps.vue";
+import type { BrainDecomposition, BrainTaskUnit } from "../lib/api";
 
 const store = getAssistantStore();
 const convs = getConversations();
@@ -68,22 +67,6 @@ const activeRun = computed<RunState | null>(() => {
 // 不可用回落整任务直通助手。单元内的工具决策仍经决策中心（brainExecute）。
 // ---------------------------------------------------------------------------
 
-function toNluData(deco: BrainDecomposition): { traces: BrainNluTrace[]; units: NluUnitRow[] } {
-  return {
-    traces: [...deco.traces],
-    units: deco.units.map((u) => ({
-      index: u.index,
-      text: u.text,
-      method: u.method,
-      zone: u.zone,
-      phase: u.phase,
-      refs: u.refs ?? [],
-      exec: u.exec,
-      status: "pending" as const,
-    })),
-  };
-}
-
 /** 裁决出队：同一批挂起的请求共用同一结论（批准一次覆盖同轮全部黄灯调用） */
 function resolveExecConfirm(ok: boolean): void {
   const run = activeRun.value;
@@ -102,53 +85,12 @@ const activeTitle = computed(() => {
   return convs.convs().find((c) => c.id === id)?.title ?? "新会话";
 });
 
-/** 消息时间线：连续工具消息按 toolCallId 合并为「一次调用一行」的步骤块；
- * brain.decompose 消息对合并为大脑单元化块（历史静态计划），运行中由
- * nluRun 动态块代展（两者不同时出现，收尾后动态块消失、静态块接管）。 */
-type Block =
-  | { kind: "msg"; key: string; m: ChatMessage }
-  | { kind: "steps"; key: string; rows: ToolStepItem[] }
-  | { kind: "nlu"; key: string; data: NluBlockData };
-
-const timeline = computed<Block[]>(() => {
-  const out: Block[] = [];
-  const runNlu = activeRun.value?.nluRun ?? null;
-  const nluActive = runNlu != null;
-  for (const m of messages.value) {
-    if (m.role === "tool" && m.toolName === "brain.decompose") {
-      if (nluActive) continue; // 运行中：动态块在末尾代展，避免同屏重复
-      if (m.result) {
-        const deco = parseStoredDecomposition(m.content);
-        if (deco) {
-          const data = toNluData(deco);
-          const open = [...out].reverse().find((b) => b.kind === "nlu");
-          if (open && open.kind === "nlu" && !open.data.units.length) {
-            open.data = data; // 填充未决的调用占位块
-          } else {
-            out.push({ kind: "nlu", key: `nlu_r_${m.id}`, data });
-          }
-        }
-        continue;
-      }
-      out.push({ kind: "nlu", key: `nlu_c_${m.toolCallId ?? m.id}`, data: { traces: [], units: [] } });
-      continue;
-    }
-    const last = out[out.length - 1];
-    if (m.role === "tool") {
-      if (last && last.kind === "steps") {
-        mergeStepRow(last.rows, m);
-      } else {
-        const rows: ToolStepItem[] = [];
-        mergeStepRow(rows, m);
-        out.push({ kind: "steps", key: `steps_${m.id}`, rows });
-      }
-    } else {
-      out.push({ kind: "msg", key: m.id, m });
-    }
-  }
-  if (runNlu) out.push({ kind: "nlu", key: "__nlu_run", data: runNlu });
-  return out;
-});
+/** 消息时间线：构建规则在 ./timeline（纯函数）——历史 brain.decompose 对
+ * 按序累积为静态大脑块，运行中只有当前任务（callId 匹配）的静态对由末尾
+ * 动态块代展，先前任务的大脑容器照常保留在会话里。 */
+const timeline = computed<Block[]>(() =>
+  buildTimeline(messages.value, activeRun.value?.nluRun ?? null),
+);
 
 /** 最后一块（执行中自动展开跟随的就是它） */
 const lastBlockKey = computed(() => timeline.value[timeline.value.length - 1]?.key ?? "");
@@ -617,7 +559,9 @@ async function send(textArg?: string | Event): Promise<void> {
     const wire = [...wireHead, { role: "user" as const, content: text + attachments }];
     if (decoResult) {
       deco = decoResult;
-      run.nluRun = toNluData(deco);
+      // callId = 本任务 brain.decompose 的 toolCallId：运行中时间线只隐藏
+      // 这一对静态消息（动态块代展），先前任务的大脑容器保持可见
+      run.nluRun = { ...toNluData(deco), callId: nluCallId };
       // 文件校验轨迹：归一化层提取过文件时展示存在性过滤的命中情况——
       // "一直是 0"这类静默清零在这里露出原因（提取 0 个不占轨迹，多数
       // 任务本就不提文件）
