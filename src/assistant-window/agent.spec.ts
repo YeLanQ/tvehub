@@ -93,6 +93,62 @@ describe("runAgent 工具循环", () => {
     expect(seen).toEqual(["先看", "先看一下上下文"]);
   });
 
+  it("守卫：计划型任务零工具轮宣称完成 → 拉回循环真正执行", async () => {
+    const script: AssistantReply[] = [
+      { content: "任务完成。问题根源是格式不对，正确格式如下……", toolCalls: [] },
+      { content: "", toolCalls: [{ id: "t1", name: "scene.list", arguments: "{}" }] },
+      { content: "任务完成。场景已查询。", toolCalls: [] },
+    ];
+    const { chat, calls } = stubChat(script);
+    const events: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "修复 Ocean.shader" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({ ok: true }),
+      onEvent: (e) => events.push(e.type),
+      requireToolWork: true,
+    });
+    expect(calls()).toBe(3);
+    expect(events).toEqual(["tool_start", "tool_result"]);
+    expect(reply.content).toContain("任务完成");
+  });
+
+  it("边界：非计划任务（requireToolWork 关）零工具完成照常放行，纯问答不受影响", async () => {
+    const { chat, calls } = stubChat([{ content: "配置完成后即可生效。", toolCalls: [] }]);
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "怎么配置？" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+      requireToolWork: false,
+    });
+    expect(calls()).toBe(1);
+    expect(reply.content).toBe("配置完成后即可生效。");
+  });
+
+  it("边界：守卫预算耗尽（2 次）后放行原文，绝不死锁", async () => {
+    const { chat, calls } = stubChat([{ content: "任务完成，已修好。", toolCalls: [] }]);
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "修复它" }],
+      tools: assistantTools(),
+      chat,
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async () => ({}),
+      requireToolWork: true,
+    });
+    expect(calls()).toBe(3);
+    expect(reply.content).toContain("任务完成");
+  });
+
   it("正常：工具轮执行并把结果回喂下一轮", async () => {
     const script: AssistantReply[] = [
       { content: "", toolCalls: [{ id: "t1", name: "scene.list", arguments: "{}" }] },

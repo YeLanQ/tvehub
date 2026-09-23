@@ -706,6 +706,12 @@ async function send(textArg?: string | Event): Promise<void> {
       });
     }
     scrollBottom();
+    // 零工具完成守卫开关：计划型任务（大脑拆出模糊单元）或归一化判定为
+    // 操作/创作/优化类且无大脑直执行结果时开启——模型没跑过任何工具轮就
+    // 宣称「任务完成」按空话拉回（直问答/纯对话任务不开启，避免误伤）
+    const requireToolWork =
+      assistUnits.length > 0 ||
+      (!!spec && !directResults.length && ["operate", "create", "optimize"].includes(spec.taskType));
     const agentCommon = {
       tools: assistantTools(),
       // 思考参数随供应商设置下发（default 不传参）；nl-normalize 前置层独立
@@ -767,6 +773,7 @@ async function send(textArg?: string | Event): Promise<void> {
         }
       },
       shouldStop: () => run.stopRequested,
+      requireToolWork,
     };
     try {
       let finalText: string;

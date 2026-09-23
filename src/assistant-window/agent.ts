@@ -145,6 +145,16 @@ const DUP_LOAD_NUDGE =
   "请基于上文结果直接发起「剩余步骤」的工具调用；若全部步骤已完成，" +
   "输出以「任务完成」开头的最终总结。";
 
+/** 零工具完成守卫的拉回提示：计划型任务在没跑过任何工具轮时，「任务完成」
+ * 式收尾必然是空话（弱模型常见：描述该做什么然后宣称已完成）——教学后拉回
+ * 循环真正执行。 */
+const FAKE_DONE_NUDGE =
+  "（系统）你输出了「任务完成」式的总结，但本轮至今没有发起过任何工具调用——" +
+  "没有真实执行过的任务不可能已完成，这种总结对用户是误导。" +
+  "请立即按执行计划发起剩余步骤的工具调用（无依赖的调用放同一轮并行）；" +
+  "所有步骤都执行且结果成功后，才允许输出以「任务完成」开头的最终总结。" +
+  "若你判断该任务确实无需任何工具（纯问答），请以「纯问答无需工具：」开头重答。";
+
 /** 终止注记：救援预算耗尽仍无工具推进时，给用户可见的暂停说明与继续指引——
  * 「任务被自动终止」必须是显式的、可恢复的，不允许静默停在半截 */
 const STALL_NOTE =
@@ -266,6 +276,9 @@ export interface RunAgentOptions {
   maxRounds?: number;
   /** 返回 true 时在轮边界/工具执行前尽快终止（配合「停止」按钮） */
   shouldStop?: () => boolean;
+  /** 计划型任务（大脑拆出模糊单元/归一化为操作类）：零工具轮的「任务完成」
+   *  式收尾按空话处理，教学后拉回循环真正执行（纯问答任务不开启） */
+  requireToolWork?: boolean;
 }
 
 /** 工具调用循环：模型回调用 → 并行执行 → 结果回喂 → 直到产出纯文本 */
@@ -286,6 +299,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
   let rescues = 0;
   /** 空回复续跑已用次数 */
   let emptyRescues = 0;
+  /** 零工具完成守卫已用次数（预算耗尽放行原文，绝不死锁） */
+  let fakeDoneNudges = 0;
+  const MAX_FAKE_DONE = 2;
   /** 连续「整批都是重复加载短路」的轮数（弱模型复读调用时的空转判据） */
   let dupLoadRounds = 0;
   /** 最近一次工具回喂文本头部（复读检测基准；首轮无前序工具时为空） */
@@ -357,6 +373,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
       // 被救援拉回循环会让模型跳过用户批准直接执行。
       if (looksLikeConfirmRequest(finalReply.content)) {
         return finalReply;
+      }
+      // 零工具完成守卫：计划型任务在没有任何工具执行轮时，「任务完成」式收尾
+      // 必然是空话——教学后拉回循环真正执行（预算 2 次，耗尽放行原文不锁死；
+      // 工具跑过之后不拦——真执行过再宣称完成属模型判断，交给完成度校验）
+      if (
+        opts.requireToolWork &&
+        batchStarts.length === 0 &&
+        fakeDoneNudges < MAX_FAKE_DONE &&
+        looksLikeCompletion(finalReply.content)
+      ) {
+        fakeDoneNudges += 1;
+        history.push({ role: "user", content: FAKE_DONE_NUDGE });
+        continue;
       }
       // 有工具调用痕迹但全部解析失败：注入纠偏提示让模型重发（至多 2 次），而不是停轮
       if (nudges < MAX_FORMAT_NUDGES && hasUnparsedCallTrace(reply.content)) {
