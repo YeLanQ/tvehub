@@ -183,6 +183,26 @@ export function parseInlineToolCalls(content: string): ParsedInline {
   return { calls, cleaned: stripAll(content, ranges) };
 }
 
+/** 围栏吸附：调用块被 ```lang … ``` 围栏包裹且围栏内除调用外无其他内容时，
+ * 把围栏一并纳入剔除区间——否则抠掉调用 JSON 后残留孤立的 ```json 围栏壳
+ * （上屏与历史都会出现"空 json 块"噪音）。围栏内有散文/其他代码则不吸附，
+ * 真代码块里的普通 JSON 不误吞。 */
+function absorbFences(content: string, ranges: Array<[number, number]>): void {
+  for (let i = 0; i < ranges.length; i++) {
+    const [s, e] = ranges[i];
+    const before = content.slice(0, s);
+    const open = /(?:^|\n)[ \t]*```[a-zA-Z]*[ \t]*(?:\n[ \t]*)?$/.exec(before);
+    if (!open) continue;
+    const close = /^[ \t]*(?:\r?\n)?[ \t]*```/.exec(content.slice(e));
+    if (!close) continue;
+    ranges[i] = [before.length - open[0].length, e + close[0].length];
+  }
+}
+
+/** 空代码围栏（```lang 开栅后直接闭栅，围栏内无内容）：围栏吸附后的漏网壳
+ * 或模型直出的空围栏都是纯噪音；有内容的围栏（真代码块）绝不碰 */
+const EMPTY_FENCE_RE = /```[a-zA-Z]*[ \t]*\r?\n[ \t]*\r?\n?[ \t]*```/g;
+
 function stripRanges(text: string, ranges: Array<[number, number]>): string {
   if (!ranges.length) return text;
   const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
@@ -196,9 +216,13 @@ function stripRanges(text: string, ranges: Array<[number, number]>): string {
   return out + text.slice(pos);
 }
 
-/** 按区间剔除调用块并收敛空行（stripRanges 的别名语义，供 cleaned 统一出口） */
+/** 按区间剔除调用块（先吸附包裹围栏）并清掉空围栏、收敛空行 */
 function stripAll(text: string, ranges: Array<[number, number]>): string {
-  return stripRanges(text, ranges).replace(/\n{3,}/g, "\n\n").trim();
+  absorbFences(text, ranges);
+  return stripRanges(text, ranges)
+    .replace(EMPTY_FENCE_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** 无内联调用（快捷判定，避免每轮都做扫描清理） */
@@ -214,7 +238,8 @@ export function stripCallTags(text: string): string {
   const out = stripLabeledCalls(text)
     .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, "")
     .replace(/<(?:invoke|function|parameter)\b[^>]*>[\s\S]*?(?:<\/(?:invoke|function|parameter)>|$)/g, "")
-    .replace(/<\/?(?:tool_call|invoke|function|parameter)\b[^>]*>/g, "");
+    .replace(/<\/?(?:tool_call|invoke|function|parameter)\b[^>]*>/g, "")
+    .replace(EMPTY_FENCE_RE, "");
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -252,15 +277,23 @@ function unclosedCallStart(text: string): number {
 }
 
 /** 流式显示净化：完整调用块与残骸标签剔除；尾部未写完的调用载荷/调用标签
- * 不闪现（含 Markdown 标签方言的半截调用）。只动显示，不动历史（历史由
- * runAgent 的 cleaned 回写负责）。 */
+ * 不闪现（含 Markdown 标签方言的半截调用）；孤立 ```lang 开栅同样隐藏——
+ * 它要么正变成围栏调用（随后整体被吸附剔除），要么是真代码块（内容一到即
+ * 恢复显示）。只动显示，不动历史（历史由 cleaned 回写负责）。 */
 export function streamingDisplay(text: string): string {
   const cleaned = stripCallTags(cleanedContent(text));
   const callStart = unclosedCallStart(cleaned);
-  if (callStart >= 0) return cleaned.slice(0, callStart).trimEnd();
+  if (callStart >= 0) {
+    // 载荷前紧邻的 ```lang 开栅一并隐藏（围栏调用的流式半截不闪围栏壳）
+    const head = cleaned.slice(0, callStart);
+    const fenceTail = /(?:^|\n)[ \t]*```[a-zA-Z]+\b[ \t]*\n?$/.exec(head);
+    return (fenceTail ? head.slice(0, head.length - fenceTail[0].length) : head).trimEnd();
+  }
   const tagStart = cleaned.search(/<\s*(?:tool_call|invoke|function|parameter)\b[^<]*$/);
   if (tagStart >= 0) return cleaned.slice(0, tagStart).trimEnd();
   const labelStart = labeledTailStart(cleaned);
   if (labelStart >= 0) return cleaned.slice(0, labelStart).trimEnd();
+  const fenceStart = cleaned.search(/```[a-zA-Z]+\b[ \t]*(?:\r?\n)?[ \t]*$/);
+  if (fenceStart >= 0) return cleaned.slice(0, fenceStart).trimEnd();
   return cleaned;
 }

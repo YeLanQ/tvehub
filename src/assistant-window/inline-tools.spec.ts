@@ -230,6 +230,27 @@ describe("hasInlineToolCalls / cleanedContent", () => {
     expect(out).toContain("再执行。");
     expect(out).not.toMatch(/\n{3,}/);
   });
+
+  it("回归（截图案例）：围栏包裹的调用整块消费，不残留孤立 ```json 围栏壳", () => {
+    const text = '```json\n{ "tool": "scene.list", "input": {} }\n```';
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(cleaned).not.toContain("```");
+    expect(cleaned.trim()).toBe("");
+    // 正文中的围栏调用同样吸附，前后散文保留
+    const out = cleanedContent('好的。\n```json\n{"tool":"preview.open","input":{}}\n```\n完成。');
+    expect(out).toContain("好的。");
+    expect(out).toContain("完成。");
+    expect(out).not.toContain("```");
+  });
+
+  it("边界：空围栏（含模型直出的 ```json 空块）清理，有内容的真代码块不误吞", () => {
+    expect(cleanedContent("```json\n```").trim()).toBe("");
+    expect(cleanedContent("```\n\n```").trim()).toBe("");
+    const code = "```ts\nconst a = { x: 1 };\n```";
+    expect(cleanedContent(code)).toContain("const a");
+    expect(cleanedContent(code).match(/```/g)?.length).toBe(2);
+  });
 });
 
 describe("stripCallTags 残骸净化", () => {
@@ -278,6 +299,17 @@ describe("streamingDisplay", () => {
   it("非调用数据（不含 tool/name 键）正常显示", () => {
     const data = '示例 {"mode": "fast", "n": 1';
     expect(streamingDisplay(data)).toBe(data);
+  });
+
+  it("回归（截图案例）：围栏调用的流式半截不闪 ```json 壳，空围栏清空", () => {
+    expect(streamingDisplay("我查一下：\n```json\n")).toBe("我查一下：");
+    expect(streamingDisplay('我查一下：\n```json\n{"tool": "scene.list", "input"')).toBe("我查一下：");
+    expect(streamingDisplay("```json\n```")).toBe("");
+    // 真代码块内容到达后正常显示，围栏不丢
+    const code = "示例：\n```ts\nconst a = 1;\n```";
+    const shown = streamingDisplay(code);
+    expect(shown).toContain("const a = 1;");
+    expect(shown.match(/```/g)?.length).toBe(2);
   });
 });
 
