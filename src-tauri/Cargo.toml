@@ -3,7 +3,7 @@
 # cargo 构建日志、产物名（tve-hub.exe，tauri build 再改名为 TvE Hub.exe）由此而来
 name = "tve-hub"
 # 与 tauri.conf.json 的 version 保持一致（产品版本以 tauri.conf.json 为准）
-version = "0.1.3+1"
+version = "0.1.4+1"
 description = "TvE Hub —— 三维可视化编辑器与创意工坊"
 authors = ["Tve Team"]
 license = "Apache-2.0"
