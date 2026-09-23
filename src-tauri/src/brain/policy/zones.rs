@@ -31,6 +31,7 @@ const GREEN_METHODS: &[&str] = &[
     "preview.screenshot",
     "file.index",
     "file.search",
+    "file.module",
 ];
 
 /// 登记过的全部方法（摄取时用于识别技能正文中的命令）
@@ -81,6 +82,7 @@ const ALL_METHODS: &[&str] = &[
     "asset.rename",
     "file.index",
     "file.search",
+    "file.module",
 ];
 
 /// 能耗权重：按副作用强度估算每次调用的相对能耗（速度分与能耗分都基于它）

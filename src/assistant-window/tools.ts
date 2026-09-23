@@ -55,7 +55,7 @@ const CATALOG: ToolSpec[] = [
   { method: "preview.stop", description: "停止预览服务。" },
   { method: "preview.screenshot", description: "截取编辑器视口 PNG（base64）。" },
   { method: "asset.list", description: "列出项目资产（name/path/kind/size；无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
-  { method: "asset.read", description: "读项目内文本资产内容（≤512KB，二进制拒绝；.scene 可直读文本）。", params: { path: "资产相对路径", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
+  { method: "asset.read", description: "读项目内文本资产（二进制拒绝；.scene 可直读文本）。缺省整读（≤512KB，超长只回预览+totalLines）；给 startLine/endLine（1 基闭区间）则按行分页读，返回 startLine/endLine/totalLines/hasMore/nextStartLine——大文件或整读被截断时务必翻页读全再改写，不要拿半截内容当全文。", params: { path: "资产相对路径", startLine: "起始行（1 基，可缺省）", endLine: "结束行（闭区间，可缺省=到文件尾）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
   { method: "asset.write", description: "写项目内文本资产（自动建父目录；改脚本/材质/场景 JSON 等文本用，无需打开编辑器）。", params: { path: "资产相对路径", content: "完整文本内容", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
   { method: "asset.create", description: "新建资产（需编辑器已开项目；未打开时可用 asset.write 写文本文件代替）。", params: { type: "类型", dir: "目标目录（缺省 assets）", name: "名称（缺省自动）" }, required: ["type"] },
   { method: "asset.select", description: "选中资产（检查器预览）。", params: { path: "资产相对路径" }, required: ["path"] },
@@ -63,6 +63,7 @@ const CATALOG: ToolSpec[] = [
   { method: "asset.rename", description: "重命名资产。", params: { path: "旧路径", newName: "新名称" }, required: ["path", "newName"] },
   { method: "file.index", description: "为工作区大文本文件建模块索引（切分+摘要+向量化，落盘缓存），返回文件摘要与模块目录（标题/行号）。@引用的大文件发送时已自动建索引；文件改动后可用它刷新。", params: { path: "文件相对路径", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
   { method: "file.search", description: "在已索引的大文件内按语义模糊匹配检索模块，返回相关段落摘录与行号——需要大文件的局部内容时优先用它，不要用 asset.read 整读。索引缺失/文件已变会自动重建。", params: { path: "文件相对路径", query: "检索关键词或语义描述", topK: "命中条数（缺省 2，上限 5）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "query"] },
+  { method: "file.module", description: "读已索引文件的单个模块全文：按 file.index 模块目录里的 no（序号，1 基）或 title（标题，精确优先、片段模糊兜底）定位，返回模块正文与行区间。要完整读大文件的某一段时用它（file.search 只给摘录，file.module 给全文）。", params: { path: "文件相对路径", no: "模块序号（file.index 目录顺序；与 title 二选一）", title: "模块标题（支持片段匹配）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
 ];
 
 function specToTool(spec: ToolSpec): OpenAITool {
@@ -137,6 +138,7 @@ export const ROOT_METHODS = new Set([
   "asset.write",
   "file.index",
   "file.search",
+  "file.module",
 ]);
 
 /** 工具执行确认回调：决策中心对黄灯写操作返回 needConfirm 时，由 UI 弹出

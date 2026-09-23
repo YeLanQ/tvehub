@@ -524,6 +524,94 @@ mod boot_scene_tests {
     }
 }
 
+#[cfg(test)]
+mod asset_read_tests {
+    use super::asset_read_of;
+
+    fn ws(tag: &str) -> String {
+        let d = std::env::temp_dir().join(format!("tve-asset-read-{tag}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        d.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn full_read_reports_total_lines_without_paging() {
+        let root = ws("full");
+        std::fs::write(format!("{root}/a.ts"), "l1\nl2\nl3\n").unwrap();
+        let v = asset_read_of(&root, "a.ts", None, None).unwrap();
+        assert_eq!(v["totalLines"], 3);
+        assert_eq!(v["truncated"], false);
+        assert!(v.get("hasMore").is_none());
+        assert!(v["content"].as_str().unwrap().contains("l2"));
+    }
+
+    #[test]
+    fn range_read_serves_requested_window() {
+        let root = ws("range");
+        let content = (1..=10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        std::fs::write(format!("{root}/b.ts"), content).unwrap();
+        let v = asset_read_of(&root, "b.ts", Some(3), Some(5)).unwrap();
+        assert_eq!(v["startLine"], 3);
+        assert_eq!(v["endLine"], 5);
+        assert_eq!(v["totalLines"], 10);
+        assert_eq!(v["hasMore"], true);
+        assert_eq!(v["nextStartLine"], 6);
+        let body = v["content"].as_str().unwrap();
+        assert!(body.starts_with("line3") && body.ends_with("line5"), "{body}");
+    }
+
+    #[test]
+    fn range_read_caps_page_and_pages_to_end() {
+        let root = ws("page");
+        let content = (1..=1000).map(|i| format!("n{i}")).collect::<Vec<_>>().join("\n");
+        std::fs::write(format!("{root}/c.ts"), content).unwrap();
+        let p1 = asset_read_of(&root, "c.ts", Some(1), None).unwrap();
+        assert_eq!(p1["endLine"], 400, "行数页容量应截到 400 行：{}", p1["endLine"]);
+        assert_eq!(p1["hasMore"], true);
+        let next = p1["nextStartLine"].as_u64().unwrap() as usize;
+        let p2 = asset_read_of(&root, "c.ts", Some(next), None).unwrap();
+        assert_eq!(p2["startLine"], 401);
+        assert_eq!(p2["endLine"], 800, "第二页 401..800");
+        assert_eq!(p2["hasMore"], true);
+        let p3 = asset_read_of(&root, "c.ts", Some(801), None).unwrap();
+        assert_eq!(p3["endLine"], 1000, "尾页应到文件末尾");
+        assert_eq!(p3["hasMore"], false);
+    }
+
+    #[test]
+    fn range_read_char_cap_falls_back_on_line_boundary() {
+        let root = ws("chars");
+        let long = "x".repeat(2000);
+        let content = (0..10).map(|_| long.clone()).collect::<Vec<_>>().join("\n");
+        std::fs::write(format!("{root}/d.ts"), content).unwrap();
+        let v = asset_read_of(&root, "d.ts", Some(1), None).unwrap();
+        let served = v["endLine"].as_u64().unwrap();
+        assert!(served < 10, "字符页容量应先行数上限触发：{served}");
+        assert!(served >= 1, "至少保住第一行：{served}");
+        let body = v["content"].as_str().unwrap();
+        assert!(body.chars().count() <= 20_000 + 10, "单页字符量应有界");
+    }
+
+    #[test]
+    fn range_validation_and_oversize_rules() {
+        let root = ws("valid");
+        std::fs::write(format!("{root}/e.ts"), "a\nb\nc\n").unwrap();
+        let e = asset_read_of(&root, "e.ts", Some(9), None).unwrap_err();
+        assert!(e.contains("超出"), "startLine 越界应报错：{e}");
+        let e = asset_read_of(&root, "e.ts", Some(3), Some(1)).unwrap_err();
+        assert!(e.contains("小于"), "endLine < startLine 应报错：{e}");
+
+        // >512KB：整读拒绝并指引分页/索引；区间读放行
+        let big = (0..300_000).map(|_| "y").collect::<Vec<_>>().join("\n");
+        std::fs::write(format!("{root}/big.txt"), &big).unwrap();
+        let e = asset_read_of(&root, "big.txt", None, None).unwrap_err();
+        assert!(e.contains("512KB"), "整读应拒超限文件：{e}");
+        let v = asset_read_of(&root, "big.txt", Some(1), Some(10)).unwrap();
+        assert_eq!(v["endLine"], 10, "区间读应放行大文件并按请求区间返回");
+        assert_eq!(v["hasMore"], true);
+    }
+}
+
 fn scene_list_of(root: &str) -> Result<serde_json::Value, String> {
     let entries = crate::project::scan_tree(&std::path::PathBuf::from(root))?;
     let scenes: Vec<serde_json::Value> = entries
@@ -587,7 +675,15 @@ fn try_local(
                         .to_string(),
                 ));
             };
-            asset_read_of(&root, path)
+            // 行区间参数宽松解析：数字与字符串数字都收（弱模型两种写法都发）
+            let num = |k: &str| -> Option<usize> {
+                params.get(k).and_then(|v| {
+                    v.as_u64()
+                        .map(|n| n as usize)
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                })
+            };
+            asset_read_of(&root, path, num("startLine"), num("endLine"))
         }
         "asset.write" => {
             let Some(root) = workspace_root(app, params) else {
@@ -604,8 +700,9 @@ fn try_local(
         "scene.tree" | "state.snapshot" => scene_doc_blocking(app),
         "scene.save" => scene_save_blocking(app).map(|_| serde_json::json!({ "ok": true })),
         // 文件内模块索引（brain.fileidx）：大文本文件 @ 引用走"索引+按需检索"，
-        // 不整包进 LLM 上下文；file.search 索引失效自动重建
-        "file.index" | "file.search" => {
+        // 不整包进 LLM 上下文；file.search 索引失效自动重建；file.module 按目录
+        // 序号/标题读单模块全文
+        "file.index" | "file.search" | "file.module" => {
             let Some(root) = workspace_root(app, params) else {
                 return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
             };
@@ -615,7 +712,7 @@ fn try_local(
             let brain = app.state::<crate::brain::Brain>();
             if method == "file.index" {
                 brain.fileidx_index(&root, path).map(|b| serde_json::to_value(b).expect("brief 可序列化"))
-            } else {
+            } else if method == "file.search" {
                 let query = params.get("query").and_then(|q| q.as_str()).unwrap_or("");
                 if query.trim().is_empty() {
                     return Some(Err("缺少 query 参数".to_string()));
@@ -624,6 +721,10 @@ fn try_local(
                 brain
                     .fileidx_search(&root, path, query, top_k)
                     .map(|hits| serde_json::to_value(hits).expect("hits 可序列化"))
+            } else {
+                let title = params.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                let no = params.get("no").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                brain.fileidx_module(&root, path, title, no)
             }
         }
         _ => return None,
@@ -641,24 +742,91 @@ fn workspace_root(app: &AppHandle, params: &serde_json::Value) -> Option<String>
     scene_root_blocking(app)
 }
 
-/// 读取项目内文本资产（助手"@插入文件"用）：拒路径穿越与二进制，超长截断。
-fn asset_read_of(root: &str, path: &str) -> Result<serde_json::Value, String> {
+/// 区间读的单页容量：行数与字符数双上限。页给保守值——工具结果还会经
+/// 助手层按上下文预算截断（最紧 4000 字），小页保证翻页元数据不被吃掉
+const RANGE_PAGE_LINES: usize = 400;
+const RANGE_PAGE_CHARS: usize = 6000;
+/// 区间读放行的大文件上限（整读仍限 512KB；索引通道上限 2MB）
+const RANGE_READ_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// 读取项目内文本资产。整读（缺省）：≤512KB、展示 16K 字符截断（附
+/// totalLines 引导分页）；区间读（startLine/endLine，1 基闭区间）：大文件
+/// 放行至 16MB，按页容量切片并返回 hasMore/nextStartLine 翻页游标——
+/// 被截断的内容务必翻页读全再整体回写，别拿半截文件当全文。
+fn asset_read_of(
+    root: &str,
+    path: &str,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<serde_json::Value, String> {
     let abs = workspace_path_of(root, path)?;
     let meta = std::fs::metadata(&abs).map_err(|_| "文件不存在".to_string())?;
     if !meta.is_file() {
         return Err("不是文件（目录请用 asset.list 浏览）".to_string());
     }
-    if meta.len() > 512 * 1024 {
-        return Err("文件超过 512KB，不适合直接插入".to_string());
+    if start.is_none() && end.is_none() && meta.len() > 512 * 1024 {
+        return Err(
+            "文件超过 512KB，不适合整读：改用 startLine/endLine 分页读，或 file.index 建索引后 file.module / file.search 取局部".to_string(),
+        );
+    }
+    if meta.len() > RANGE_READ_MAX_BYTES {
+        return Err("文件超过 16MB，不支持读取".to_string());
     }
     let bytes = std::fs::read(&abs).map_err(|e| format!("读取失败: {e}"))?;
-    let content = String::from_utf8(bytes).map_err(|_| "二进制文件不支持插入".to_string())?;
-    let truncated = content.len() > 64 * 1024;
-    let mut shown: String = content.chars().take(16 * 1024).collect();
-    if truncated {
-        shown.push_str("\n…（内容过长，已截断）");
+    let content = String::from_utf8(bytes).map_err(|_| "二进制文件不支持读取".to_string())?;
+    let total = content.lines().count();
+    if start.is_none() && end.is_none() {
+        let truncated = content.len() > 64 * 1024;
+        let mut shown: String = content.chars().take(16 * 1024).collect();
+        if truncated {
+            shown.push_str("\n…（内容过长，已截断）");
+        }
+        let mut v = serde_json::json!({
+            "path": path,
+            "content": shown,
+            "truncated": truncated,
+            "totalLines": total,
+        });
+        if truncated {
+            v["hint"] = serde_json::json!(
+                "整读只是预览（已截断）。要局部内容用 file.index + file.module / file.search；要通读或整体回写，用 startLine/endLine 分页读全"
+            );
+        }
+        return Ok(v);
     }
-    Ok(serde_json::json!({ "path": path, "content": shown, "truncated": truncated }))
+    let s = start.unwrap_or(1).max(1);
+    if s > total {
+        return Err(format!("startLine {s} 超出文件总行数 {total}"));
+    }
+    let e_req = end.unwrap_or(total).min(total);
+    if e_req < s {
+        return Err(format!("endLine ({e_req}) 小于 startLine ({s})"));
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    // 页容量裁剪：行数与字符数双上限；字符超限时按行边界回退（不切半行，
+    // 超长单行至少保住一行交给上层截断兜底）
+    let mut e = e_req.min(s.saturating_add(RANGE_PAGE_LINES - 1));
+    let mut acc = 0usize;
+    for (i, line) in lines.iter().enumerate().take(e).skip(s - 1) {
+        acc += line.chars().count() + 1;
+        if acc > RANGE_PAGE_CHARS {
+            e = e.min(i.max(s));
+            break;
+        }
+    }
+    let has_more = e < total;
+    let mut v = serde_json::json!({
+        "path": path,
+        "content": lines[s - 1..e].join("\n"),
+        "startLine": s,
+        "endLine": e,
+        "totalLines": total,
+        "hasMore": has_more,
+    });
+    if has_more {
+        v["nextStartLine"] = serde_json::json!(e + 1);
+    }
+    Ok(v)
 }
 
 /// 写入项目内文本资产（助手工作区编辑用）：自动建父目录，超限拒绝。

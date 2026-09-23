@@ -213,6 +213,7 @@ export function buildSystemPrompt(
     `## 运行环境\n当前工作区：${currentProject || "通用（未绑定项目目录；可 project.create 新建，或让用户在左栏添加）"}\n` +
       [
         "工作区规则：项目目录即工作区——无需在编辑器打开，scene.list / asset.list / asset.read / asset.write 即可查询与读写该目录下的文件（含直读 .scene 文本）。",
+        "大文件读法（内容被截断或超 512KB 时）：先 file.index 拿模块目录，再 file.module 读单模块全文、file.search 检索局部，或 asset.read 带 startLine/endLine 按行分页（响应含 totalLines/hasMore/nextStartLine，按游标翻页）；改写前把相关区间读全，不要拿半截内容当全文回写。",
         "会话依赖：node.* 与 preview.* 只对「已在编辑器打开」的项目生效。project.create 只在磁盘建项目——建完必须先 project.open 打开它，才能 node.add / scene.save / 预览。project.open 在没有编辑器窗口时会新开一个编辑器窗口加载（返回即已就绪），有编辑器窗口时切换其工作区。多步建造任务按顺序推进：project.create → project.open → 场景/节点操作 → 保存。",
         "项目未打开时 node.* 会报「没有活跃的编辑器窗口」，此时先 project.open，不要反复重试同一调用。",
         "参数缺省即有默认值时直接采用默认执行，不要为可选参数暂停询问；只有缺失会造成不可逆破坏（误删、覆盖已有成果）时才向用户确认。",

@@ -106,6 +106,70 @@ impl FileIndexStore {
         top_k: usize,
         now: u64,
     ) -> Result<Vec<ModuleHit>, String> {
+        let (content, key) = self.ensure_index(root, rel, now)?;
+        let idx = self.map().get(&key).expect("刚确保存在");
+        let k = if top_k == 0 { DEFAULT_TOP_K } else { top_k.min(MAX_TOP_K) };
+        let lines: Vec<&str> = content.lines().collect();
+        Ok(search::search_modules(&idx.modules, &lines, query, k, MAX_EXCERPT_CHARS))
+    }
+
+    /// 按目录条目读单个模块全文：no（file.index 目录序号，1 基）优先，
+    /// 缺省按 title 精确 → 包含双向模糊匹配；索引缺失/失效自动重建。
+    /// 返回模块正文与行区间（行号可与 asset.read 的 startLine/endLine 互通）。
+    pub fn module(
+        &mut self,
+        root: &str,
+        rel: &str,
+        title: &str,
+        no: usize,
+        now: u64,
+    ) -> Result<serde_json::Value, String> {
+        let (content, key) = self.ensure_index(root, rel, now)?;
+        let idx = self.map().get(&key).expect("刚确保存在");
+        if idx.modules.is_empty() {
+            return Err("索引没有任何模块（空文件或纯空白）".to_string());
+        }
+        let picked = if no >= 1 {
+            idx.modules.get(no - 1)
+        } else {
+            let t = title.trim();
+            if t.is_empty() {
+                return Err(
+                    "缺少模块定位参数：给 no（file.index 目录序号）或 title（模块标题）".to_string(),
+                );
+            }
+            idx.modules
+                .iter()
+                .position(|m| m.title == t)
+                .or_else(|| idx.modules.iter().position(|m| m.title.contains(t) || t.contains(&m.title)))
+                .map(|pos| &idx.modules[pos])
+        };
+        let Some(m) = picked else {
+            let shown = if title.trim().is_empty() {
+                format!("序号 {no}")
+            } else {
+                title.trim().to_string()
+            };
+            return Err(format!("未找到模块「{shown}」：先用 file.index 查看模块目录（标题/序号），再按其重发"));
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let s = m.line_start.saturating_sub(1);
+        let e = m.line_end.min(lines.len());
+        let body = lines[s..e].join("\n");
+        Ok(serde_json::json!({
+            "path": rel,
+            "title": m.title,
+            "summary": m.summary,
+            "lineStart": m.line_start,
+            "lineEnd": m.line_end,
+            "content": body,
+            "moduleCount": idx.modules.len(),
+        }))
+    }
+
+    /// 读文件并确保索引存在且新鲜（search/module 共用）；返回 (正文, 缓存键)。
+    /// 哈希不符自动重建并落盘（落盘失败只记日志）。
+    fn ensure_index(&mut self, root: &str, rel: &str, now: u64) -> Result<(String, String), String> {
         let (content, size) = read_workspace_file(root, rel)?;
         let hash = fnv1a64(&content);
         let key = store::index_key(root, rel);
@@ -120,10 +184,7 @@ impl FileIndexStore {
                 eprintln!("[brain] fileidx 落盘失败: {e}");
             }
         }
-        let idx = self.map().get(&key).expect("刚确保存在");
-        let k = if top_k == 0 { DEFAULT_TOP_K } else { top_k.min(MAX_TOP_K) };
-        let lines: Vec<&str> = content.lines().collect();
-        Ok(search::search_modules(&idx.modules, &lines, query, k, MAX_EXCERPT_CHARS))
+        Ok((content, key))
     }
 }
 
@@ -242,6 +303,20 @@ impl crate::brain::Brain {
             .expect("fileidx 锁")
             .search(root, rel, query, top_k, now_ms())
     }
+
+    /// 读单个模块全文（file.module，只读绿灯；索引失效自动重建）
+    pub fn fileidx_module(
+        &self,
+        root: &str,
+        rel: &str,
+        title: &str,
+        no: usize,
+    ) -> Result<serde_json::Value, String> {
+        self.fileidx
+            .lock()
+            .expect("fileidx 锁")
+            .module(root, rel, title, no, now_ms())
+    }
 }
 
 #[cfg(test)]
@@ -337,5 +412,54 @@ mod tests {
         }
         assert_eq!(st.map().len(), MAX_ENTRIES, "超出应淘汰最旧");
         assert!(!st.map().contains_key(&store::index_key(&root, "f0.txt")), "最早索引应被淘汰");
+    }
+
+    #[test]
+    fn module_reads_by_no_and_title() {
+        let root = ws("module");
+        std::fs::write(format!("{root}/Rotator.ts"), SAMPLE).unwrap();
+        let mut st = FileIndexStore::new(None);
+
+        let by_no = st.module(&root, "Rotator.ts", "", 1, 10).expect("按序号读模块");
+        assert_eq!(by_no["title"], "声明 fn rotate(delta: f32) {");
+        assert_eq!(by_no["lineStart"], 1);
+        assert!(by_no["content"].as_str().unwrap().contains("node.rotate_y"));
+        assert_eq!(by_no["moduleCount"], 2);
+
+        let by_title = st
+            .module(&root, "Rotator.ts", "fn follow", 0, 10)
+            .expect("按标题片段读模块");
+        assert!(by_title["content"].as_str().unwrap().contains("camera.look_at"));
+        assert_eq!(by_title["lineStart"], 5);
+    }
+
+    #[test]
+    fn module_fuzzy_title_and_stale_rebuild() {
+        let root = ws("module-fuzzy");
+        let file = format!("{root}/Doc.md");
+        std::fs::write(&file, "# 旋转\n旋转内容\n").unwrap();
+        let mut st = FileIndexStore::new(None);
+        st.index(&root, "Doc.md", 10).expect("首次索引");
+
+        // 模糊匹配（只给片段）+ 文件已变：应重建索引后命中新模块
+        std::fs::write(&file, "# 旋转\n旋转内容\n\n# 网络同步\nnet sync 状态同步\n").unwrap();
+        let hit = st.module(&root, "Doc.md", "网络", 0, 11).expect("模糊读模块");
+        assert_eq!(hit["title"], "网络同步");
+        assert!(hit["content"].as_str().unwrap().contains("状态同步"));
+    }
+
+    #[test]
+    fn module_missing_locator_and_miss_are_errors() {
+        let root = ws("module-miss");
+        std::fs::write(format!("{root}/Rotator.ts"), SAMPLE).unwrap();
+        let mut st = FileIndexStore::new(None);
+        st.index(&root, "Rotator.ts", 10).expect("索引");
+
+        let e = st.module(&root, "Rotator.ts", "", 0, 10).unwrap_err();
+        assert!(e.contains("缺少模块定位"), "无定位参数应报错：{e}");
+        let e = st.module(&root, "Rotator.ts", "不存在的模块", 0, 10).unwrap_err();
+        assert!(e.contains("未找到模块"), "未命中应报错并指引：{e}");
+        let e = st.module(&root, "Rotator.ts", "", 99, 10).unwrap_err();
+        assert!(e.contains("未找到模块"), "序号越界应报错：{e}");
     }
 }
