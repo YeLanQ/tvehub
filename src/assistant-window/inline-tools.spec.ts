@@ -223,6 +223,15 @@ describe("hasInlineToolCalls / cleanedContent", () => {
     expect(hasInlineToolCalls("普通回答")).toBe(false);
   });
 
+  it("复数壳方言：<tool_calls>[…] 内的调用数组整壳解析与消费", () => {
+    const text =
+      '<tool_calls>[{"tool":"scene.list","input":{}},{"tool":"preview.open","input":{}}]</tool_calls>';
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls.map((c) => c.name)).toEqual(["scene.list", "preview.open"]);
+    expect(cleaned).not.toContain("tool_calls");
+    expect(cleaned.trim()).toBe("");
+  });
+
   it("cleaned：抠掉调用块并收敛空行", () => {
     const out = cleanedContent('我先查状态。\n\n{ "tool": "editor.state", "input": {} }\n\n\n\n再执行。');
     expect(out).not.toContain("editor.state");
@@ -341,5 +350,38 @@ describe("parseInlineToolCalls Markdown 标签方言", () => {
   it("stripCallTags：救援耗尽后的方言残骸整行剔除", () => {
     const out = stripCallTags('（已发起工具调用）\n\n**工具调用：** `load_skill` {"id":');
     expect(out).toBe("（已发起工具调用）");
+  });
+
+  it("回归（截图案例）：空 <tool_calls>[]</tool_calls> 壳净化，前后散文保留", () => {
+    expect(streamingDisplay("<tool_calls>[] </tool_calls>")).toBe("");
+    expect(stripCallTags("<tool_calls>[]</tool_calls>")).toBe("");
+    const out = stripCallTags("前文\n<tool_calls>[]</tool_calls>\n后文");
+    expect(out).toContain("前文");
+    expect(out).toContain("后文");
+    expect(out).not.toContain("tool_calls");
+    // 未闭合尾巴（流式半截）同样隐藏
+    expect(streamingDisplay("前文\n<tool_calls>[{")).toBe("前文");
+  });
+
+  it("回归（截图案例）：孤儿 </think> 与复读的工具回喂块剔除", () => {
+    const leaked = '场景已保存并打开预览确认效果：\n\n</think>\n\n[工具 scene.save 执行结果]\n{"ok":true}';
+    expect(stripCallTags(leaked)).toBe("场景已保存并打开预览确认效果：");
+  });
+
+  it("内联 think 块：配对整块剔、未闭合剔到尾、孤儿标签清", () => {
+    expect(stripCallTags("<think>推理过程</think>结论是 1")).toBe("结论是 1");
+    expect(stripCallTags("结论是 1\n<think>还想补充")).toBe("结论是 1");
+    expect(stripCallTags("结论是 1</think>")).toBe("结论是 1");
+  });
+
+  it("复读回喂块：带系统注/带空行终止都剔净，后续正文保留", () => {
+    expect(
+      stripCallTags('[工具 scene.save 执行结果]\n{"ok":true}\n（系统代为执行，请基于以上结果继续）'),
+    ).toBe("");
+    const mixed = "已完成。\n\n[工具 asset.read 执行结果]\n{\"content\":\"…\"}\n\n然后我改好了文件。";
+    const out = stripCallTags(mixed);
+    expect(out).toContain("已完成。");
+    expect(out).toContain("然后我改好了文件。");
+    expect(out).not.toContain("执行结果");
   });
 });

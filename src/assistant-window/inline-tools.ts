@@ -46,7 +46,8 @@ function decodeEntities(text: string): string {
 
 /** <invoke name="x">…</invoke> 块解析已由宽松参数槽解析（callFromParams）取代 */
 const LOOSE_BLOCK_RE = /<(?:invoke|function)\b[^>]*>([\s\S]*?)<\/(?:invoke|function)>/g;
-const WRAPPER_RE = /<tool_call>[\s\S]*?<\/tool_call>/g;
+/** 调用壳（单复数都收；弱模型有 <tool_calls>[…]</tool_calls> 数组方言） */
+const WRAPPER_RE = /<tool_calls?(?:\s[^>]*)?>[\s\S]*?<\/tool_calls?>/g;
 
 /** 包裹词（等号方言里挂在 = 后的不是工具名，是壳语义：<function=tool_call>） */
 const WRAPPER_NAME_TOKENS = new Set(["tool_call", "tool_calls", "tool", "invoke", "function", "call"]);
@@ -132,11 +133,12 @@ export function parseInlineToolCalls(content: string): ParsedInline {
     }
   }
 
-  // 2. <tool_call> 壳：壳内（含已识别的嵌套块）捞出有效调用才整壳消费
+  // 2. <tool_call>/<tool_calls> 壳：壳内（含已识别的嵌套块）捞出有效调用才整壳消费
   for (const m of content.matchAll(WRAPPER_RE)) {
     const s = m.index ?? 0;
     const e = s + m[0].length;
-    const inner = m[0].slice("<tool_call>".length, -"</tool_call>".length);
+    const openEnd = m[0].indexOf(">") + 1;
+    const inner = m[0].slice(openEnd, m[0].lastIndexOf("</"));
     const nested = ranges.some(([rs, re]) => rs >= s && re <= e);
     let found = nested;
     let pos = 0;
@@ -234,11 +236,22 @@ export function hasInlineToolCalls(content: string): boolean {
  * （<tool_call> 壳没有闭合、<function=invoke> 缺工具名这类方言残骸）——
  * 从开标签删到文本尾；Markdown 标签方言残骸（**工具调用：** …）一并剔除。
  * 模型内部历史保留原文供自纠，这里只管用户看得见的。 */
+/** 复读的工具回喂块（弱模型把 [工具 X 执行结果] + 结果体原样抄进回复）：
+ * 从标记行起惰性吃到「系统代为执行」注 / 空行 / 文本尾；400 字上限防误吞
+ * 标记后紧跟的正文（不满足任一终止条件时宁可不剔） */
+const FEED_ECHO_RE = /\[工具 [^\]\n]{0,60} 执行结果\]\s*[\s\S]{0,400}?(?:（系统代为执行[^）]*）|(?=\n\s*\n)|$)/g;
+
 export function stripCallTags(text: string): string {
   const out = stripLabeledCalls(text)
-    .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, "")
+    .replace(/<tool_calls?(?:\s[^>]*)?>[\s\S]*?(?:<\/tool_calls?>|$)/g, "")
     .replace(/<(?:invoke|function|parameter)\b[^>]*>[\s\S]*?(?:<\/(?:invoke|function|parameter)>|$)/g, "")
-    .replace(/<\/?(?:tool_call|invoke|function|parameter)\b[^>]*>/g, "")
+    .replace(/<\/?(?:tool_calls?|invoke|function|parameter)\b[^>]*>/g, "")
+    // 内联思考块（provider 没剥干净的 <think> 方言）：配对整块剔、未闭合
+    // 剔到尾（流式中即思考进行中）、孤儿标签单独清
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/<think(?:\s[^>]*)?>[\s\S]*$/g, "")
+    .replace(/<\/?think(?:\s[^>]*)?>/g, "")
+    .replace(FEED_ECHO_RE, "")
     .replace(EMPTY_FENCE_RE, "");
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -289,7 +302,7 @@ export function streamingDisplay(text: string): string {
     const fenceTail = /(?:^|\n)[ \t]*```[a-zA-Z]+\b[ \t]*\n?$/.exec(head);
     return (fenceTail ? head.slice(0, head.length - fenceTail[0].length) : head).trimEnd();
   }
-  const tagStart = cleaned.search(/<\s*(?:tool_call|invoke|function|parameter)\b[^<]*$/);
+  const tagStart = cleaned.search(/<\s*(?:tool_calls?|invoke|function|parameter)\b[^<]*$/);
   if (tagStart >= 0) return cleaned.slice(0, tagStart).trimEnd();
   const labelStart = labeledTailStart(cleaned);
   if (labelStart >= 0) return cleaned.slice(0, labelStart).trimEnd();
