@@ -384,4 +384,13 @@ describe("parseInlineToolCalls Markdown 标签方言", () => {
     expect(out).toContain("然后我改好了文件。");
     expect(out).not.toContain("执行结果");
   });
+
+  it("回归（截图案例）：模仿回喂的「[工具 X 调用]」旁白标记剔除，旁白正文保留", () => {
+    const leaked =
+      "[工具 load_doc 调用] 让我先读补间动画文档，确认 `sequence`（串联两段不同缓动）和缓动名的准确写法，再动手改曲线。";
+    const out = stripCallTags(leaked);
+    expect(out).not.toContain("[工具");
+    expect(out).toContain("让我先读补间动画文档");
+    expect(out).toContain("再动手改曲线");
+  });
 });

@@ -251,6 +251,9 @@ export function stripCallTags(text: string): string {
     .replace(/<think>[\s\S]*?<\/think>/g, "")
     .replace(/<think(?:\s[^>]*)?>[\s\S]*$/g, "")
     .replace(/<\/?think(?:\s[^>]*)?>/g, "")
+    // 模仿回喂格式的"调用版"伪标记（[工具 X 调用]）——模型复读历史回喂样式
+    // 的旁白头；只剔标记本身，后面的旁白正文保留
+    .replace(/\[工具\s*[^\]\n]{0,60}\s*调用\]/g, "")
     .replace(FEED_ECHO_RE, "")
     .replace(EMPTY_FENCE_RE, "");
   return out.replace(/\n{3,}/g, "\n\n").trim();
