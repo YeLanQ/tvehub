@@ -449,9 +449,14 @@ export const api = {
   /** 策略规划：任务 → 主技能 + 推荐步骤 + 效能门控决策 */
   brainPlan: (task: string) => invoke<BrainPlan>("brain_plan", { task }),
   /** 语义单元化：任务 →（分段 → 神经图检索 → 命令预测）→ 单元任务 + 处理轨迹；
-   * root 为当前工作区（注入 scene.list/asset.list 直执行参数） */
-  brainDecompose: (task: string, root?: string) =>
-    invoke<BrainDecomposition>("brain_decompose", { task, root: root ?? null }),
+   * root 为当前工作区（注入 scene.list/asset.list 直执行参数）；spec 为语言
+   * 归一化前置层（助手 LLM 结构化）产物，大脑据其锚点/文件/类型检索分类 */
+  brainDecompose: (task: string, root?: string, spec?: BrainNormSpec | null) =>
+    invoke<BrainDecomposition>("brain_decompose", {
+      task,
+      root: root ?? null,
+      spec: spec ?? null,
+    }),
   /** 观测回写：一次工具执行的耗时与成败（驱动因果链进化与效能统计） */
   brainObserve: (args: { task: string; method: string; ok: boolean; ms: number }) =>
     invoke<BrainObserveReport>("brain_observe", { args }),
@@ -480,6 +485,21 @@ export const api = {
   /** 内嵌 docs 文档目录（id+title+summary，无正文）：load_doc 缺/错 id 时回喂 */
   docsList: () =>
     invoke<{ id: string; title: string; summary: string }[]>("docs_list"),
+  /** 工坊资源全文（load_repo 直答）：public/repos 文本资产的运行时层，
+   * 外部 repos 更新后自动对齐图谱，不经决策中心门控 */
+  reposDocRead: (id: string) =>
+    invoke<{ id: string; title: string; summary: string; body: string } | null>(
+      "repos_doc_read",
+      { id },
+    ),
+  /** 工坊资源目录（id+title+summary，无正文）：load_repo 缺/错 id 时回喂 */
+  reposDocList: () =>
+    invoke<{ id: string; title: string; summary: string }[]>("repos_doc_list"),
+  /** 手动刷新工坊资源层（读路径自带节流懒刷新，一般无需调用） */
+  brainReposRefresh: () =>
+    invoke<{ changed: boolean; docs: number; concepts: number; commands: number; removed: number }>(
+      "brain_repos_refresh",
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -510,11 +530,25 @@ export interface BrainPlan {
   steps: BrainPlanStep[];
 }
 
-/** 图谱命中的权威知识（技能/文档）：只给「是什么+怎么取」，全文按需拉取 */
+/** 图谱命中的权威知识（技能/文档/工坊资源）：只给「是什么+怎么取」，全文按需拉取 */
 export interface BrainKnowledgeHit {
-  /** 节点 id："skill:<id>" / "concept:doc:<path>" */
+  /** 节点 id："skill:<id>" / "concept:doc:<path>" / "concept:repos:<分类>/<文件>" */
   id: string;
   label: string;
+}
+
+/** 语言归一化前置层产物（助手 LLM 结构化；与 Rust nlu::NormSpec 对应）：
+ * 大脑据规范化表述+锚点+文件基名做神经图/知识库检索，按类型分类决策 */
+export interface BrainNormSpec {
+  /** operate 命令操作 / create 指令创作 / optimize 指令优化 /
+   * analyze 指令解析 / chat 闲聊对话 */
+  taskType: string;
+  /** 规范化后的任务表述（空则大脑回落原始任务文本） */
+  task: string;
+  /** 检索锚点（只并入检索词料，不污染单元文本） */
+  keywords: string[];
+  /** 提及且经工作区清单确认存在的文件（相对路径；只校验存在性不读内容） */
+  files: string[];
 }
 
 /** 语义单元任务（brain_decompose 产物；预测方法只是入口建议） */

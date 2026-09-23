@@ -10,7 +10,7 @@ const KNOWLEDGE_HEADER =
   "只有在资料与当前步骤相关时才读取，无关则跳过：";
 
 /** 图谱知识命中 → 目录式指引：一行一条「是什么 + 怎么取」，全文由助手按需
- * load_skill / load_doc 拉取——不预载内容撑大任务上下文。 */
+ * load_skill / load_doc / load_repo 拉取——不预载内容撑大任务上下文。 */
 function knowledgeLines(hits: BrainKnowledgeHit[]): string[] {
   return hits.map((r) => {
     if (r.id.startsWith("skill:")) {
@@ -18,6 +18,9 @@ function knowledgeLines(hits: BrainKnowledgeHit[]): string[] {
     }
     if (r.id.startsWith("concept:doc:")) {
       return `- 官方文档「${r.label}」→ load_doc({"id": "${r.id.slice("concept:doc:".length)}"})`;
+    }
+    if (r.id.startsWith("concept:repos:")) {
+      return `- 工坊资源「${r.label}」→ load_repo({"id": "${r.id.slice("concept:repos:".length)}"})`;
     }
     return `- 相关知识「${r.label}」`;
   });

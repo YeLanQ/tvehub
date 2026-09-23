@@ -22,7 +22,7 @@ use crate::repos_root;
 const BUILTIN_CATEGORIES: [&str; 2] = ["code", "effect"];
 
 /// 判定文本文件用的扩展名（二进制文件不读取内容，只列信息）
-const TEXT_EXTS: [&str; 18] = [
+pub(crate) const TEXT_EXTS: [&str; 18] = [
     "ts", "js", "mjs", "cjs", "tsx", "json", "md", "txt", "shader", "glsl", "hlsl", "cg", "css",
     "scss", "html", "xml", "yml", "yaml",
 ];
@@ -104,7 +104,7 @@ fn delete_file_in(dir: &Path, file: &str) -> Result<(), String> {
 }
 
 /// 从代码首部注释解析描述（// @desc: xxx，支持全角冒号）
-fn parse_desc(code: &str) -> String {
+pub(crate) fn parse_desc(code: &str) -> String {
     for line in code.lines().take(5) {
         let t = line.trim();
         for p in ["// @desc:", "// @desc："] {
@@ -117,7 +117,7 @@ fn parse_desc(code: &str) -> String {
 }
 
 /// 小写扩展名（无扩展名 → 空串）
-fn ext_of(file: &str) -> String {
+pub(crate) fn ext_of(file: &str) -> String {
     match file.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => ext.to_ascii_lowercase(),
         _ => String::new(),
@@ -125,7 +125,7 @@ fn ext_of(file: &str) -> String {
 }
 
 /// 是否为文本文件（按扩展名判定；未知扩展名按二进制处理，不读取内容）
-fn is_text_file(ext: &str) -> bool {
+pub(crate) fn is_text_file(ext: &str) -> bool {
     TEXT_EXTS.contains(&ext)
 }
 

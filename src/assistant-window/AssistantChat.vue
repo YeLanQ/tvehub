@@ -26,6 +26,9 @@ import { hasLabeledCallTrace } from "./labeled-calls";
 import { createTauriTransport } from "./transport";
 import { streamingDisplay } from "./inline-tools";
 import { mergeStepRow } from "./steps";
+import { fetchLoadableCatalogs } from "./loadable-index";
+import { filterExistingFiles, normalizeNaturalLanguage } from "./nl-normalize";
+import type { BrainNormSpec } from "../lib/api";
 import { assistantTools, execAssistantTool, type ConfirmFn } from "./tools";
 import {
   decomposeDigest,
@@ -291,6 +294,8 @@ const canSend = computed(() => !activeRun.value?.busy && !!input.value.trim() &&
 onMounted(async () => {
   messages.value = await convs.ensureActiveMessages();
   scrollBottom();
+  // 预热可加载资料索引（TTL 缓存）：发送时零等待拿到 docs/工坊目录
+  void fetchLoadableCatalogs();
 });
 
 /** 文件树点文件 → 插入 @路径 引用（AssistantApp 经窗口事件投递） */
@@ -513,8 +518,11 @@ async function send(textArg?: string | Event): Promise<void> {
   // 跨轮防重复备忘：本会话已成功的写操作（只进 wire 不落库）——跨轮历史不含
   // 工具结果，没有它模型会把往期任务并入 brain.plan 重跑（如再次 project.create）
   const note = doneWritesNote(messages.value);
+  // 可加载资料索引：官方文档+工坊原型目录常驻提示词——模型首调即中，
+  // 不必空参试探 load_doc 换目录（失败回落空索引，只退化为无目录不阻塞）
+  const catalogs = await fetchLoadableCatalogs();
   const wireHead = [
-    { role: "system" as const, content: buildSystemPrompt(card0, root) },
+    { role: "system" as const, content: buildSystemPrompt(card0, root, undefined, catalogs) },
     // 历史末尾是刚追加的用户消息 → 占位剔除，稍后替换为"原文 + 引用附件"版本
     ...history.slice(0, -1),
     ...(note ? [{ role: "user" as const, content: note }] : []),
@@ -548,12 +556,34 @@ async function send(textArg?: string | Event): Promise<void> {
   let rafPending = 0;
   let latestText = "";
   try {
-    // @引用解析与大脑拆解并行：两者互不依赖，串行等于白等一次完整往返；
-    // 拆解失败静默回落（deco = null → 直通助手），不因拆解失败阻塞对话
-    const [attachments, decoResult] = await Promise.all([
+    // 语言归一化前置层：助手先把自然语言翻译成大脑可检索的结构（任务类型/
+    // 检索锚点/提及文件）。文件只对工作区清单做存在性校验（不读内容）；
+    // 层不可用（无供应商/超时/输出不合法）时 spec = null，大脑按原文走
+    // 既有规则链路。@引用解析与归一化并行，之后大脑拆解以 spec 为检索输入；
+    // 拆解失败静默回落（deco = null → 直通助手），不因任何失败阻塞对话
+    const normPromise: Promise<BrainNormSpec | null> = (async () => {
+      const norm = await normalizeNaturalLanguage(text, {
+        baseUrl: prov.baseUrl,
+        apiKey: prov.apiKey,
+        model: card0?.model?.trim() ? card0.model.trim() : prov.model,
+      });
+      if (!norm || !norm.files.length || !root) return norm;
+      try {
+        const res = await execAssistantTool("asset.list", "{}", root, text);
+        const listing = Array.isArray(res)
+          ? res.map((a) => String((a as { path?: unknown }).path ?? ""))
+          : [];
+        norm.files = filterExistingFiles(norm.files, listing).files;
+      } catch {
+        norm.files = []; // 清单拿不到 → 宁可不注入，也不注入未核实的路径
+      }
+      return norm;
+    })();
+    const [attachments, spec] = await Promise.all([
       refs.length ? resolveRefAttachments(refs, root || undefined) : Promise.resolve(""),
-      api.brainDecompose(text, root || undefined).catch(() => null),
+      normPromise,
     ]);
+    const decoResult = await api.brainDecompose(text, root || undefined, spec).catch(() => null);
     const wire = [...wireHead, { role: "user" as const, content: text + attachments }];
     if (decoResult) {
       deco = decoResult;

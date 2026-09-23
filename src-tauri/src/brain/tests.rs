@@ -33,6 +33,69 @@ fn routes_docs_queries_to_doc_nodes() {
     );
 }
 
+/// 工坊资源动态层：public/repos 文本资产（随仓库分发）应入图可检索、
+/// 可按 id 直读全文——神经图的外部扩展面。
+#[test]
+fn repos_layer_ingested_and_routable() {
+    let brain = Brain::new(None);
+    let stats = brain.stats();
+    assert!(
+        stats.nodes_by_kind.get("concept").copied().unwrap_or(0) >= 20,
+        "repos 层应与 docs 共同撑起概念层：{:?}",
+        stats.nodes_by_kind
+    );
+    let hits = brain.query("Rotator 匀速自转", 20);
+    assert!(
+        hits.iter().any(|h| h.id == "concept:repos:code/Rotator.ts"),
+        "仓库自带的 Rotator 原型应可被检索命中：{:?}",
+        hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>()
+    );
+    let doc = brain
+        .repos_doc_read("code/Rotator.ts")
+        .expect("repos 层应可直读");
+    assert_eq!(doc.id, "code/Rotator.ts");
+    assert!(!doc.body.is_empty(), "全文应含脚本内容");
+    let briefs = brain.repos_doc_briefs();
+    assert!(briefs.iter().any(|b| b.id == "code/Rotator.ts"), "目录应列出该资源");
+}
+
+/// 外部 repos 更新自动对齐：新增资源入图可检索，删除资源连边下架——
+/// 全程不重启、不重新编译（指纹驱动的动态层语义）。
+#[test]
+fn repos_layer_realigned_on_external_updates() {
+    let root = std::env::temp_dir().join(format!("tve-brain-repos-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("code")).unwrap();
+    std::fs::write(root.join("code/Spin.ts"), "// @desc: 旋转原型\nclass Spin {}\n").unwrap();
+    let brain = Brain::with_repos_root(None, root.clone());
+    let hits = brain.query("Spin 旋转原型", 8);
+    assert!(
+        hits.iter().any(|h| h.id == "concept:repos:code/Spin.ts"),
+        "初始资源应入图：{:?}",
+        hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>()
+    );
+
+    // 外部新增文件 → 刷新后目录与检索可见
+    std::fs::write(root.join("code/Bob.ts"), "// @desc: 上下浮动原型\nclass Bob {}\n").unwrap();
+    let report = brain.refresh_repos();
+    assert!(report.changed, "外部新增应触发重对齐：{report:?}");
+    assert_eq!(report.removed, 0);
+    assert!(brain.repos_doc_read("code/Bob.ts").is_some(), "新资源应可直读");
+    let hits2 = brain.query("Bob 上下浮动原型", 8);
+    assert!(
+        hits2.iter().any(|h| h.id == "concept:repos:code/Bob.ts"),
+        "新增资源应可检索：{:?}",
+        hits2.iter().map(|h| h.id.clone()).collect::<Vec<_>>()
+    );
+
+    // 外部删除文件 → 节点连边下架
+    std::fs::remove_file(root.join("code/Spin.ts")).unwrap();
+    let report = brain.refresh_repos();
+    assert_eq!(report.removed, 1, "应摘除过期节点：{report:?}");
+    assert!(brain.repos_doc_read("code/Spin.ts").is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn observe_evolves_causal_chain_and_ledger() {
     let brain = Brain::new(None);

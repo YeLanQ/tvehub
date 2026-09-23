@@ -72,6 +72,16 @@ describe("knowledgeNote 直通注入", () => {
     });
     expect(withDoc).toContain('load_doc({"id": "sdk/tween.md"})');
   });
+
+  it("工坊资源命中给 load_repo 入口（<分类>/<文件名>）", () => {
+    const d = deco([unit(1, "a", null)]);
+    const note = knowledgeNote({
+      ...d,
+      refs: [hit("concept:repos:code/Rotator.ts", "Rotator")],
+    });
+    expect(note).toContain("工坊资源「Rotator」");
+    expect(note).toContain('load_repo({"id": "code/Rotator.ts"})');
+  });
 });
 
 describe("decomposeDigest / parseStoredDecomposition 落库往返", () => {

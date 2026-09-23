@@ -138,7 +138,8 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
     // 第一轮：发送 → 运行中消息可见 → 收尾
     await textEl.setValue("第一个任务");
     await sendBtn().trigger("click");
-    await nextTick();
+    // flush 到 runAgent 挂起（send 内部引用解析/目录索引/大脑拆解都是微任务）
+    await flushPromises();
     expect(userTexts().some((t) => t.includes("第一个任务"))).toBe(true);
     resolveRun({ content: "第一轮完成", toolCalls: [] });
     await flushPromises();
@@ -148,8 +149,7 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
     // 用户消息与工具步骤在运行期间全部"消失"（只剩流式气泡）
     await textEl.setValue("第二个任务");
     await sendBtn().trigger("click");
-    await nextTick();
-    await nextTick();
+    await flushPromises();
     expect(userTexts().some((t) => t.includes("第二个任务"))).toBe(true);
     resolveRun({ content: "第二轮完成", toolCalls: [] });
     await flushPromises();
@@ -180,7 +180,8 @@ describe("AssistantChat 发送链路（引用别名回归）", () => {
     const { wrapper, convId } = await mounted();
     await wrapper.find(".achat-text").setValue("跑一个多步任务");
     await wrapper.find(".achat-send:not(.stop)").trigger("click");
-    await nextTick();
+    // flush 到 runAgent 挂起（send 内部引用解析/目录索引/大脑拆解都是微任务）
+    await flushPromises();
     // 运行中：工具消息落库 → 面板保持收敛一行（不再自动展开跟随）
     getConversations().append(convId, {
       role: "tool",

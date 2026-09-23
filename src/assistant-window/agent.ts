@@ -5,6 +5,7 @@
 // tool_calls 的 tool 消息会被服务端拒绝）。
 
 import { skillIndexPrompt } from "./skills";
+import { loadableIndexPrompt, type LoadableCatalogs } from "./loadable-index";
 import { cleanedContent, parseInlineToolCalls, stripCallTags } from "./inline-tools";
 import { hasLabeledCallTrace } from "./labeled-calls";
 import { assistantTools, type OpenAITool } from "./tools";
@@ -44,9 +45,9 @@ export type ChatFn = (args: StreamArgs) => Promise<AssistantReply>;
  * 建造类任务（建项目 → 开项目 → 逐个加节点 → 写脚本 → 预览）单轮通常只推进
  * 1-2 步，24 轮才够一次完整交付；仍超限时走「继续」续跑。 */
 const MAX_ROUNDS = 24;
-const TOOL_RESULT_LIMIT = 4000;/** 重复调用守卫：同参数纯加载（load_skill/load_doc）刚成功且在结果保留窗内
+const TOOL_RESULT_LIMIT = 4000;/** 重复调用守卫：同参数纯加载（load_skill/load_doc/load_repo）刚成功且在结果保留窗内
  *  再发 → 短路提示不重发请求——弱模型反复重载同一技能/文档是空转轮大头 */
-const PURE_LOAD_METHODS = new Set(["load_skill", "load_doc"]);
+const PURE_LOAD_METHODS = new Set(["load_skill", "load_doc", "load_repo"]);
 /** 同参数连败 N 次后短路：前两次真实重试（环境补齐后同参可成，如先
  *  project.open 再 node.*），第三次起原样重发必然再败，直接回警告 */
 const FAIL_SHORT_CIRCUIT_AFTER = 2;
@@ -185,11 +186,14 @@ export function looksLikeCompletion(text: string): boolean {
  * 会被下方空回复救援识别并拉回循环，绝不能当作任务的最终结论。 */
 export const CALLS_PLACEHOLDER = "（已发起工具调用）";
 
-/** 系统提示词：卡片自定义 > 默认（身份+人设），再统一附加环境/工具/技能索引 */
+/** 系统提示词：卡片自定义 > 默认（身份+人设），再统一附加环境/工具/技能索引。
+ * catalogs 传入时可加载资料索引（官方文档+工坊原型目录）：弱模型不再需要
+ * 空参试探 load_doc 才能拿到目录，首调即中。 */
 export function buildSystemPrompt(
   card: AgentCard | null,
   currentProject: string,
   tools: OpenAITool[] = assistantTools(),
+  catalogs?: LoadableCatalogs,
 ): string {
   const base = card?.systemPrompt?.trim()
     ? card.systemPrompt.trim()
@@ -228,6 +232,7 @@ export function buildSystemPrompt(
       "防重复：每次发起调用前先看上文结果与「会话进度备忘」判断进度——已成功执行的步骤不要再次执行；报错的步骤先修正参数，也不要原样重发。",
     ].join("\n"),
     skillIndexPrompt(),
+    catalogs ? loadableIndexPrompt(catalogs) : "",
   ].join("\n\n");
 }
 

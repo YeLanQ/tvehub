@@ -13,11 +13,13 @@ export function stepHasError(content: string): boolean {
   }
 }
 
-/** 把一条工具消息合进步骤行：调用建行，结果按 同名未决行 → 任意未决行 原位落位
- * （并行时同名调用 FIFO 配对；无配对的历史孤儿结果单独成行）。 */
+/** 把一条工具消息合进步骤行：调用建行，结果按 toolCallId 精确回位
+ * （并行调用完成序≠调用序，只按同名 FIFO 会把结果挂到别的调用上）；
+ * 无 id 的历史孤儿按 同名未决行 → 任意未决行 兜底落位。 */
 export function mergeStepRow(rows: ToolStepItem[], m: ChatMessage): void {
   if (m.result) {
     const open =
+      (m.toolCallId ? rows.find((r) => r.result === undefined && r.id === m.toolCallId) : undefined) ??
       [...rows].reverse().find((r) => r.result === undefined && (!m.toolName || r.toolName === m.toolName)) ??
       [...rows].reverse().find((r) => r.result === undefined);
     if (open) {

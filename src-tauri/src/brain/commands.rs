@@ -26,7 +26,8 @@ pub fn brain_plan(state: State<'_, Brain>, task: String) -> Result<Plan, String>
     Ok(plan)
 }
 
-/// 语义单元化（自然语义处理层）：任务文本 →（分段 → 神经图检索 → 命令预测）
+/// 语义单元化（自然语义处理层 + 语言归一化前置层）：任务文本 →（归一化 spec
+/// 可选：助手 LLM 结构化的类型/锚点/文件）→（分段 → 神经图检索 → 命令预测）
 /// → 单元任务 + 处理轨迹。前端把轨迹与单元上屏过程容器，并把单元逐个转发
 /// 助手推进小循环；单元内的工具决策仍经 brain_execute 决策中心门控执行。
 #[tauri::command]
@@ -34,8 +35,9 @@ pub fn brain_decompose(
     state: State<'_, Brain>,
     task: String,
     root: Option<String>,
+    spec: Option<super::nlu::NormSpec>,
 ) -> Result<super::nlu::Decomposition, String> {
-    Ok(state.decompose(&task, root.as_deref()))
+    Ok(state.decompose(&task, root.as_deref(), spec.as_ref()))
 }
 
 #[derive(serde::Deserialize)]
@@ -123,4 +125,30 @@ pub fn docs_list() -> Result<Vec<DocBrief>, String> {
             summary: d.summary.clone(),
         })
         .collect())
+}
+
+/// 工坊资源全文（load_repo 直答）：public/repos 文本资产的运行时层——外部
+/// repos 更新后读路径懒刷新自动对齐，不经决策中心门控（只读无副作用）。
+#[tauri::command]
+pub fn repos_doc_read(
+    state: State<'_, Brain>,
+    id: String,
+) -> Result<Option<super::reposrc::RepoDoc>, String> {
+    Ok(state.repos_doc_read(&id))
+}
+
+/// 工坊资源目录（id+title+summary，无正文）：load_repo 缺/错 id 时回喂，
+/// 模型一轮内自选正确资源；与 repos_doc_read 同源，含同一次懒刷新。
+#[tauri::command]
+pub fn repos_doc_list(state: State<'_, Brain>) -> Result<Vec<super::reposrc::RepoBrief>, String> {
+    Ok(state.repos_doc_briefs())
+}
+
+/// 手动刷新工坊资源层（跳过节流强制比对指纹）。一般无需调用——读路径自带
+/// 节流懒刷新；工坊页大量改文件后想立即生效时可主动触发。
+#[tauri::command]
+pub fn brain_repos_refresh(
+    state: State<'_, Brain>,
+) -> Result<super::reposrc::ingest::ReposIngestReport, String> {
+    Ok(state.refresh_repos())
 }

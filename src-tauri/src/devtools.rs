@@ -582,7 +582,10 @@ fn try_local(
                 return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
             };
             let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
-                return Some(Err("缺少 path 参数".to_string()));
+                return Some(Err(
+                    "缺少 path 参数（相对工作区的文件路径；先用 asset.list 列目录拿路径，勿空参试探）"
+                        .to_string(),
+                ));
             };
             asset_read_of(&root, path)
         }

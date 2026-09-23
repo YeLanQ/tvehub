@@ -102,11 +102,26 @@ export function assistantTools(): OpenAITool[] {
       function: {
         name: "load_doc",
         description:
-          "读取应用内置官方文档全文（编辑器操作/SDK API，如 sdk/tween.md、editor/scene.md）。" +
-          "大脑知识命中给出的文档摘要需要展开时用它，不要用 asset.read 读应用目录。",
+          "读取应用内置官方文档全文（编辑器操作/SDK API）。文档 id 见系统提示词「可加载资料索引」" +
+          "（如 sdk/tween.md），带 id 调用、勿空参试探；大脑知识命中给出的文档摘要需要展开时也用它。",
         parameters: {
           type: "object",
           properties: { id: { type: "string", description: "文档相对路径，如 sdk/tween.md" } },
+          required: ["id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "load_repo",
+        description:
+          "读取创意工坊资源全文（public/repos 的脚本原型/效果着色器等文本资产）。" +
+          "可用 id 见系统提示词「可加载资料索引」（如 code/Rotator.ts），带 id 调用、勿空参试探；" +
+          "写脚本/效果前先读相关原型全文再动手，不要凭文件名猜内容。",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "string", description: "资源相对 id：<分类>/<文件名>" } },
           required: ["id"],
         },
       },
@@ -249,6 +264,21 @@ export async function execAssistantTool(
       if (!doc) {
         const docs = await api.docsList().catch(() => []);
         return { error: `未知文档: ${args.id}（id 需与下列目录一致，勿凭空构造）`, docs };
+      }
+      return { id: doc.id, title: doc.title, content: doc.body };
+    }
+    if (name === "load_repo") {
+      const args = params as { id?: string };
+      const rawId = String(args.id ?? "").trim();
+      // 缺 id：回喂工坊资源目录（含外部 repos 最新状态），模型一轮内选定
+      if (!rawId) {
+        const repos = await api.reposDocList().catch(() => []);
+        return { error: "缺少 id（格式 <分类>/<文件名>）", repos };
+      }
+      const doc = await api.reposDocRead(rawId).catch(() => null);
+      if (!doc) {
+        const repos = await api.reposDocList().catch(() => []);
+        return { error: `未知工坊资源: ${rawId}（id 需与下列目录一致，勿凭空构造）`, repos };
       }
       return { id: doc.id, title: doc.title, content: doc.body };
     }
