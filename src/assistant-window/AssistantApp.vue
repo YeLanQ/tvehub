@@ -43,23 +43,49 @@ onMounted(async () => {
   if (isTauri()) {
     // 项目列表跨窗口同步：助手内建项目 / 首页与控制端增删改项目 → projects:changed
     // 广播后即时重扫（防抖：一次操作可能连发多次广播）
-    void listen("projects:changed", () => {
-      clearTimeout(rescanTimer);
-      rescanTimer = setTimeout(() => {
-        void refreshProjects();
-        void refreshEditorState();
-      }, 300);
-    }).then((off) => (offProjectsChanged = off));
+    void listen("projects:changed", () => scheduleRailSync()).then(
+      (off) => (offProjectsChanged = off),
+    );
+    // 助手自身写操作 → 打开中的文件树即时刷新（tools.ts 成功执行后投递）
+    void listen("assistant:workspace-changed", () => scheduleTreeRefresh()).then(
+      (off) => (offWorkspaceChanged = off),
+    );
+    // 窗口隐藏期间错过的外部变更（项目被删/文件变动）在重新聚焦时补同步
+    void getCurrentWindow()
+      .listen("tauri://focus", () => scheduleRailSync(500))
+      .then((off) => (offFocus = off));
   }
 });
 
 /** 项目列表外部变更防抖（同 HomeView 口径） */
 let rescanTimer: ReturnType<typeof setTimeout> | undefined;
 let offProjectsChanged: (() => void) | undefined;
+let offWorkspaceChanged: (() => void) | undefined;
+let offFocus: (() => void) | undefined;
+let treeTimer: ReturnType<typeof setTimeout> | undefined;
+let focusTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleRailSync(delay = 300): void {
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => {
+    void refreshProjects();
+    void refreshEditorState();
+    void refreshTree();
+  }, delay);
+}
+
+function scheduleTreeRefresh(): void {
+  clearTimeout(treeTimer);
+  treeTimer = setTimeout(() => void refreshTree(), 400);
+}
 
 onBeforeUnmount(() => {
   offProjectsChanged?.();
+  offWorkspaceChanged?.();
+  offFocus?.();
   clearTimeout(rescanTimer);
+  clearTimeout(treeTimer);
+  clearTimeout(focusTimer);
 });
 
 /** 会话树折叠：点工作区卡左侧文件夹图标收起/展开其会话叶 */
@@ -96,12 +122,27 @@ async function callDevtools(
   }
 }
 
+/** 项目目录是否已消失（被删）：根目录不在 + 父位置可达（盘/网络不可达时
+ *  保守保留，不销毁会话——可能只是临时离线） */
+async function rootGone(root: string): Promise<boolean> {
+  try {
+    if (await api.workspacePathExists(root)) return false;
+    const parent = root.replace(/[\\/]+[^\\/]+[\\/]?$/, "");
+    if (parent && (await api.workspacePathExists(parent))) return true;
+  } catch {
+    /* 探测失败：保守保留 */
+  }
+  return false;
+}
+
 async function refreshProjects(): Promise<void> {
   // devtools project.list 返回 { recent: [{path,name,sceneCount}] }
   const doc = (await callDevtools("project.list", undefined, true)) as {
     recent?: ProjectRow[];
   } | null;
   projects.value = Array.isArray(doc?.recent) ? doc.recent : [];
+  // 已删项目的会话清出索引（残留根因：索引按根持久，项目删除后永远挂着）
+  await convs.pruneMissing(rootGone);
 }
 
 async function refreshEditorState(): Promise<void> {
@@ -213,6 +254,18 @@ async function openTree(p: ProjectRow): Promise<void> {
     treeOpen.value = false;
   } finally {
     treeLoading.value = false;
+  }
+}
+
+/** 打开中的文件树重查清单（保持展开状态）：内容更新（助手写文件/编辑器
+ *  保存/项目被删）后由 projects:changed / workspace-changed / 聚焦触发 */
+async function refreshTree(): Promise<void> {
+  if (!treeOpen.value || !treeRoot.value) return;
+  try {
+    const list = await api.devtoolsCall("asset.list", { root: treeRoot.value });
+    treeNodes.value = buildTree(Array.isArray(list) ? list : []);
+  } catch {
+    /* 目录消失/服务不可用：保留现有树（重开时全量重查） */
   }
 }
 
@@ -407,7 +460,10 @@ defineExpose({ refreshProjects, refreshEditorState });
         <aside v-if="treeOpen" class="assistant-tree">
           <div class="assistant-tree-head">
             <span class="assistant-tree-title">文件 · {{ treeName }}</span>
-            <button class="assistant-tree-close" title="收起" @click="treeOpen = false">×</button>
+            <span class="assistant-tree-head-acts">
+              <button class="assistant-tree-close" title="刷新" @click="refreshTree">⟳</button>
+              <button class="assistant-tree-close" title="收起" @click="treeOpen = false">×</button>
+            </span>
           </div>
           <p v-if="treeLoading" class="assistant-tree-empty">读取中…</p>
           <p v-else-if="!treeRows.length" class="assistant-tree-empty">空项目</p>
@@ -608,6 +664,7 @@ export default { components: { AssistantChat, AssistantSettings } };
   border-bottom: 1px solid var(--border);
   flex: none;
   .assistant-tree-title { font-size: 12px; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .assistant-tree-head-acts { display: inline-flex; gap: 2px; }
   .assistant-tree-close { border: none; background: transparent; color: var(--text-dim); font-size: 14px; cursor: pointer;
     &:hover { color: var(--text); } }
 }

@@ -247,6 +247,28 @@ export function rewriteScriptAttach(
   return { name: "node.component.add", params: { id: target, script } };
 }
 
+/** 工作区内容写操作：成功执行后投递 assistant:workspace-changed，助手面板
+ *  的浮动文件树即时刷新（不必关开重查）。经大脑决策中心的方法集中在此。 */
+const WORKSPACE_WRITE_METHODS = new Set([
+  "asset.write",
+  "scene.write",
+  "shader.write",
+  "scene.save",
+  "asset.create",
+  "asset.delete",
+  "asset.rename",
+  "node.add",
+  "node.remove",
+  "node.rename",
+  "node.set",
+  "node.component.add",
+]);
+
+function notifyWorkspaceChanged(method: string): void {
+  if (!WORKSPACE_WRITE_METHODS.has(method)) return;
+  window.dispatchEvent(new CustomEvent("assistant:workspace-changed", { detail: { method } }));
+}
+
 /**
  * 执行一个工具调用。永不抛错——失败返回 { error } 结构回喂模型自纠；
  * load_skill 读本地注册表；brain.* 直连大脑（决策咨询，不入观测）；
@@ -336,7 +358,9 @@ export async function execAssistantTool(
       await api.brainApprove(task);
       out = await api.brainExecute({ task, method: name, params });
     }
-    return outcomeToToolResult(out, name);
+    const result = outcomeToToolResult(out, name);
+    if (out.status === "ok") notifyWorkspaceChanged(name);
+    return result;
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
