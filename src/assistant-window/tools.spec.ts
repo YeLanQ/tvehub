@@ -51,7 +51,7 @@ describe("injectWorkspaceRoot", () => {
 
   it("边界：ROOT_METHODS 目录与 tools 目录一致（scene/asset/file 方法）", () => {
     expect([...ROOT_METHODS].sort()).toEqual(
-      ["asset.list", "asset.read", "asset.write", "file.index", "file.search", "file.module", "scene.list", "scene.write"].sort(),
+      ["asset.list", "asset.read", "asset.write", "file.index", "file.search", "file.module", "scene.list", "scene.write", "shader.write"].sort(),
     );
   });
 });

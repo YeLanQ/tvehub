@@ -30,6 +30,7 @@ const CATALOG: ToolSpec[] = [
   { method: "scene.open", description: "在编辑器中打开场景（需编辑器已开项目）。", params: { rel: "场景相对路径" }, required: ["rel"] },
   { method: "scene.save", description: "保存编辑器当前场景（需编辑器已开项目）。" },
   { method: "scene.write", description: "直写 .scene 场景文档（无需编辑器；引擎格式锁定：写入前按引擎同款规则校验 JSON 对象与 root 节点结构，校验不过拒写，不会产生引擎打不开的场景）。流程：asset.read 读原文 → 修改 → scene.write 整体回写 → project.open / scene.open 重载生效。节点级修改优先用 node.*（编辑器内可撤销）。", params: { rel: "场景相对路径（如 assets/Main.scene）", content: "完整场景文档 JSON 文本", root: "工作区项目根（缺省=当前工作区）" }, required: ["rel", "content"] },
+  { method: "shader.write", description: "直写 .shader 效果着色器资产（引擎格式锁定：写入前按引擎着色器解析校验 Shader 指令行/Base 渲染分支/钩子名，校验不过拒写并回喂具体原因）。流程：先 load_repo 读工坊同类效果原型或 asset.read 读现有着色器，修改后 shader.write 整体回写。新建文件先 asset.create（type=shader）拿模板。", params: { path: "着色器相对路径（如 assets/fx/Wave.shader）", content: "完整着色器源码", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
   { method: "scene.tree", description: "读编辑器会话的场景文档 JSON（需编辑器已开项目；未打开时可用 asset.read 直读 .scene 文件文本）。" },
   { method: "node.select", description: "选中节点（编辑器高亮）。", params: { id: "节点 id，空串取消选中" } },
   {
@@ -61,7 +62,7 @@ const CATALOG: ToolSpec[] = [
   { method: "preview.screenshot", description: "截取编辑器视口 PNG（base64）。" },
   { method: "asset.list", description: "列出项目资产（name/path/kind/size；无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
   { method: "asset.read", description: "读项目内文本资产（二进制拒绝；.scene 可直读文本）。缺省整读（≤512KB，超长只回预览+totalLines）；给 startLine/endLine（1 基闭区间）则按行分页读，返回 startLine/endLine/totalLines/hasMore/nextStartLine——大文件或整读被截断时务必翻页读全再改写，不要拿半截内容当全文。", params: { path: "资产相对路径", startLine: "起始行（1 基，可缺省）", endLine: "结束行（闭区间，可缺省=到文件尾）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
-  { method: "asset.write", description: "写项目内文本资产（脚本/着色器/文档/普通 JSON 等；自动建父目录）。引擎结构化格式已锁定：.scene 必须走 scene.write；.meta/.fsm/.bt/.mat/.terrain/.terrainmat/根 *.config.json/二进制模型音视频拒绝直写。", params: { path: "资产相对路径", content: "完整文本内容", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
+  { method: "asset.write", description: "写项目内文本资产（脚本/文档/普通 JSON 等；自动建父目录）。引擎结构化格式已锁定：.scene 必须走 scene.write；.shader 必须走 shader.write；.meta/.fsm/.bt/.mat/.terrain/.terrainmat/根 *.config.json/二进制模型音视频拒绝直写。", params: { path: "资产相对路径", content: "完整文本内容", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
   { method: "asset.create", description: "新建资产（需编辑器已开项目；未打开时可用 asset.write 写文本文件代替）。", params: { type: "类型", dir: "目标目录（缺省 assets）", name: "名称（缺省自动）" }, required: ["type"] },
   { method: "asset.select", description: "选中资产（检查器预览）。", params: { path: "资产相对路径" }, required: ["path"] },
   { method: "asset.delete", description: "删除资产。", params: { path: "资产相对路径" }, required: ["path"] },
@@ -139,6 +140,7 @@ export function assistantTools(): OpenAITool[] {
 export const ROOT_METHODS = new Set([
   "scene.list",
   "scene.write",
+  "shader.write",
   "asset.list",
   "asset.read",
   "asset.write",

@@ -63,6 +63,7 @@ const ALL_METHODS: &[&str] = &[
     "scene.open",
     "scene.save",
     "scene.write",
+    "shader.write",
     "scene.tree",
     "node.select",
     "node.add",

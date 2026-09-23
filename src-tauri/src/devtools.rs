@@ -194,6 +194,7 @@ const METHOD_TO_TOOL: &[(&str, &str)] = &[
     ("node.rename", "nodeSet"),
     ("node.set", "nodeSet"),
     ("node.component.add", "nodeSet"),
+    ("shader.write", "assetWrite"),
     ("preview.start", "previewStart"),
     ("preview.stop", "previewStop"),
     ("preview.open", "previewOpen"),
@@ -527,7 +528,7 @@ mod boot_scene_tests {
 
 #[cfg(test)]
 mod asset_io_tests {
-    use super::{asset_read_of, asset_write_of, scene_write_of};
+    use super::{asset_read_of, asset_write_of, scene_write_of, shader_write_of};
 
     fn ws(tag: &str) -> String {
         let d = std::env::temp_dir().join(format!("tve-asset-io-{tag}-{}", std::process::id()));
@@ -667,6 +668,39 @@ mod asset_io_tests {
         let v = scene_write_of(&root, "assets/Empty.scene", r#"{"root":{"type":"empty"}}"#).unwrap();
         assert_eq!(v["ok"], true);
     }
+
+    #[test]
+    fn shader_write_validates_engine_format() {
+        let root = ws("swrite");
+        // 引擎自家模板 = 保证合法的效果着色器
+        let ok = crate::scene::shader::serialize_shader_file("assets/fx/Wave.shader", "physical");
+        let v = shader_write_of(&root, "assets/fx/Wave.shader", &ok).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(std::path::Path::new(&format!("{root}/assets/fx/Wave.shader")).exists());
+
+        // 非 .shader / 缺 Shader 指令行 / 未知 Base / 未知钩子 全部拒写并给引擎原因
+        assert!(shader_write_of(&root, "src/A.ts", &ok).is_err());
+        let e = shader_write_of(&root, "assets/fx/Bad.shader", "void main() {}").unwrap_err();
+        assert!(e.contains("Shader 指令行"), "{e}");
+        let e = shader_write_of(&root, "assets/fx/Bad.shader", "Shader \"x\"\n{\n    Base \"Cartoon\"\n}").unwrap_err();
+        assert!(e.contains("Base"), "未知 Base 应带引擎原因：{e}");
+        let e = shader_write_of(
+            &root,
+            "assets/fx/Bad.shader",
+            "Shader \"x\"\n{\n    Base \"PBR\"\n    Hook \"Bogus\" { }\n}",
+        )
+        .unwrap_err();
+        assert!(e.contains("钩子"), "未知钩子应带引擎原因：{e}");
+    }
+
+    #[test]
+    fn asset_write_redirects_shader_to_dedicated_channel() {
+        let root = ws("shlock");
+        let e = asset_write_of(&root, "assets/fx/Wave.shader", "Shader \"x\" {}").unwrap_err();
+        assert!(e.contains("shader.write"), "{e}");
+        // internal/ 的着色器同样只读
+        assert!(shader_write_of(&root, "internal/fx/X.shader", "Shader \"x\"\n{}").is_err());
+    }
 }
 
 fn scene_list_of(root: &str) -> Result<serde_json::Value, String> {
@@ -758,6 +792,22 @@ fn try_local(
                 return Some(Err("缺少 content 参数（完整场景文档 JSON 文本）".to_string()));
             };
             scene_write_of(&root, path, content)
+        }
+        "shader.write" => {
+            let Some(root) = workspace_root(app, params) else {
+                return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
+            };
+            let Some(path) = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .or_else(|| params.get("rel").and_then(|v| v.as_str()))
+            else {
+                return Some(Err("缺少 path 参数（着色器相对路径，如 assets/fx/Wave.shader）".to_string()));
+            };
+            let Some(content) = params.get("content").and_then(|c| c.as_str()) else {
+                return Some(Err("缺少 content 参数（完整着色器源码）".to_string()));
+            };
+            shader_write_of(&root, path, content)
         }
         "asset.write" => {
             let Some(root) = workspace_root(app, params) else {
@@ -926,6 +976,11 @@ fn locked_write_reason(path: &str) -> Option<String> {
             "场景文档请用 scene.write（写入前按引擎场景格式校验，防写坏打不开）；.meta/.fsm/.bt/.mat/.terrain 等引擎管理格式不可直写".to_string(),
         );
     }
+    if lower.ends_with(".shader") {
+        return Some(
+            "着色器资产请用 shader.write（写入前按引擎着色器解析校验 Shader 指令/Base 分支/钩子，防写坏不可渲染）".to_string(),
+        );
+    }
     if let Some(ext) = WRITE_LOCKED_EXTS.iter().find(|e| lower.ends_with(*e)) {
         return Some(format!(
             "「{ext}」是引擎管理的格式，不支持通用文本直写（防结构损坏）；脚本/着色器/文档/普通 JSON 等文本资产用 asset.write"
@@ -987,6 +1042,29 @@ fn scene_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::V
         return Err(
             "拒绝写入：root 节点结构不符合引擎场景格式（NodeData 解析失败）。先用 asset.read 读原文件核对结构再回写；节点级修改建议在编辑器打开项目后用 node.* 走撤销历史".to_string(),
         );
+    }
+    write_text_asset(root, path, content)
+}
+
+/// 着色器资产直写（shader.write，格式锁定）：只写 .shader，内容先过引擎
+/// 同款校验——is_shader_doc（Shader 指令行）+ parse_shader 错误检查（Base
+/// 渲染分支/钩子名/属性行）。校验不过拒写，并原样回喂引擎解析错误（文案
+/// 本身就是修复指引）。GLSL 代码级错误不在锁定范围（渲染期可见、可迭代）。
+fn shader_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::Value, String> {
+    let lower = path.trim().to_ascii_lowercase();
+    if !lower.ends_with(".shader") {
+        return Err("shader.write 只写 .shader 着色器资产；脚本/文档等文本资产用 asset.write".to_string());
+    }
+    if lower == "internal" || lower.starts_with("internal/") {
+        return Err("internal/ 是引擎内置目录，只读".to_string());
+    }
+    if !crate::scene::shader::is_shader_doc(content) {
+        return Err(
+            "拒绝写入：缺少 Shader 指令行（应为 Shader \"组/名称\"），不是引擎可识别的着色器文档。可先 asset.create（type=shader）建模板再改".to_string(),
+        );
+    }
+    if let Some(err) = crate::scene::shader::parse_shader(content).error {
+        return Err(format!("拒绝写入：{err}"));
     }
     write_text_asset(root, path, content)
 }
