@@ -584,13 +584,18 @@ async function send(textArg?: string | Event): Promise<void> {
     // 层不可用（无供应商/超时/输出不合法）时 spec = null，大脑按原文走
     // 既有规则链路。@引用解析与归一化并行，之后大脑拆解以 spec 为检索输入；
     // 拆解失败静默回落（deco = null → 直通助手），不因任何失败阻塞对话
-    const normPromise: Promise<BrainNormSpec | null> = (async () => {
+    const normPromise: Promise<{
+      norm: BrainNormSpec | null;
+      check: { extracted: number; kept: number } | null;
+    }> = (async () => {
       const norm = await normalizeNaturalLanguage(text, {
         baseUrl: prov.baseUrl,
         apiKey: prov.apiKey,
         model: card0?.model?.trim() ? card0.model.trim() : prov.model,
       });
-      if (!norm || !norm.files.length || !root) return norm;
+      if (!norm) return { norm: null, check: null };
+      const extracted = norm.files.length;
+      if (!extracted || !root) return { norm, check: null };
       try {
         const res = await execAssistantTool("asset.list", "{}", root, text);
         const listing = Array.isArray(res)
@@ -600,17 +605,33 @@ async function send(textArg?: string | Event): Promise<void> {
       } catch {
         norm.files = []; // 清单拿不到 → 宁可不注入，也不注入未核实的路径
       }
-      return norm;
+      return { norm, check: { extracted, kept: norm.files.length } };
     })();
-    const [attachments, spec] = await Promise.all([
+    const [attachments, normResult] = await Promise.all([
       refs.length ? resolveRefAttachments(refs, root || undefined) : Promise.resolve(""),
       normPromise,
     ]);
+    const spec = normResult.norm;
+    const fileCheck = normResult.check;
     const decoResult = await api.brainDecompose(text, root || undefined, spec).catch(() => null);
     const wire = [...wireHead, { role: "user" as const, content: text + attachments }];
     if (decoResult) {
       deco = decoResult;
       run.nluRun = toNluData(deco);
+      // 文件校验轨迹：归一化层提取过文件时展示存在性过滤的命中情况——
+      // "一直是 0"这类静默清零在这里露出原因（提取 0 个不占轨迹，多数
+      // 任务本就不提文件）
+      if (fileCheck) {
+        const detail =
+          fileCheck.kept === fileCheck.extracted
+            ? `模型提取 ${fileCheck.extracted} 个 · 全部命中工作区`
+            : `模型提取 ${fileCheck.extracted} 个 · 命中 ${fileCheck.kept} 个` +
+              (fileCheck.kept === 0 ? "（路径与工作区清单对不上，已全部剔除）" : "");
+        run.nluRun.traces.splice(run.nluRun.traces.length ? 1 : 0, 0, {
+          stage: "文件校验",
+          detail,
+        });
+      }
       // 绿色通道（死板过程命令）：大脑直接委托命令中心执行，不经助手；
       // 模糊原子任务留给助手按计划转换。全走 brain_execute 门控与观测闭环。
       for (const u of deco.units.filter((x) => x.exec === "direct" && x.method)) {

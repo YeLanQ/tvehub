@@ -38,8 +38,9 @@ export function normalizePrompt(): string {
     '- taskType：任务类型，五选一——"operate"（命令操作：对项目/场景/节点/资产执行具体操作）、"create"（指令创作：创作新内容，如写脚本/着色器/文件）、"optimize"（指令优化：修改/优化已有内容或文件）、"analyze"（指令解析：解释/分析/问答，不要求改动）、"chat"（闲聊对话）',
     "- task：规范化后的任务描述——保留对象名/参数值/文件名等实体，消除口语歧义与错别字，一句话（≤120 字）",
     '- keywords：3~8 个检索锚点（方法名/API 名/对象词，中英混合，如 "tween"、"node.add"、"旋转"）',
-    '- files：任务提到的项目文件相对路径（按表述推断，如 "src/TweenMotion.ts"）；没有就空数组。只列路径，绝不读取文件内容',
+    '- files：任务文本提到的项目文件相对路径——出现文件路径（如 "src/TweenMotion.ts"）或文件名（如 "TweenMotion.ts"）都必须列出，这是后续操作的目标；只提文件名时按项目常见目录推断完整路径。完全没提文件才给空数组。只列路径，绝不读取文件内容',
     '示例：输入「帮我写个让方块慢慢转的脚本」→ {"taskType":"create","task":"编写脚本组件：使立方体绕 Y 轴缓慢旋转","keywords":["脚本","Component","onUpdate","旋转","node.add"],"files":[]}',
+    '示例：输入「修复 src/Player.ts 里的移动 bug」→ {"taskType":"optimize","task":"修复 Player.ts 中角色移动方向的错误","keywords":["Player.ts","移动","修复"],"files":["src/Player.ts"]}',
   ].join("\n");
 }
 
@@ -82,19 +83,24 @@ export function parseNormalizedTask(raw: string): NormSpec | null {
   return { taskType, task, keywords, files };
 }
 
-/** 文件存在性校验：只对工作区清单成员判定（不读文件内容）；路径归一 +
- * 大小写不敏感（Windows）；重复路径去重。 */
+/** 文件存在性校验：先按全路径精确匹配（分隔符/引导符/大小写归一）；模型只给
+ * 文件名或路径后半截时，按清单后缀匹配对回规范全路径——对不上的才剔除，
+ * 绝不保留未核实路径。dropped = 提取数 - 保留数（含重复）。 */
 export function filterExistingFiles(
   files: string[],
   listing: string[],
 ): { files: string[]; dropped: number } {
-  const set = new Set(listing.map((p) => normalizeRelPath(p).toLowerCase()));
+  const rels = listing.map((p) => normalizeRelPath(p)).filter(Boolean);
+  const exact = new Set(rels.map((p) => p.toLowerCase()));
   const kept: string[] = [];
   for (const f of files) {
     const norm = normalizeRelPath(f);
-    if (norm && set.has(norm.toLowerCase()) && !kept.some((k) => k.toLowerCase() === norm.toLowerCase())) {
-      kept.push(norm);
-    }
+    if (!norm) continue;
+    const key = norm.toLowerCase();
+    const hit = exact.has(key)
+      ? norm
+      : rels.find((p) => p.toLowerCase().endsWith("/" + key));
+    if (hit && !kept.some((k) => k.toLowerCase() === hit.toLowerCase())) kept.push(hit);
   }
   return { files: kept, dropped: files.length - kept.length };
 }

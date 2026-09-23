@@ -70,6 +70,24 @@ describe("filterExistingFiles", () => {
     expect(filterExistingFiles(["src/Nope.ts"], [])).toEqual({ files: [], dropped: 1 });
     expect(filterExistingFiles([], listing)).toEqual({ files: [], dropped: 0 });
   });
+
+  it("后缀兜底：模型只给文件名/路径后半截，按清单对回规范全路径", () => {
+    const { files, dropped } = filterExistingFiles(
+      ["TweenMotion.ts", "Main.scene", "src/deep/Nope.ts"],
+      listing,
+    );
+    expect(files).toEqual(["src/TweenMotion.ts", "assets/Main.scene"]);
+    expect(dropped).toBe(1);
+  });
+
+  it("后缀兜底去重：文件名与全路径同提只保留一份规范路径", () => {
+    const { files, dropped } = filterExistingFiles(
+      ["src/TweenMotion.ts", "TweenMotion.ts"],
+      listing,
+    );
+    expect(files).toEqual(["src/TweenMotion.ts"]);
+    expect(dropped).toBe(1);
+  });
 });
 
 describe("normalizeRelPath / normalizePrompt", () => {
@@ -86,5 +104,8 @@ describe("normalizeRelPath / normalizePrompt", () => {
     }
     expect(p).toContain("只输出一个 JSON 对象");
     expect(p).toContain("绝不读取文件内容");
+    // 文件提取强约束（防弱模型照抄空数组示例）：提到文件必须列出 + 带文件的示例
+    expect(p).toContain("都必须列出");
+    expect(p).toContain('"files":["src/Player.ts"]');
   });
 });
