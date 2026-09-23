@@ -27,6 +27,9 @@ import { Component, property, nodeType, engine, math, tween } from "tve"。
   物理写入放这) → 碰撞回调 → onUpdate → 全部模拟后 onLateUpdate(相机跟随放这) →
   停机 onDisable → onDestroy。事件订阅在 onDisable/onDestroy 解绑。
 - 运行态修改（灯光/粒子/UI/组件设置）不回写场景文件。
+- 关联文件先查再改：脚本被 .scene/.prefab 以「路径 + 类名」挂载——重命名/
+  移动/删除前先用 file.search 搜场景文本确认引用方，改 @property 字段名
+  会让已存参数值回退默认；着色器属性名同理（材质 .mat 已调参数会丢）。
 
 ## 属性三种写法
 1. @property({ label, min, max, step }) 基本属性（初值推断类型）；

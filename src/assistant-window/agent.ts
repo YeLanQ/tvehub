@@ -229,6 +229,7 @@ export function buildSystemPrompt(
         "参数缺省即有默认值时直接采用默认执行，不要为可选参数暂停询问；只有缺失会造成不可逆破坏（误删、覆盖已有成果）时才向用户确认。",
         "改完文件即落盘。.scene 场景文档整体回写必须走 scene.write、.shader 着色器必须走 shader.write（写入前引擎格式校验，防止写坏后引擎打不开/不可渲染）；节点级修改优先在编辑器打开项目后用 node.*（走撤销历史）。.meta/.fsm/.bt/.mat/.terrain 等引擎管理格式与根 *.config.json 不可直写。",
         "给节点挂用户脚本用 node.component.add（脚本作为组件挂在节点属性面板，如 {id, script: \"src/Player.ts\"}）；脚本不是子节点，不要用 node.add kind=script。",
+        "文件关联先查再改：重命名/移动/删除脚本、着色器或资产前，先用 file.search 在 .scene/.prefab 文本里确认引用方（挂载的脚本路径与类名、材质引用的着色器与属性名、场景引用的资产路径）；改 @property 或着色器属性名会让已存参数值回退默认——改动后核对引用方仍能解析，必须改名时在汇报中说明哪些引用处需要同步。",
         "scene.write 直写 .scene 后，编辑器正打开该项目时调 project.open（或对同场景 scene.open）即可从磁盘重载场景，无需退出重进；场景有未保存修改时编辑器保留内存版不被覆盖。",
       ].join("\n"),
     "## 可用工具\n" + toolLines.join("\n"),
