@@ -18,6 +18,13 @@ import type { LightKind } from "../../framework/prototype/nodes/LightNode";
 import type { SkyboxKind } from "../../framework/prototype/nodes/SkyboxNode";
 import { FOG_KINDS } from "../../framework/fog/types";
 import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
+import {
+  canAddComponent,
+  componentMetaOf,
+  createComponentRef,
+  createScriptComponentRef,
+} from "../lib/component-registry";
+import type { NodeComponentRef } from "../../framework/prototype/components";
 
 const GEOMETRY_KINDS: GeometryKind[] = [
   "box", "sphere", "plane", "quad", "cylinder", "cone", "torus", "capsule",
@@ -233,6 +240,49 @@ registerCommand({
     const name = args?.name ? String(args.name).trim() : "";
     if (name && node.name !== name) graph().rename(node.id, name);
     return { id: node.id, name: node.name, type: kind };
+  },
+});
+
+registerCommand({
+  id: "node.component.add",
+  label: "添加组件",
+  group: "节点",
+  expose: true,
+  description:
+    "给节点添加组件（属性面板组件卡同源，一次撤销）。脚本组件：不传 type，给 script=脚本 .ts 相对路径（如 src/Player.ts）；" +
+    "内置组件：type=rigidBody/collider/light/audioSource/animationClip（light 可带 lightKind）。重复挂载的脚本与单实例组件幂等/报错",
+  run: (_ctx, args: any) => {
+    const id = String(args?.id ?? "");
+    const node = graph().get(id);
+    if (!node) throw new Error(`未找到节点: ${id}（先用 scene.tree 或层级面板查节点 id）`);
+    const raw = node.toJSON() as JsonRecord;
+    const comps: Array<Record<string, unknown>> = Array.isArray(raw.components)
+      ? [...(raw.components as Array<Record<string, unknown>>)]
+      : [];
+    const typeRaw = String(args?.type ?? "script").toLowerCase();
+    const BUILTIN = new Set(["rigidbody", "collider", "light", "audiosource", "animationclip"]);
+    let comp: NodeComponentRef;
+    if (typeRaw === "script" || typeRaw === "scriptcomponent") {
+      const rel = String(args?.script ?? args?.rel ?? args?.path ?? "").trim();
+      if (!rel) throw new Error("缺少 script 参数（脚本 .ts 相对路径，如 src/Player.ts）");
+      if (comps.some((c) => c.type === "script" && String(c.script) === rel)) {
+        return { ok: true, id, added: false, note: `脚本组件已挂载：${rel}（勿重复添加；改参数在属性面板或用 node.set）` };
+      }
+      comp = createScriptComponentRef(rel);
+    } else if (BUILTIN.has(typeRaw)) {
+      const t = typeRaw as "rigidBody" | "collider" | "light" | "audioSource" | "animationClip";
+      if (!canAddComponent({ components: comps as unknown as NodeComponentRef[] }, t)) {
+        throw new Error(`「${componentMetaOf(t).label}」是单实例组件，该节点已挂载`);
+      }
+      comp = createComponentRef(t, { lightKind: args?.lightKind });
+    } else {
+      throw new Error(
+        `未知组件类型: ${args?.type}（脚本组件不传 type 只给 script；内置组件 type=rigidBody/collider/light/audioSource/animationClip）`,
+      );
+    }
+    const after = { ...raw, components: [...comps, comp] } as unknown as JsonRecord;
+    engine().patchNode(id, raw, after, "添加组件");
+    return { ok: true, id, added: true, component: comp };
   },
 });
 

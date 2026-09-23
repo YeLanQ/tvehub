@@ -193,6 +193,7 @@ const METHOD_TO_TOOL: &[(&str, &str)] = &[
     ("node.remove", "nodeDelete"),
     ("node.rename", "nodeSet"),
     ("node.set", "nodeSet"),
+    ("node.component.add", "nodeSet"),
     ("preview.start", "previewStart"),
     ("preview.stop", "previewStop"),
     ("preview.open", "previewOpen"),
@@ -525,11 +526,11 @@ mod boot_scene_tests {
 }
 
 #[cfg(test)]
-mod asset_read_tests {
-    use super::asset_read_of;
+mod asset_io_tests {
+    use super::{asset_read_of, asset_write_of, scene_write_of};
 
     fn ws(tag: &str) -> String {
-        let d = std::env::temp_dir().join(format!("tve-asset-read-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("tve-asset-io-{tag}-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         d.to_string_lossy().replace('\\', "/")
     }
@@ -610,6 +611,62 @@ mod asset_read_tests {
         assert_eq!(v["endLine"], 10, "区间读应放行大文件并按请求区间返回");
         assert_eq!(v["hasMore"], true);
     }
+
+    #[test]
+    fn asset_write_locks_engine_formats() {
+        let root = ws("wlock");
+        // .scene 引导去 scene.write（校验通道）
+        let e = asset_write_of(&root, "assets/A.scene", "{}").unwrap_err();
+        assert!(e.contains("scene.write"), "{e}");
+        // 引擎管理格式 / 根配置 / internal 只读目录全部拒绝
+        for p in [
+            "assets/x.meta",
+            "logic/a.fsm",
+            "logic/b.bt",
+            "assets/m.mat",
+            "terrain/t.terrain",
+            "terrain/tm.terrainmat",
+            "project.config.json",
+            "build.config.json",
+            "internal/materials/M.mat",
+        ] {
+            let e = asset_write_of(&root, p, "x").unwrap_err();
+            assert!(
+                e.contains("不支持") || e.contains("只读") || e.contains("管理"),
+                "{p} 应被格式锁拒绝：{e}"
+            );
+        }
+        // 普通文本资产与目录创建照常
+        let v = asset_write_of(&root, "src/A.ts", "export const a = 1;").unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(std::path::Path::new(&format!("{root}/src/A.ts")).exists());
+    }
+
+    #[test]
+    fn scene_write_validates_engine_format() {
+        let root = ws("swrite");
+        let ok = r#"{"name":"Main","root":{"type":"group","id":"root","name":"Root","children":[]}}"#;
+        let v = scene_write_of(&root, "assets/Main.scene", ok).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(
+            std::fs::read_to_string(format!("{root}/assets/Main.scene"))
+                .unwrap()
+                .contains("\"root\""),
+            "校验通过的文档应已落盘"
+        );
+
+        // 非 .scene / 非 JSON / 缺 root / 坏 root 结构全部拒写
+        assert!(scene_write_of(&root, "src/A.ts", ok).is_err());
+        assert!(scene_write_of(&root, "assets/B.scene", "not json").is_err());
+        assert!(scene_write_of(&root, "assets/B.scene", "[1,2]").is_err());
+        assert!(scene_write_of(&root, "assets/B.scene", r#"{"name":"NoRoot"}"#).is_err());
+        let e = scene_write_of(&root, "assets/B.scene", r#"{"root":{"type":123}}"#).unwrap_err();
+        assert!(e.contains("NodeData"), "坏 root 应给出结构校验理由：{e}");
+
+        // 空场景魔法标记放行（引擎装载口径内的合法形态）
+        let v = scene_write_of(&root, "assets/Empty.scene", r#"{"root":{"type":"empty"}}"#).unwrap();
+        assert_eq!(v["ok"], true);
+    }
 }
 
 fn scene_list_of(root: &str) -> Result<serde_json::Value, String> {
@@ -684,6 +741,23 @@ fn try_local(
                 })
             };
             asset_read_of(&root, path, num("startLine"), num("endLine"))
+        }
+        "scene.write" => {
+            let Some(root) = workspace_root(app, params) else {
+                return Some(Err("没有工作区项目（可在助手左栏添加），也未打开编辑器".to_string()));
+            };
+            // rel/path 双收：scene.* 家族惯用 rel，从 asset.write 流转来的调用惯用 path
+            let Some(path) = params
+                .get("rel")
+                .and_then(|v| v.as_str())
+                .or_else(|| params.get("path").and_then(|v| v.as_str()))
+            else {
+                return Some(Err("缺少 rel 参数（场景相对路径，如 assets/Main.scene）".to_string()));
+            };
+            let Some(content) = params.get("content").and_then(|c| c.as_str()) else {
+                return Some(Err("缺少 content 参数（完整场景文档 JSON 文本）".to_string()));
+            };
+            scene_write_of(&root, path, content)
         }
         "asset.write" => {
             let Some(root) = workspace_root(app, params) else {
@@ -829,8 +903,50 @@ fn asset_read_of(
     Ok(v)
 }
 
-/// 写入项目内文本资产（助手工作区编辑用）：自动建父目录，超限拒绝。
+/// asset.write 格式锁：引擎结构化/引擎管理/二进制资产不经通用文本直写——
+/// 助手写坏结构会让引擎打不开项目或丢资产元数据（.scene 另有校验通道
+/// scene.write；逻辑/地形/材质资产由编辑器与图窗口管理）。
+const WRITE_LOCKED_EXTS: &[&str] = &[
+    ".meta", ".fsm", ".bt", ".mat", ".terrain", ".terrainmat",
+    ".gltf", ".glb", ".fbx", ".obj", ".dae", ".blend",
+    ".png", ".jpg", ".jpeg", ".webp", ".ktx2", ".bin",
+    ".wav", ".mp3", ".ogg", ".mp4",
+];
+
+/// 通用文本写对锁定路径的拒绝理由；None = 允许。internal/ 为引擎内置目录
+///（内置材质库等），对一切写入只读。
+fn locked_write_reason(path: &str) -> Option<String> {
+    let p = path.trim();
+    let lower = p.to_ascii_lowercase();
+    if lower == "internal" || lower.starts_with("internal/") {
+        return Some("internal/ 是引擎内置目录（内置材质库等），只读".to_string());
+    }
+    if lower.ends_with(".scene") {
+        return Some(
+            "场景文档请用 scene.write（写入前按引擎场景格式校验，防写坏打不开）；.meta/.fsm/.bt/.mat/.terrain 等引擎管理格式不可直写".to_string(),
+        );
+    }
+    if let Some(ext) = WRITE_LOCKED_EXTS.iter().find(|e| lower.ends_with(*e)) {
+        return Some(format!(
+            "「{ext}」是引擎管理的格式，不支持通用文本直写（防结构损坏）；脚本/着色器/文档/普通 JSON 等文本资产用 asset.write"
+        ));
+    }
+    if !p.contains('/') && lower.ends_with(".config.json") {
+        return Some("项目根配置（*.config.json）由编辑器与构建管线管理，不支持助手直写".to_string());
+    }
+    None
+}
+
+/// 写入项目内文本资产（助手工作区编辑用）：格式锁 → 自动建父目录，超限拒绝。
 fn asset_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::Value, String> {
+    if let Some(reason) = locked_write_reason(path) {
+        return Err(reason);
+    }
+    write_text_asset(root, path, content)
+}
+
+/// 底层文本落盘（无格式锁；调用方各自完成校验）：自动建父目录，超限拒绝。
+fn write_text_asset(root: &str, path: &str, content: &str) -> Result<serde_json::Value, String> {
     if content.len() > 512 * 1024 {
         return Err("内容超过 512KB，请拆分后写入".to_string());
     }
@@ -840,6 +956,39 @@ fn asset_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::V
     }
     std::fs::write(&abs, content).map_err(|e| format!("写入失败: {e}"))?;
     Ok(serde_json::json!({ "path": path, "bytes": content.len(), "ok": true }))
+}
+
+/// 场景文档直写（scene.write，格式锁定）：只写 .scene，内容先过引擎装载
+/// 同款校验——合法 JSON 对象 + root 为 empty 标记或 NodeData 可反序列化
+///（与 scene_open 的接受口径一致，格式演进自动跟随引擎）。校验不过拒写，
+/// 杜绝产生引擎打不开或装载即清空的场景文件。
+fn scene_write_of(root: &str, path: &str, content: &str) -> Result<serde_json::Value, String> {
+    let lower = path.trim().to_ascii_lowercase();
+    if !lower.ends_with(".scene") {
+        return Err("scene.write 只写 .scene 场景文档；脚本/着色器/文档等文本资产用 asset.write".to_string());
+    }
+    if lower == "internal" || lower.starts_with("internal/") {
+        return Err("internal/ 是引擎内置目录，只读".to_string());
+    }
+    let doc: serde_json::Value = serde_json::from_str(content)
+        .map_err(|e| format!("拒绝写入：不是合法 JSON（{e}），引擎无法装载"))?;
+    if !doc.is_object() {
+        return Err("拒绝写入：场景文档顶层必须是 JSON 对象".to_string());
+    }
+    let Some(r) = doc.get("root") else {
+        return Err(
+            "拒绝写入：缺少 root 节点（引擎装载会回退初始场景，等同清空本场景）。空场景请写 {\"root\":{\"type\":\"empty\"}}".to_string(),
+        );
+    };
+    let empty = r.get("type").and_then(|t| t.as_str()) == Some("empty");
+    if !empty
+        && <crate::scene::model::NodeData as serde::Deserialize>::deserialize(r).is_err()
+    {
+        return Err(
+            "拒绝写入：root 节点结构不符合引擎场景格式（NodeData 解析失败）。先用 asset.read 读原文件核对结构再回写；节点级修改建议在编辑器打开项目后用 node.* 走撤销历史".to_string(),
+        );
+    }
+    write_text_asset(root, path, content)
 }
 
 /// 工作区相对路径安全化：拒空/穿越/反斜杠，返回 root 下的绝对路径

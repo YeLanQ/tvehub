@@ -217,8 +217,9 @@ export function buildSystemPrompt(
         "会话依赖：node.* 与 preview.* 只对「已在编辑器打开」的项目生效。project.create 只在磁盘建项目——建完必须先 project.open 打开它，才能 node.add / scene.save / 预览。project.open 在没有编辑器窗口时会新开一个编辑器窗口加载（返回即已就绪），有编辑器窗口时切换其工作区。多步建造任务按顺序推进：project.create → project.open → 场景/节点操作 → 保存。",
         "项目未打开时 node.* 会报「没有活跃的编辑器窗口」，此时先 project.open，不要反复重试同一调用。",
         "参数缺省即有默认值时直接采用默认执行，不要为可选参数暂停询问；只有缺失会造成不可逆破坏（误删、覆盖已有成果）时才向用户确认。",
-        "改完文件即落盘；但 .scene 的节点图编辑建议项目在编辑器打开后用 node.* 走撤销历史。",
-        "asset.write 直写 .scene 后，编辑器正打开该项目时调 project.open（或对同场景 scene.open）即可从磁盘重载场景，无需退出重进；场景有未保存修改时编辑器保留内存版不被覆盖。",
+        "改完文件即落盘。.scene 场景文档整体回写必须走 scene.write（写入前引擎格式校验，防止写坏后引擎打不开）；节点级修改优先在编辑器打开项目后用 node.*（走撤销历史）。.meta/.fsm/.bt/.mat/.terrain 等引擎管理格式与根 *.config.json 不可直写。",
+        "给节点挂用户脚本用 node.component.add（脚本作为组件挂在节点属性面板，如 {id, script: \"src/Player.ts\"}）；脚本不是子节点，不要用 node.add kind=script。",
+        "scene.write 直写 .scene 后，编辑器正打开该项目时调 project.open（或对同场景 scene.open）即可从磁盘重载场景，无需退出重进；场景有未保存修改时编辑器保留内存版不被覆盖。",
       ].join("\n"),
     "## 可用工具\n" + toolLines.join("\n"),
     [

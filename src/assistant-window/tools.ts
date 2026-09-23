@@ -29,16 +29,21 @@ const CATALOG: ToolSpec[] = [
   { method: "scene.list", description: "列出项目内全部 .scene 场景（可带 root 指定工作区，无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
   { method: "scene.open", description: "在编辑器中打开场景（需编辑器已开项目）。", params: { rel: "场景相对路径" }, required: ["rel"] },
   { method: "scene.save", description: "保存编辑器当前场景（需编辑器已开项目）。" },
+  { method: "scene.write", description: "直写 .scene 场景文档（无需编辑器；引擎格式锁定：写入前按引擎同款规则校验 JSON 对象与 root 节点结构，校验不过拒写，不会产生引擎打不开的场景）。流程：asset.read 读原文 → 修改 → scene.write 整体回写 → project.open / scene.open 重载生效。节点级修改优先用 node.*（编辑器内可撤销）。", params: { rel: "场景相对路径（如 assets/Main.scene）", content: "完整场景文档 JSON 文本", root: "工作区项目根（缺省=当前工作区）" }, required: ["rel", "content"] },
   { method: "scene.tree", description: "读编辑器会话的场景文档 JSON（需编辑器已开项目；未打开时可用 asset.read 直读 .scene 文件文本）。" },
   { method: "node.select", description: "选中节点（编辑器高亮）。", params: { id: "节点 id，空串取消选中" } },
   {
     method: "node.add",
     description:
-      "添加节点。kind: group/mesh/light/camera/skybox/fog/audio/particle/nav/logic/terrain/ui/script/model；mesh 用 subtype(box/sphere/…)、light 用 subtype(point/directional/spot/ambient)、script 用 rel=脚本 .ts 相对路径（如 src/Player.ts）、model/audio/terrain 用 path=资产相对路径；parent/parentId 指定父节点（值可为节点 id 或 \"root\"，缺省挂根）。",
-    params: { kind: "节点类型", subtype: "子类型（mesh/light 用）", parentId: "父节点 id（或 parent）", name: "名称", path: "资产路径（model/audio/terrain）", rel: "脚本路径（script 用）" },
+      "添加节点。kind: group/mesh/light/camera/skybox/fog/audio/particle/nav/logic/terrain/ui/model；" +
+      "mesh 用 subtype(box/sphere/…)、light 用 subtype(point/directional/spot/ambient)、model/audio/terrain 用 path=资产相对路径；" +
+      "parent/parentId 指定父节点（值可为节点 id 或 \"root\"，缺省挂根）。" +
+      "注意：脚本不是子节点——给节点挂用户脚本/组件一律用 node.component.add，不要 kind=script。",
+    params: { kind: "节点类型", subtype: "子类型（mesh/light 用）", parentId: "父节点 id（或 parent）", name: "名称", path: "资产路径（model/audio/terrain）" },
     required: ["kind"],
   },
   { method: "node.remove", description: "删除节点。", params: { id: "节点 id" }, required: ["id"] },
+  { method: "node.component.add", description: "给节点添加组件（属性面板组件卡同源；一次撤销）。脚本组件：不传 type，给 id=目标节点 id + script=脚本 .ts 相对路径（如 src/Player.ts）；内置组件：type=rigidBody/collider/light/audioSource/animationClip（light 可带 lightKind）。已挂载的同名脚本组件幂等返回；单实例内置组件重复挂载报错。", params: { id: "目标节点 id", script: "脚本 .ts 相对路径（脚本组件用；与 type 二选一）", type: "内置组件类型", lightKind: "灯光类型（type=light 时可选）" }, required: ["id"] },
   { method: "node.rename", description: "重命名节点。", params: { id: "节点 id", name: "新名称" }, required: ["id", "name"] },
   {
     method: "node.set",
@@ -56,7 +61,7 @@ const CATALOG: ToolSpec[] = [
   { method: "preview.screenshot", description: "截取编辑器视口 PNG（base64）。" },
   { method: "asset.list", description: "列出项目资产（name/path/kind/size；无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
   { method: "asset.read", description: "读项目内文本资产（二进制拒绝；.scene 可直读文本）。缺省整读（≤512KB，超长只回预览+totalLines）；给 startLine/endLine（1 基闭区间）则按行分页读，返回 startLine/endLine/totalLines/hasMore/nextStartLine——大文件或整读被截断时务必翻页读全再改写，不要拿半截内容当全文。", params: { path: "资产相对路径", startLine: "起始行（1 基，可缺省）", endLine: "结束行（闭区间，可缺省=到文件尾）", root: "工作区项目根（缺省=当前工作区）" }, required: ["path"] },
-  { method: "asset.write", description: "写项目内文本资产（自动建父目录；改脚本/材质/场景 JSON 等文本用，无需打开编辑器）。", params: { path: "资产相对路径", content: "完整文本内容", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
+  { method: "asset.write", description: "写项目内文本资产（脚本/着色器/文档/普通 JSON 等；自动建父目录）。引擎结构化格式已锁定：.scene 必须走 scene.write；.meta/.fsm/.bt/.mat/.terrain/.terrainmat/根 *.config.json/二进制模型音视频拒绝直写。", params: { path: "资产相对路径", content: "完整文本内容", root: "工作区项目根（缺省=当前工作区）" }, required: ["path", "content"] },
   { method: "asset.create", description: "新建资产（需编辑器已开项目；未打开时可用 asset.write 写文本文件代替）。", params: { type: "类型", dir: "目标目录（缺省 assets）", name: "名称（缺省自动）" }, required: ["type"] },
   { method: "asset.select", description: "选中资产（检查器预览）。", params: { path: "资产相对路径" }, required: ["path"] },
   { method: "asset.delete", description: "删除资产。", params: { path: "资产相对路径" }, required: ["path"] },
@@ -133,6 +138,7 @@ export function assistantTools(): OpenAITool[] {
 /** 接受工作区 root 覆盖的方法（助手自动注入当前工作区项目根） */
 export const ROOT_METHODS = new Set([
   "scene.list",
+  "scene.write",
   "asset.list",
   "asset.read",
   "asset.write",
@@ -215,6 +221,31 @@ export function outcomeToToolResult(out: BrainExecOutcome, method: string): unkn
 }
 
 /**
+ * 助手通道语义改写（纯函数便于单测）：模型惯把「挂脚本」写成 node.add 的
+ * kind=script 子节点——用户语义是"把脚本作为组件挂到节点属性面板"。该形态
+ * 统一改写为 node.component.add 组件挂载；缺目标节点/脚本路径时回喂教学
+ * 错误。编辑器与 devtools 直连命令层不经过此改写。
+ */
+export function rewriteScriptAttach(
+  name: string,
+  params: Record<string, unknown>,
+): { name: string; params: Record<string, unknown> } | { error: string } {
+  const kind = String(params.kind ?? params.type ?? "").toLowerCase();
+  if (name !== "node.add" || (kind !== "script" && kind !== "scriptnode")) {
+    return { name, params };
+  }
+  const target = params.parentId ?? params.parent;
+  const script = params.rel ?? params.script ?? params.path ?? params.subtype;
+  if (!target || !script) {
+    return {
+      error:
+        '挂脚本是作为「组件」挂到目标节点的属性面板，不是子节点：node.component.add { id: "节点id", script: "src/X.ts" }（节点 id 可用 scene.tree 查询；不要用 node.add kind=script）',
+    };
+  }
+  return { name: "node.component.add", params: { id: target, script } };
+}
+
+/**
  * 执行一个工具调用。永不抛错——失败返回 { error } 结构回喂模型自纠；
  * load_skill 读本地注册表；brain.* 直连大脑（决策咨询，不入观测）；
  * 其余全部经后端大脑决策中心（brain_execute）：绿灯只读直接执行；黄灯写
@@ -239,6 +270,11 @@ export async function execAssistantTool(
   }
   // 助手通道参数归一：node.add 别名（rel/parent/逗号名）集中在此，命令层兼容 devtools 旧契约
   if (name === "node.add") params = normalizeNodeAddArgs(params);
+  // 助手通道语义改写：kind=script 子节点 → 节点挂脚本组件（用户语义即"挂组件"）
+  const rewritten = rewriteScriptAttach(name, params);
+  if ("error" in rewritten) return { error: rewritten.error };
+  name = rewritten.name;
+  params = rewritten.params;
   try {
     if (name === "load_skill") {
       const id = parseAssistantSkill(params.id, task, SKILLS);

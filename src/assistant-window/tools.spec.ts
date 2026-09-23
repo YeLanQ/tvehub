@@ -8,6 +8,7 @@ import {
   normalizeNodeAddArgs,
   outcomeToToolResult,
   parseAssistantSkill,
+  rewriteScriptAttach,
   ROOT_METHODS,
 } from "./tools";
 import { SKILLS, type AssistantSkill } from "./skills";
@@ -50,7 +51,7 @@ describe("injectWorkspaceRoot", () => {
 
   it("边界：ROOT_METHODS 目录与 tools 目录一致（scene/asset/file 方法）", () => {
     expect([...ROOT_METHODS].sort()).toEqual(
-      ["asset.list", "asset.read", "asset.write", "file.index", "file.search", "file.module", "scene.list"].sort(),
+      ["asset.list", "asset.read", "asset.write", "file.index", "file.search", "file.module", "scene.list", "scene.write"].sort(),
     );
   });
 });
@@ -89,8 +90,7 @@ describe("outcomeToToolResult", () => {
 });
 
 describe("normalizeNodeAddArgs", () => {
-  it("正常：rel 与 subtype 互补（脚本 rel 同时落 subtype，细分 subtype 同时落 rel）", () => {
-    expect(normalizeNodeAddArgs({ kind: "script", rel: "src/Player.ts" })).toEqual({
+  it("正常：rel 与 subtype 互补（脚本 rel 同时落 subtype，细分 subtype 同时落 rel）", () => {    expect(normalizeNodeAddArgs({ kind: "script", rel: "src/Player.ts" })).toEqual({
       kind: "script",
       rel: "src/Player.ts",
       subtype: "src/Player.ts",
@@ -127,6 +127,40 @@ describe("normalizeNodeAddArgs", () => {
     expect(normalizeNodeAddArgs({ kind: "group" })).toEqual({ kind: "group" });
     const both = normalizeNodeAddArgs({ kind: "light", subtype: "point", rel: "x" });
     expect(both).toEqual({ kind: "light", subtype: "point", rel: "x" });
+  });
+});
+
+describe("rewriteScriptAttach 脚本挂载语义改写", () => {
+  it("正常：kind=script 子节点形态改写为节点挂脚本组件", () => {
+    expect(
+      rewriteScriptAttach("node.add", { kind: "script", rel: "src/Player.ts", parentId: "cube_1" }),
+    ).toEqual({ name: "node.component.add", params: { id: "cube_1", script: "src/Player.ts" } });
+    // parent 别名与 path/subtype 路径别名都收
+    const viaParent = rewriteScriptAttach("node.add", {
+      kind: "scriptnode",
+      subtype: "src/A.ts",
+      parent: "root",
+    });
+    expect(viaParent).toEqual({ name: "node.component.add", params: { id: "root", script: "src/A.ts" } });
+  });
+
+  it("边界：缺目标节点或脚本路径 → 教学错误（组件语义而非子节点）", () => {
+    const missTarget = rewriteScriptAttach("node.add", { kind: "script", rel: "src/A.ts" });
+    expect("error" in missTarget).toBe(true);
+    expect(String((missTarget as { error: string }).error)).toContain("node.component.add");
+    const missScript = rewriteScriptAttach("node.add", { kind: "script", parentId: "n1" });
+    expect("error" in missScript).toBe(true);
+  });
+
+  it("边界：非脚本形态与其他方法原样透传", () => {
+    expect(rewriteScriptAttach("node.add", { kind: "mesh", subtype: "box", parentId: "p" })).toEqual({
+      name: "node.add",
+      params: { kind: "mesh", subtype: "box", parentId: "p" },
+    });
+    expect(rewriteScriptAttach("node.set", { id: "n", name: "x" })).toEqual({
+      name: "node.set",
+      params: { id: "n", name: "x" },
+    });
   });
 });
 
