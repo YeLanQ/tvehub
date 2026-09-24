@@ -47,11 +47,9 @@ const labelColor = computed(() => {
 function onImageSelect(e: Event): void {
   emit("update", "image", (e.target as HTMLSelectElement).value);
 }
-function onColorInput(label: string) {
-  return (e: Event): void => {
-    const v = parseInt((e.target as HTMLInputElement).value.replace("#", ""), 16);
-    if (!Number.isNaN(v)) emit("update", label, v & 0xffffff);
-  };
+function onColorInput(label: string, e: Event): void {
+  const v = parseInt((e.target as HTMLInputElement).value.replace("#", ""), 16);
+  if (!Number.isNaN(v)) emit("update", label, v & 0xffffff);
 }
 function onLabelInput(e: Event): void {
   emit("update", "label", (e.target as HTMLInputElement).value);
@@ -77,7 +75,7 @@ function onInteractableChange(e: Event): void {
     </div>
     <div class="field">
       <label title="Color（背景着色）">背景色</label>
-      <input type="color" :value="color" @input="onColorInput('color')" @change="onColorInput('color')" />
+      <input type="color" :value="color" @input="onColorInput('color', $event)" @change="onColorInput('color', $event)" />
     </div>
     <div class="field">
       <label title="Label">标签</label>
@@ -85,7 +83,7 @@ function onInteractableChange(e: Event): void {
     </div>
     <div class="field">
       <label title="Label Color">标签色</label>
-      <input type="color" :value="labelColor" @input="onColorInput('labelColor')" @change="onColorInput('labelColor')" />
+      <input type="color" :value="labelColor" @input="onColorInput('labelColor', $event)" @change="onColorInput('labelColor', $event)" />
     </div>
     <div class="field">
       <label title="Font Size（设计像素；100px = 1 单位）">标签字号</label>
