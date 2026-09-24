@@ -1706,7 +1706,7 @@ export class SceneSynchronizer {
     const isText = node instanceof UITextNode;
     const isButton = node instanceof UIButtonNode;
     const widget = node as unknown as {
-      size: Vec2; sortOrder: number; anchorMin: Vec2; anchorMax: Vec2; pivot: Vec2;
+      size: Vec2; sortOrder: number; opacity: number; anchorMin: Vec2; anchorMax: Vec2; pivot: Vec2;
       anchoredPosition: Vec2; offsetMin: Vec2; offsetMax: Vec2;
     };
     obj.userData.uiSort = widget.sortOrder;
@@ -1731,6 +1731,7 @@ export class SceneSynchronizer {
       obj.material = this.createUIMaterial();
     }
     const mat = obj.material as THREE.MeshBasicMaterial;
+    mat.opacity = widget.opacity;
 
     if (isImage) {
       const img = node as UIImageNode;
@@ -1842,6 +1843,9 @@ export class SceneSynchronizer {
       label.geometry = new THREE.PlaneGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
       label.userData.uiSizeSig = `${size.x}|${size.y}`;
     }
+    // 标签材质透明度跟随 Widget opacity（置于签名守卫之前：仅透明度变化也需生效）
+    const lmat = label.material as THREE.MeshBasicMaterial;
+    lmat.opacity = btn.opacity;
     const style: UITextStyle = {
       text: btn.label,
       fontSize: btn.fontSize,
@@ -1854,7 +1858,6 @@ export class SceneSynchronizer {
     const sig = uiTextSignature(style, size);
     if (obj.userData.uiLabelSig === sig) return;
     obj.userData.uiLabelSig = sig;
-    const lmat = label.material as THREE.MeshBasicMaterial;
     const old = lmat.map;
     lmat.map = buildUITextTexture(style, size);
     (lmat.map as unknown as { userData: Record<string, unknown> }).userData.uiOwnedTexture = true;

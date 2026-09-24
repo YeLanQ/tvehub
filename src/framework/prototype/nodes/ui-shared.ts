@@ -83,6 +83,12 @@ export function parseUIFontNumber(v: unknown, fallback: number, min: number, max
   return Math.min(max, Math.max(min, n));
 }
 
+/** 不透明度收敛（0..1；非法回退 fallback） */
+export function parseUIOpacity01(v: unknown, fallback: number): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
 export type UIFontFamily = "system" | "serif" | "mono";
 
 export function parseUIFontFamily(v: unknown): UIFontFamily {

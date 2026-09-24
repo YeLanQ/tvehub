@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import UIButtonSection from "./UIButtonSection.vue";
+import NumberField from "../NumberField.vue";
 import { UIButtonNode } from "../../../framework/prototype/derived/Primitives";
 
 function mountSection() {
@@ -40,5 +41,17 @@ describe("UIButtonSection 颜色输入", () => {
     expect(emitted).toBeTruthy();
     expect(emitted![0][0]).toBe("labelColor");
     expect(emitted![0][1]).toBe(0xffcc00);
+  });
+
+  it("不透明度 NumberField 提交发射 label=opacity", async () => {
+    const { wrapper } = mountSection();
+    const numberField = wrapper.findComponent(NumberField);
+    expect(numberField.exists()).toBe(true);
+    numberField.vm.$emit("commit", 0.5);
+    await wrapper.vm.$nextTick();
+    const emitted = wrapper.emitted("update");
+    expect(emitted).toBeTruthy();
+    expect(emitted![emitted!.length - 1][0]).toBe("opacity");
+    expect(emitted![emitted!.length - 1][1]).toBe(0.5);
   });
 });

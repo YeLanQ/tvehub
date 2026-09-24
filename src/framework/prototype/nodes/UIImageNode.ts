@@ -45,6 +45,7 @@ export class UIImageNode extends UIWidgetNode implements IUIImageNode {
       components: this.components,
       size: this.size,
       sortOrder: this.sortOrder,
+      opacity: this.opacity,
       image: this.image,
       color: this.color,
     });

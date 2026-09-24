@@ -7,6 +7,7 @@ import { computed } from "vue";
 import { isInternalAsset } from "../../../lib/internal-assets";
 import { getAssetsStore } from "../../stores/assets";
 import { UIImageNode } from "../../../framework/prototype/derived/Primitives";
+import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ node: UIImageNode; rev?: number }>();
 
@@ -40,6 +41,11 @@ const color = computed(() => {
   return "#" + (props.node.color & 0xffffff).toString(16).padStart(6, "0");
 });
 
+const opacity = computed(() => {
+  void props.rev;
+  return props.node.opacity;
+});
+
 function onImageSelect(e: Event): void {
   emit("update", "image", (e.target as HTMLSelectElement).value);
 }
@@ -69,6 +75,10 @@ function onColorInput(e: Event): void {
     <div class="field">
       <label title="Color（与图片相乘；无图片时即底色）">颜色</label>
       <input type="color" :value="color" title="着色（与图片相乘）" @input="onColorInput" @change="onColorInput" />
+    </div>
+    <div class="field">
+      <label title="Opacity（0..1）">不透明度</label>
+      <NumberField :model-value="opacity" :step="0.05" :min="0" :max="1" title="不透明度（0..1，1 = 不透明）" @commit="(v) => emit('update', 'opacity', v)" />
     </div>
     <div class="hint">位置/尺寸/排序在「2D Transform」与「Anchor」卡编辑（100px = 1 单位）</div>
   </div>

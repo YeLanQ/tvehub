@@ -2,6 +2,7 @@ import { Node, type NodeInit } from "../Node";
 import {
   clampUISortOrder,
   parseUIFreeVec2,
+  parseUIOpacity01,
   parseUIUnitVec2,
   parseVec2,
   vec2,
@@ -25,6 +26,8 @@ export interface UIWidgetNodeInit extends NodeInit {
   offsetMin?: Vec2;
   /** 拉伸轴边距：相对上/右锚线（UI 单位） */
   offsetMax?: Vec2;
+  /** 不透明度（0..1；1 = 不透明。渲染到 Widget 材质透明度；布局容器不渲染，字段保留） */
+  opacity?: number;
 }
 
 /**
@@ -46,10 +49,12 @@ export abstract class UIWidgetNode extends Node {
   anchoredPosition: Vec2 = vec2(0, 0);
   offsetMin: Vec2 = vec2(0, 0);
   offsetMax: Vec2 = vec2(0, 0);
+  opacity: number = 1;
 
   protected initWidget(init: UIWidgetNodeInit, defaultSize: Vec2): void {
     this.size = parseVec2(init.size, defaultSize);
     this.sortOrder = clampUISortOrder(init.sortOrder, this.sortOrder);
+    this.opacity = parseUIOpacity01(init.opacity, this.opacity);
     this.anchorMin = parseUIUnitVec2(init.anchorMin, this.anchorMin);
     this.anchorMax = parseUIUnitVec2(init.anchorMax, this.anchorMax);
     this.pivot = parseUIUnitVec2(init.pivot, this.pivot);
@@ -61,6 +66,7 @@ export abstract class UIWidgetNode extends Node {
   protected readWidget(source: Record<string, unknown>, defaultSize: Vec2): void {
     this.size = parseVec2(source.size, this.size ?? defaultSize);
     this.sortOrder = clampUISortOrder(source.sortOrder, this.sortOrder);
+    this.opacity = parseUIOpacity01(source.opacity, this.opacity);
     this.anchorMin = parseUIUnitVec2(source.anchorMin, this.anchorMin);
     this.anchorMax = parseUIUnitVec2(source.anchorMax, this.anchorMax);
     this.pivot = parseUIUnitVec2(source.pivot, this.pivot);
@@ -74,6 +80,7 @@ export abstract class UIWidgetNode extends Node {
   protected writeWidget(target: Record<string, unknown>): void {
     target.size = { ...this.size };
     target.sortOrder = this.sortOrder;
+    target.opacity = this.opacity;
     target.anchorMin = { ...this.anchorMin };
     target.anchorMax = { ...this.anchorMax };
     target.pivot = { ...this.pivot };

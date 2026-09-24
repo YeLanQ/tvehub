@@ -72,6 +72,7 @@ export class UITextNode extends UIWidgetNode implements IUITextNode {
       components: this.components,
       size: this.size,
       sortOrder: this.sortOrder,
+      opacity: this.opacity,
       text: this.text,
       fontSize: this.fontSize,
       color: this.color,

@@ -69,6 +69,7 @@ export class UILayoutNode extends UIWidgetNode implements IUILayoutNode {
       components: this.components,
       size: this.size,
       sortOrder: this.sortOrder,
+      opacity: this.opacity,
       anchorMin: this.anchorMin,
       anchorMax: this.anchorMax,
       pivot: this.pivot,

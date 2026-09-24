@@ -6,7 +6,8 @@
 designWidth/designHeight/scaleMode）、`UIImageNode`（image/color）、`UITextNode`
 （text/fontSize/color/bold/align）、`UIButtonNode`（label/interactable）、
 `UILayoutNode`（layoutMode: horizontal|vertical|grid + padding/spacing/gridColumns），
-全部实现 UIWidgetBase（sortOrder/size/anchorMin/Max/pivot/anchoredPosition/offsetMin/Max）。
+全部实现 UIWidgetBase（sortOrder/size/opacity/anchorMin/Max/pivot/anchoredPosition/offsetMin/Max；
+opacity 不透明度 0..1，经 engine.ui.set 或直接赋值调整渲染透明度）。
 `engine.ui`：`set(e, patch)/get(e)`、`onClick(e, cb) → 解绑`、`offClick(e, cb)`、
 `rectOf(e) → UIRect|null`（画布局部，原点中心 y 向上）、`metricsOf(e)`（屏幕像素 ↔
 UI 单位换算，建议每帧读）、`screenToUi(e, x, y)`。

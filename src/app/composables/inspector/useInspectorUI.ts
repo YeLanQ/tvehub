@@ -23,6 +23,7 @@ import {
 import {
   parseUIAlign,
   parseUIFontFamily,
+  parseUIOpacity01,
   parseUIPadding,
   parseUIFreeVec2,
   vec2,
@@ -56,6 +57,9 @@ function editWidgetField(target: UIWidgetNode, label: string, value: unknown): b
   switch (label) {
     case "sortOrder":
       target.sortOrder = clampUISortOrder(value as number);
+      return true;
+    case "opacity":
+      target.opacity = parseUIOpacity01(value as number, target.opacity);
       return true;
     case "size.x":
     case "size.y": {

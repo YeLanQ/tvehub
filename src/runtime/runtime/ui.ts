@@ -85,6 +85,11 @@ function colorOf(v, fallback) {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(v) & 0xffffff : fallback;
 }
 
+/** 不透明度收敛（0..1；非法回退 fallback） */
+function opacityOf(v, fallback = 1) {
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
+}
+
 /** 字号（设计像素，100px = 1 单位）→ UI 单位 */
 function uiFontSizeToUnits(fontSize) {
   return num(fontSize, 24) / UI_PPU;
@@ -385,6 +390,7 @@ export function buildUIImage(json) {
   const size = vec2Of(json.size, 2, 2);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
   mesh.material.color.setHex(colorOf(json.color, 0xffffff));
+  mesh.material.opacity = opacityOf(json.opacity);
   mesh.userData.uiSizeSig = `${size.x}|${size.y}`;
   return mesh;
 }
@@ -393,6 +399,7 @@ export function buildUIImage(json) {
 export function buildUIText(json) {
   const size = vec2Of(json.size, 4, 1);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
+  mesh.material.opacity = opacityOf(json.opacity);
   mesh.userData.uiSizeSig = `${size.x}|${size.y}`;
   const style = textStyleOf(json, false);
   mesh.material.map = buildUITextTexture(style, size);
@@ -403,12 +410,15 @@ export function buildUIText(json) {
 /** UI 按钮：背景网格 + __uiLabel 文本子网格（z 偏移浮向相机，同 renderOrder） */
 export function buildUIButton(json) {
   const size = vec2Of(json.size, 2, 0.8);
+  const opacity = opacityOf(json.opacity);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
   mesh.material.color.setHex(colorOf(json.color, 0xc8c8c8));
+  mesh.material.opacity = opacity;
   mesh.userData.uiSizeSig = `${size.x}|${size.y}`;
   const label = new THREE.Mesh(planeOf(size), uiMaterial());
   label.name = UI_LABEL_CHILD_NAME;
   label.userData.uiRenderable = true;
+  label.material.opacity = opacity;
   label.position.z = 0.02;
   const style = textStyleOf(json, true);
   label.material.map = buildUITextTexture(style, size);
@@ -714,6 +724,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     if (!UI_POSITION_KINDS.has(json.type)) return null;
     const snap = {
       sortOrder: clampSort(json.sortOrder, 0),
+      opacity: opacityOf(json.opacity),
       size: { ...vec2Of(json.size, 2, 2) },
       anchorMin: unitVec2Of(json.anchorMin, 0.5, 0.5),
       anchorMax: unitVec2Of(json.anchorMax, 0.5, 0.5),
@@ -934,6 +945,17 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
             w.obj.material.color.setHex(colorOf(v, j.color));
           }
           break;
+        case "opacity": {
+          // Widget 材质透明度（按钮：背景 + 标签子网格跟随；布局容器无渲染材质，仅存档）
+          if (typeof v === "number" && Number.isFinite(v)) {
+            j.opacity = Math.min(1, Math.max(0, v));
+            if (w.obj.material) w.obj.material.opacity = j.opacity;
+            for (const c of w.obj.children) {
+              if (c.userData?.uiRenderable === true && c.material) c.material.opacity = j.opacity;
+            }
+          }
+          break;
+        }
         case "text":
           if (j.type === "uiTextNode" && typeof v === "string" && v !== j.text) {
             j.text = v;

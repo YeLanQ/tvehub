@@ -910,12 +910,16 @@ export interface UIWidgetBase extends UIAnchorBase {
   sortOrder: number;
   /** 矩形尺寸（UI 单位；拉伸锚点轴由父矩形与边距推导） */
   size: { x: number; y: number };
+  /** 不透明度（0..1，1 = 不透明；图片/文本/按钮渲染到材质透明度） */
+  opacity: number;
 }
 
 /** UI 图片节点（编辑器 uiImageNode）：矩形图片或纯色块 */
 export class UIImageNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  /** 不透明度（0..1，1 = 不透明） */
+  opacity: number;
   anchorMin: UIVec2;
   anchorMax: UIVec2;
   pivot: UIVec2;
@@ -932,6 +936,8 @@ export class UIImageNode extends Entity implements UIWidgetBase {
 export class UITextNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  /** 不透明度（0..1，1 = 不透明） */
+  opacity: number;
   anchorMin: UIVec2;
   anchorMax: UIVec2;
   pivot: UIVec2;
@@ -956,6 +962,8 @@ export class UITextNode extends Entity implements UIWidgetBase {
 export class UIButtonNode extends Entity implements UIWidgetBase {
   sortOrder: number;
   size: { x: number; y: number };
+  /** 不透明度（0..1，1 = 不透明；背景与标签整体透明） */
+  opacity: number;
   anchorMin: UIVec2;
   anchorMax: UIVec2;
   pivot: UIVec2;

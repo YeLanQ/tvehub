@@ -76,9 +76,9 @@ const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "
 
 for (const [Cls, keys] of [
   [UICanvasNode, ["sortOrder", "designWidth", "designHeight", "scaleMode"]],
-  [UIImageNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color"]],
-  [UITextNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "text", "fontSize", "color", "bold", "italic", "fontFamily", "align"]],
-  [UIButtonNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable"]],
+  [UIImageNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "opacity"]],
+  [UITextNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "text", "fontSize", "color", "bold", "italic", "fontFamily", "align", "opacity"]],
+  [UIButtonNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable", "opacity"]],
   [UILayoutNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "layoutMode", "padding", "spacing", "gridColumns"]],
 ]) {
   for (const key of keys) {

@@ -43,6 +43,10 @@ const labelColor = computed(() => {
   void props.rev;
   return "#" + (props.node.labelColor & 0xffffff).toString(16).padStart(6, "0");
 });
+const opacity = computed(() => {
+  void props.rev;
+  return props.node.opacity;
+});
 
 function onImageSelect(e: Event): void {
   emit("update", "image", (e.target as HTMLSelectElement).value);
@@ -84,6 +88,10 @@ function onInteractableChange(e: Event): void {
     <div class="field">
       <label title="Label Color">标签色</label>
       <input type="color" :value="labelColor" @input="onColorInput('labelColor', $event)" @change="onColorInput('labelColor', $event)" />
+    </div>
+    <div class="field">
+      <label title="Opacity（0..1）">不透明度</label>
+      <NumberField :model-value="opacity" :step="0.05" :min="0" :max="1" title="不透明度（0..1，1 = 不透明）" @commit="(v) => emit('update', 'opacity', v)" />
     </div>
     <div class="field">
       <label title="Font Size（设计像素；100px = 1 单位）">标签字号</label>

@@ -37,6 +37,10 @@ const color = computed(() => {
   void props.rev;
   return "#" + (props.node.color & 0xffffff).toString(16).padStart(6, "0");
 });
+const opacity = computed(() => {
+  void props.rev;
+  return props.node.opacity;
+});
 
 function onTextInput(e: Event): void {
   emit("update", "text", (e.target as HTMLTextAreaElement).value);
@@ -76,6 +80,10 @@ function onItalicChange(e: Event): void {
     <div class="field">
       <label title="Color">颜色</label>
       <input type="color" :value="color" @input="onColorInput" @change="onColorInput" />
+    </div>
+    <div class="field">
+      <label title="Opacity（0..1）">不透明度</label>
+      <NumberField :model-value="opacity" :step="0.05" :min="0" :max="1" title="不透明度（0..1，1 = 不透明）" @commit="(v) => emit('update', 'opacity', v)" />
     </div>
     <div class="field">
       <label title="Font Family">字族</label>

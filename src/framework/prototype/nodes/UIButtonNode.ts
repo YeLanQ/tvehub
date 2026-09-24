@@ -67,6 +67,7 @@ export class UIButtonNode extends UIWidgetNode implements IUIButtonNode {
       components: this.components,
       size: this.size,
       sortOrder: this.sortOrder,
+      opacity: this.opacity,
       image: this.image,
       color: this.color,
       label: this.label,
