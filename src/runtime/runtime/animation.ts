@@ -1318,6 +1318,14 @@ export async function createAnimationsWorker(meshes, models, workerUrl) {
             }
           }
         }
+        // 回读缓冲消费完归还 Worker 复用（免每帧 TypedArray 分配；state/events
+        // 是克隆副本不受影响）
+        try {
+          worker.postMessage(
+            { type: "recycleResult", transforms, morphs },
+            [transforms.buffer, morphs.buffer],
+          );
+        } catch { /* Worker 已终止 */ }
         pending = null;
       }
       // 2) 附件跟随 + IK 后包围球重算（主线程，需真实对象）

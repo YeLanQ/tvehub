@@ -401,6 +401,14 @@ export class NavSystem {
     navAgentPathVisuals.clear();
   }
 
+  /** 有活动代理（任一代理持有待走路径）：渲染循环空闲降帧的保持全速信号 */
+  hasActiveAgents(): boolean {
+    for (const agent of this.agents.values()) {
+      if (agent.path && agent.path.length > 0) return true;
+    }
+    return false;
+  }
+
   /** 推进全部代理（编辑器渲染回调调用；路径/碰撞全部查烘焙表） */
   update(dt: number): void {
     if (dt <= 0) return;

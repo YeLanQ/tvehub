@@ -9,7 +9,7 @@
 | `factory: NodeFactory` | 节点工厂（默认注册表） |
 | `graph: SceneClient` | 场景镜像（读 get/all，写走命令方法） |
 | `events: EventBus<EditorEvents>` | 12 种事件：graph:changed、select:changed、gizmo:state、material/shader/model/animation/audio/physics/particles/logic:changed、shader:error |
-| `renderer: RendererManager` | WebGL/WebGPU 渲染器、后端切换、清晰态 |
+| `renderer: RendererManager` | WebGL/WebGPU 渲染器、后端切换、清晰态；空闲降帧（markActivity/addActivityHook/viewportActive：交互与活动内容全速，静止视口 12fps 省电） |
 | `synchronizer: SceneSynchronizer` | 镜像 Node → three Object3D 同步 |
 | `helperSystem / gizmo: GizmoController` | 辅助线 / 变换手柄 |
 | `terrainPaint: TerrainPaintController` | 地形绘制笔刷（begin/endTerrainPaint） |

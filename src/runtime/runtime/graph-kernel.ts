@@ -109,6 +109,10 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
   const sampleVector = new THREE.Vector3();
   let sampleTimer = 0;
 
+  /** 帧循环复用集合（update 每帧使用；cascadeExec 同步递归，串行安全） */
+  const _framedReuse = new Set<ContainerBehavior>();
+  const _visitedReuse = new Set<string>();
+
   /** 图内不存在的类型键缓存（避免每节点重复查找注册表） */
   const typeDefOf = (node: GNode) => nodeTypeDef(node.type);
 
@@ -748,7 +752,9 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
       // 容器每帧驱动（状态轮询、激活态子驱动步进等，语义在容器行为模块内）。
       // 嵌套容器随父级调度：容器自身在父链上不激活（如状态机内打了所属状态的
       // 行为树容器，切走状态后）→ 帧钩子整体停摆，成员驱动器随之停止
-      const framed = new Set<ContainerBehavior>();
+      // （framed/visited 集合复用，免每帧分配；cascadeExec 同步递归完成，串行安全）
+      const framed = _framedReuse;
+      framed.clear();
       for (const n of graph.nodes) {
         if (n.unresolved) continue;
         const beh = containers[n.type];
@@ -768,7 +774,8 @@ export function createGraphKernel(ctx: GraphBehaviorsCtx, modules: GraphRuntimeM
           `[graph] 每帧执行链步进中（${tickChainEntries.length} 个入口，事件节点 ${tickEvents.length}）`,
         );
         for (const t of tickChainEntries) {
-          cascadeExec(t.id, new Set(), "next", t.dstPort);
+          _visitedReuse.clear();
+          cascadeExec(t.id, _visitedReuse, "next", t.dstPort);
         }
       }
       for (const behavior of frameOps) {

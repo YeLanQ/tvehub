@@ -769,15 +769,16 @@ async function main() {
   const hasUICanvas = nodes.some(({ json }) => json.type === "uiCanvasNode");
   // 脚本图存在时保持逐帧更新：图行为（巡逻/追击/旋转/浮动/设值等）每帧改位姿，世界矩阵须重算
   const hasScriptGraph = !!cfg.scriptGraph;
+  // 脚本存在性单独判定：tve Light 组件可在运行时开 castShadow（component-light），
+  // 有脚本的场景不做"无投影灯 → 关闭阴影管线"的推断
+  const hasScripts = hasScriptComponent || hasEntryScript || hasScriptGraph;
   if (
-    !hasScriptComponent &&
-    !hasEntryScript &&
+    !hasScripts &&
     clips.length === 0 &&
     !hasModelClip &&
     !physicsActive &&
     !hasUICanvas &&
-    !hasNavNodes &&
-    !hasScriptGraph
+    !hasNavNodes
   ) {
     scene.matrixWorldAutoUpdate = false;
     scene.traverse((o) => {
@@ -786,6 +787,16 @@ async function main() {
         o.shadow.needsUpdate = true;
       }
     });
+    // 阴影管线按需：静态场景且无任何投影灯 → 整条 shadow map 管线关闭
+    // （渲染器不再为阴影做逐灯深度 pass 准备；场景灯后续不会变化）
+    if (renderer.shadowMap && renderer.shadowMap.enabled) {
+      let anyCaster = false;
+      scene.traverse((o) => {
+        if (anyCaster || o.isLight !== true || o.castShadow !== true) return;
+        anyCaster = true;
+      });
+      if (!anyCaster) renderer.shadowMap.enabled = false;
+    }
   }
 
   // 帧间隔计时（THREE.Clock 已在 r183 弃用 → Timer；connect 启用页面可见性处理，
@@ -794,6 +805,54 @@ async function main() {
   timer.connect(document);
   // 着色器时间（钩子 _Time；按帧间隔累加，与 timer 的 getDelta 取值互不干扰）
   let shaderTime = 0;
+
+  // —— 帧循环调度（功耗：帧率上限 + 不可见暂停）——
+  // 目标帧率 performance.frameRate（config.json 与场景设置通用键；缺省 60，0 = 不限）。
+  // 高刷屏（120/144Hz）默认锁 60 显著降低 CPU/GPU 功耗与发热；需要原生流畅度时设 0。
+  // 页面隐藏（document.hidden）或预览容器不可见（IntersectionObserver：预览面板
+  // 切走/产物页滚出视口）时暂停整个循环，恢复后丢弃暂停期间的巨大帧间隔。
+  const perfFrameRate = (() => {
+    const v =
+      (cfg && cfg.performance && cfg.performance.frameRate) ??
+      (sceneData.settings && sceneData.settings.performance && sceneData.settings.performance.frameRate);
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 60;
+  })();
+  let pageHidden = document.hidden;
+  let viewVisible = true;
+  let rafPending = false;
+  let resumePending = true; // 首帧也走恢复路径（丢弃首帧前的时间间隔）
+  // —— 帧率上限（Bresenham 数帧累积器）——
+  // 启动期测定显示器刷新率，按 cap/hz 的比例给每帧配额、累积到 1 渲染一帧。
+  // 数帧不数时间：对 rAF 时间戳抖动完全免疫；比例配额在任意刷新率上精确锁到
+  // 上限（60Hz 全渲零回归、90Hz→60、144Hz→60、240Hz→60）。
+  // 探测算法：预热 10 帧后采 60 个帧距取中位数——启动首帧被着色器编译/Worker
+  // 初始化拖慢时均值会被拉低、配额随之偏高（实测 240Hz 屏锁出 77fps 的根因），
+  // 中位数 + 排除 >100ms 异常帧距后不受污染。
+  let lastProbeT = -1;
+  let probeWarm = 0;
+  const probeDeltas = [];
+  let quota = 1; // 启动首帧即渲染
+  let quotaInc = 0; // cap=0 时恒 0（配额路径整体旁路）
+  document.addEventListener("visibilitychange", () => {
+    pageHidden = document.hidden;
+    if (pageHidden) resumePending = true;
+    scheduleFrame();
+  });
+  if (typeof IntersectionObserver === "function") {
+    new IntersectionObserver(
+      (entries) => {
+        viewVisible = entries[entries.length - 1].isIntersecting;
+        if (!viewVisible) resumePending = true;
+        scheduleFrame();
+      },
+      { threshold: 0 },
+    ).observe(document.documentElement);
+  }
+  function scheduleFrame() {
+    if (rafPending || pageHidden || !viewVisible) return;
+    rafPending = true;
+    requestAnimationFrame(frame);
+  }
 
   // —— 调试统计面板（编辑器 postMessage 或 F3 键切换）——
   let debugVisible = false;
@@ -882,7 +941,41 @@ async function main() {
   });
 
   function frame(now) {
-    requestAnimationFrame(frame);
+    rafPending = false;
+    if (pageHidden || !viewVisible) return; // 暂停态：由可见性监听恢复调度
+    // 刷新率探测（一次，仅有限帧率时）：预热 + 帧距中位数 → 比例配额
+    if (perfFrameRate > 0 && quotaInc === 0) {
+      if (lastProbeT < 0) {
+        lastProbeT = now;
+      } else {
+        const d = now - lastProbeT;
+        lastProbeT = now;
+        if (d > 0 && d < 100) {
+          if (probeWarm < 10) probeWarm++;
+          else probeDeltas.push(d);
+          if (probeDeltas.length >= 60) {
+            probeDeltas.sort((a, b) => a - b);
+            const hz = 1000 / probeDeltas[Math.floor(probeDeltas.length / 2)];
+            // cap ≥ 实测刷新率 → 配额 1（全渲）；否则按比例（60 上限在 60Hz 屏零回归）
+            quotaInc = Math.min(1, perfFrameRate / Math.max(30, hz));
+          }
+        }
+      }
+    }
+    if (quotaInc > 0) {
+      quota += quotaInc;
+      if (quota < 1) {
+        scheduleFrame();
+        return;
+      }
+      quota -= 1;
+    }
+    if (resumePending) {
+      // 暂停恢复/首帧：丢弃暂停期间的巨大时间间隔（各子系统的 dt 钳制不依赖它）
+      resumePending = false;
+      timer.update(now);
+      timer.getDelta();
+    }
     timer.update(now);
     const dt = timer.getDelta();
     shaderTime += dt;
@@ -908,8 +1001,9 @@ async function main() {
     // 场景相机节点位姿（可能被脚本/动画/物理驱动）每帧回填渲染相机
     syncPose();
     // 阴影相机贴合（每 20 帧节拍；首次立即）：范围贴合场景包围盒 + 兑现自动
-    // normalBias——没有这一步，受光面会出现整面自阴影条纹（shadow acne）
-    refitShadowCameras(scene);
+    // normalBias——没有这一步，受光面会出现整面自阴影条纹（shadow acne）。
+    // 静态冻结场景跳过：世界矩阵已停更（对象不会动），阴影也已一次性贴合+冻结
+    if (scene.matrixWorldAutoUpdate) refitShadowCameras(scene);
     // UI 相机叠加：画布根贴合渲染相机（相机位姿回填之后）
     uiApi.update(cam);
     applyClearFlags();
@@ -942,8 +1036,9 @@ async function main() {
       debugMeshes = m;
       debugVertices = v;
     }
+    scheduleFrame();
   }
-  frame();
+  scheduleFrame();
 
   postLog("info", "网页预览已启动（独立运行时）");
 }

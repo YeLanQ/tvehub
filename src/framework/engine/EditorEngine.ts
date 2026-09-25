@@ -71,7 +71,7 @@ import { buildNishitaSkyEquirect } from "./modules/nishitaSky";
 import { pickSelectableNodeId } from "./modules/picking";
 import { MaterialManager } from "../material/MaterialManager";
 import { ShaderManager } from "../material/ShaderManager";
-import { hookDataOf, tickAllHookTime } from "../material/shaderHooks";
+import { hookDataOf, hookMaterialCount, tickAllHookTime } from "../material/shaderHooks";
 import { loadNodeMaterialBackend, setNodeMaterialBackend, tickAllNodeHookTime } from "../material/nodeMaterialBackend";
 import { ModelManager, type ModelFileAccess } from "../mesh";
 import { AnimationSystem } from "../animation";
@@ -572,6 +572,15 @@ export class EditorEngine {
       begin: () => this.uiSystem.beginSolo(),
       end: () => this.uiSystem.endSolo(),
     });
+    // 空闲降帧的活动信号：有活动内容（动画播放/粒子发射/物理模拟/导航代理/
+    // 逻辑运行/着色器 _Time 钩子）时视口保持全速，静止场景降频省电
+    this.renderer.addActivityHook(() => this.animation.hasActive());
+    this.renderer.addActivityHook(() => this.particles.hasActive());
+    this.renderer.addActivityHook(() => this.physics.isSimulatingActive());
+    this.renderer.addActivityHook(() => this.nav.hasActiveAgents());
+    this.renderer.addActivityHook(() => this.logic.hasRunning());
+    this.renderer.addActivityHook(() => hookMaterialCount() > 0);
+    this.events.on("select:changed", () => this.renderer.markActivity());
     this.renderer.setRenderCb(() => {
       // 帧间隔（Timer.update 每帧一次；getDelta 取值在本帧内多次调用结果一致）
       this.timer.update();
@@ -597,8 +606,9 @@ export class EditorEngine {
       this.audio.update();
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
-      // 阴影相机贴合场景包围盒（按节拍惰性重算，场景增删/移动后投影范围自动跟上）
-      this.synchronizer.refitShadowCameras();
+      // 阴影相机贴合场景包围盒（按节拍惰性重算，场景增删/移动后投影范围自动跟上）；
+      // 视口静止（无交互无活动内容）时跳过周期重贴合——对象不动，范围不会变
+      this.synchronizer.refitShadowCameras(false, this.renderer.viewportActive());
       // UI 相机叠加：画布根贴合活动渲染相机 + 按 SortOrder 合成 Widget 渲染序
       // （renderActive 用的同一活动相机；scene 模式 = 编辑器轨道相机，非 null）
       // gizmo 拖拽中把被拖对象传给布局解析（拖拽子树跳过，避免位置被拉回）
@@ -1580,6 +1590,8 @@ export class EditorEngine {
   // ===================== 数据 → Three 同步 =====================
 
   private onGraphChange(c: SceneChange): void {
+    // 场景数据变化 = 视口活动：空闲降帧立即恢复全速渲染本次变更
+    this.renderer.markActivity();
     this.synchronizer.onGraphChange(c, this.graph);
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     // 节点子树移除 → 其动画绑定（mixer/骨骼辅助线）一并解除

@@ -569,7 +569,9 @@ function makePropsDriver(target, props, useFrom) {
     apply(k) {
       for (const s of spec) {
         if (s.base) {
-          const outv = { ...s.base };
+          // base 即输出对象（in-place 写插值分量；非插值分量保持快照原值）：
+          // 免去每属性每帧的 {...base} 拷贝分配——插值分量按 k 幂等重算
+          const outv = s.base;
           for (const kk of s.keys) {
             outv[kk] = s.from[kk] + (s.to[kk] - s.from[kk]) * k;
           }
@@ -646,14 +648,22 @@ function makeColorDriver(from, to) {
 
 const ACTIVE = new Set();
 let timeScale = 1;
+// 快照迭代缓冲（复用模块级数组，避免每帧展开 Set 的分配；回调内创建/停止 tween 均安全）
+const ACTIVE_SNAPSHOT = [];
 
 /** 每帧推进（tve.mjs tickTime 驱动；dt 为收敛后的帧增量秒数） */
 export function tickTweens(dt) {
   if (!ACTIVE.size || dt <= 0) return;
   const scaled = dt * timeScale;
   if (scaled <= 0) return;
-  // 快照迭代：回调内创建/停止 tween 均安全
-  for (const t of [...ACTIVE]) t.__tick(scaled);
+  const n = ACTIVE.size;
+  ACTIVE_SNAPSHOT.length = n;
+  let i = 0;
+  for (const t of ACTIVE) ACTIVE_SNAPSHOT[i++] = t;
+  for (let j = 0; j < n; j++) {
+    const t = ACTIVE_SNAPSHOT[j];
+    if (t) t.__tick(scaled); // 快照期间被停止的 tween 跳过
+  }
 }
 
 /** 重置（installRuntime 重入：清空上一轮预览的残留 tween 与全局时标） */

@@ -21,7 +21,7 @@ sky/fog/terrain → createPhysicsWorker → createUI → createLogic → createS
 createGraphBehaviors → createNavRuntime → createClipAnimations/createAnimationsWorker
 → createParticles → createAudios → createRenderCamera → requestAnimationFrame(frame)。
 
-**帧循环固定顺序**（player.mjs:882-921，动顺序前先读懂注释链）：
+**帧循环固定顺序**（frame() 本体；动顺序前先读懂注释链）：
 
 ```
 tickShaderTime → scripts.fixedUpdate(dt)      // 1/60 固定步长，0..n 次
@@ -29,11 +29,21 @@ tickShaderTime → scripts.fixedUpdate(dt)      // 1/60 固定步长，0..n 次
 → animations.update → physicsApi.update → clipAnims.update → audiosApi.update
 → particlesApi.update                          // 位姿更新后再发射（world 出生点跟上）
 → scripts.lateUpdate(dt) → syncPose()          // 相机节点位姿回填渲染相机
-→ refitShadowCameras(scene)                    // 每 20 帧节拍，防 shadow acne
+→ refitShadowCameras(scene)                    // 每 20 帧节拍（静态冻结场景跳过）
 → uiApi.update(cam) → applyClearFlags
 → uiApi.beginRender → layerPassBits/renderLayerPasses（掩码全开=单 pass 零开销）
 → uiApi.endRender
 ```
+
+**帧调度层（功耗，frame() 之外包一层 scheduleFrame）**：目标帧率
+`performance.frameRate`（config.json 与场景 settings.performance 通用键；缺省 60，
+0 = 不限）——高刷屏锁 60 降 CPU/GPU 功耗；页面隐藏（document.hidden）或容器
+不可见（IntersectionObserver）时暂停整个循环，恢复后丢弃暂停期间的巨大帧间隔。
+`performance.powerPreference`（"high-performance" / "low-power"，缺省 "default"）
+控制 GPU 偏好——缺省不再强制独显（原 high-performance 使混合 GPU 设备功耗数倍）。
+静态场景（无脚本/剪辑/物理/UI 画布/导航）且无投影灯时还会整体关闭阴影管线
+（`renderer.shadowMap.enabled = false`；有脚本时不推断——tve Light 组件可运行时开
+castShadow）。
 
 ## 使用例
 

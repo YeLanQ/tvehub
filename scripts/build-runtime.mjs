@@ -309,6 +309,8 @@ export function buildRuntime(why = "") {
         write: false, // 见上：后处理 + 内容比对后再落盘
         emptyOutDir: false, // engine 为共享产物目录（vendor/extra 输出同在其中），只增量写本步产物
         copyPublicDir: false, // outDir 在 publicDir 内部：必须禁用，否则整个 public/ 会被复制进产物目录
+        // 不 minify：smoke 回归对产物 .mjs 文本做形态断言（导出名/调用形态），
+        // 压缩会破坏该体系；引擎体积大头是 vendor 官方构建（已压缩），此处收益小
         minify: false,
         sourcemap: false,
         rollupOptions: {

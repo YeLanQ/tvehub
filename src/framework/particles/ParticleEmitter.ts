@@ -239,6 +239,13 @@ export class ParticleEmitter {
     return !s.looping && this.time >= s.startDelay + s.duration && this.alive === 0;
   }
 
+  /** 正在发射（未暂停、未被 stop、发射窗口内）。与 finished/state.playing 的差异：
+   *  stop() 后的循环系统 finished 恒 false、playing 恒 true，二者都分不出
+   *  "停了的循环发射器"；此 getter 才是"还在产生新粒子"的准确语义 */
+  get emitting(): boolean {
+    return !this.paused && !this.emissionStopped && !this.finished;
+  }
+
   get state(): ParticleRuntimeState {
     return {
       playing: !this.paused && !this.finished,

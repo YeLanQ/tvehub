@@ -5,14 +5,21 @@ import * as THREE from "../core/three.module.min.js";
 
 
 
-/** WebGL 渲染器参数：首选高性能 GPU（WebGL 的 powerPreference 各平台均被浏览器
- * 采纳，含 Windows 双显卡）；preserveDrawingBuffer 仅在清除标志需要跨帧保留
- * 颜色/深度缓冲时开启（默认呈现后缓冲失效，关掉可省一整块画布带宽，
- * 对移动端 tiled GPU 影响尤其明显）。 */
+/** GPU 偏好（功耗）：performance.powerPreference 可配 "high-performance" / "low-power"，
+ *  缺省 "default"（浏览器均衡选择，双显卡笔记本不再强制独显——原 high-performance
+ *  会使混合 GPU 设备整页功耗数倍提升、持续发热）。 */
+function powerPref(cfg) {
+  const v = cfg && cfg.performance && cfg.performance.powerPreference;
+  return v === "high-performance" || v === "low-power" ? v : "default";
+}
+
+/** WebGL 渲染器参数：preserveDrawingBuffer 仅在清除标志需要跨帧保留
+ *  颜色/深度缓冲时开启（默认呈现后缓冲失效，关掉可省一整块画布带宽，
+ *  对移动端 tiled GPU 影响尤其明显）。 */
 function makeWebGL(cfg, preserveDrawingBuffer) {
   return new THREE.WebGLRenderer({
     antialias: cfg.antiAliasing !== 0,
-    powerPreference: "high-performance",
+    powerPreference: powerPref(cfg),
     preserveDrawingBuffer: preserveDrawingBuffer === true,
   });
 }
@@ -62,7 +69,9 @@ export async function createRenderer(cfg) {
       // 仍传递以求在支持的平台上生效；Windows 双显卡无页面侧手段，导出产物
       // 只能靠用户的浏览器/系统 GPU 首选项，编辑器自身窗口则由 tauri.conf 的
       // additionalBrowserArgs 在浏览器进程级强制（该级别 Windows 生效）。
-      powerPreference: "high-performance",
+      // 缺省 default（功耗均衡，见 powerPref）；可经 performance.powerPreference
+      // 显式要求独显（"high-performance"）。
+      powerPreference: powerPref(cfg),
     });
     // WebGPU 后端为异步初始化：必须先 await init() 再 render()（WebGL 无此要求）
     await renderer.init();

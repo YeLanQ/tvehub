@@ -262,6 +262,14 @@ export class LogicSystem {
 
   // ===================== 推进 =====================
 
+  /** 有运行中的状态机/行为树：渲染循环空闲降帧的保持全速信号 */
+  hasRunning(): boolean {
+    for (const binding of this.bindings.values()) {
+      if (binding.running) return true;
+    }
+    return false;
+  }
+
   /** 推进全部运行中的运行器（编辑器渲染回调调用；dt ≤ 0 跳过） */
   update(dt: number): void {
     if (dt <= 0) return;

@@ -37,12 +37,20 @@ import { readPropPath, writePropPath } from "./graph-prop-path";
  * 对象世界坐标平移分量（matrixWorld 平移列；不引入 THREE 值导入）。
  * 先刷新父链矩阵（与 three getWorldPosition 同语义）——图在渲染前写入位姿时，
  * matrixWorld 可能还是上一帧的，直接读会得到过期坐标。
+ * 写入调用方提供的 out 对象（复用，避免每调用点每帧分配）。
  */
-function worldPos(obj: THREE.Object3D): { x: number; y: number; z: number } {
+function worldPosInto(obj: THREE.Object3D, out: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
   obj.updateWorldMatrix(true, false);
   const e = obj.matrixWorld.elements;
-  return { x: e[12] ?? 0, y: e[13] ?? 0, z: e[14] ?? 0 };
+  out.x = e[12] ?? 0;
+  out.y = e[13] ?? 0;
+  out.z = e[14] ?? 0;
+  return out;
 }
+
+/** 距离求值（sense.dist）的世界坐标复用缓冲（a/b 各一） */
+const _distA = { x: 0, y: 0, z: 0 };
+const _distB = { x: 0, y: 0, z: 0 };
 
 /** 祖先链判定（obj 是否在 root 子树内）：移动者不能把"自己的子级"当路径点/追击目标 */
 function isDescendantOf(obj: THREE.Object3D, root: THREE.Object3D): boolean {
@@ -340,6 +348,9 @@ export function createCoreDriversModule(): GraphRuntimeModule {
         const base = new Map<string, { x: number; y: number; z: number }>();
         /** 路径点模式：当前巡回的路径点下标 */
         const wpIdx = new Map<string, number>();
+        /** 世界坐标复用缓冲（mover/waypoint 各一；免每目标每帧分配） */
+        const _moverWorld = { x: 0, y: 0, z: 0 };
+        const _wpWorld = { x: 0, y: 0, z: 0 };
         return {
           step(dt, targets) {
             // 路径点模式：路径口接入的实体位置即路径点（多入按连线顺序巡回）。
@@ -378,8 +389,8 @@ export function createCoreDriversModule(): GraphRuntimeModule {
                   wpIdx.set(t.id, (idx + 1) % waypoints.length);
                   continue;
                 }
-                const moverWorld = worldPos(t.obj);
-                const wpWorld = worldPos(wp.obj);
+                const moverWorld = worldPosInto(t.obj, _moverWorld);
+                const wpWorld = worldPosInto(wp.obj, _wpWorld);
                 if (Math.hypot(moverWorld.x - wpWorld.x, moverWorld.y - wpWorld.y, moverWorld.z - wpWorld.z) < WAYPOINT_ARRIVE) {
                   wpIdx.set(t.id, (idx + 1) % waypoints.length);
                   continue;
@@ -439,6 +450,9 @@ export function createCoreDriversModule(): GraphRuntimeModule {
           string,
           { pts: { x: number; y: number; z: number }[] | null; seg: number; preyX: number; preyZ: number; t: number } | undefined
         >();
+        /** 世界坐标复用缓冲（mover/prey 各一；免每目标每帧分配） */
+        const _moverWorld = { x: 0, y: 0, z: 0 };
+        const _preyWorld = { x: 0, y: 0, z: 0 };
         return {
           step(dt, targets) {
             const prey = unwrapEntity(k.evalInput(node.id, "prey"));
@@ -457,8 +471,8 @@ export function createCoreDriversModule(): GraphRuntimeModule {
             for (const t of targets) {
               // 同巡逻：跨父级时局部坐标不可比，一律世界坐标判定/换向
               if (prey.obj === t.obj || isDescendantOf(prey.obj, t.obj)) continue;
-              const moverWorld = worldPos(t.obj);
-              const preyWorld = worldPos(prey.obj);
+              const moverWorld = worldPosInto(t.obj, _moverWorld);
+              const preyWorld = worldPosInto(prey.obj, _preyWorld);
               const worldDist = Math.hypot(moverWorld.x - preyWorld.x, moverWorld.y - preyWorld.y, moverWorld.z - preyWorld.z);
               if (worldDist <= stop) continue;
               // 本帧移动不得跨进最小距离边界（防单帧步长过大造成重叠）
@@ -721,8 +735,8 @@ export function createCoreDataModule(): GraphRuntimeModule {
           );
           return 0;
         }
-        const a = worldPos(from.obj);
-        const b = worldPos(to.obj);
+        const a = worldPosInto(from.obj, _distA);
+        const b = worldPosInto(to.obj, _distB);
         return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
       },
     },

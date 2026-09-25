@@ -30,6 +30,12 @@ interface ProxyBinding {
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data;
   switch (msg.type) {
+    case "recycleResult": {
+      // 主线程消费完的回读缓冲归还复用（transform/morph 各一池）
+      if (msg.transforms?.buffer) transformPool.push(msg.transforms);
+      if (msg.morphs?.buffer) morphPool.push(msg.morphs);
+      break;
+    }
     case "init": {
       try {
         const { meshEntries, modelMap } = msg;
@@ -226,6 +232,18 @@ function collectProxyBindings(meshEntries: any[]): ProxyBinding[] {
 // 状态回读：每帧从代理骨骼提取变换 + 形态键权重 + 状态快照
 // ---------------------------------------------------------------------------
 
+/** 回读缓冲池（主线程消费 stepped 后经 recycleResult 归还；免每帧 TypedArray 分配） */
+const transformPool: Float32Array[] = [];
+const morphPool: Float32Array[] = [];
+
+/** 从池取缓冲：尺寸不匹配（绑定结构变化）时清池新建 */
+function takeBuf(pool: Float32Array[], len: number): Float32Array {
+  const top = pool[pool.length - 1];
+  if (top && top.length === len) return pool.pop()!;
+  pool.length = 0;
+  return new Float32Array(len);
+}
+
 function readbackState(): {
   transforms: Float32Array;
   morphs: Float32Array;
@@ -238,8 +256,8 @@ function readbackState(): {
     for (const mm of b.morphMeshes) totalMorphs += mm.influenceCount;
   }
 
-  const transforms = new Float32Array(totalBones * 7);
-  const morphs = new Float32Array(totalMorphs);
+  const transforms = takeBuf(transformPool, totalBones * 7);
+  const morphs = takeBuf(morphPool, totalMorphs);
   const state: any = {};
 
   let tOff = 0;

@@ -6,7 +6,9 @@
 // → { type: "init", nodes, terrains, settings }
 // ← { type: "ready", dynamicIds: string[], bodyInfos: Record<string, {mode,gravityScale,colliderCount}> }
 // → { type: "step", dt, transforms: Float32Array }
+// ← { type: "recycleInput", buffer: ArrayBuffer }（step 输入缓冲消费完归还主线程复用）
 // ← { type: "stepped", transforms: Float32Array, velocities: Float32Array, collisions: any[] }
+// → { type: "recycleResult", buf: Float32Array }（stepped 结果缓冲消费完归还 Worker 复用）
 // → { type: "command", method: string, args: any[] }
 // ← { type: "result", method: string, value: any }
 // → { type: "castRay", id: number, options: any }
@@ -19,10 +21,16 @@ let api: any = null;
 let proxyMap = new Map<string, THREE.Object3D>();
 let allNodes: { nodeId: string; obj: THREE.Object3D }[] = [];
 let dynamicIds: string[] = [];
+/** stepped 结果缓冲池（主线程消费后经 recycleResult 归还复用） */
+const resultPool: Float32Array[] = [];
 
 self.onmessage = async (e: MessageEvent) => {
   const msg = e.data;
   switch (msg.type) {
+    case "recycleResult": {
+      if (msg.buf?.buffer) resultPool.push(msg.buf as Float32Array);
+      break;
+    }
     case "init": {
       try {
         const { nodes, terrains, settings } = msg;
@@ -52,8 +60,10 @@ self.onmessage = async (e: MessageEvent) => {
           obj.position.set(transforms[j], transforms[j + 1], transforms[j + 2]);
           obj.quaternion.set(transforms[j + 3], transforms[j + 4], transforms[j + 5], transforms[j + 6]);
         }
+        // 输入缓冲消费完立即归还主线程复用（零拷贝往返；免每帧 nodes×7 分配）
+        (self as any).postMessage({ type: "recycleInput", buffer: transforms.buffer }, [transforms.buffer]);
         api.update(dt);
-        const out = new Float32Array(dynamicIds.length * 7);
+        const out = resultPool.pop() ?? new Float32Array(dynamicIds.length * 7);
         const vel = new Float32Array(dynamicIds.length * 3);
         for (let i = 0, j = 0, k = 0; i < dynamicIds.length; i++, j += 7, k += 3) {
           const obj = proxyMap.get(dynamicIds[i]);

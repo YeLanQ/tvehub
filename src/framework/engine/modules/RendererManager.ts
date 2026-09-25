@@ -7,6 +7,11 @@ export type RendererBackend = "webgl" | "webgpu" | "auto";
 /** 编辑器视口默认清屏色（无天空盒节点时的场景背景） */
 export const EDITOR_BACKGROUND_COLOR = 0x141414;
 
+/** 空闲判定窗口：最后一次交互/场景活动后该毫秒数内保持全速渲染 */
+const IDLE_DELAY_MS = 800;
+/** 空闲视口帧率上限：视口静止（无交互且无活动内容）时的降频渲染目标 */
+const IDLE_FPS = 12;
+
 /** 渲染统计快照（调试面板每帧/定时拉取） */
 export interface RenderStats {
   fps: number;
@@ -100,12 +105,20 @@ export class RendererManager {
   /** 渲染循环暂停（预览/脚本等中央区域被独立面板接管时暂停后台渲染） */
   private paused = false;
 
+  /** 最近一次视口活动（交互输入/相机运动/场景活动钩子）时间戳——空闲降帧的基准 */
+  private lastActivityAt = performance.now();
+  /** 上一次空闲降帧渲染的时间戳 */
+  private lastIdleRenderAt = 0;
+  /** 场景活动谓词（引擎注入：动画播放中/粒子发射中/物理模拟中等返回 true 即保持全速） */
+  private activityHooks: (() => boolean)[] = [];
+
   /** 渲染统计：FPS（EMA 平滑）+ 帧时间戳 */
   private statsFps = 0;
   private statsLastTime = 0;
-  /** 场景遍历统计缓存（renderActive 后更新） */
+  /** 场景遍历统计缓存（getStats 被拉取时按需更新；面板关闭 = 零遍历） */
   private statsMeshes = 0;
   private statsVertices = 0;
+  private statsTraverseAt = 0;
 
   async mount(
     container: HTMLElement,
@@ -169,6 +182,15 @@ export class RendererManager {
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.08;
 
+    // 空闲降帧的活动信号：任何视口输入与相机运动（含阻尼收敛期间）恢复全速渲染。
+    // passive 监听只写时间戳，无分配；键盘挂 window（快捷键多在全局层）。
+    const mark = (): void => this.markActivity();
+    dom.addEventListener("pointerdown", mark, { passive: true });
+    dom.addEventListener("pointermove", mark, { passive: true });
+    dom.addEventListener("wheel", mark, { passive: true });
+    window.addEventListener("keydown", mark, { passive: true });
+    this.orbit.addEventListener("change", mark);
+
     dom.addEventListener("contextmenu", (e) => e.preventDefault(), { passive: false });
     dom.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
     dom.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
@@ -200,6 +222,22 @@ export class RendererManager {
 
   setRenderCb(cb: () => void): void {
     this.renderCb = cb;
+  }
+
+  /** 标记视口活动（交互/场景变化/系统活动）：空闲降帧立即回到全速渲染 */
+  markActivity(): void {
+    this.lastActivityAt = performance.now();
+  }
+
+  /** 注入场景活动谓词（返回 true = 有活动内容，视口保持全速；如动画播放中） */
+  addActivityHook(hook: () => boolean): void {
+    this.activityHooks.push(hook);
+  }
+
+  /** 视口是否有活动（最近 IDLE 窗口内有交互，或任一活动谓词为真） */
+  viewportActive(): boolean {
+    if (performance.now() - this.lastActivityAt <= IDLE_DELAY_MS) return true;
+    return this.activityHooks.some((h) => h());
   }
 
   /** 注入着色器编译失败回调（引擎接 "shader:error" 事件 → 编辑器控制台） */
@@ -309,6 +347,16 @@ export class RendererManager {
   private loop = (): void => {
     if (this.paused) return;
     this.raf = requestAnimationFrame(this.loop);
+    // 空闲降帧（功耗）：无交互且无活动内容（活动钩子，见 viewportActive）时视口
+    // 降频渲染——编辑器空闲时 GPU/CPU 从满速 rAF 降到 12fps，交互即刻恢复全速
+    if (
+      performance.now() - this.lastActivityAt > IDLE_DELAY_MS &&
+      !this.activityHooks.some((h) => h())
+    ) {
+      const now = performance.now();
+      if (now - this.lastIdleRenderAt < 1000 / IDLE_FPS) return;
+      this.lastIdleRenderAt = now;
+    }
     this.applySizeIfNeeded();
     this.orbit?.update();
     this.renderCb?.();
@@ -316,7 +364,7 @@ export class RendererManager {
     this.tickStats();
   };
 
-  /** 每帧统计：FPS（EMA 平滑）+ 场景网格/顶点遍历 */
+  /** 每帧统计：FPS（EMA 平滑）。网格/顶点遍历统计只在 getStats 被拉取时按需做 */
   private tickStats(): void {
     const now = performance.now();
     if (this.statsLastTime > 0) {
@@ -327,27 +375,31 @@ export class RendererManager {
       }
     }
     this.statsLastTime = now;
-    // 场景遍历统计（兼容 WebGPU：不依赖 renderer.info）
-    let meshes = 0;
-    let vertices = 0;
-    this.scene.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (mesh.isMesh && mesh.geometry) {
-        const pos = mesh.geometry.getAttribute("position");
-        if (pos) {
-          meshes++;
-          vertices += pos.count;
-        }
-      }
-    });
-    this.statsMeshes = meshes;
-    this.statsVertices = vertices;
   }
 
-  /** 获取渲染统计快照（调试面板用） */
+  /** 获取渲染统计快照（调试面板用；网格/顶点数按需遍历并缓存 500ms） */
   getStats(): RenderStats {
     const gl = this.glRenderer;
     const info = gl?.info;
+    const now = performance.now();
+    if (now - this.statsTraverseAt > 500) {
+      this.statsTraverseAt = now;
+      // 场景遍历统计（兼容 WebGPU：不依赖 renderer.info）
+      let meshes = 0;
+      let vertices = 0;
+      this.scene.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh && mesh.geometry) {
+          const pos = mesh.geometry.getAttribute("position");
+          if (pos) {
+            meshes++;
+            vertices += pos.count;
+          }
+        }
+      });
+      this.statsMeshes = meshes;
+      this.statsVertices = vertices;
+    }
     return {
       fps: Math.round(this.statsFps),
       drawCalls: info?.render.calls ?? 0,

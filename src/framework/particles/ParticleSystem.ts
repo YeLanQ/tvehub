@@ -143,6 +143,16 @@ export class ParticleSystem {
     this.bindings.forEach((b) => b.emitter.update(dt, b.host));
   }
 
+  /** 有活动内容（任一发射器在发射或尚有存活粒子）：空闲降帧的保持全速信号。
+   *  注意不能用 finished/playing——stop() 后的循环系统二者都恒"未完成" */
+  hasActive(): boolean {
+    for (const b of this.bindings.values()) {
+      if (b.emitter.state.paused) continue;
+      if (b.emitter.aliveCount > 0 || b.emitter.emitting) return true;
+    }
+    return false;
+  }
+
   // —— 运行时控制（瞬态，不落盘）——
 
   play(nodeId: string): boolean {

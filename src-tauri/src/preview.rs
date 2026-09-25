@@ -8,13 +8,15 @@
 //! 临时端口（OS 分配），A/B 窗口分别预览各自项目互不串台；窗口销毁时由
 //! `stop_server_for_label` 兜底释放子进程。
 //!
-//! 服务器只做最小静态文件服务（GET，无目录列表/无 Keep-Alive/无压缩），
-//! 全部用 std 实现，不引入第三方依赖；路径守卫防止越界读取。
+//! 服务器只做最小静态文件服务（GET，无目录列表；Keep-Alive + ETag 协商缓存，
+//! 无压缩），全部用 std 实现，不引入第三方依赖；路径守卫防止越界读取。
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write, BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
+#[cfg(test)]
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -575,6 +577,13 @@ struct PreviewServerInproc {
 #[cfg(test)]
 fn stop_server_inproc(server: PreviewServerInproc) {
     server.shutdown.store(true, Ordering::Relaxed);
+    // 唤醒阻塞在 accept 上的循环线程：本地 connect 一次，accept 返回后即检查
+    // 关停标志退出（connect 失败 = 线程已退出，join 照常回收）
+    if let Ok(mut addrs) = server.base_url.trim_start_matches("http://").to_socket_addrs() {
+        if let Some(addr) = addrs.next() {
+            let _ = TcpStream::connect(addr);
+        }
+    }
     if let Some(h) = server.handle {
         let _ = h.join();
     }
@@ -591,17 +600,28 @@ fn accept_loop(
     root: Arc<Mutex<PathBuf>>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let _ = listener.set_nonblocking(true);
-    while !shutdown.load(Ordering::Relaxed) {
+    // 阻塞 accept：空闲时线程挂起零唤醒（原先非阻塞 + 8ms 轮询 ≈125 次唤醒/秒，
+    // 预览存活期间常转）。关停由停止方向本端口 connect 一次唤醒（见
+    // stop_server_inproc），accept 返回后检查标志退出；子进程模式由进程 kill 兜底。
+    // accept 出的连接天然阻塞（无继承非阻塞问题），handle_connection 内的
+    // set_nonblocking(false) 保留为幂等兜底。
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
         match listener.accept() {
             Ok((stream, _)) => {
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
                 let root = root.clone();
                 thread::spawn(move || handle_connection(stream, root));
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(8));
-            }
             Err(_) => {
+                // 瞬时错误（EMFILE 等）退避重试；listener 因关停失效则由循环头检查退出
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(20));
             }
         }
@@ -672,84 +692,137 @@ pub(crate) fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|w| w == needle)
 }
 
+/** 文件协商缓存 ETag：mtime(纳秒)+长度。热切换/重新导出（staging 原子换入）后
+ * mtime 全变 → ETag 全变 → 全量重拉；内容未变的重载走 304 空体（省全量传输） */
+fn etag_of(meta: &fs::Metadata) -> String {
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("\"{:x}-{:x}\"", mtime, meta.len())
+}
+
+/** If-None-Match 匹配（支持 * / 逗号列表 / W/ 弱验证的宽松包含判定） */
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    if_none_match == "*" || if_none_match.contains(etag)
+}
+
 fn handle_connection(mut stream: TcpStream, root: Arc<Mutex<PathBuf>>) {
     // 阻塞模式 + 读超时：Windows 上 accept() 返回的连接会继承监听套接字的非阻塞
-    // 模式（POSIX 不会），而监听套接字为非阻塞轮询 accept。不改回阻塞的话，请求头
-    // 可能立刻读到 WouldBlock（被当成非法方法响应 405），响应体更会在内核缓冲写满
-    // 时由 write_all 半途返回（错误被忽略）——浏览器收到被截断的响应并报
-    // net::ERR_CONNECTION_ABORTED（并发拉取大文件时高发）。读超时保证连接后不发
-    // 数据（预连接/探测）的 socket 不会永久占住线程。
+    // 模式（POSIX 不会；现监听为阻塞 accept，此行为兜底幂等）。读超时保证连接后
+    // 不发数据（预连接/探测）的 socket 不会永久占住线程，也是 Keep-Alive 的空闲
+    // 超时（5s 内无下一请求即关连接）。
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    // 读请求头（最多 64KB，遇到空行即止）
-    let mut buf: Vec<u8> = Vec::with_capacity(2048);
-    let mut chunk = [0u8; 4096];
-    let mut header_end = None;
+    // Keep-Alive 循环：同一连接串行处理多个请求（HTTP/1.1 默认，浏览器拉取 40+
+    // 个引擎模块时免去每模块一条 TCP 连接的握手/慢启动开销）；客户端要求 close
+    // 或读超时/对端关闭即结束。
     loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&chunk[..n]);
-                if let Some(pos) = find_sub(&buf, b"\r\n\r\n") {
-                    header_end = Some(pos);
-                    break;
+        // 读请求头（最多 64KB，遇到空行即止）
+        let mut buf: Vec<u8> = Vec::with_capacity(2048);
+        let mut chunk = [0u8; 4096];
+        let mut header_end = None;
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = find_sub(&buf, b"\r\n\r\n") {
+                        header_end = Some(pos);
+                        break;
+                    }
+                    if buf.len() > 65536 {
+                        break;
+                    }
                 }
-                if buf.len() > 65536 {
-                    break;
+                Err(_) => break,
+            }
+        }
+        let head_len = header_end.unwrap_or(buf.len());
+        // 空请求 = 连接探测/预连接（浏览器提前开的 socket）或空闲超时：直接关闭
+        if buf.is_empty() {
+            break;
+        }
+        let head = String::from_utf8_lossy(&buf[..head_len]);
+        let request_line = head.lines().next().unwrap_or("").trim();
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("");
+        let target = parts.next().unwrap_or("/");
+        if method != "GET" {
+            respond(
+                &mut stream,
+                "405 Method Not Allowed",
+                "text/plain; charset=utf-8",
+                b"405 Method Not Allowed",
+                false,
+                None,
+            );
+            break;
+        }
+        // 请求头解析：连接复用与协商缓存（大小写不敏感）
+        let mut keep_alive = true;
+        let mut if_none_match = String::new();
+        for line in head.lines().skip(1) {
+            let lower = line.to_ascii_lowercase();
+            if let Some(v) = lower.strip_prefix("connection:") {
+                if v.trim().contains("close") {
+                    keep_alive = false;
+                }
+            } else if let Some(v) = lower.strip_prefix("if-none-match:") {
+                if_none_match = v.trim().to_string();
+            }
+        }
+
+        let rel = match sanitize_target(target) {
+            Some(rel) => rel,
+            None => {
+                respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found", false, None);
+                break;
+            }
+        };
+        // 服务目录在请求时刻读取（支持运行中热切换：网页预览产物 ↔ 构建产物）
+        let root = match root.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => {
+                respond(&mut stream, "500 Internal Server Error", "text/plain; charset=utf-8", b"500", false, None);
+                break;
+            }
+        };
+        let file = root.join(&rel);
+        if !file.starts_with(&root) {
+            respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found", false, None);
+            break;
+        }
+        match fs::read(&file) {
+            Ok(body) => {
+                let mime = mime_for(&file);
+                let etag = fs::metadata(&file).map(|m| etag_of(&m)).unwrap_or_default();
+                if !etag.is_empty() && etag_matches(&if_none_match, &etag) {
+                    // 协商缓存命中：304 空体（浏览器用 HTTP 缓存里的未变模块）
+                    respond(&mut stream, "304 Not Modified", mime, b"", keep_alive, Some(&etag));
+                } else {
+                    respond(&mut stream, "200 OK", mime, &body, keep_alive, Some(&etag));
                 }
             }
-            Err(_) => break,
+            Err(_) => {
+                respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found", false, None);
+                break;
+            }
+        }
+        if !keep_alive {
+            break;
         }
     }
-    let head_len = header_end.unwrap_or(buf.len());
-    // 空请求 = 连接探测/预连接（浏览器提前开的 socket）：直接关闭，不写响应
-    if buf.is_empty() {
-        return;
-    }
-    let head = String::from_utf8_lossy(&buf[..head_len]);
-    let request_line = head.lines().next().unwrap_or("").trim();
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or("");
-    let target = parts.next().unwrap_or("/");
-    if method != "GET" {
-        respond(
-            &mut stream,
-            "405 Method Not Allowed",
-            "text/plain; charset=utf-8",
-            b"405 Method Not Allowed",
-        );
-        return;
-    }
-
-    let rel = match sanitize_target(target) {
-        Some(rel) => rel,
-        None => {
-            respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found");
-            return;
-        }
-    };
-    // 服务目录在请求时刻读取（支持运行中热切换：网页预览产物 ↔ 构建产物）
-    let root = match root.lock() {
-        Ok(g) => g.clone(),
-        Err(_) => {
-            respond(&mut stream, "500 Internal Server Error", "text/plain; charset=utf-8", b"500");
-            return;
-        }
-    };
-    let file = root.join(&rel);
-    if !file.starts_with(&root) {
-        respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found");
-        return;
-    }
-    match fs::read(&file) {
-        Ok(body) => {
-            let mime = mime_for(&file);
-            respond(&mut stream, "200 OK", mime, &body);
-        }
-        Err(_) => {
-            respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found");
-        }
-    }
+    // 连接收尾：显式半关闭（发 FIN）代替直接 drop：Windows 上带未读入站数据时
+    // drop 会让内核发 RST，把刚写出的响应一起掐断（浏览器报
+    // net::ERR_CONNECTION_ABORTED，且并行加载下偶发）。再短暂排干对端关闭前的
+    // 残留字节，让其读到干净 EOF。
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+    let mut sink = [0u8; 1024];
+    while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 /// 把请求目标解析为安全相对路径；非法返回 None。
@@ -823,13 +896,29 @@ pub(crate) fn mime_for(path: &Path) -> &'static str {
     }
 }
 
-fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) {
-    // no-store：预览产物随"重新导出"原地覆写且无版本化文件名/协商器，
-    // 不禁缓存时 WebView 会命中旧运行时模块（改了运行时代码预览却不变/仍是旧行为）
-    let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+/// 写响应：keep_alive 决定连接复用声明；etag 提供时带协商缓存头
+/// （Cache-Control must-revalidate：每次都协商，mtime 变化即全量刷新——
+/// 预览产物原地覆写无版本化文件名，靠 ETag 区分新旧；未变的重载 304 空体）。
+fn respond(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    keep_alive: bool,
+    etag: Option<&str>,
+) {
+    let mut head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n",
         body.len()
     );
+    if let Some(tag) = etag {
+        head.push_str(&format!("ETag: {tag}\r\nCache-Control: private, max-age=0, must-revalidate\r\n"));
+    }
+    head.push_str(if keep_alive {
+        "Connection: keep-alive\r\n\r\n"
+    } else {
+        "Connection: close\r\n\r\n"
+    });
     // 头与响应体合并为单次写入（禁用 Nagle 立即发出），减少浏览器并行拉取
     // 大文件（loaders 等）时的分段时间窗口
     let mut out = Vec::with_capacity(head.len() + body.len());
@@ -838,13 +927,6 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]
     let _ = stream.set_nodelay(true);
     let _ = stream.write_all(&out);
     let _ = stream.flush();
-    // 显式半关闭（发 FIN）代替直接 drop：Windows 上带未读入站数据时 drop 会让
-    // 内核发 RST，把刚写出的响应一起掐断（浏览器报 net::ERR_CONNECTION_ABORTED，
-    // 且并行加载下偶发）。再短暂排干对端关闭前的残留字节，让其读到干净 EOF。
-    let _ = stream.shutdown(std::net::Shutdown::Write);
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
-    let mut sink = [0u8; 1024];
-    while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
 }
 
 #[cfg(test)]
@@ -1049,6 +1131,9 @@ mod tests {
                     // 小块发送请求（模拟浏览器分两次写出请求行与头）
                     s.write_all(format!("GET /f{i}.js HTTP/1.1\r\n").as_bytes()).unwrap();
                     s.write_all(b"Host: 127.0.0.1\r\n\r\n").unwrap();
+                    // Keep-Alive：服务器响应后不再立即关连接，客户端半关闭写端
+                    // 告知不再有下一请求，服务器读完本轮即收尾连接（读到干净 EOF）
+                    let _ = s.shutdown(std::net::Shutdown::Write);
                     let mut raw = Vec::new();
                     s.read_to_end(&mut raw).expect("读取响应失败");
                     let split = raw
@@ -1070,9 +1155,103 @@ mod tests {
         }
 
         shutdown.store(true, Ordering::Relaxed);
+        // 唤醒阻塞 accept 的循环线程（connect 一次）再 join
+        let _ = TcpStream::connect(addr);
         let _ = accept.join();
     }
 
+
+    /// Keep-Alive + ETag 协商缓存回归：
+    /// - 同一连接连续两个请求（连接复用，浏览器拉模块的真实形态）；
+/// - If-None-Match 命中 → 304 空体（未变模块重载省全量传输）；
+    /// - 文件覆写后同 ETag → 200 新内容（预览产物更新必须立即可见——原先
+    ///   no-store 保证的行为在协商缓存下由 mtime/长度变化的 ETag 保证）。
+    #[test]
+    fn preview_server_keepalive_and_etag_cache() {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let root = std::env::temp_dir().join("tve-preview-etag-test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a.js"), b"V1").unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let flag = shutdown.clone();
+        let loop_root = Arc::new(Mutex::new(root.clone()));
+        let accept = std::thread::spawn(move || super::accept_loop(listener, loop_root, flag));
+
+        // 读取单个响应：头 + Content-Length 定长体（Keep-Alive 下连接不关闭）
+        let read_response = |s: &mut TcpStream| -> (String, Vec<u8>) {
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 2048];
+            loop {
+                let n = s.read(&mut chunk).unwrap();
+                raw.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = super::find_sub(&raw, b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&raw[..pos]).to_string();
+                    let len: usize = head
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap())
+                        })
+                        .unwrap_or(0);
+                    let total = pos + 4 + len;
+                    while raw.len() < total {
+                        let n = s.read(&mut chunk).unwrap();
+                        raw.extend_from_slice(&chunk[..n]);
+                    }
+                    return (head, raw[pos + 4..].to_vec());
+                }
+            }
+        };
+
+        let mut s = TcpStream::connect(addr).unwrap();
+        // 1) 同连接连续两个请求（Keep-Alive 复用）
+        s.write_all(b"GET /a.js HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (head1, body1) = read_response(&mut s);
+        assert!(head1.starts_with("HTTP/1.1 200 OK"), "{head1}");
+        assert_eq!(body1, b"V1");
+        let etag = head1
+            .lines()
+            .find_map(|l| {
+                let lower = l.to_ascii_lowercase();
+                lower.strip_prefix("etag:").map(|v| v.trim().to_string())
+            })
+            .expect("响应缺少 ETag");
+        s.write_all(b"GET /a.js HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (head2, body2) = read_response(&mut s);
+        assert!(head2.starts_with("HTTP/1.1 200 OK"), "Keep-Alive 第二请求失败: {head2}");
+        assert_eq!(body2, b"V1");
+
+        // 2) If-None-Match 命中 → 304 空体
+        let mut s2 = TcpStream::connect(addr).unwrap();
+        s2.write_all(format!("GET /a.js HTTP/1.1\r\nHost: x\r\nIf-None-Match: {etag}\r\n\r\n").as_bytes())
+            .unwrap();
+        let (head3, body3) = read_response(&mut s2);
+        assert!(head3.starts_with("HTTP/1.1 304"), "ETag 命中应 304: {head3}");
+        assert!(body3.is_empty(), "304 应空体");
+
+        // 3) 文件覆写（长度/mtime 变化）→ 同 ETag 重新拿全量
+        fs::write(root.join("a.js"), b"V2-UPDATED").unwrap();
+        let mut s3 = TcpStream::connect(addr).unwrap();
+        s3.write_all(format!("GET /a.js HTTP/1.1\r\nHost: x\r\nIf-None-Match: {etag}\r\n\r\n").as_bytes())
+            .unwrap();
+        let (head4, body4) = read_response(&mut s3);
+        assert!(head4.starts_with("HTTP/1.1 200 OK"), "覆写后应 200: {head4}");
+        assert_eq!(body4, b"V2-UPDATED");
+
+        shutdown.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(addr);
+        let _ = accept.join();
+    }
 
     /// 服务目录热切换回归：切换目录（网页预览产物 ↔ 构建产物）复用同一监听，
     /// 端口与 URL 不变、后续请求读到新目录内容。重建监听会让外部浏览器在途
@@ -1104,6 +1283,8 @@ mod tests {
             let mut s = TcpStream::connect(addr).unwrap();
             s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
                 .unwrap();
+            // Keep-Alive：半关闭写端让服务器响应后收尾连接（read_to_end 读到 EOF）
+            let _ = s.shutdown(std::net::Shutdown::Write);
             let mut raw = Vec::new();
             s.read_to_end(&mut raw).unwrap();
             let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
@@ -1119,6 +1300,8 @@ mod tests {
         assert_eq!(get("/index.html"), "AAA");
 
         shutdown.store(true, Ordering::Relaxed);
+        // 唤醒阻塞 accept 的循环线程（connect 一次）再 join
+        let _ = TcpStream::connect(addr);
         let _ = accept.join();
     }
 

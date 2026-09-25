@@ -1610,6 +1610,9 @@ export async function createPhysicsWorker(opts) {
       pending = msg;
       if (msg.velocities) cachedVelocities = msg.velocities;
       workerBusy = false;
+    } else if (msg.type === "recycleInput") {
+      // Worker 消费完 step 输入缓冲后原样送回（零拷贝复用；池空时兜底新建）
+      if (msg.buffer) stepBufPool.push(new Float32Array(msg.buffer));
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
       cachedCollisions = msg.value;
     } else if (msg.type === "raycastResult") {
@@ -1621,7 +1624,9 @@ export async function createPhysicsWorker(opts) {
     }
   };
 
-  const transformBuf = new Float32Array(nodes.length * 7);
+  // step 输入缓冲池（transfer 往返复用，免去每帧 nodes×7 的 Float32Array 分配；
+  // Worker 消费后经 recycleInput 归还，池空兜底新建）
+  const stepBufPool: Float32Array[] = [];
 
   const api = {
     update(dt) {
@@ -1634,24 +1639,31 @@ export async function createPhysicsWorker(opts) {
           obj.position.set(t[j], t[j + 1], t[j + 2]);
           obj.quaternion.set(t[j + 3], t[j + 4], t[j + 5], t[j + 6]);
         }
+        // 消费完的结果缓冲送回 Worker 复用（velocities 由 cachedVelocities
+        // 长期引用，不回收；只回收 transforms）
+        try {
+          worker.postMessage({ type: "recycleResult", buf: t }, [t.buffer]);
+        } catch {
+          /* Worker 已终止等，静默忽略 */
+        }
         cachedCollisions = pending.collisions || [];
         pending = null;
       }
       // 2) 发送当前帧全节点变换给 Worker（非忙时）
       if (!workerBusy) {
+        const buf = stepBufPool.pop() ?? new Float32Array(nodes.length * 7);
         for (let i = 0, j = 0; i < nodes.length; i++, j += 7) {
           const obj = nodes[i].obj;
-          transformBuf[j] = obj.position.x;
-          transformBuf[j + 1] = obj.position.y;
-          transformBuf[j + 2] = obj.position.z;
-          transformBuf[j + 3] = obj.quaternion.x;
-          transformBuf[j + 4] = obj.quaternion.y;
-          transformBuf[j + 5] = obj.quaternion.z;
-          transformBuf[j + 6] = obj.quaternion.w;
+          buf[j] = obj.position.x;
+          buf[j + 1] = obj.position.y;
+          buf[j + 2] = obj.position.z;
+          buf[j + 3] = obj.quaternion.x;
+          buf[j + 4] = obj.quaternion.y;
+          buf[j + 5] = obj.quaternion.z;
+          buf[j + 6] = obj.quaternion.w;
         }
         try {
-          const copy = transformBuf.slice();
-          worker.postMessage({ type: "step", dt, transforms: copy }, [copy.buffer]);
+          worker.postMessage({ type: "step", dt, transforms: buf }, [buf.buffer]);
           workerBusy = true;
         } catch {
           /* Worker 已终止等，静默忽略 */

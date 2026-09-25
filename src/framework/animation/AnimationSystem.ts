@@ -599,6 +599,14 @@ export class AnimationSystem {
     this.playClipAction(b, clip, { speed: state.speed, loop: state.loop }, 0);
   }
 
+  /** 有活动内容（剪辑播放中）：渲染循环空闲降帧的保持全速信号 */
+  hasActive(): boolean {
+    for (const b of this.bindings.values()) {
+      if (b.playing && !b.paused) return true;
+    }
+    return false;
+  }
+
   /** 每帧推进：mixer 步进 → IK 求解 → 骨骼绑定跟随 → 图状态机评估过渡（exitTime + 参数条件） */
   update(dt: number): void {
     if (dt <= 0) return;

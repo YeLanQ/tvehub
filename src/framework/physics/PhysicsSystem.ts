@@ -250,6 +250,11 @@ export class PhysicsSystem {
     this.notifyAll();
   }
 
+  /** 模拟进行中（未暂停）：渲染循环空闲降帧的保持全速信号 */
+  isSimulatingActive(): boolean {
+    return this.simulating && !this.paused;
+  }
+
   /** 暂停模拟（世界保留；恢复继续） */
   pause(): void {
     if (!this.simulating || this.paused) return;

@@ -653,18 +653,26 @@ export class SceneSynchronizer {
     obj.castShadow = true;
     obj.receiveShadow = true;
     if (mesh.source === "model") {
+      (obj.userData as { geomSig?: string }).geomSig = "";
       this.refreshModelMesh(mesh, obj);
       return;
     }
-    // 基元网格：清理可能的模型残留（实例共享模板资源只摘除；占位体/轮廓体释放）
-    this.removeModelChild(obj);
-    this.removeNamedChild(obj, MODEL_PENDING_NAME);
-    const geom = buildGeometry(mesh.geometry, mesh.size);
-    obj.geometry.dispose();
-    obj.geometry = geom;
+    // 基元几何签名门控：geometry/size 未变时跳过 dispose + 重建 + GPU 重上传 +
+    // 阴影重算（材质应用不门控——updateMeshMaterial 承担材质资产参数变化的传播）
+    const geomSig = `prim:${mesh.geometry}|${JSON.stringify(mesh.size ?? null)}`;
+    const ud = obj.userData as { geomSig?: string };
+    if (ud.geomSig !== geomSig) {
+      // 基元网格：清理可能的模型残留（实例共享模板资源只摘除；占位体/轮廓体释放）
+      this.removeModelChild(obj);
+      this.removeNamedChild(obj, MODEL_PENDING_NAME);
+      const geom = buildGeometry(mesh.geometry, mesh.size);
+      obj.geometry.dispose();
+      obj.geometry = geom;
+      ud.geomSig = geomSig;
+      // 物体尺寸/位置变化都会改变投影范围 → 让阴影相机重算一次
+      this.shadowCamerasDirty = true;
+    }
     this.updateMeshMaterial(mesh, obj);
-    // 物体尺寸/位置变化都会改变投影范围 → 让阴影相机重算一次
-    this.shadowCamerasDirty = true;
   }
 
   /**
@@ -969,9 +977,13 @@ export class SceneSynchronizer {
   /**
    * 帧循环调用：把启用阴影的灯光阴影相机贴合到场景包围盒。
    * @param force 忽略节拍立即重算（加载完成等需要立刻正确的时机）
+   * @param allowPeriodic 允许按节拍周期重算（缺省 true）；视口静止（无交互无
+   *   活动内容）时传 false 跳过周期路径——对象不动包围盒不变，重算是纯空转。
+   *   脏标记路径不受影响：场景变化触发的重贴合始终执行。
    */
-  refitShadowCameras(force = false): void {
+  refitShadowCameras(force = false, allowPeriodic = true): void {
     if (!force && !this.shadowCamerasDirty) {
+      if (!allowPeriodic) return;
       if (++this.shadowCameraFrame < SHADOW_REFIT_INTERVAL) return;
       this.shadowCameraFrame = 0;
     }
@@ -1162,6 +1174,31 @@ export class SceneSynchronizer {
   }
 
   private refreshLight(light: LightNode, obj: THREE.Object3D): void {
+    // 签名门控：灯型/灯参数/阴影参数未变（refreshNode 是整卡刷新，节点名等
+    // 无关字段变化也走这里）时跳过整组销毁重建——检查器连续拖动灯光参数时
+    // 每次事件都重建灯光对象+图标精灵并置阴影脏，是拖动的 CPU 尖峰来源
+    const spot = light instanceof SpotLightNode ? light : null;
+    const hasShadow = light instanceof PointLightNode || light instanceof DirectionalLightNode || spot !== null;
+    const shadow = hasShadow ? (light as PointLightNode).shadow : null;
+    const sig = [
+      light.lightKind,
+      light.lightColor,
+      light.intensity,
+      light.cullingMask,
+      (light as PointLightNode).distance,
+      (light as PointLightNode).decay,
+      spot?.angle,
+      spot?.penumbra,
+      (light as PointLightNode).castShadow,
+      shadow?.strength,
+      shadow?.bias,
+      shadow?.normalBias,
+      shadow?.near,
+      shadow?.radius,
+      shadow?.resolution,
+    ].join("|");
+    if ((obj.userData as { lightSig?: string }).lightSig === sig) return;
+    (obj.userData as { lightSig?: string }).lightSig = sig;
     obj.children
       .slice()
       .filter((c) => (c.userData as { lamp?: boolean }).lamp)
