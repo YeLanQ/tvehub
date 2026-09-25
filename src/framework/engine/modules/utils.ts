@@ -33,6 +33,18 @@ export function applySpawnOffset(node: { transform: { setPosition: (x: number, y
   node.transform.setPosition(r(), 0.5 + Math.random(), r());
 }
 
+/** 容器型节点：未显式指定父级时唯一可作为「隐式父级」的类型集合
+ *  （空组 + UI 画布/布局容器——用户明确用来组织层级的节点）。 */
+const IMPLICIT_CONTAINER_TYPE_KEYS = new Set<string>(["node", "uiCanvasNode", "uiLayoutNode"]);
+
+/** 选中节点能否作为「添加节点」的隐式父级：实体节点（mesh/灯光/相机等）
+ *  一律不隐式收子——未指定 parent 的新节点挂根。连续添加曾因「添加后自动
+ *  选中 + 选中即隐式父级」链式嵌套成树（真实事故），此判定折中保留
+ *  「选中空组快速填充」的便捷、消除实体互挂的事故面。 */
+export function isImplicitContainer(node: { typeKey: string } | null | undefined): boolean {
+  return !!node && IMPLICIT_CONTAINER_TYPE_KEYS.has(node.typeKey);
+}
+
 /**
  * 新添加的灯光节点放置到场景里可观察的位置/方向：
  * - point：放置在原点附近；

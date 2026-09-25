@@ -10,7 +10,10 @@ script 视图连带保存脏脚本）、`editor.gizmoMode`（args `mode`: transl
 
 **节点组**（nodeCommands.ts）：`node.add`（args `kind` 13 族：group/mesh/light/
 camera/skybox/fog/audio/particle/nav/logic/terrain/ui/script/model + subtype/
-geometry/path/scriptRel/name，model 收 `position` 拖放落位）、`node.rename`
+geometry/path/scriptRel/name，model 收 `position` 拖放落位；**父级语义**：
+`parentId/parent` 显式指定永远精确生效；未指定时挂根——仅当选中的是容器型
+节点（空组/uiCanvasNode/uiLayoutNode，判定 isImplicitContainer）才挂到其下，
+实体选中不隐式收子（自动化连加不再链式嵌套））、`node.rename`
 （`name`,`id?`）、`node.delete`（`id|ids[]`，根不可删）、`node.duplicate`
 （`id|ids[]`，复制子树一次撤销）、`node.reparent`（`moves[]`{id,newParentId,
 newIndex}，成环守卫）、`node.patch`（`id,before,after` 整节点补丁）、

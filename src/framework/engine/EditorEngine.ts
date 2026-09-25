@@ -58,7 +58,7 @@ import { bakeTerrainHeights, decodeSculptData, encodeSculptData } from "../terra
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
-import { applyLightSpawn, applySpawnOffset, snapshotTransform } from "./modules/utils";
+import { applyLightSpawn, applySpawnOffset, isImplicitContainer, snapshotTransform } from "./modules/utils";
 import {
   buildProceduralSkyTexture,
   buildBandSkyTexture,
@@ -1512,9 +1512,11 @@ export class EditorEngine {
 
   private resolveParent(preferred?: string): Node | undefined {
     if (preferred) return this.graph.get(preferred);
+    // 未显式指定父级：仅容器型选中节点（空组/UI 容器）作为隐式父级，
+    // 实体节点（mesh/灯光/相机等）不收子 → 挂根（见 isImplicitContainer 注释）
     if (this.selectedId) {
       const sel = this.graph.get(this.selectedId);
-      if (sel) return sel;
+      if (sel && isImplicitContainer(sel)) return sel;
     }
     return this.graph.root;
   }
