@@ -38,3 +38,23 @@ export {
   type TerrainMaterialLayer,
   type TerrainMaterialSettings,
 } from "./terrainMaterialTypes";
+export {
+  DEM_TYPE_LABELS,
+  decodeDemData,
+  demBaseHeights,
+  demSig,
+  demTerrainFit,
+  encodeDemData,
+  importDemFile,
+  parseTerrainDem,
+  resampleGrid,
+  type DemFormat,
+  type TerrainDemData,
+} from "./dem";
+export {
+  parseAscGrid,
+  parseHgt,
+  parsePgm,
+  parseXyzPoints,
+  type RawElevationGrid,
+} from "./demFormats";

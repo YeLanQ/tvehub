@@ -1,4 +1,4 @@
-# 单元：地形（程序化设置 + 绘制模式）
+# 单元：地形（程序化设置 + 数字地形数据 + 绘制模式）
 
 ## 操作面：程序化地形（TerrainSection 检查器）
 
@@ -11,6 +11,17 @@
 - 绑定 **.terrainmat**（4 纹理图层 + splatmap + 全局 PBR；新建：右键「新建地形材质」）。
 - **生成 Splatmap**（:272）：按海拔/坡度烘 RGBA 权重纹理 → 写
   `assets/..._splat.png` → 更新材质引用——**绘制模式的前置**。
+
+## 操作面：数字地形数据（Digital Terrain Data 卡，TerrainDemSection）
+
+- **导入地形数据**：.asc（Esri ASCII Grid，DEM/DTM/DSM 标准交换）/.hgt（SRTM
+  大端 int16 方阵）/.pgm（P5/P2 灰度高程，16 位大端）/.xyz .csv（高程点/点云，
+  散点桶平均栅格化 + 平滑回填）；解析为归一化 0..1 网格（上限 513²）base64
+  内嵌节点——预览/导出不依赖源文件。
+- 导入后替代程序化分形作**基准高度**：最终高度 = 归一化 × Heightfield 的
+  heightScale（垂直夸张）；雕刻层照常叠加；碰撞 heightfield/导航/采样全链路
+  自动一致（同一条烘焙出口）。
+- **清除数据源**回退程序化；卡片回显源文件/格式/网格/高程范围（原单位）。
 
 ## 操作面：地形绘制模式（editor.terrainPaint toggle）
 

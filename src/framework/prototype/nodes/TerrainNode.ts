@@ -8,6 +8,7 @@ import {
   type TerrainSettings,
 } from "../../terrain/types";
 import { parseTerrainSculpt, type TerrainSculptData } from "../../terrain/sculpt";
+import { parseTerrainDem, type TerrainDemData } from "../../terrain/dem";
 import {
 
   cloneTerrainMaterialSettings,
@@ -26,6 +27,8 @@ export interface TerrainNodeInit extends NodeInit {
   materialSettings?: TerrainMaterialSettings | null;
   /** 雕刻高度偏移层（笔刷雕刻；null = 未雕刻） */
   sculpt?: TerrainSculptData | null;
+  /** 数字地形数据源（DEM/DTM/DSM/DLG 导入；null = 程序化生成） */
+  dem?: TerrainDemData | null;
 }
 
 /** 地形节点能力接口：地形设置 + 地形材质设置（随场景序列化） */
@@ -54,6 +57,8 @@ export class TerrainNode extends Node implements ITerrainNode {
   materialSettings: TerrainMaterialSettings | null = null;
   /** 雕刻高度偏移层（笔刷雕刻；base64 Float32，叠加在程序化高度场上；null = 未雕刻） */
   sculpt: TerrainSculptData | null = null;
+  /** 数字地形数据源（DEM/DTM/DSM/DLG；归一化网格内嵌，优先于程序化生成；null = 未导入） */
+  dem: TerrainDemData | null = null;
 
   constructor(init: TerrainNodeInit = {}) {
     super(init);
@@ -64,6 +69,7 @@ export class TerrainNode extends Node implements ITerrainNode {
       ? cloneTerrainMaterialSettings(init.materialSettings)
       : null;
     this.sculpt = init.sculpt ? parseTerrainSculpt(init.sculpt) : null;
+    this.dem = init.dem ? parseTerrainDem(init.dem) : null;
   }
 
   override clone(): TerrainNode {
@@ -82,6 +88,7 @@ export class TerrainNode extends Node implements ITerrainNode {
         ? cloneTerrainMaterialSettings(this.materialSettings)
         : null,
       sculpt: this.sculpt ? { ...this.sculpt } : null,
+      dem: this.dem ? { ...this.dem } : null,
     });
   }
 
@@ -94,6 +101,7 @@ export class TerrainNode extends Node implements ITerrainNode {
       target.materialSettings = cloneTerrainMaterialSettings(this.materialSettings);
     }
     if (this.sculpt) target.sculpt = { ...this.sculpt };
+    if (this.dem) target.dem = { ...this.dem };
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
@@ -104,6 +112,7 @@ export class TerrainNode extends Node implements ITerrainNode {
       ? parseTerrainMaterialSettings(source.materialSettings)
       : null;
     this.sculpt = parseTerrainSculpt(source.sculpt);
+    this.dem = parseTerrainDem(source.dem);
   }
 }
 

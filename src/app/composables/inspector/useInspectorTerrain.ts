@@ -11,8 +11,11 @@ import { TerrainNode } from "../../../framework/prototype/derived/Primitives";
 import {
   parseTerrainSettings,
   parseTerrainMaterialSettings,
+  parseTerrainDem,
+  demTerrainFit,
   type TerrainSettings,
 } from "../../../framework/terrain";
+import { logStore } from "../../stores/log";
 import type { InspectorNodeApi } from "./useInspectorNode";
 
 /** 卡片事件标签 → 设置字段（标签即撤销历史文案） */
@@ -66,6 +69,29 @@ export function useInspectorTerrain(ctx: InspectorNodeApi): InspectorTerrainApi 
         t.materialAsset = rel;
         t.materialSettings = v?.settings ? parseTerrainMaterialSettings(v.settings) : null;
       }, rel ? `绑定地形材质: ${rel}` : "解绑地形材质");
+      return;
+    }
+    // 数字地形数据源：导入（解析产物直写节点 dem 字段 + 比例自动适配）/ 清除（回退程序化）
+    if (label === "Import DEM Data") {
+      const dem = parseTerrainDem(value);
+      if (dem) {
+        const n0 = node.value as TerrainNode;
+        const fit = demTerrainFit(dem, { heightScale: n0.terrain.heightScale, size: n0.terrain.size });
+        commit((m) => {
+          const t = m as TerrainNode;
+          t.dem = dem;
+          if (fit.heightScale !== undefined || fit.size !== undefined) {
+            t.terrain = parseTerrainSettings({ ...t.terrain, heightScale: fit.heightScale ?? t.terrain.heightScale, size: fit.size ?? t.terrain.size });
+          }
+        }, `导入地形数据: ${dem.sourceName || dem.format}`);
+        if (fit.advisory) logStore.log("info", `${fit.advisory}（检查器可再手动调整）`);
+      }
+      return;
+    }
+    if (label === "Clear DEM Data") {
+      commit((m) => {
+        (m as TerrainNode).dem = null;
+      }, "清除地形数据源");
       return;
     }
     const field = LABEL_FIELD[label];

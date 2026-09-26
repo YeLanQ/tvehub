@@ -574,18 +574,8 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
 // 构建
 // ---------------------------------------------------------------------------
 
-/**
- * 烘焙地形几何与采样数据（位置/顶点色/法线/菱形索引）。
- * splatmap 不为空时，颜色纹理按 splatmap RGBA 权重混合 4 个图层颜色。
- * 返回 { geometry, colorTexture, heights, gridSize, size, segments, minY, maxY }。
- */
-function buildTerrain(p, splatmap, sculpt) {
-  const n = p.segments + 1;
-  const half = p.size / 2;
-
-  const coord = new Array(n);
-  for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
-
+/** 程序化基准高度（分形 + 热侵蚀；DEM 数据源地形不走这条路径） */
+function bakeHeights(p, coord, n) {
   const height = heightField(p);
   const heights = new Float32Array(n * n);
   for (let iz = 0; iz < n; iz++) {
@@ -593,8 +583,71 @@ function buildTerrain(p, splatmap, sculpt) {
       heights[iz * n + ix] = height(coord[ix], coord[iz]);
     }
   }
-
   if (p.talusPasses > 0) thermalErode(heights, n, p.size / p.segments, p.talus, p.talusPasses);
+  return heights;
+}
+
+// —— 数字地形数据源（编辑器 framework/terrain/dem.ts 的解码镜像：只解码内嵌
+//    归一化网格 + 双线性重采样，不解析 ASC/HGT 等源文件；两边算法需同步）——
+function _decodeDemData(data) {
+  try {
+    const bin = atob(data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.byteLength % 4 === 0 ? new Float32Array(bytes.buffer) : null;
+  } catch {
+    return null;
+  }
+}
+
+function _resampleDemGrid(src, srcN, targetN) {
+  if (srcN === targetN) return src;
+  const out = new Float32Array(targetN * targetN);
+  const last = srcN - 1;
+  for (let z = 0; z < targetN; z++) {
+    const fz = (z / (targetN - 1)) * last;
+    const z0 = Math.min(last - 1, Math.floor(fz));
+    const tz = fz - z0;
+    for (let x = 0; x < targetN; x++) {
+      const fx = (x / (targetN - 1)) * last;
+      const x0 = Math.min(last - 1, Math.floor(fx));
+      const tx = fx - x0;
+      const h00 = src[z0 * srcN + x0];
+      const h10 = src[z0 * srcN + x0 + 1];
+      const h01 = src[(z0 + 1) * srcN + x0];
+      const h11 = src[(z0 + 1) * srcN + x0 + 1];
+      out[z * targetN + x] = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+    }
+  }
+  return out;
+}
+
+/** DEM 基准高度（归一化 × heightScale 垂直夸张；损坏返回 null → 回退程序化） */
+function demBaseOf(dem, heightScale, targetN) {
+  if (!dem || typeof dem.data !== "string" || typeof dem.gridN !== "number" || dem.gridN < 2) return null;
+  const norm = _decodeDemData(dem.data);
+  if (!norm || norm.length !== dem.gridN * dem.gridN) return null;
+  const sampled = _resampleDemGrid(norm, dem.gridN, targetN);
+  const out = new Float32Array(sampled.length);
+  for (let i = 0; i < sampled.length; i++) out[i] = sampled[i] * heightScale;
+  return out;
+}
+
+/**
+ * 烘焙地形几何与采样数据（位置/顶点色/法线/菱形索引）。
+ * splatmap 不为空时，颜色纹理按 splatmap RGBA 权重混合 4 个图层颜色。
+ * base 不为空且与网格规模一致时作为基准高度（编辑器 DEM 数据源解码产物），
+ * 跳过程序化分形+热侵蚀（与编辑器 buildTerrain 的 baseHeights 参数同语义）。
+ * 返回 { geometry, colorTexture, heights, gridSize, size, segments, minY, maxY }。
+ */
+function buildTerrain(p, splatmap, sculpt, base) {
+  const n = p.segments + 1;
+  const half = p.size / 2;
+
+  const coord = new Array(n);
+  for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
+
+  const heights = base && base.length === n * n ? new Float32Array(base) : bakeHeights(p, coord, n);
 
   // 雕刻偏移层（编辑器笔刷雕刻；TerrainNode.sculpt，网格规模一致才叠加）
   if (sculpt && sculpt.length === heights.length) {
@@ -789,8 +842,9 @@ export function createTerrain(json) {
       sculpt = null;
     }
   }
-  const data = buildTerrain(ts, splatmap, sculpt);
-  const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, 4);
+  const data = buildTerrain(ts, splatmap, sculpt, demBaseOf(json.dem, settings.heightScale, settings.segments + 1));
+  // 分块数随尺寸自适应（与编辑器 SceneSynchronizer 同规则）：≥800 用 8×8
+  const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, data.size >= 800 ? 8 : 4);
   data.geometry.dispose();
 
   const matMetalness = ms ? (ms.metalness ?? 0) : 0;
