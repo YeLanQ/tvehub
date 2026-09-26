@@ -63,20 +63,41 @@ export type ColliderShape = "box" | "sphere" | "capsule" | "cylinder" | "convex"
  * 高度场碰撞分辨率（每轴采样数；碰撞 LOD）。
  * 只允许 2 的幂：Jolt HeightFieldShapeSettings 要求每轴采样为 2 的幂，
  * 统一取值集合让三引擎共享同一下采样结果（无需按引擎 padding）。
+ * 512 档：大地图（DEM 地形 size ≥ 800m）下 256 档采样间距已粗于网格，
+ * 最近邻+物理端双线性会削峰填谷（碰撞/线框与地表明显错位）。
  */
-export const HEIGHTFIELD_RESOLUTIONS = [64, 128, 256] as const;
+export const HEIGHTFIELD_RESOLUTIONS = [64, 128, 256, 512] as const;
 
-/** 高度场碰撞分辨率默认值（128² ≈ 1.6 万采样，三引擎宽相/内存都很轻） */
-export const DEFAULT_HEIGHTFIELD_RESOLUTION = 128;
+/**
+ * 高度场分辨率默认值：0 = 自动——按地形烘焙网格密度取最小可用档
+ * （采样间距 ≲ 网格间距，采样点恒落在真实烘焙顶点上，碰撞/线框与地表对齐）。
+ * 显式档位（64..512）= 用户明确的 LOD 选择；旧场景存量 128 保持原值。
+ */
+export const DEFAULT_HEIGHTFIELD_RESOLUTION = 0;
 
-/** 吸附到最接近的合法高度场分辨率（非法/越界值同样回吸） */
+/** 吸附到最接近的合法高度场分辨率（非法/越界/0 同回自动档） */
 export function snapHeightfieldResolution(v: unknown): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULT_HEIGHTFIELD_RESOLUTION;
+  if (n <= 0) return 0;
   let best: number = HEIGHTFIELD_RESOLUTIONS[0];
   for (const r of HEIGHTFIELD_RESOLUTIONS) {
     if (Math.abs(r - n) < Math.abs(best - n)) best = r;
   }
   return best;
+}
+
+/**
+ * 自动档解析：采样数 ≥ 地形网格单元格数（gridN-1）的最小可用档，上限 512。
+ * 显式档位（>0）原样返回。编辑器与播放侧镜像共用此规则（colliderShape.ts /
+ * runtime/physics.ts 两边改需同步）。
+ */
+export function resolveHeightfieldSamples(resolution: number, gridN: number): number {
+  if (resolution > 0) return resolution;
+  const want = Math.max(2, Math.min(HEIGHTFIELD_RESOLUTIONS[HEIGHTFIELD_RESOLUTIONS.length - 1], gridN - 1));
+  for (const r of HEIGHTFIELD_RESOLUTIONS) {
+    if (r >= want) return r;
+  }
+  return HEIGHTFIELD_RESOLUTIONS[HEIGHTFIELD_RESOLUTIONS.length - 1];
 }
 
 /** 碰撞体组件设置（node.components[type=collider].collider 的形状） */

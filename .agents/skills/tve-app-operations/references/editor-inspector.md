@@ -16,7 +16,7 @@ references/composables.md）。编辑均走 commit → 节点补丁进撤销。
 | Light/Audio | 灯光类型/颜色/强度/阴影档位（off·hard·soft/分辨率）；音源资产/循环/空间化 2d·3d | 阴影档位 shadowType 优先于单字段 |
 | Camera/Sky | 透视/正交、裁剪面、FOV；天空盒程序化/立方贴图、三段配色 | |
 | Fog | 线性/Exp2/高度雾参数 | 首个启用且可见的雾节点生效 |
-| Physics | 刚体形态 static/kinematic/dynamic、重力缩放；碰撞体形状/摩擦/弹性/传感器 | 前提：项目设置启用物理 |
+| Physics | 刚体形态 static/kinematic/dynamic、重力缩放；碰撞体形状/摩擦/弹性/传感器 | 前提：项目设置启用物理；高度场分辨率默认「自动（对齐地形网格密度）」，可显式选 64/128/256/512 作 LOD |
 | Particles | 全量发射参数（duration/lifetime/shape/blending/texture…） | maxParticles/blending 改动重建发射器 |
 | Nav | 导航区域/代理绑定与参数 | |
 | Logic | FSM/BT 资产绑定、速度；「打开编辑器」进逻辑编辑弹层 | 图见 graph-nodes.md |

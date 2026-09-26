@@ -18,6 +18,7 @@ import { Node } from "../../../src/framework/prototype/Node";
 import {
   DEFAULT_COLLIDER_SETTINGS,
   parseColliderSettings,
+  resolveHeightfieldSamples,
   snapHeightfieldResolution,
   type ColliderSettings,
 } from "../../../src/framework/physics/types";
@@ -275,10 +276,14 @@ function settings(patch: Partial<ColliderSettings>): ColliderSettings {
 
 // ---------- 5. heightfield（高度场：下采样 / 缩放烘焙 / 回退 / 线框有界 / 签名） ----------
 {
-  // resolution 吸附：非法值回默认 128，任意值吸附到合法档位
-  check("resolution 缺省 128", parseColliderSettings({}).resolution === 128);
+  // resolution 吸附：非法/缺省/0 → 自动档（0）；显式值吸附到合法档位
+  check("resolution 缺省 0（自动对齐地形）", parseColliderSettings({}).resolution === 0);
   check("resolution 吸附 300→256 / 100→128 / 50→64",
     snapHeightfieldResolution(300) === 256 && snapHeightfieldResolution(100) === 128 && snapHeightfieldResolution(50) === 64);
+  check("resolution 自动档解析：网格 257→256 / 65→64 / 129→128 / 513→512 / 显式档原样",
+    resolveHeightfieldSamples(0, 257) === 256 && resolveHeightfieldSamples(0, 65) === 64 &&
+    resolveHeightfieldSamples(0, 129) === 128 && resolveHeightfieldSamples(0, 513) === 512 &&
+    resolveHeightfieldSamples(64, 257) === 64);
 
   // 带地形缓存的伪地形对象（两平台 x<0 高 1 / x≥0 高 3）
   const s = 64;
@@ -296,6 +301,9 @@ function settings(patch: Partial<ColliderSettings>): ColliderSettings {
 
   const desc = computeColliderShapeDesc(settings({ shape: "heightfield", resolution: 64 }), terrainObj);
   check("heightfield desc 采样数/边长", desc.samples === 64 && desc.terrainSizeX === 10 && desc.terrainSizeZ === 10);
+  // 自动档端到端：resolution 0（缺省）→ 采样对齐地形网格密度（64 网格 → 64 采样）
+  const autoDesc = computeColliderShapeDesc(settings({ shape: "heightfield" }), terrainObj);
+  check("heightfield 自动档：采样对齐地形网格（64→64）", autoDesc.samples === 64);
   check("heightfield desc min/max", desc.minHeight === 1 && desc.maxHeight === 3);
   check("heightfield desc 保留平台值（下采样取真实烘焙点）",
     !!desc.heights && desc.heights[0] === 1 && desc.heights[desc.heights.length - 1] === 3);

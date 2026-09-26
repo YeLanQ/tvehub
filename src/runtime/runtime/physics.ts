@@ -47,17 +47,29 @@ function parseRigidBody(v) {
   };
 }
 
-/** 高度场碰撞分辨率合法档位（2 的幂：Jolt HeightFieldShape 要求；与编辑器同集合） */
-const HF_RESOLUTIONS = [64, 128, 256];
-const HF_DEFAULT_RESOLUTION = 128;
+/** 高度场碰撞分辨率合法档位（2 的幂：Jolt HeightFieldShape 要求；与编辑器同集合）。
+ *  512：大地图下 256 档采样间距粗于网格会削峰填谷（与编辑器 types.ts 同步改）。 */
+const HF_RESOLUTIONS = [64, 128, 256, 512];
+const HF_DEFAULT_RESOLUTION = 0; // 0 = 自动（对齐地形网格密度）
 
 function snapHeightfieldResolution(v) {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : HF_DEFAULT_RESOLUTION;
+  if (n <= 0) return 0;
   let best = HF_RESOLUTIONS[0];
   for (const r of HF_RESOLUTIONS) {
     if (Math.abs(r - n) < Math.abs(best - n)) best = r;
   }
   return best;
+}
+
+/** 自动档解析：采样数 ≥ 地形网格单元格数的最小可用档（与编辑器同规则） */
+function resolveHeightfieldSamples(resolution, gridN) {
+  if (resolution > 0) return resolution;
+  const want = Math.max(2, Math.min(HF_RESOLUTIONS[HF_RESOLUTIONS.length - 1], gridN - 1));
+  for (const r of HF_RESOLUTIONS) {
+    if (r >= want) return r;
+  }
+  return HF_RESOLUTIONS[HF_RESOLUTIONS.length - 1];
 }
 
 function parseCollider(v) {
@@ -179,7 +191,7 @@ function colliderDescFor(col, obj, terrainGrid) {
       }
       return desc;
     }
-    const samples = snapHeightfieldResolution(s.resolution);
+    const samples = resolveHeightfieldSamples(snapHeightfieldResolution(s.resolution), terrainGrid.gridSize);
     const heights = downsampleHeightfield(terrainGrid.heights, terrainGrid.gridSize, samples, sy);
     let min = Infinity;
     let max = -Infinity;

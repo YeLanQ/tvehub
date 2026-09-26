@@ -9,7 +9,7 @@
 import * as THREE from "three";
 import type { Vec3 } from "../prototype/types";
 import type { ColliderShapeDesc } from "./backend/types";
-import { snapHeightfieldResolution, type ColliderSettings } from "./types";
+import { resolveHeightfieldSamples, snapHeightfieldResolution, type ColliderSettings } from "./types";
 
 /** autoSize 时对象局部空间包围盒 + convex 顶点采样结果 */
 export interface ColliderLocalBounds {
@@ -264,7 +264,9 @@ export function computeColliderShapeDesc(
     }
     return desc;
   }
-  const samples = snapHeightfieldResolution(s.resolution);
+  // 自动档：采样密度对齐地形烘焙网格（采样间距 ≲ 网格间距），否则陡坡上
+  // 最近邻+物理端双线性会削峰填谷，碰撞/线框与地表明显错位（大地图尤甚）
+  const samples = resolveHeightfieldSamples(snapHeightfieldResolution(s.resolution), terrain.gridN);
   const heights = downsampleHeightfield(terrain.heights, terrain.gridN, samples, sy);
   let min = Infinity;
   let max = -Infinity;

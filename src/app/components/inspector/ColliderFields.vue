@@ -36,7 +36,7 @@ const RESOLUTION_OPTIONS = HEIGHTFIELD_RESOLUTIONS;
     <!-- 高度场：尺寸/自适应均来自地形网格，不适用；分辨率 = 碰撞 LOD -->
     <div class="field">
       <label
-        title="每轴采样数（碰撞 LOD）。从地形烘焙网格等距取真实高度点：越小越省性能，越大碰撞越贴合；仅 terrainNode 有效"
+        title="每轴采样数（碰撞 LOD）。自动 = 对齐地形烘焙网格密度（采样点恒在真实高度点上，碰撞/线框与地表贴合）；显式档位越小越省性能、越大越贴合；仅 terrainNode 有效"
       >
         碰撞分辨率
       </label>
@@ -44,6 +44,7 @@ const RESOLUTION_OPTIONS = HEIGHTFIELD_RESOLUTIONS;
         :value="comp.collider.resolution"
         @change="emit('update', 'Set Collider Resolution', Number(($event.target as HTMLSelectElement).value))"
       >
+        <option :value="0">自动（对齐地形）</option>
         <option v-for="r in RESOLUTION_OPTIONS" :key="r" :value="r">{{ r }} × {{ r }}</option>
       </select>
     </div>

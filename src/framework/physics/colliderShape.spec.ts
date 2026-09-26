@@ -87,6 +87,15 @@ describe("computeColliderShapeDesc(heightfield)", () => {
     expect(desc.maxHeight).toBe(2);
   });
 
+  it("自动档：resolution 0（新默认）→ 采样密度对齐地形网格（8 网格 → 64 档）", () => {
+    const obj = makeTerrainTree("s", flat(8, 2), 8, 20);
+    const desc = computeColliderShapeDesc({ ...DEFAULT_COLLIDER_SETTINGS, shape: "heightfield" }, obj);
+    expect(desc.samples).toBe(64); // resolveHeightfieldSamples(0, 8) → 最小可用档 64
+    // 大网格：257（segments 256）→ 256 档，采样点恒落在烘焙顶点上
+    const big = makeTerrainTree("s", flat(257, 1), 257, 2000);
+    expect(computeColliderShapeDesc({ ...DEFAULT_COLLIDER_SETTINGS, shape: "heightfield" }, big).samples).toBe(256);
+  });
+
   it("异常：非地形对象 → heights 为 null（回退盒形），不抛错", () => {
     const desc = computeColliderShapeDesc(
       { ...DEFAULT_COLLIDER_SETTINGS, shape: "heightfield" },
