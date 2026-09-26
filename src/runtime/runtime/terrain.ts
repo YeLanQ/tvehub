@@ -94,7 +94,8 @@ const LIMITS = {
   seed: [1, 999999],
   size: [10, 2000],
   segments: [16, 256],
-  heightScale: [0, 500],
+  // 上限覆盖真实地形起伏量级（DEM 导入自动设置；与编辑器 TERRAIN_LIMITS 同步改）
+  heightScale: [0, 10000],
   frequency: [0.0005, 0.05],
   octaves: [1, 8],
   lacunarity: [1, 4],

@@ -74,7 +74,8 @@ export const TERRAIN_LIMITS = {
   seed: { min: 1, max: 999999 },
   size: { min: 10, max: 2000 },
   segments: { min: 16, max: 256 },
-  heightScale: { min: 0, max: 500 },
+  // heightScale 上限覆盖真实地形起伏量级（DEM 导入按源起伏自动设置，珠峰级 ~8850m）
+  heightScale: { min: 0, max: 10000 },
   frequency: { min: 0.0005, max: 0.05 },
   octaves: { min: 1, max: 8 },
   lacunarity: { min: 1, max: 4 },
