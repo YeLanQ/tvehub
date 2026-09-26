@@ -301,18 +301,59 @@ export class SceneClient implements GraphLike {
 
   // ===================== 写路径：乐观应用 + 后端提交 =====================
 
+  /**
+   * 后端变更提交串行链。Tauri 命令在线程池并发执行，同窗口先后提交不保证
+   * 到达顺序——整节点快照式补丁（patch/setTransform）一旦乱序落盘，旧快照会
+   * 覆盖新编辑。链保证后端按提交顺序执行；调用方仍各自处理失败回滚。
+   */
+  private mutationChain: Promise<void> = Promise.resolve();
+
+  /**
+   * 各节点在途提交数（已出站、后端回显未到）。回显滞后于本地乐观编辑时
+   * （快速连续编辑的常态），无条件回填会把新编辑打回——检查器数值反复跳/
+   * 回弹，且下一次编辑从被打回的状态捕获快照会永久丢数据。在途期间跳过
+   * 该节点的回显回填（本地乐观态 ≥ 回显态）。
+   */
+  private pendingEcho = new Map<string, number>();
+
+  /** 串行入站：所有后端变更命令按提交顺序执行；返回值透传给调用方 */
+  private enqueueMutation<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.mutationChain.then(run, run);
+    this.mutationChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  /** 标记节点在途提交（+1；提交时同步开启，早于串行链的微任务执行） */
+  private pendingMark(ids: string[]): void {
+    for (const id of ids) this.pendingEcho.set(id, (this.pendingEcho.get(id) ?? 0) + 1);
+  }
+
+  /** 在途提交落定（-1；成功失败均计，归零移除） */
+  private pendingRelease(ids: string[]): void {
+    for (const id of ids) {
+      const n = (this.pendingEcho.get(id) ?? 1) - 1;
+      if (n <= 0) this.pendingEcho.delete(id);
+      else this.pendingEcho.set(id, n);
+    }
+  }
+
   /** 新增节点（node.parentId 已指向目标父节点；失败自动回滚镜像） */
   add(node: Node, label?: string): void {
     this.linkAdded(node);
     this.emit({ kind: "add", nodeId: node.id });
     const json = node.toJSON() as JsonRecord;
-    this.transport
-      ?.addNode(json, label)
+    if (!this.transport) return;
+    this.pendingMark([node.id]);
+    this.enqueueMutation(() => this.transport!.addNode(json, label))
       .catch((e) => {
         logger.error(`[scene] 节点提交失败，已回滚 ${node.name}: ${String(e)}`);
         this.removeFromMap(node.id);
         this.emit({ kind: "remove", nodeId: node.id });
-      });
+      })
+      .finally(() => this.pendingRelease([node.id]));
   }
 
   /**
@@ -346,15 +387,17 @@ export class SceneClient implements GraphLike {
     added.forEach((n) => this.emit({ kind: "add", nodeId: n.id }));
     // 提交文档保留 prefab 来源引用与组件 id（实例身份与绑定键稳定）
     const doc = serializePrefabTree(root, childrenInTree, { forAsset: false });
-    this.transport
-      ?.addTree(doc, parentId, label)
+    if (!this.transport) return;
+    this.pendingMark(added.map((n) => n.id));
+    this.enqueueMutation(() => this.transport!.addTree(doc, parentId, label))
       .catch((e) => {
         logger.error(`[scene] 子树提交失败，已回滚 ${root.name}: ${String(e)}`);
         for (let i = added.length - 1; i >= 0; i--) {
           const n = added[i];
           if (this.removeFromMap(n.id)) this.emit({ kind: "remove", nodeId: n.id });
         }
-      });
+      })
+      .finally(() => this.pendingRelease(added.map((n) => n.id)));
   }
 
   /** 批量删除（一次撤销；根节点自动跳过） */
@@ -368,15 +411,18 @@ export class SceneClient implements GraphLike {
     }
     if (!captured.length) return;
     captured.forEach((c) => this.emit({ kind: "remove", nodeId: c.node.id }));
-    this.transport
-      ?.removeNodes(captured.map((c) => c.node.id), label)
+    if (!this.transport) return;
+    const removedIds = captured.map((c) => c.node.id);
+    this.pendingMark(removedIds);
+    this.enqueueMutation(() => this.transport!.removeNodes(removedIds, label))
       .catch((e) => {
         logger.error(`[scene] 删除提交失败，已回滚: ${String(e)}`);
         for (let i = captured.length - 1; i >= 0; i--) {
           this.reattachMap(captured[i].node, captured[i].removed);
           this.emit({ kind: "add", nodeId: captured[i].node.id });
         }
-      });
+      })
+      .finally(() => this.pendingRelease(removedIds));
   }
 
   /** 批量重挂/移动（多选拖拽一次撤销） */
@@ -404,8 +450,10 @@ export class SceneClient implements GraphLike {
       }
     }
     if (!applied.length) return;
-    this.transport
-      ?.reparentNodes(applied, label)
+    if (!this.transport) return;
+    const movedIds = applied.map((m) => m.id);
+    this.pendingMark(movedIds);
+    this.enqueueMutation(() => this.transport!.reparentNodes(applied, label))
       .catch((e) => {
         logger.error(`[scene] 层级调整提交失败，已回滚: ${String(e)}`);
         for (let i = olds.length - 1; i >= 0; i--) {
@@ -413,7 +461,8 @@ export class SceneClient implements GraphLike {
           this.reparentLocal(o.id, o.oldParentId, o.oldIndex);
           this.emit({ kind: "reparent", nodeId: o.id });
         }
-      });
+      })
+      .finally(() => this.pendingRelease(movedIds));
   }
 
   /** 重命名 */
@@ -423,13 +472,15 @@ export class SceneClient implements GraphLike {
     const oldName = node.name;
     node.name = name;
     this.emit({ kind: "rename", nodeId: id });
-    this.transport
-      ?.rename(id, name, label)
+    if (!this.transport) return;
+    this.pendingMark([id]);
+    this.enqueueMutation(() => this.transport!.rename(id, name, label))
       .catch((e) => {
         logger.error(`[scene] 重命名提交失败，已回滚: ${String(e)}`);
         node.name = oldName;
         this.emit({ kind: "rename", nodeId: id });
-      });
+      })
+      .finally(() => this.pendingRelease([id]));
   }
 
   /**
@@ -442,8 +493,9 @@ export class SceneClient implements GraphLike {
       applySnapshotTransform(node, after);
       this.emit({ kind: "transform", nodeId: id });
     }
-    this.transport
-      ?.setTransform(id, before, after)
+    if (!this.transport) return;
+    this.pendingMark([id]);
+    this.enqueueMutation(() => this.transport!.setTransform(id, before, after))
       .catch((e) => {
         logger.error(`[scene] 变换提交失败，已回滚: ${String(e)}`);
         const n = this.nodes.get(id);
@@ -451,7 +503,8 @@ export class SceneClient implements GraphLike {
           applySnapshotTransform(n, before);
           this.emit({ kind: "transform", nodeId: id });
         }
-      });
+      })
+      .finally(() => this.pendingRelease([id]));
   }
 
   /**
@@ -464,8 +517,9 @@ export class SceneClient implements GraphLike {
       node.applyJSON(after);
       this.emit({ kind: "properties", nodeId: id });
     }
-    this.transport
-      ?.patchNode(id, before, after, label)
+    if (!this.transport) return;
+    this.pendingMark([id]);
+    this.enqueueMutation(() => this.transport!.patchNode(id, before, after, label))
       .catch((e) => {
         logger.error(`[scene] 属性提交失败，已回滚: ${String(e)}`);
         const n = this.nodes.get(id);
@@ -473,7 +527,8 @@ export class SceneClient implements GraphLike {
           n.applyJSON(before);
           this.emit({ kind: "properties", nodeId: id });
         }
-      });
+      })
+      .finally(() => this.pendingRelease([id]));
   }
 
   /** 批量整节点属性补丁（多选批量编辑；一次撤销） */
@@ -486,8 +541,10 @@ export class SceneClient implements GraphLike {
         this.emit({ kind: "properties", nodeId: item.id });
       }
     }
-    this.transport
-      ?.patchNodes(items, label)
+    if (!this.transport) return;
+    const ids = items.map((i) => i.id);
+    this.pendingMark(ids);
+    this.enqueueMutation(() => this.transport!.patchNodes(items, label))
       .catch((e) => {
         logger.error(`[scene] 批量属性提交失败，已回滚: ${String(e)}`);
         for (const item of items) {
@@ -497,7 +554,8 @@ export class SceneClient implements GraphLike {
             this.emit({ kind: "properties", nodeId: item.id });
           }
         }
-      });
+      })
+      .finally(() => this.pendingRelease(ids));
   }
 
   /** 本地已直接改写节点变换（gizmo 拖动实时回写）：仅广播，不提交 */
@@ -507,16 +565,17 @@ export class SceneClient implements GraphLike {
 
   /** 撤销（后端执行；结果经 scene:changed 事件回灌镜像与历史状态） */
   undo(): void {
-    this.transport
-      ?.undo()
+    if (!this.transport) return;
+    // 串行链保证撤销作用于已提交的最新状态（在途补丁先落盘）
+    this.enqueueMutation(() => this.transport!.undo())
       .then((h) => this.history.update(h))
       .catch((e) => logger.error(`[scene] 撤销失败: ${String(e)}`));
   }
 
   /** 重做（后端执行） */
   redo(): void {
-    this.transport
-      ?.redo()
+    if (!this.transport) return;
+    this.enqueueMutation(() => this.transport!.redo())
       .then((h) => this.history.update(h))
       .catch((e) => logger.error(`[scene] 重做失败: ${String(e)}`));
   }
@@ -550,8 +609,9 @@ export class SceneClient implements GraphLike {
     this.emit({ kind: "replace", nodeId: this.rootId ?? "" });
   }
 
-  /** 平铺快照整树重建（replace 事件 / 兜底） */
+  /** 平铺快照整树重建（replace 事件 / 兜底）：整树权威重建时清空在途状态 */
   rebuildFromSnapshots(list: JsonRecord[]): void {
+    this.pendingEcho.clear();
     this.nodes.clear();
     this.rootId = null;
     for (const json of list) {
@@ -573,7 +633,14 @@ export class SceneClient implements GraphLike {
       // 删除事件的快照只含父节点；子树按镜像 childIds 收集清除
       this.collectSubtreeById(evt.nodeId).forEach((n) => this.nodes.delete(n.id));
     }
-    for (const json of evt.nodes) this.applySnapshot(json);
+    // 在途回显抑制：节点有未落定的本地提交时，滞后回显（整节点快照）晚于本地
+    // 乐观编辑，回填会把新编辑打回（属性面板反复跳/回弹 → 后续快照捕获丢数据）。
+    // 本地乐观态恒 ≥ 回显态（所有本地变更都经串行链提交），跳过不丢后端数据。
+    for (const json of evt.nodes) {
+      const id = typeof json.id === "string" ? json.id : "";
+      if (id && (this.pendingEcho.get(id) ?? 0) > 0) continue;
+      this.applySnapshot(json);
+    }
     this.emit({ kind: evt.kind, nodeId: evt.nodeId });
   }
 
