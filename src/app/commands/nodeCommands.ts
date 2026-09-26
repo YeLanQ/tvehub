@@ -20,6 +20,7 @@ import { FOG_KINDS } from "../../framework/fog/types";
 import { isTerrainAssetRel, parseTerrainSettings } from "../../framework/terrain";
 import {
   canAddComponent,
+  canonicalComponentType,
   componentMetaOf,
   createComponentRef,
   createScriptComponentRef,
@@ -82,10 +83,13 @@ registerCommand({
         break;
       case "mesh":
       case "meshnode":
-        node = engine().addMesh(
-          asSubtype(GEOMETRY_KINDS, subtype ?? args?.geometry, "box"),
-          parentId,
-        );
+        // subtype=data → 数据化网格节点（source=data，载荷经检查器导入）
+        node = subtype === "data"
+          ? engine().addDataMesh(parentId)
+          : engine().addMesh(
+              asSubtype(GEOMETRY_KINDS, subtype ?? args?.geometry, "box"),
+              parentId,
+            );
         break;
       case "light":
       case "lightnode":
@@ -270,7 +274,12 @@ registerCommand({
       }
       comp = createScriptComponentRef(rel);
     } else if (BUILTIN.has(typeRaw)) {
-      const t = typeRaw as "rigidBody" | "collider" | "light" | "audioSource" | "animationClip";
+      // 命令入参已小写化；描述符/元数据键是驼峰（rigidBody/audioSource/animationClip），
+      // 经归一映射回登记键，否则 descriptorOf 查不到报"未登记的组件类型"
+      const t = canonicalComponentType(typeRaw);
+      if (!t) {
+        throw new Error(`未知组件类型: ${args?.type}（内置组件 type=rigidBody/collider/light/audioSource/animationClip）`);
+      }
       if (!canAddComponent({ components: comps as unknown as NodeComponentRef[] }, t)) {
         throw new Error(`「${componentMetaOf(t).label}」是单实例组件，该节点已挂载`);
       }

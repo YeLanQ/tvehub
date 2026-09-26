@@ -9,13 +9,14 @@
 | `factory: NodeFactory` | 节点工厂（默认注册表） |
 | `graph: SceneClient` | 场景镜像（读 get/all，写走命令方法） |
 | `events: EventBus<EditorEvents>` | 12 种事件：graph:changed、select:changed、gizmo:state、material/shader/model/animation/audio/physics/particles/logic:changed、shader:error |
-| `renderer: RendererManager` | WebGL/WebGPU 渲染器、后端切换、清晰态；空闲降帧（markActivity/addActivityHook/viewportActive：交互与活动内容全速，静止视口 12fps 省电） |
+| `renderer: RendererManager` | WebGL/WebGPU 渲染器、后端切换、清晰态；空闲降帧（markActivity/addActivityHook/viewportActive：交互与活动内容全速，静止视口 12fps 省电）；阴影图按需重画（markShadowDirty：图变更/几何重建/活动内容才重画一次，静态场景免整套阴影 pass，DrawCall 约减半；WebGL 路径） |
 | `synchronizer: SceneSynchronizer` | 镜像 Node → three Object3D 同步 |
 | `helperSystem / gizmo: GizmoController` | 辅助线 / 变换手柄 |
 | `terrainPaint: TerrainPaintController` | 地形绘制笔刷（begin/endTerrainPaint） |
 | `materials/shaders/models/animation/audio/particles/physics/nav/logic` | 各 System（缓存/解析/实例化） |
 
-**节点创建方法族**：`addEmptyGroup / addMesh(geometryKind,parent) / addLight(kind,parent) /
+**节点创建方法族**：`addEmptyGroup / addMesh(geometryKind,parent) / addDataMesh(parent)
+（source=data 数据化网格，载荷经检查器导入）/ addLight(kind,parent) /
 addCamera / addSkybox / addAudio / addParticleSystem / addTerrain / addNavArea /
 addNavAgent / addFsmRunner / addBtRunner / addFog / addUICanvas / addUIImage /
 addUIText / addUIButton / addUILayout`。

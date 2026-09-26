@@ -106,3 +106,40 @@ export const geometryRegistry = createDefaultGeometryRegistry();
 export function buildGeometry(kind: string, size: Vec3): THREE.BufferGeometry {
   return geometryRegistry.getOrDefault(kind).build(size);
 }
+
+// —— 编辑器共享基元几何（引用计数）：场景里大量同规格基元（复制/阵列）共享同一
+//    BufferGeometry，GPU 顶点缓冲与上传按"参数种数"而非网格数增长。释放必须走
+//    releaseGeometry（引用归零才真 dispose）；播放侧同策略见 runtime/mesh.ts 缓存。
+const sharedGeometryCache = new Map<string, { geom: THREE.BufferGeometry; refs: number }>();
+
+/** 取共享基元几何（同 kind+尺寸同实例；引用 +1） */
+export function acquireGeometry(kind: string, size: Vec3): THREE.BufferGeometry {
+  const key = `prim|${kind}|${size.x}|${size.y}|${size.z}`;
+  let entry = sharedGeometryCache.get(key);
+  if (!entry) {
+    entry = { geom: buildGeometry(kind, size), refs: 0 };
+    (entry.geom.userData as { sharedGeometryKey?: string }).sharedGeometryKey = key;
+    sharedGeometryCache.set(key, entry);
+  }
+  entry.refs++;
+  return entry.geom;
+}
+
+/**
+ * 释放几何：共享基元（userData.sharedGeometryKey 标记）引用 -1，归零才 dispose；
+ * 非共享几何（数据网格/地形 chunk/模型内嵌）直接 dispose，与原路径等价。
+ */
+export function releaseGeometry(geom: THREE.BufferGeometry | undefined | null): void {
+  if (!geom) return;
+  const key = (geom.userData as { sharedGeometryKey?: string }).sharedGeometryKey;
+  const entry = key ? sharedGeometryCache.get(key) : undefined;
+  if (!key || !entry || entry.geom !== geom) {
+    geom.dispose();
+    return;
+  }
+  entry.refs--;
+  if (entry.refs <= 0) {
+    entry.geom.dispose();
+    sharedGeometryCache.delete(key);
+  }
+}

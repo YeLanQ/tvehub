@@ -13,6 +13,13 @@ transform: Transform, properties: JsonRecord, components: NodeComponentRef[] }`�
 - `PrototypeRegistry`：typeKey → 派生类注册表；`fromJSON` 按类型分发、旧场景兼容。
 - `derived/Primitives`：18 种派生节点类（mesh/light/camera/skybox/audio/particle/
   terrain/nav/fsm/bt/fog/ui* 等）。
+- `MeshNode` 网格来源三态 `source: "primitive" | "model" | "data"`：data 为
+  数据化网格（`dataMesh` 载荷内嵌 base64，`framework/mesh/dataGeometry.ts` 的
+  importMeshDataFile/parseMeshData/buildDataGeometry 管线；载荷可空 = 建而未导
+  入，渲染基元占位，幂等回填不降级 source）。
+- `TerrainNode` 可选数字地形数据源 `dem: TerrainDemData | null`（`framework/
+  terrain/dem.ts`：ASC/HGT/PGM/XYZ 四格式解析 → 归一化网格内嵌；有 dem 时烘焙
+  以其为基准高度 × heightScale，无则程序化分形；雕刻层照常叠加）。
 - `prefab.ts`：`serializePrefabTree / instantiatePrefabTree`——.prefab 文档
   （嵌套 children）↔ 场景根同形状；实例化时节点/组件 id 全部重生成。
 - 派生节点属性的**收敛函数**在各系统 types 模块（parseXxxSettings：钳制/回退默认/

@@ -121,6 +121,19 @@ export class NodeFactory {
     return node;
   }
 
+  /**
+   * 创建数据化网格节点（source=data；载荷导入前渲染基元占位）：
+   * 材质与基元同走 .mat 资产引用，检查器「Data Mesh」卡导入数据。
+   */
+  createDataMesh(opts: CreateOptions = {}): MeshNode {
+    const node = this.registry.create("meshNode") as MeshNode;
+    node.source = "data";
+    node.dataMesh = null;
+    node.name = opts.name ?? "数据网格";
+    this.decorate(node, { ...opts, name: undefined });
+    return node;
+  }
+
   /** 按灯光类型创建对应节点原型（点光/平行光/环境光/聚光灯） */
   createLight(kind: LightKind, opts: CreateOptions = {}): LightNode {
     const node = this.registry.create(LIGHT_TYPE_KEY[kind]) as LightNode;

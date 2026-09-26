@@ -13,11 +13,21 @@ export {
 export type { MeshSourceKind, ModelExt, ModelMeta, ModelMaterialInfo } from "./types";
 export {
   GeometryRegistry,
+  acquireGeometry,
   buildGeometry,
   createDefaultGeometryRegistry,
   geometryRegistry,
+  releaseGeometry,
 } from "./geometry";
 export type { GeometryKind, GeometryProvider } from "./geometry";
+export {
+  buildDataGeometry,
+  importMeshDataFile,
+  meshDataBounds,
+  meshDataSig,
+  parseMeshData,
+  type MeshDataGeometry,
+} from "./dataGeometry";
 export {
   ModelLoaderRegistry,
   createDefaultModelLoaderRegistry,

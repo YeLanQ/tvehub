@@ -29,6 +29,7 @@ import UI2DTransformSection from "./inspector/UI2DTransformSection.vue";
 import UIAnchorSection from "./inspector/UIAnchorSection.vue";
 import UILayoutSection from "./inspector/UILayoutSection.vue";
 import MeshSection from "./inspector/MeshSection.vue";
+import MeshDataSection from "./inspector/MeshDataSection.vue";
 import MaterialSection from "./inspector/MaterialSection.vue";
 import ModelMaterialSection from "./inspector/ModelMaterialSection.vue";
 import AnimationSection from "./inspector/AnimationSection.vue";
@@ -38,6 +39,7 @@ import SkyboxSection from "./inspector/SkyboxSection.vue";
 import AudioSection from "./inspector/AudioSection.vue";
 import ParticleSection from "./inspector/ParticleSection.vue";
 import TerrainSection from "./inspector/TerrainSection.vue";
+import TerrainDemSection from "./inspector/TerrainDemSection.vue";
 import NavAreaSection from "./inspector/NavAreaSection.vue";
 import NavAgentSection from "./inspector/NavAgentSection.vue";
 import FsmRunnerSection from "./inspector/FsmRunnerSection.vue";
@@ -235,6 +237,11 @@ onBeforeUnmount(flushMaterialPersist);
         <MeshSection :node="node" :rev="revision" @update="onMeshUpdate" />
       </ComponentCard>
 
+      <!-- 数据化网格（source=data）：外部数据导入的网格载荷 -->
+      <ComponentCard v-if="node instanceof MeshNode && node.source === 'data'" title="Data Mesh" :open="true">
+        <MeshDataSection :node="node" :rev="revision" @update="onMeshUpdate" />
+      </ComponentCard>
+
       <!-- 动画卡片：模型携带动画剪辑时显示（静态模型不出卡片） -->
       <ComponentCard
         v-if="node instanceof MeshNode && node.source === 'model' && modelHasClips"
@@ -284,6 +291,11 @@ onBeforeUnmount(flushMaterialPersist);
 
       <ComponentCard v-if="node instanceof TerrainNode" title="Terrain" :open="true">
         <TerrainSection :node="node" :rev="revision" @update="onTerrainUpdate" />
+      </ComponentCard>
+
+      <!-- 数字地形数据源（DEM/DTM/DSM/DLG 外部数据导入） -->
+      <ComponentCard v-if="node instanceof TerrainNode" title="Digital Terrain Data" :open="true">
+        <TerrainDemSection :node="node" :rev="revision" @update="onTerrainUpdate" />
       </ComponentCard>
 
       <!-- 导航（层级「导航」分组）：区域烘焙 / 代理移动 -->

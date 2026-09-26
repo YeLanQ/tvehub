@@ -10,7 +10,9 @@ script 视图连带保存脏脚本）、`editor.gizmoMode`（args `mode`: transl
 
 **节点组**（nodeCommands.ts）：`node.add`（args `kind` 13 族：group/mesh/light/
 camera/skybox/fog/audio/particle/nav/logic/terrain/ui/script/model + subtype/
-geometry/path/scriptRel/name，model 收 `position` 拖放落位；**父级语义**：
+geometry/path/scriptRel/name，model 收 `position` 拖放落位；mesh 的
+subtype=`data` 建数据化网格节点（source=data，载荷经检查器「Data Mesh」导入）；
+**父级语义**：
 `parentId/parent` 显式指定永远精确生效；未指定时挂根——仅当选中的是容器型
 节点（空组/uiCanvasNode/uiLayoutNode，判定 isImplicitContainer）才挂到其下，
 实体选中不隐式收子（自动化连加不再链式嵌套））、`node.rename`

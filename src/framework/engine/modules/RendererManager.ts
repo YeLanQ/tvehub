@@ -347,12 +347,12 @@ export class RendererManager {
   private loop = (): void => {
     if (this.paused) return;
     this.raf = requestAnimationFrame(this.loop);
+    // 活动内容钩子（动画/粒子/物理/导航/逻辑/着色器时间）：既驱动空闲降帧判定，
+    // 也驱动阴影图按需重画（见下方 shadowMap 门控）
+    const contentActive = this.activityHooks.some((h) => h());
     // 空闲降帧（功耗）：无交互且无活动内容（活动钩子，见 viewportActive）时视口
     // 降频渲染——编辑器空闲时 GPU/CPU 从满速 rAF 降到 12fps，交互即刻恢复全速
-    if (
-      performance.now() - this.lastActivityAt > IDLE_DELAY_MS &&
-      !this.activityHooks.some((h) => h())
-    ) {
+    if (performance.now() - this.lastActivityAt > IDLE_DELAY_MS && !contentActive) {
       const now = performance.now();
       if (now - this.lastIdleRenderAt < 1000 / IDLE_FPS) return;
       this.lastIdleRenderAt = now;
@@ -360,9 +360,24 @@ export class RendererManager {
     this.applySizeIfNeeded();
     this.orbit?.update();
     this.renderCb?.();
+    // 静态场景阴影图按需重画（WebGL）：阴影不依赖观察相机，轨道移动无需重画；
+    // 只有场景内容变化（脏标记：图变更/几何重建）或活动内容（动画/粒子/物理）
+    // 才重画，静态大场景免去每帧整套阴影 pass（DrawCall 约减半）
+    const gl = this.glRenderer;
+    if (gl?.shadowMap) {
+      gl.shadowMap.autoUpdate = false;
+      gl.shadowMap.needsUpdate = this.shadowDirtyRequested || contentActive;
+      this.shadowDirtyRequested = false;
+    }
     if (this.renderer) this.renderActive();
     this.tickStats();
   };
+
+  /** 阴影脏标记（场景内容变化时由引擎标脏；下一帧重画一次阴影图） */
+  markShadowDirty(): void {
+    this.shadowDirtyRequested = true;
+  }
+  private shadowDirtyRequested = true;
 
   /** 每帧统计：FPS（EMA 平滑）。网格/顶点遍历统计只在 getStats 被拉取时按需做 */
   private tickStats(): void {

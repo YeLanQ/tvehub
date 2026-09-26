@@ -11,6 +11,7 @@ references/composables.md）。编辑均走 commit → 节点补丁进撤销。
 |---|---|---|
 | Transform | 位置/旋转(度)/缩放九字段（NumberField 拖拽微调） | commit 一次一步撤销 |
 | Mesh | 几何切换（基元）、模型路径、材质覆盖表 | 几何注册表驱动 |
+| Data Mesh（source=data 时） | 导入数据网格（.json 显式 positions/indices/normals/uvs；.xyz/.csv 规则格点 x 最快）→ 载荷内嵌节点自包含；清除回基元；顶点/三角形/包围盒回显 | 层级「添加节点→网格→数据网格」建节点；导入前渲染基元占位 |
 | Material（节点/资产） | 挂载着色器下拉、渲染分支全参数（PBR/Unlit/Toon 数据驱动）、着色器 Properties 暴露参数、贴图槽（无/内置/项目三组） | 内置材质只读须先「复制到项目材质」；编辑即写引擎缓存 + 300ms 防抖写 .mat（useInspectorMaterial.ts:17） |
 | Light/Audio | 灯光类型/颜色/强度/阴影档位（off·hard·soft/分辨率）；音源资产/循环/空间化 2d·3d | 阴影档位 shadowType 优先于单字段 |
 | Camera/Sky | 透视/正交、裁剪面、FOV；天空盒程序化/立方贴图、三段配色 | |
@@ -22,6 +23,7 @@ references/composables.md）。编辑均走 commit → 节点补丁进撤销。
 | UI（Canvas/Widget） | 画布设计尺寸/缩放模式/排序；Widget 锚点/尺寸/文本富文本/按钮交互 | 布局视图（layout）编辑 |
 | Animation（节点） | 动画剪辑组件绑定、播放控制、「在动画编辑器中打开」 | 见 editor-animation.md |
 | Terrain | 地形资产绑定/程序化设置/生成 Splatmap/地形材质绑定 | 见 editor-terrain.md |
+| Digital Terrain Data | 导入数字地形数据源（.asc Esri ASCII Grid / .hgt SRTM / .pgm 16 位灰度高程 / .xyz .csv 高程点-点云，覆盖 DEM/DTM/DSM/DLG 常见导出）→ 归一化网格内嵌节点；清除回退程序化；源格式/网格/高程范围回显 | 高度 = 数据归一化 × Heightfield 的 Height Scale（垂直夸张）；雕刻层仍可叠加 |
 | 资产 .shader | Base 渲染分支/Hook 钩子清单/Properties 属性表/解析错误展示；「编辑源码」开 Monaco 弹层（Ctrl+S 保存即后端解析校验，错误不阻断保存）；旧版着色器「一键迁移补 Base」 | 效果原型从工坊 effect 分类套用（叠加 Hook） |
 
 ## 规则/要点

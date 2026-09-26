@@ -23,7 +23,7 @@ import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import type { JsonRecord } from "../../../framework/prototype/types";
 import type { TransformSnapshot } from "../../../framework/scene/SceneClient";
 import type { AnimGraph } from "../../../framework/animation";
-import { isModelAssetRel } from "../../../framework/mesh";
+import { isModelAssetRel, parseMeshData } from "../../../framework/mesh";
 import { dispatchCommand } from "../../commands";
 
 /** inspector 系列共享上下文：由 useInspectorNode 构造，域组合式函数只消费它 */
@@ -124,7 +124,7 @@ export function useInspectorNode(): InspectorNodeApi {
         }, label);
         break;
       case "Set Mesh Source": {
-        const source = value === "model" ? "model" : "primitive";
+        const source = value === "model" ? "model" : value === "data" ? "data" : "primitive";
         commit((m) => {
           const mesh = m as MeshNode;
           mesh.source = source;
@@ -132,6 +132,24 @@ export function useInspectorNode(): InspectorNodeApi {
         }, label);
         break;
       }
+      case "Import Mesh Data": {
+        // 数据化网格：载荷经 parseMeshData 收敛（非法丢弃不提交）
+        const payload = parseMeshData(value);
+        if (!payload) return;
+        commit((m) => {
+          const mesh = m as MeshNode;
+          mesh.source = "data";
+          mesh.dataMesh = payload;
+        }, `导入数据网格: ${payload.sourceName || payload.format}`);
+        break;
+      }
+      case "Clear Mesh Data":
+        commit((m) => {
+          const mesh = m as MeshNode;
+          mesh.dataMesh = null;
+          mesh.source = "primitive"; // 清除回基元（载荷空置时 data 无意义）
+        }, "清除数据网格");
+        break;
       case "Set Model": {
         const rel = value as string;
         if (!isModelAssetRel(rel)) return;

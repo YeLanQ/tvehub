@@ -40,7 +40,10 @@ export function addNodeMenuItems(src: AddMenuSources): AddMenuItem[] {
   // 基元列表由几何工厂注册表驱动（新增基元自动出现在菜单）
   items.push({
     label: "网格",
-    children: src.geometry.map((g) => ({ label: g.label, type: `mesh:${g.key}` })),
+    children: [
+      ...src.geometry.map((g) => ({ label: g.label, type: `mesh:${g.key}` })),
+      { label: "数据网格 (Data Mesh)", type: "mesh:data" },
+    ],
   });
   items.push({ separator: true });
   items.push({

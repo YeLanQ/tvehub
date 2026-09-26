@@ -38,8 +38,8 @@ import type { LightComponentSettings } from "../../lighting/types";
 import { clampLayerIndex, parseCullingMask } from "../../layers";
 import { degToRad } from "../../prototype/types";
 import { disposeObject3D } from "./utils";
-import { buildGeometry } from "../../mesh";
-import { buildTerrain, bakeColorTexture, splitTerrainGeometry, terrainSettingsSig, decodeSculptData, type TerrainMaterialSettings, type SplatmapData, type TerrainSculptData, type SplatBuffer } from "../../terrain";
+import { acquireGeometry, buildDataGeometry, meshDataSig, releaseGeometry } from "../../mesh";
+import { buildTerrain, bakeColorTexture, splitTerrainGeometry, terrainSettingsSig, decodeSculptData, demBaseHeights, type TerrainMaterialSettings, type SplatmapData, type TerrainSculptData, type TerrainDemData, type SplatBuffer } from "../../terrain";
 import { createIconSprite, type SpriteIconKind } from "./helpers/spriteIcon";
 import { buildNavOverlayGeometry, type NavBakeResult } from "../../navigation";
 import { DEFAULT_MATERIAL_PARAMS, type MaterialParams } from "../../material/types";
@@ -130,6 +130,13 @@ function terrainSculptSig(s: TerrainSculptData | null): string {
   let h = 5381;
   for (let i = 0; i < s.data.length; i += 8) h = ((h * 33) ^ s.data.charCodeAt(i)) >>> 0;
   return `sculpt:${s.gridN}:${s.data.length}:${h.toString(36)}`;
+}
+/** 数字地形数据源签名（dem 导入/清除 → 签名变化 → 几何以新基准重建） */
+function terrainDemSigOf(dem: TerrainDemData | null): string {
+  if (!dem) return "nodem";
+  let h = 5381;
+  for (let i = 0; i < dem.data.length; i += 8) h = ((h * 33) ^ dem.data.charCodeAt(i)) >>> 0;
+  return `dem:${dem.format}:${dem.gridN}:${dem.data.length}:${h.toString(36)}`;
 }
 /** 灯光组件子对象名（灯光组件单实例；挂任意节点下，随组件增删/启停/改参重建） */
 const COMP_LIGHT_NAME = "__compLight";
@@ -287,6 +294,11 @@ export class SceneSynchronizer {
   /** 模型覆盖材质缓存（.mat rel → three 材质；跨实例共享，参数修改时失效重建） */
   private modelOverrideMaterials = new Map<string, THREE.Material>();
   /** 阴影相机待重算（灯光刷新、场景增删后置位；帧循环消费） */
+  /** 阴影相机待重贴合（地形重建/几何尺寸变化置脏；引擎每帧读并联动阴影图重画） */
+  get shadowDirty(): boolean {
+    return this.shadowCamerasDirty;
+  }
+
   private shadowCamerasDirty = true;
   /** 阴影相机重算的帧节拍计数 */
   private shadowCameraFrame = 0;
@@ -657,16 +669,41 @@ export class SceneSynchronizer {
       this.refreshModelMesh(mesh, obj);
       return;
     }
-    // 基元几何签名门控：geometry/size 未变时跳过 dispose + 重建 + GPU 重上传 +
-    // 阴影重算（材质应用不门控——updateMeshMaterial 承担材质资产参数变化的传播）
+    if (mesh.source === "data") {
+      // 数据化网格：载荷签名门控（导入/清除/换数据才重建几何）；无载荷回退基元占位
+      const geomSig = mesh.dataMesh ? meshDataSig(mesh.dataMesh) : "data:none";
+      const ud = obj.userData as { geomSig?: string };
+      if (ud.geomSig !== geomSig) {
+        this.removeModelChild(obj);
+        this.removeNamedChild(obj, MODEL_PENDING_NAME);
+        releaseGeometry(obj.geometry);
+        if (mesh.dataMesh) {
+          try {
+            obj.geometry = buildDataGeometry(mesh.dataMesh);
+          } catch (e) {
+            console.warn(`[mesh] 数据化网格构建失败，回退占位: ${String(e)}`);
+            obj.geometry = acquireGeometry(mesh.geometry, mesh.size);
+          }
+        } else {
+          obj.geometry = acquireGeometry(mesh.geometry, mesh.size);
+        }
+        ud.geomSig = geomSig;
+        this.shadowCamerasDirty = true;
+      }
+      this.updateMeshMaterial(mesh, obj);
+      return;
+    }
+    // 基元几何签名门控：geometry/size 未变时跳过释放 + 重建 + GPU 重上传 +
+    // 阴影重算（材质应用不门控——updateMeshMaterial 承担材质资产参数变化的传播）；
+    // 同规格基元共享一份几何（acquireGeometry 引用计数，释放走 releaseGeometry）
     const geomSig = `prim:${mesh.geometry}|${JSON.stringify(mesh.size ?? null)}`;
     const ud = obj.userData as { geomSig?: string };
     if (ud.geomSig !== geomSig) {
       // 基元网格：清理可能的模型残留（实例共享模板资源只摘除；占位体/轮廓体释放）
       this.removeModelChild(obj);
       this.removeNamedChild(obj, MODEL_PENDING_NAME);
-      const geom = buildGeometry(mesh.geometry, mesh.size);
-      obj.geometry.dispose();
+      const geom = acquireGeometry(mesh.geometry, mesh.size);
+      releaseGeometry(obj.geometry);
       obj.geometry = geom;
       ud.geomSig = geomSig;
       // 物体尺寸/位置变化都会改变投影范围 → 让阴影相机重算一次
@@ -704,7 +741,7 @@ export class SceneSynchronizer {
     this.removeNamedChild(obj, MODEL_PENDING_NAME);
     this.removeNamedChild(obj, OUTLINE_CHILD_NAME);
     // 容器几何置空：基元几何/材质不参与模型渲染（材质由模型内嵌）
-    if (obj.geometry) obj.geometry.dispose();
+    releaseGeometry(obj.geometry);
     obj.geometry = new THREE.BufferGeometry();
 
     const inst = mesh.model ? (this.lookup.instantiateModel?.(mesh.model) ?? null) : null;
@@ -1364,11 +1401,12 @@ export class SceneSynchronizer {
     if (!splatmap && layerColors) {
       splatmap = { data: null, width: 0, height: 0, layerColors: layerColors! };
     }
-    // 几何由 地形设置 + 雕刻层 决定；颜色由 材质 + splatmap 就绪态 + splatmap 内容纪元 决定。
+    // 几何由 地形设置 + 数字地形数据源 + 雕刻层 决定；颜色由 材质 + splatmap 就绪态 + splatmap 内容纪元 决定。
     // 绘制提交只推进纪元 → 走下方"仅重烤颜色"路径，几何（chunk）不重建；
     // 雕刻提交改变雕刻层 → geomSig 变化 → 几何重build。
     const sculptSig = terrainSculptSig(node.sculpt);
-    const geomSig = terrainSettingsSig(node.terrain) + "#" + sculptSig;
+    const demSig = terrainDemSigOf(node.dem);
+    const geomSig = terrainSettingsSig(node.terrain) + "#" + sculptSig + "#" + demSig;
     const colorSig = `${terrainMaterialSig(ms)}#${splatmapReady ? "splat" : "nosplat"}#${this.splatmapEpoch}`;
     let terrainGroup = obj.children.find((c) => c.name === TERRAIN_MESH_NAME) as THREE.Group | null;
     if (!terrainGroup || terrainGroup.userData.terrainSig !== geomSig) {
@@ -1380,8 +1418,8 @@ export class SceneSynchronizer {
         node.sculpt && node.sculpt.gridN === node.terrain.segments + 1
           ? decodeSculptData(node.sculpt.data)
           : null;
-      // sculpt 增量：地形设置未变（仅雕刻层变化）且有缓存基准高度 → 跳过最重的
-      // 程序化生成（分形 + 热侵蚀）。会话期间 base 不变，仅 sculpt 偏移层变化。
+      // sculpt 增量：设置与 DEM 源均未变（仅雕刻层变化）且有缓存基准高度 → 跳过
+      // 重烘焙（DEM 解码或程序化分形+热侵蚀）。会话期间 base 不变，仅 sculpt 偏移层变化。
       const settingsSig = terrainSettingsSig(node.terrain);
       const cachedBase = terrainGroup
         ? (terrainGroup.userData.terrainBaseHeights as Float32Array | undefined)
@@ -1389,10 +1427,20 @@ export class SceneSynchronizer {
       const onlySculpt =
         !!terrainGroup &&
         terrainGroup.userData.terrainSettingsSig === settingsSig &&
+        terrainGroup.userData.terrainDemSig === demSig &&
         !!cachedBase &&
         cachedBase.length === (node.terrain.segments + 1) * (node.terrain.segments + 1);
-      const build = buildTerrain(ts, splatmap, sculptOffsets, onlySculpt ? cachedBase : undefined);
-      const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, 4);
+      // DEM 数据源优先作为基准高度（归一化 × heightScale 垂直夸张）；解码失败回退程序化
+      let demBase: Float32Array | undefined;
+      if (node.dem) {
+        const n = node.terrain.segments + 1;
+        demBase = demBaseHeights(node.dem, node.terrain.heightScale, n) ?? undefined;
+        if (!demBase) console.warn("[terrain] DEM 数据解码失败，回退程序化地形");
+      }
+      const build = buildTerrain(ts, splatmap, sculptOffsets, onlySculpt ? cachedBase : demBase);
+      // 分块数随尺寸自适应：常规 4×4；超大地形（≥800）8×8 提升视锥剔除粒度
+      // （每块更小 → 视野外整块剔除，远景不进 draw call）。两侧同规则。
+      const chunkGeoms = splitTerrainGeometry(build.geometry, build.size, build.size >= 800 ? 8 : 4);
       build.geometry.dispose();
       const matMetalness = ms ? ms.metalness : 0;
       const matRoughness = ms ? ms.roughness : 0.95;
@@ -1441,6 +1489,7 @@ export class SceneSynchronizer {
       }
       terrainGroup.userData.terrainSig = geomSig;
       terrainGroup.userData.terrainSettingsSig = settingsSig;
+      terrainGroup.userData.terrainDemSig = demSig;
       terrainGroup.userData.terrainBaseHeights = build.baseHeights;
       terrainGroup.userData.colorSig = colorSig;
       terrainGroup.userData.terrainMinY = build.minY;

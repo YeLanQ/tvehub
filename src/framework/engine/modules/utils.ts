@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { TransformSnapshot } from "../../scene/SceneClient";
 import type { Vec3 } from "../../prototype/types";
+import { releaseGeometry } from "../../mesh";
 import type { LightNode } from "../../prototype/nodes/LightNode";
 
 export function snapshotTransform(node: {
@@ -95,7 +96,8 @@ export function disposeObject3D(obj: THREE.Object3D): void {
   // 标记 sharedResources 的子树整棵跳过，避免销毁模板资源导致其它实例花屏
   if (isSharedSubtree(obj)) return;
   const mesh = obj as THREE.Mesh;
-  if (mesh.geometry) mesh.geometry.dispose();
+  // 共享基元几何走引用计数释放（归零才 dispose），其余几何直接释放
+  if (mesh.geometry) releaseGeometry(mesh.geometry);
   const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
   // UI 文本光栅化贴图（uiOwnedTexture）为节点自有资源，随对象销毁释放；
   // 其余贴图来自共享缓存（textureCache），只卸材质不卸贴图

@@ -7,6 +7,7 @@ import {
   parseModelMaterialOverrides,
   type MeshSourceKind,
 } from "../../mesh/types";
+import { parseMeshData, type MeshDataGeometry } from "../../mesh/dataGeometry";
 import type { GeometryKind } from "../../mesh/geometry";
 import {
   cloneAnimGraph,
@@ -26,10 +27,12 @@ export interface MeshNodeInit extends NodeInit {
   size?: Vec3;
   /** 材质资产引用路径（internal/… 内置或 assets/… 项目资产；默认 internal/materials/Default.mat） */
   material?: string;
-  /** 网格来源：基元（默认）/ 模型资产 */
+  /** 网格来源：基元（默认）/ 模型资产 / 数据化网格 */
   source?: MeshSourceKind;
   /** 模型资产引用（source=model 时有效） */
   model?: string;
+  /** 数据化网格载荷（source=data 时有效；null = 未导入） */
+  dataMesh?: MeshDataGeometry | null;
   /** 单剪辑播放设置（source=model 时有效） */
   anim?: AnimClipSettings;
   /** 动画图（source=model 时优先于单剪辑；null = 未使用图模式） */
@@ -66,12 +69,14 @@ export interface IAnimatable {
 }
 
 /**
- * 网格节点：两种网格来源 + 材质**资产引用** + 动画数据。
+ * 网格节点：三种网格来源 + 材质**资产引用** + 动画数据。
  * - source=primitive：基元几何（geometry/size）+ 材质资产引用（material），
  *   材质参数由 .mat 资产文件持有，渲染期经 MaterialManager 解析；
  * - source=model：模型资产引用（model，glb/gltf/fbx/obj），几何/材质随模型
  *   内嵌；动画剪辑由模型携带，节点上的 anim（单剪辑）与 animGraph（动画图）
- *   描述播放意图，运行时由 AnimationSystem 驱动（含骨骼动画）。
+ *   描述播放意图，运行时由 AnimationSystem 驱动（含骨骼动画）；
+ * - source=data：数据化网格（dataMesh 载荷内嵌；null 时渲染回退基元占位），
+ *   材质与基元同走 material 资产引用。
  */
 export class MeshNode extends Node implements IMeshNode, IAnimatable {
   static override readonly kType: string = "meshNode";
@@ -82,6 +87,8 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
   material: string = DEFAULT_MATERIAL_REL;
   /** 模型资产引用（空串 = 未绑定模型） */
   model: string = "";
+  /** 数据化网格载荷（source=data；null = 未导入，渲染回退基元占位） */
+  dataMesh: MeshDataGeometry | null = null;
   /** 单剪辑播放设置（动画图存在时被其覆盖） */
   anim: AnimClipSettings = { autoplay: true, clip: "", speed: 1, loop: "loop" };
   /** 动画图（null = 单剪辑模式） */
@@ -102,6 +109,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     this.size = init.size ? { ...init.size } : this.size;
     this.material = init.material ?? this.material;
     this.model = init.model ?? this.model;
+    this.dataMesh = init.dataMesh ? parseMeshData(init.dataMesh) : null;
     this.anim = init.anim ? { ...init.anim } : { ...this.anim };
     this.animGraph = init.animGraph ? cloneAnimGraph(init.animGraph) : null;
     this.boneBindings = init.boneBindings ? cloneBoneBindings(init.boneBindings) : [];
@@ -124,6 +132,7 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
       size: this.size,
       material: this.material,
       model: this.model,
+      dataMesh: this.dataMesh ? { ...this.dataMesh } : null,
       anim: { ...this.anim },
       animGraph: this.animGraph ? cloneAnimGraph(this.animGraph) : null,
       boneBindings: cloneBoneBindings(this.boneBindings),
@@ -137,6 +146,8 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
     target.size = { ...this.size };
     target.material = this.material;
     target.model = this.model;
+    // 数据化网格载荷非空才写入（旧场景文件保持字节兼容）
+    if (this.dataMesh) target.dataMesh = { ...this.dataMesh };
     target.anim = { ...this.anim };
     target.animGraph = this.animGraph ? cloneAnimGraph(this.animGraph) : null;
     target.boneBindings = cloneBoneBindings(this.boneBindings);
@@ -147,8 +158,16 @@ export class MeshNode extends Node implements IMeshNode, IAnimatable {
   }
 
   protected override readOwnData(source: Record<string, unknown>): void {
-    // 旧版场景无 source 字段 → 回退基元（既有行为不变）
-    this.source = source.source === "model" ? "model" : "primitive";
+    // 旧版场景无 source 字段 → 回退基元（既有行为不变）。
+    // 注意：data 允许 dataMesh 为空（建节点后未导入，渲染基元占位）——
+    // 幂等回填的 add/properties 事件快照同形，不能据此降级 source。
+    this.dataMesh = parseMeshData(source.dataMesh);
+    this.source =
+      source.source === "model"
+        ? "model"
+        : source.source === "data"
+          ? "data"
+          : "primitive";
     this.geometry = (source.geometry as GeometryKind) ?? this.geometry;
     this.size = (source.size as Vec3) ?? this.size;
     // 旧版场景把材质参数内嵌在节点字段里；现在材质资产化后节点只保存引用。

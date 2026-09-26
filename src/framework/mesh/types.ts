@@ -1,14 +1,15 @@
 // ---------------------------------------------------------------------------
 // Mesh 系统基础类型（framework 层，不依赖 app/api）。
 //
-// MeshNode 的网格来源分两类（MeshSourceKind）：
+// MeshNode 的网格来源分三类（MeshSourceKind）：
 // - primitive：内置基元几何（box/sphere/…，几何工厂 geometryRegistry 按类型构建）；
 // - model：模型资产引用（.glb/.gltf/.fbx/.obj，加载器工厂 modelLoaderRegistry
-//   按扩展名解析，ModelManager 负责读取/缓存/实例化）。
+//   按扩展名解析，ModelManager 负责读取/缓存/实例化）；
+// - data：数据化网格（JSON/XYZ 外部数据导入，载荷内嵌节点；dataGeometry.ts）。
 // ---------------------------------------------------------------------------
 
-/** 网格来源：内置基元 / 模型资产 */
-export type MeshSourceKind = "primitive" | "model";
+/** 网格来源：内置基元 / 模型资产 / 数据化网格 */
+export type MeshSourceKind = "primitive" | "model" | "data";
 
 /** 支持的模型资产扩展名（小写、不带点；与加载器工厂注册表对应） */
 export const MODEL_EXTS = ["glb", "gltf", "fbx", "obj"] as const;

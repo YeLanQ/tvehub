@@ -80,6 +80,48 @@ function getPrimitiveGeometry(kind, x, y, z) {
   return geom;
 }
 
+// —— 数据化网格（编辑器 framework/mesh/dataGeometry.ts 的解码镜像：只解码内嵌
+//    载荷构建 BufferGeometry，不解析 JSON/XYZ 源文件；两边算法需同步）——
+function _decodeMeshData(data, Ctor) {
+  try {
+    const bin = atob(data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (bytes.byteLength % Ctor.BYTES_PER_ELEMENT !== 0) return null;
+    return new Ctor(bytes.buffer);
+  } catch {
+    return null;
+  }
+}
+
+/** 载荷 → BufferGeometry（按载荷长度签名共享；损坏回退占位方块） */
+function getDataGeometry(d) {
+  const vc = d.vertexCount | 0;
+  if (vc < 3 || typeof d.positions !== "string") return null;
+  const key = `data|${d.positions.length}|${d.indices?.length ?? 0}|${vc}|${d.indexCount | 0}`;
+  let geom = primitiveGeometryCache.get(key);
+  if (geom !== undefined) return geom;
+  const pos = _decodeMeshData(d.positions, Float32Array);
+  if (!pos || pos.length !== vc * 3) return null;
+  geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  if ((d.indexCount | 0) > 0 && d.indices) {
+    const idx = _decodeMeshData(d.indices, Uint32Array);
+    if (idx && idx.length === (d.indexCount | 0)) geom.setIndex(new THREE.BufferAttribute(idx, 1));
+  }
+  if (d.normals) {
+    const nrm = _decodeMeshData(d.normals, Float32Array);
+    if (nrm && nrm.length === vc * 3) geom.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+  }
+  if (d.uvs) {
+    const uv = _decodeMeshData(d.uvs, Float32Array);
+    if (uv && uv.length === vc * 2) geom.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  }
+  if (!geom.getAttribute("normal")) geom.computeVertexNormals();
+  primitiveGeometryCache.set(key, geom);
+  return geom;
+}
+
 /** 按解析后的 .mat 参数对象取共享材质（同引用网格共用一个材质实例；
  * 贴图回填/Hook 注入按参数幂等，共享后各网格渲染结果不变） */
 function sharedBranchMaterial(m, build) {
@@ -144,7 +186,9 @@ function buildMeshNode(json, ctx) {
   const x = Math.max(0.01, num(sz.x, 1));
   const y = Math.max(0.01, num(sz.y, 1));
   const z = Math.max(0.01, num(sz.z, 1));
-  const geom = getPrimitiveGeometry(kind, x, y, z);
+  // 数据化网格（source=data）：载荷解码（同载荷共享）；无载荷/损坏回退基元占位
+  const dataGeom = json.source === "data" && json.dataMesh ? getDataGeometry(json.dataMesh) : null;
+  const geom = dataGeom || getPrimitiveGeometry(kind, x, y, z);
 
   // 材质解析：引用缺失（.mat 未随产物/解析失败）时回退默认材质 —— 但必须**可见地**告警，
   // 否则表现为"材质变成一块纯灰"，让人误以为是渲染后端或着色器的问题

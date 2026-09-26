@@ -54,7 +54,7 @@ import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type Ca
 import { HelperSystem } from "./modules/HelperSystem";
 import { TerrainPaintController, type TerrainToolBrush } from "./modules/TerrainPaintController";
 import type { SplatBuffer } from "../terrain/paint";
-import { bakeTerrainHeights, decodeSculptData, encodeSculptData } from "../terrain";
+import { bakeTerrainHeights, decodeSculptData, demBaseHeights, encodeSculptData } from "../terrain";
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
@@ -607,7 +607,9 @@ export class EditorEngine {
       // 每帧贴合辅助线世界变换（gizmo 拖拽时实时跟随）
       this.helperSystem.tick(this.synchronizer.getObjectMap());
       // 阴影相机贴合场景包围盒（按节拍惰性重算，场景增删/移动后投影范围自动跟上）；
-      // 视口静止（无交互无活动内容）时跳过周期重贴合——对象不动，范围不会变
+      // 视口静止（无交互无活动内容）时跳过周期重贴合——对象不动，范围不会变；
+      // 相机待重贴合说明场景内容变化 → 联动阴影图重画一次（静态场景阴影 pass 免除）
+      if (this.synchronizer.shadowDirty) this.renderer.markShadowDirty();
       this.synchronizer.refitShadowCameras(false, this.renderer.viewportActive());
       // UI 相机叠加：画布根贴合活动渲染相机 + 按 SortOrder 合成 Widget 渲染序
       // （renderActive 用的同一活动相机；scene 模式 = 编辑器轨道相机，非 null）
@@ -812,6 +814,16 @@ export class EditorEngine {
   addMesh(geometry: GeometryKind, parentId?: string): MeshNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createMesh(geometry, { parentId: parent?.id ?? null });
+    applySpawnOffset(node);
+    this.graph.add(node);
+    this.select(node.id);
+    return node;
+  }
+
+  /** 添加数据化网格节点（source=data；载荷经检查器「Data Mesh」卡导入） */
+  addDataMesh(parentId?: string): MeshNode {
+    const parent = this.resolveParent(parentId);
+    const node = this.factory.createDataMesh({ parentId: parent?.id ?? null });
     applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
@@ -1592,8 +1604,10 @@ export class EditorEngine {
   // ===================== 数据 → Three 同步 =====================
 
   private onGraphChange(c: SceneChange): void {
-    // 场景数据变化 = 视口活动：空闲降帧立即恢复全速渲染本次变更
+    // 场景数据变化 = 视口活动：空闲降帧立即恢复全速渲染本次变更；
+    // 同时标脏阴影图（变换/几何/增删都会改变投影内容）
     this.renderer.markActivity();
+    this.renderer.markShadowDirty();
     this.synchronizer.onGraphChange(c, this.graph);
     this.helperSystem.onGraphChange(c, this.graph, this.synchronizer.getObjectMap());
     // 节点子树移除 → 其动画绑定（mixer/骨骼辅助线）一并解除
@@ -2848,8 +2862,10 @@ export class EditorEngine {
       return { ok: true };
     }
 
-    // sculpt：基准高度程序化烘焙（每次会话一次；segments 上限 256，耗时可接受）
-    const base = bakeTerrainHeights(node.terrain);
+    // sculpt：基准高度按数据源烘焙（DEM 优先；每次会话一次；segments 上限 256 可接受）
+    const base = node.dem
+      ? { heights: demBaseHeights(node.dem, node.terrain.heightScale, node.terrain.segments + 1) ?? bakeTerrainHeights(node.terrain).heights, gridSize: node.terrain.segments + 1 }
+      : bakeTerrainHeights(node.terrain);
     const offsets = new Float32Array(base.gridSize * base.gridSize);
     if (node.sculpt && node.sculpt.gridN === base.gridSize) {
       const prev = decodeSculptData(node.sculpt.data);

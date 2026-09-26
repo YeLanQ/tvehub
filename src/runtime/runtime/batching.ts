@@ -119,7 +119,8 @@ function isStaticMesh(
   animatedNodeIds: Set<string>,
   excludeNodeIds?: Set<string>,
 ): boolean {
-  if (json.source !== "primitive") return false;
+  // 基元与数据化网格都是纯静态几何（模型/动画/脚本/物理路径不走批处理）
+  if (json.source !== "primitive" && json.source !== "data") return false;
   if (!(obj as any).isMesh) return false;
   const nodeId = obj.userData.nodeId;
   if (nodeId && animatedNodeIds.has(nodeId)) return false;
