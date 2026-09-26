@@ -336,6 +336,19 @@ function settings(patch: Partial<ColliderSettings>): ColliderSettings {
   // 签名：地形网格内容签名参与重建判定
   check("terrainMeshSigOf 读取地形签名", terrainMeshSigOf(terrainObj) === "sig-1");
   check("terrainMeshSigOf 无地形为空串", terrainMeshSigOf(unitBoxObject()) === "");
+  // 生产布局：SceneSynchronizer 把签名写在地形组上（chunk mesh 只带高度缓存），
+  // 读取端必须从组上拿到才能在模拟中随地形变化重建碰撞体/线框
+  const prodObj = new THREE.Object3D();
+  const prodGroup = new THREE.Group();
+  prodGroup.name = "__terrainMesh";
+  prodGroup.userData.terrainSig = "prod-sig";
+  const prodChunk = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  prodChunk.userData.terrainHeights = heights;
+  prodChunk.userData.terrainGridSize = s;
+  prodChunk.userData.terrainSize = 10;
+  prodGroup.add(prodChunk);
+  prodObj.add(prodGroup);
+  check("terrainMeshSigOf 生产布局（签名在地形组上）可读", terrainMeshSigOf(prodObj) === "prod-sig");
 }
 
 finish();

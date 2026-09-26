@@ -75,16 +75,16 @@ export function computeColliderLocalBounds(obj: THREE.Object3D): ColliderLocalBo
 
 /**
  * 对象子树中地形网格的内容签名（SceneSynchronizer.refreshTerrain 写入 userData）。
- * 高度场碰撞的重建签名必须含它：地形参数变化只重建网格不改节点缩放，
+ * 签名写在 __terrainMesh 地形组上（chunk mesh 只带高度缓存，不带签名）；
+ * 兼容旧布局：mesh 上直接写 terrainSig 同样生效（smoke 手工构造用）。
+ * 高度场碰撞的重建签名必须含它：地形参数/雕刻变化只重建网格不改节点缩放，
  * 缺它则 sig 不变、碰撞体陈旧。非地形对象返回空串。
  */
 export function terrainMeshSigOf(obj: THREE.Object3D): string {
   let sig = "";
   obj.traverse((child) => {
     if (sig) return;
-    const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const s = (mesh.userData as { terrainSig?: unknown }).terrainSig;
+    const s = (child.userData as { terrainSig?: unknown }).terrainSig;
     if (typeof s === "string") sig = s;
   });
   return sig;
