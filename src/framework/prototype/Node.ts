@@ -190,7 +190,10 @@ export class Node extends Prototype implements INode {
   }
 
   applyJSON(json: Record<string, unknown>): void {
-    this.id = (json.id as string) ?? this.id;
+    // id 空串视同缺失：旧脚手架场景文件的 root 无 id 字段（反序列化为 ""），
+    // 落到构造期生成的 id —— 空串 id 会让 graph.root 的 truthy 判定失效，
+    // 挂根添加变孤儿节点（保存/导出建树全空）
+    this.id = (json.id as string) || this.id;
     this.name = (json.name as string) ?? this.name;
     this.parentId = (json.parentId as string | null) ?? null;
     this.childIds = Array.isArray(json.childIds) ? [...(json.childIds as string[])] : [];

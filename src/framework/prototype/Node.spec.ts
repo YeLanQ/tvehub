@@ -151,4 +151,17 @@ describe("序列化（字节兼容约定）", () => {
     expect(n.tag).toBe("");
     expect(n.layer).toBe(0);
   });
+
+  it("id 空串视同缺失：applyJSON 回落到已有/生成 id（旧脚手架场景 root 无 id 字段）", () => {
+    // 已有 id 的节点不被空串清掉（幂等回填快照若缺 id 不能洗掉身份）
+    const keep = new Node({ id: "node_keep" });
+    keep.applyJSON({ id: "" });
+    expect(keep.id).toBe("node_keep");
+    // 反序列化无 id 节点 → 生成非空 id（graph.root 的 truthy 判定依赖它）
+    const made = Node.fromJSON({ type: "node", name: "Root" } as never);
+    expect(made.id).toBeTruthy();
+    const empty = new Node();
+    empty.applyJSON({ id: "" });
+    expect(empty.id).toBeTruthy();
+  });
 });

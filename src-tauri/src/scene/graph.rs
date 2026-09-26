@@ -5,8 +5,20 @@
 // ---------------------------------------------------------------------------
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::model::{NodeData, TransformData};
+
+/// 装载期补 id 生成器（时间戳 + 进程内序号；仅用于文件缺 id 字段的旧场景节点）
+fn generate_node_id() -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("node_{t}_{n}")
+}
 
 /// 单次图变更（会话层据此组装 scene:changed 事件）
 pub struct GraphChange {
@@ -78,7 +90,19 @@ impl Graph {
     }
 
     fn index_subtree(&mut self, mut node: NodeData, parent: Option<&str>, all: &mut Vec<NodeData>) {
-        let children = std::mem::take(&mut node.children);
+        // 旧脚手架场景文件的节点可能没有 id 字段（反序列化为空串）：装载期补生成。
+        // 空串 id 会让 root/父链判定失效（前端 graph.root 的 truthy 判定、
+        // add_node 的父查找），挂根添加变孤儿节点 → 保存/导出建树全空。
+        // 直接子代先补 id 再建 child_ids，保证父子引用一致（孙代在递归层补）。
+        if node.id.is_empty() {
+            node.id = generate_node_id();
+        }
+        let mut children = std::mem::take(&mut node.children);
+        for child in children.iter_mut() {
+            if child.id.is_empty() {
+                child.id = generate_node_id();
+            }
+        }
         node.parent_id = parent.map(str::to_string);
         node.child_ids = children.iter().map(|c| c.id.clone()).collect();
         let id = node.id.clone();
@@ -401,6 +425,33 @@ mod tests {
         .unwrap()
     }
 
+    /// 旧脚手架场景 root/子节点无 id 字段（反序列化为空串）：装载期补生成 id，
+    /// 且父子引用（child_ids）必须指向补后的真实 id —— 否则挂根添加成孤儿，
+    /// 保存/导出建树全空（前端 graph.root 对空串 id 的 truthy 判定同步失效）。
+    #[test]
+    fn id_less_root_doc_gets_generated_ids() {
+        let doc: NodeData = serde_json::from_value(json!({
+            "type": "node", "id": "", "name": "Root", "parentId": null, "childIds": [],
+            "children": [
+                { "type": "meshNode", "id": "", "name": "Box", "parentId": null, "childIds": [],
+                  "source": "primitive", "geometry": "box", "material": "internal/materials/Default.mat" }
+            ]
+        }))
+        .unwrap();
+        let mut g = Graph::from_root_doc(doc).0;
+        let root_id = g.root_id.clone().expect("root assigned");
+        assert!(!root_id.is_empty(), "root id must be generated");
+        let root = g.root().unwrap();
+        assert_eq!(root.child_ids.len(), 1, "child link must use generated id");
+        assert!(!root.child_ids[0].is_empty());
+        // 补出的 id 可直接作为挂接父级（前端 node.add parentId=根 id 的链路）
+        let child_id = root.child_ids[0].clone();
+        g.add_node(mesh("a", Some(&root_id))).unwrap();
+        assert_eq!(g.root().unwrap().child_ids, vec![child_id, "a".to_string()]);
+        let doc_out = g.to_root_doc().unwrap();
+        assert_eq!(doc_out.child_ids.len(), 2, "doc tree must contain all nodes");
+    }
+
     #[test]
     fn add_remove_reattach_roundtrip() {
         let mut g = Graph::default();
@@ -408,7 +459,6 @@ mod tests {
         g.add_node(root).unwrap();
         g.add_node(mesh("a", Some("root"))).unwrap();
         g.add_node(mesh("b", Some("a"))).unwrap();
-
         let (captured, _) = g.remove_subtree("a").unwrap();
         assert_eq!(captured.len(), 2);
         assert!(!g.contains("a") && !g.contains("b"));

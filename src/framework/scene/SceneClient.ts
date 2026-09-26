@@ -578,15 +578,17 @@ export class SceneClient implements GraphLike {
   }
 
   private applySnapshot(json: JsonRecord): void {
-    const id = typeof json.id === "string" ? json.id : "";
-    if (!id) return;
-    const existing = this.nodes.get(id);
+    const rawId = typeof json.id === "string" ? json.id : "";
+    const existing = rawId ? this.nodes.get(rawId) : undefined;
     if (existing) {
       existing.applyJSON(json);
       return;
     }
+    // id 空串视同缺失（旧脚手架场景 root 无 id 字段，反序列化为 ""）：
+    // fromJSON 生成 id，镜像键与 node.id 必须一致，否则 graph.root 判定失效、
+    // 挂根添加变孤儿节点（保存/导出建树全空）
     const node = this.factory.fromJSON(json);
-    this.nodes.set(id, node);
-    if (!node.parentId) this.rootId = id;
+    this.nodes.set(node.id, node);
+    if (!node.parentId) this.rootId = node.id;
   }
 }
