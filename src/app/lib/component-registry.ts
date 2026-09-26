@@ -59,6 +59,12 @@ export function componentMetaOf(type: NodeComponentRef["type"]): ComponentMeta {
   return meta;
 }
 
+/** 大小写/空白不敏感地归一组件类型输入（命令层小写化后转驼峰键）；未登记返回 null */
+export function canonicalComponentType(v: unknown): NodeComponentRef["type"] | null {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return COMPONENT_METAS.find((m) => m.type.toLowerCase() === s)?.type ?? null;
+}
+
 /** 节点是否还能挂该类型组件（多实例约束已满时 false） */
 export function canAddComponent(node: { components: NodeComponentRef[] }, type: NodeComponentRef["type"]): boolean {
   const meta = componentMetaOf(type);
