@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * Mesh 卡片：网格来源（基元/模型）+ 对应参数。
+ * Mesh 卡片：网格来源（基元/模型/数据）+ 对应参数。
  * - 基元：几何类型（几何工厂注册表驱动）下拉；
  * - 模型：模型资产下拉（glb/gltf/fbx/obj；材质/动画由模型内嵌），
- *   未就绪时同步器渲染占位体，加载完成后自动替换。
+ *   未就绪时同步器渲染占位体，加载完成后自动替换；
+ * - 数据：载荷导入在下方「Data Mesh」卡（.json/.xyz/.csv → 内嵌几何）。
  */
 import { computed } from "vue";
 import { MeshNode } from "../../../framework/prototype/derived/Primitives";
@@ -67,6 +68,7 @@ function onModelChange(e: Event): void {
       <select :value="node.source" @change="onSourceChange($event)">
         <option value="primitive">基元（Primitive）</option>
         <option value="model">模型（Model）</option>
+        <option value="data">数据（Data）</option>
       </select>
     </div>
 
@@ -77,6 +79,10 @@ function onModelChange(e: Event): void {
           <option v-for="g in geometryOptions" :key="g.key" :value="g.key">{{ g.label }}</option>
         </select>
       </div>
+    </template>
+
+    <template v-else-if="node.source === 'data'">
+      <div class="hint">载荷在下方「Data Mesh」卡导入（.json 显式网格 / .xyz .csv 规则格点）；未导入前渲染基元占位。</div>
     </template>
 
     <template v-else>

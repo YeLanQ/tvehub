@@ -411,8 +411,9 @@ onBeforeUnmount(flushMaterialPersist);
       <!-- 集中式添加组件入口：注册表驱动（物理/光照/音频/脚本），弹出子菜单 -->
       <button class="add-comp-btn" @click="onAddComponentMenu">＋ 添加组件</button>
 
-      <!-- 材质区：与组件层分离，置于面板底部（组件增删不影响此区）；卡片可折叠 -->
-      <template v-if="node instanceof MeshNode && node.source === 'primitive'">
+      <!-- 材质区：与组件层分离，置于面板底部（组件增删不影响此区）；卡片可折叠。
+           基元与数据化网格同走 .mat 资产引用（MaterialSection）；模型走内嵌材质覆盖。 -->
+      <template v-if="node instanceof MeshNode && node.source !== 'model'">
         <div class="inspector-divider">材质</div>
         <ComponentCard
           title="Material"

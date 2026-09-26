@@ -265,7 +265,8 @@ export function animPropGroupsFor(
   const cap = lightCapOf(node);
   if (cap) groups.push({ group: "灯光", items: lightDefsFor(cap) });
   if (node instanceof CameraNode) groups.push({ group: "相机", items: cameraDefsFor(node) });
-  if (node instanceof MeshNode && node.source === "primitive" && node.material) {
+  // 基元与数据化网格同走 .mat 资产引用 → 材质参数可关键帧
+  if (node instanceof MeshNode && node.source !== "model" && node.material) {
     groups.push({ group: "材质", items: MATERIAL_PROPS });
   }
   if (node instanceof UIWidgetNode) {

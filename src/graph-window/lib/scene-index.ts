@@ -97,7 +97,9 @@ function typeSummary(type: string, raw: JsonRecord): SummaryRow[] {
   switch (type) {
     case "meshNode": {
       const source = typeof raw.source === "string" ? raw.source : "primitive";
-      rows.push({ label: source === "model" ? "模型" : "形状", value: source === "model" ? sv(raw.model) : sv(raw.shape) });
+      const label = source === "model" ? "模型" : source === "data" ? "数据网格" : "形状";
+      const value = source === "model" ? sv(raw.model) : source === "data" ? sv((raw.dataMesh as { sourceName?: string } | undefined)?.sourceName ?? "（未导入）") : sv(raw.shape);
+      rows.push({ label, value });
       break;
     }
     case "particleSystemNode": {
