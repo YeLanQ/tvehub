@@ -2680,7 +2680,7 @@ export class EditorEngine {
   private applyCameraNodeToThree(
     cam: THREE.PerspectiveCamera | THREE.OrthographicCamera,
     node: CameraNode,
-    orthoAspect: number,
+    aspect: number,
   ): void {
     // 模型层保证 near ≥ 0.01、far ≥ 1；真实相机还需要 far > near，这里兜底
     const near = Math.max(0.01, node.near);
@@ -2693,14 +2693,18 @@ export class EditorEngine {
     if (node.cameraType === "orthographic") {
       const oc = cam as THREE.OrthographicCamera;
       const halfH = Math.max(0.01, node.orthoSize);
-      oc.left = -halfH * orthoAspect;
-      oc.right = halfH * orthoAspect;
+      oc.left = -halfH * aspect;
+      oc.right = halfH * aspect;
       oc.top = halfH;
       oc.bottom = -halfH;
       oc.updateProjectionMatrix();
     } else {
-      (cam as THREE.PerspectiveCamera).fov = node.fov;
-      cam.updateProjectionMatrix();
+      // 透视同样要跟随目标面比例：画中画 RT/预览全屏的面比例就是入参 aspect，
+      // 不同步会导致画面被拉伸（pip 相机构造后 aspect 恒为 1 的历史缺陷）
+      const pc = cam as THREE.PerspectiveCamera;
+      pc.fov = node.fov;
+      pc.aspect = Math.max(0.01, aspect);
+      pc.updateProjectionMatrix();
     }
     const obj = this.synchronizer.getObjectMap().get(node.id);
     if (obj) {
