@@ -135,7 +135,12 @@ console.log("[3] 灯光组件（扁平字段）同语义");
 
 console.log("[4] 舞台渲染器的阴影开关与采样方式");
 const stageSrc = readFileSync(resolve(root, "public/engine/runtime/stage.mjs"), "utf8");
-ok(/renderer\.shadowMap\.enabled\s*=\s*true/.test(stageSrc), "shadowMap.enabled = true");
-ok(/shadowMap\.type\s*=\s*THREE\.PCFShadowMap/.test(stageSrc), "shadowMap.type = PCFShadowMap（每灯 radius 才生效）");
+// 舞台经 RHI 设备配置显示状态（stage.mjs 内联 src/engine/rhi 及 three 后端）：
+// 配置项存在 + 后端把 pcf 映射到 THREE.PCFShadowMap（每灯 radius 才生效）
+ok(/shadowMapEnabled:\s*true/.test(stageSrc), "RHI configureDisplay shadowMapEnabled = true");
+ok(
+  /shadowFilter:\s*"pcf"/.test(stageSrc) && /PCFShadowMap/.test(stageSrc),
+  "shadowFilter=pcf → three 后端映射 PCFShadowMap（每灯 radius 才生效）",
+);
 
 finish();

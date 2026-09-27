@@ -30,6 +30,9 @@ export default defineConfig({
         "src/ui-kit/**",
         "src/components/**",
         "src/framework/**",
+        // RHI/RPI 抽象层（types/registry/纯逻辑；three 后端属 GPU 面走 smoke）
+        "src/engine/rhi/registry.ts",
+        "src/engine/rpi/layerSet.ts",
       ],
       exclude: [
         "src/**/*.spec.ts",

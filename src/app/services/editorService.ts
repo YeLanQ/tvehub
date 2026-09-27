@@ -198,6 +198,8 @@ export function mountEditor(container: HTMLElement): Promise<void> {
             if (e.root === projectStore.currentPath && e.rel === projectStore.sceneRel) fn(e);
           }),
         );
+        // App 层只选定渲染后端偏好（RHI backend kind：webgl/webgpu/auto），
+        // 设备创建/回退由 src/engine/rhi registry 解析，管线由 rpi 组装
         await engine.mount(container, {
           renderer: projectStore.rendererBackend,
           antialias: projectStore.antiAliasing,

@@ -38,7 +38,6 @@ import { createRenderCamera } from "../engine/runtime/camera.mjs";
 import { createRenderer, createStage, recreateWebGLRendererPreserveBuffer } from "../engine/runtime/stage.mjs";
 import { refitShadowCameras } from "../engine/runtime/shadow.mjs";
 import { configureSkyOrientation } from "../engine/runtime/sky.mjs";
-import { layerPassBits, renderLayerPasses } from "../engine/runtime/layerpass.mjs";
 import { base64ToBytes, gunzip, installAssetShim, parseArchive } from "../engine/runtime/pak.mjs";
 import { resourceLoader } from "../engine/runtime/resource.mjs";
 import { AssetBundle } from "../engine/runtime/asset-bundle.mjs";
@@ -174,9 +173,11 @@ async function main() {
   // 渲染后端（项目设置 renderer）在建场景树之前确定：粒子在场景树构建时即创建
   // 发射器，其材质实现是后端相关的（GLSL / TSL 节点材质）。渲染器挂载到舞台
   // 推迟到相机就绪之后（createStage）。
-  // renderer 可能因清除标志需要跨帧保留缓冲而重建（见 createRenderCamera 之后）
-  const { renderer: initialRenderer, backend } = await createRenderer(cfg);
+  // renderer 可能因清除标志需要跨帧保留缓冲而重建（见 createRenderCamera 之后；
+  // 重建时 pipeline 随新设备一起换出）
+  const { renderer: initialRenderer, pipeline: initialPipeline, backend } = await createRenderer(cfg);
   let renderer = initialRenderer;
+  let pipeline = initialPipeline;
   // 立方体贴图采样约定按后端不同（GL vs D3D）：天空纹理翻转策略随之后定（见 sky.mjs）
   configureSkyOrientation(backend);
   if (backend === "webgpu") {
@@ -339,16 +340,9 @@ async function main() {
   // 主渲染各 pass 隐藏画布、主渲染后由专属叠加渲染绘制（beginRender/endRender）；
   // 图片/按钮背景贴图按相对路径异步回填（与网格贴图同一 fetch 链路）
   function renderOverlayPass(c) {
-    const prevBg = scene.background;
-    const prevClearColor = renderer.autoClearColor;
-    const prevClearDepth = renderer.autoClearDepth;
-    scene.background = null;
-    renderer.autoClearColor = false;
-    renderer.autoClearDepth = false;
-    renderer.render(scene, c);
-    scene.background = prevBg;
-    renderer.autoClearColor = prevClearColor;
-    renderer.autoClearDepth = prevClearDepth;
+    // RPI 叠加渲染：不清屏不画背景，结束后恢复场景背景（清屏标志下帧由
+    // applyClearFlags → pipeline.renderView 重写）
+    pipeline.renderOverlay({ scene, camera: c });
   }
   const uiApi = createUI({ nodes, canvas: renderer.domElement, scene, render: renderOverlayPass, scaleMode: cfg.scaleMode });
 
@@ -428,7 +422,7 @@ async function main() {
     backend === "webgl" &&
     (clear.flags === "depthOnly" || clear.flags === "colorOnly")
   ) {
-    renderer = recreateWebGLRendererPreserveBuffer(cfg, renderer);
+    ({ renderer, pipeline } = await recreateWebGLRendererPreserveBuffer(cfg, renderer));
   }
 
   // 正交相机的天空背景面：three.js 的纹理背景只支持透视相机（立方体路径按贴在
@@ -519,7 +513,7 @@ async function main() {
   // WebGPU 后端同编辑器策略：保留渐变兜底（不做示意性替换）
   if (activeSkyKind === "procedural" && skyMatParams && backend === "webgl") {
     try {
-      const nishita = makeNishitaSkyEquirect(renderer, skyMatParams);
+      const nishita = makeNishitaSkyEquirect(renderer.native, skyMatParams);
       scene.background = nishita;
       scene.backgroundIntensity = skyMatParams.strength ?? 1;
       skyTexture = scene.background;
@@ -538,33 +532,28 @@ async function main() {
     postLog("info", "WebGPU 后端下程序化天空使用渐变兜底（与编辑器一致）");
   }
 
-  // 相机清除标志：每帧渲染前应用（与编辑器预览渲染规则一致）
+  // 相机清除标志：每帧渲染前解析为清除描述（RPI renderView 应用：场景背景
+  // + 自动清屏标志；与编辑器预览渲染规则一致）
+  let frameClear = null;
   function applyClearFlags() {
     switch (clear.flags) {
       case "solidColor":
-        scene.background = clearColor;
-        renderer.autoClearColor = true;
-        renderer.autoClearDepth = true;
+        frameClear = { color: true, depth: true, background: clearColor };
         break;
       case "depthOnly":
         // 只清深度：不清颜色、不绘制背景，保留上一帧画面
-        scene.background = null;
-        renderer.autoClearColor = false;
-        renderer.autoClearDepth = true;
+        frameClear = { color: false, depth: true, background: null };
         break;
       case "colorOnly":
         // 只清颜色：不清深度，保留上一帧深度
-        scene.background = null;
-        renderer.autoClearColor = true;
-        renderer.autoClearDepth = false;
+        frameClear = { color: true, depth: false, background: null };
         break;
       default:
         // skybox：透视保留全局天空/底色背景，确保颜色+深度全清；
         // 正交由全屏天空背景面渲染（背景置空，避免失效的立方体背景绘制）
-        renderer.autoClearColor = true;
-        renderer.autoClearDepth = true;
+        frameClear = { color: true, depth: true };
         if (orthoSkyQuad) {
-          scene.background = null;
+          frameClear = { color: true, depth: true, background: null };
           const u = orthoSkyQuad.material.uniforms;
           cam.updateMatrixWorld(); // 渲染前 matrixWorld 尚未推进，需手动刷新
           u.projInverse.value.copy(cam.projectionMatrixInverse);
@@ -584,8 +573,7 @@ async function main() {
   // 首帧管线/着色程序预热：全部材质（含阴影深度变体）在载入阶段编译完毕
   // （WebGPU 异步、WebGL 同步），避免首个渲染帧集中编译造成的启动卡顿
   try {
-    if (backend === "webgpu") await renderer.compileAsync(scene, cam);
-    else renderer.compile(scene, cam);
+    await renderer.warmupShaders(scene, cam);
   } catch (e) {
     postLog("warn", `渲染预热失败（${e?.message ?? e}），首帧可能卡顿`);
   }
@@ -789,14 +777,12 @@ async function main() {
     });
     // 阴影管线按需：静态场景且无任何投影灯 → 整条 shadow map 管线关闭
     // （渲染器不再为阴影做逐灯深度 pass 准备；场景灯后续不会变化）
-    if (renderer.shadowMap && renderer.shadowMap.enabled) {
-      let anyCaster = false;
-      scene.traverse((o) => {
-        if (anyCaster || o.isLight !== true || o.castShadow !== true) return;
-        anyCaster = true;
-      });
-      if (!anyCaster) renderer.shadowMap.enabled = false;
-    }
+    let anyCaster = false;
+    scene.traverse((o) => {
+      if (anyCaster || o.isLight !== true || o.castShadow !== true) return;
+      anyCaster = true;
+    });
+    if (!anyCaster) renderer.setShadowMapEnabled(false);
   }
 
   // 帧间隔计时（THREE.Clock 已在 r183 弃用 → Timer；connect 启用页面可见性处理，
@@ -889,17 +875,17 @@ async function main() {
 
   function updateDebugPanel() {
     if (!debugPanel) return;
-    const info = renderer.info;
+    const info = renderer.getStats();
     const fpsEl = debugPanel.querySelector("#dbg-fps");
     fpsEl.textContent = Math.round(debugFps);
     fpsEl.style.color = debugFps < 30 ? "#f44" : debugFps < 50 ? "#fa0" : "#ddd";
-    debugPanel.querySelector("#dbg-calls").textContent = info?.render?.calls ?? 0;
+    debugPanel.querySelector("#dbg-calls").textContent = info?.drawCalls ?? 0;
     debugPanel.querySelector("#dbg-meshes").textContent = debugMeshes;
     debugPanel.querySelector("#dbg-verts").textContent = fmtNum(debugVertices);
-    debugPanel.querySelector("#dbg-tris").textContent = fmtNum(info?.render?.triangles ?? 0);
-    debugPanel.querySelector("#dbg-geos").textContent = info?.memory?.geometries ?? 0;
-    debugPanel.querySelector("#dbg-texs").textContent = info?.memory?.textures ?? 0;
-    debugPanel.querySelector("#dbg-progs").textContent = info?.programs?.length ?? 0;
+    debugPanel.querySelector("#dbg-tris").textContent = info?.triangles ?? 0;
+    debugPanel.querySelector("#dbg-geos").textContent = info?.geometries ?? 0;
+    debugPanel.querySelector("#dbg-texs").textContent = info?.textures ?? 0;
+    debugPanel.querySelector("#dbg-progs").textContent = info?.programs ?? 0;
   }
 
   function toggleDebugPanel() {
@@ -1009,11 +995,9 @@ async function main() {
     applyClearFlags();
     // 主渲染各 pass 隐藏 UI 画布；完成后恢复并做 UI 专属叠加渲染
     const uiHidden = uiApi.beginRender();
-    // 分层渲染（Culling Mask）：相机掩码全开/单层占用 → 单 pass（零开销）；
-    // 多层占用 → 按层拆 pass，灯光只照亮各自掩码内的层（layerpass.mjs）
-    const bits = layerPassBits(scene, cam);
-    if (!bits) renderer.render(scene, cam);
-    else renderLayerPasses(renderer, scene, cam, bits);
+    // RPI 主渲染（Culling Mask 分层多 pass 在管线内拆分：相机掩码全开/单层
+    // 占用 → 单 pass 零开销；多层占用 → 按层拆，灯光只照亮各自掩码内的层）
+    pipeline.renderView({ scene, camera: cam, clear: frameClear });
     if (uiHidden > 0) uiApi.endRender(cam);
     // 调试统计：FPS（EMA 平滑）+ 场景网格/顶点遍历
     if (debugVisible) {

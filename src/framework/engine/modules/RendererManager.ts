@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { layerPassBits, renderLayerPasses } from "./layerPass";
-import { CameraPiPPass, type PiPRequest } from "./CameraPiP";
+import { createRHIDevice, type RHIDevice } from "../../../engine/rhi";
+import { registerThreeRHIBackends } from "../../../engine/rhi/backends/three";
+import { createRPIPipeline, type RPIClearDesc, type RPIPipeline } from "../../../engine/rpi";
+import type { PiPRequest } from "./CameraPiP";
 
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
@@ -27,26 +29,6 @@ export interface RenderStats {
   vertices: number;
 }
 
-/** 与具体后端解耦的最小渲染器接口（WebGLRenderer / WebGPURenderer 共用） */
-interface RendererHandle {
-  domElement: HTMLCanvasElement;
-  shadowMap: { enabled: boolean; type: number };
-  toneMapping: number;
-  /** 每帧是否清颜色/深度缓冲（两种后端语义一致；清除标志按帧改写） */
-  autoClearColor: boolean;
-  autoClearDepth: boolean;
-  setPixelRatio(value?: number): void;
-  setSize(width: number, height: number, updateStyle?: boolean): void;
-  setRenderTarget(target: THREE.RenderTarget | null): void;
-  /** 逻辑像素入参（内部乘像素比）；画中画 scissor 回贴用 */
-  setScissor(x: number, y: number, w: number, h: number): void;
-  setViewport(x: number, y: number, w: number, h: number): void;
-  setScissorTest(test: boolean): void;
-  getPixelRatio(): number;
-  render(scene: THREE.Object3D, camera: THREE.Camera): void;
-  dispose(): void;
-}
-
 /**
  * 相机清除状态（渲染每帧开始时如何清屏；由引擎按活动相机节点的清除标志给出）：
  * - background：本帧 scene.background（null = 不绘制背景，配合不清颜色保留上一帧画面）；
@@ -59,14 +41,14 @@ export interface CameraClearState {
 }
 
 /**
- * 渲染器管理：编辑器视口渲染。
+ * 渲染器管理：编辑器视口渲染（Framework 层渲染服务）。
  *
  * 渲染设计要点：
- * - 支持项目设置里选择的渲染后端（webgl / webgpu / auto）：
- *   - webgl → 经典 WebGLRenderer（默认、稳定）；
- *   - webgpu / auto → 动态 import three/webgpu 的 WebGPURenderer；three 0.185
- *     在 WebGPU 不可用时会自动回退 WebGL2 后端（内部 getFallback）；构造失败时
- *     这里再兜底回退 WebGLRenderer。运行时不可切换，修改后需重新挂载。
+ * - 设备与管线经 RHI/RPI 抽象（src/engine）：RendererManager 只做编辑器
+ *   策略（空闲降帧/尺寸同步节奏/阴影按需重画），不直接创建 three 渲染器——
+ *   后端选择（webgl / webgpu / auto）由 RHI registry 解析（WebGPU 不可用
+ *   自动回退 WebGL），多 pass/离屏/回贴流程由 RPI 管线承担。运行时不可
+ *   切换，修改后需重新挂载；
  * - 编辑器使用独立的自由轨道相机（editorCamera / OrbitControls）；
  * - 场景“真实渲染相机”（CameraNode 预览）是另一个独立相机，通过
  *   registerCamera / setActiveCamera 切换，互不影响；
@@ -77,12 +59,13 @@ export interface CameraClearState {
 export class RendererManager {
   readonly scene = new THREE.Scene();
   camera!: THREE.PerspectiveCamera;
-  private renderer!: RendererHandle;
-  /** 实际生效的后端（webgl 或 webgpu），供日志/诊断 */
+  private device!: RHIDevice;
+  private pipeline!: RPIPipeline;
+  /** 实际生效的后端（webgl 或 webgpu），供日志/诊断与材质策略分派 */
   activeBackend: RendererBackend | "webgpu" = "webgl";
-  /** 原始渲染器实例（handle 本身即渲染器；KTX2 压缩纹理格式探测等需要具体类型） */
+  /** 原始渲染设备载荷（RHI native；KTX2 压缩纹理格式探测等需要具体类型） */
   get raw(): unknown {
-    return this.renderer;
+    return this.device?.native;
   }
   private orbit!: OrbitControls;
   private container!: HTMLElement;
@@ -93,7 +76,6 @@ export class RendererManager {
   private clearProvider: ((cam: THREE.Camera) => CameraClearState | null) | null = null;
   /** 画中画提供方（引擎按选中相机节点逐帧解析；null 配置 = 无画中画） */
   private pipProvider: ((viewW: number, viewH: number) => PiPRequest | null) | null = null;
-  private readonly pipPass = new CameraPiPPass();
   /** 着色器编译失败回调（three 的 program 报错 → 引擎事件 → 编辑器控制台） */
   private shaderErrorCb: ((message: string) => void) | null = null;
   /** UI 布局视图独占渲染钩子（begin 隐藏非画布子树返回数量；end 恢复；null = 无 UI） */
@@ -141,37 +123,32 @@ export class RendererManager {
     this.container = container;
     const backend = options?.renderer ?? "webgl";
     const aa = Math.max(0, Math.min(8, Math.round(options?.antialias ?? 2)));
-    this.renderer = await createRendererHandle(backend, aa, (actual) => {
-      this.activeBackend = actual;
+    // 设备创建经 RHI：后端解析/WebGPU 初始化/失败回退 WebGL 全部在 registry，
+    // 着色器编译失败摘要经 onShaderError 回调接出（three 默认只打印浏览器控制台）
+    registerThreeRHIBackends();
+    this.device = await createRHIDevice(backend, {
+      antialias: aa > 0,
+      msaaSamples: aa,
+      // preserveDrawingBuffer：仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲
+      preserveDrawingBuffer: true,
+      onShaderError: (e) => this.shaderErrorCb?.(e.message),
     });
+    this.activeBackend = this.device.kind;
+    this.pipeline = createRPIPipeline(this.device);
     if (this.activeBackend !== "webgl") {
       console.info("[renderer] 渲染后端: WebGPU（WebGPU 不可用时 three 自动回退 WebGL2）");
     }
-    // 着色器编译失败（扩展着色器 GLSL 有误等）：转到引擎事件 → 编辑器控制台。
-    // three 默认只在浏览器控制台打印，编辑器面板看不到，这里显式接出摘要信息。
-    const gl = this.renderer as unknown as THREE.WebGLRenderer;
-    if (this.activeBackend === "webgl" && gl.debug) {
-      gl.debug.onShaderError = (context, _program, vertexShader, fragmentShader) => {
-        const log =
-          context.getShaderInfoLog(fragmentShader) ||
-          context.getShaderInfoLog(vertexShader) ||
-          "";
-        const summary = String(log).trim().split("\n").slice(0, 4).join(" / ");
-        this.shaderErrorCb?.(summary || "着色器编译失败（无详细信息）");
-      };
-    }
-    // HDR/LDR 渲染合成：HDR 用 ACES 电影级色调映射，LDR 常规输出（不映射）
-    this.renderer.toneMapping =
-      (options?.hdrMode ?? "ldr") === "hdr"
-        ? THREE.ACESFilmicToneMapping
-        : THREE.NoToneMapping;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    // HDR/LDR 渲染合成：HDR 用 ACES 电影级色调映射，LDR 常规输出（不映射）；
     // PCF 采样：每灯的 shadow.radius（Shadow 类型 Hard/Soft）只在 PCF 下生效，
     // PCFSoft 会忽略 radius，无法做每灯软硬差异
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.device.configureDisplay({
+      toneMapping: (options?.hdrMode ?? "ldr") === "hdr" ? "aces-filmic" : "none",
+      pixelRatio: Math.min(window.devicePixelRatio, 2),
+      shadowMapEnabled: true,
+      shadowFilter: "pcf",
+    });
 
-    const dom = this.renderer.domElement;
+    const dom = this.device.domElement;
     dom.style.display = "block";
     dom.style.position = "absolute";
     dom.style.top = "0";
@@ -224,10 +201,10 @@ export class RendererManager {
     cancelAnimationFrame(this.raf);
     this.resizeObs?.disconnect();
     this.orbit?.dispose();
-    this.pipPass.dispose();
-    if (this.renderer) {
-      this.renderer.domElement.parentElement?.removeChild(this.renderer.domElement);
-      this.renderer.dispose();
+    this.pipeline?.dispose();
+    if (this.device) {
+      this.device.domElement.parentElement?.removeChild(this.device.domElement);
+      this.device.dispose();
     }
   }
 
@@ -272,22 +249,18 @@ export class RendererManager {
   }
 
   /**
-   * 渲染前按活动相机应用清除标志：改写 scene.background 与 autoClear 标志。
-   * background 由 provider 每帧给定（纯色/天空/无背景），与引擎的全局天空
-   * 维护（applySkyFromGraph）不冲突：每帧重写，引擎侧仍是纹理的属主。
+   * 渲染前按活动相机解析清除描述（渲染管线应用：改写 scene.background 与
+   * 自动清屏标志）。background 由 provider 每帧给定（纯色/天空/无背景），
+   * 与引擎的全局天空维护（applySkyFromGraph）不冲突：每帧重写，引擎侧仍是
+   * 纹理的属主。
    */
-  private applyClearState(cam: THREE.Camera): void {
-    const r = this.renderer;
-    if (!r) return;
+  private clearDescFor(cam: THREE.Camera): RPIClearDesc {
     const state = this.clearProvider ? this.clearProvider(cam) : null;
     if (!state) {
-      r.autoClearColor = true;
-      r.autoClearDepth = true;
-      return;
+      // 缺省全清 + 不动场景背景（全局背景保持）
+      return { color: true, depth: true };
     }
-    this.scene.background = state.background;
-    r.autoClearColor = state.clearColor;
-    r.autoClearDepth = state.clearDepth;
+    return { color: state.clearColor, depth: state.clearDepth, background: state.background };
   }
 
   /** 暂停/恢复渲染循环（中央区域被 iframe/面板接管时暂停，避免后台空转） */
@@ -354,8 +327,8 @@ export class RendererManager {
     if (this.targetW === this.appliedW && this.targetH === this.appliedH) return;
     this.appliedW = this.targetW;
     this.appliedH = this.targetH;
-    if (!this.renderer || this.appliedW < 1 || this.appliedH < 1) return;
-    this.renderer.setSize(this.appliedW, this.appliedH, false);
+    if (!this.device || this.appliedW < 1 || this.appliedH < 1) return;
+    this.device.setSize(this.appliedW, this.appliedH, false);
     const aspect = this.appliedW / this.appliedH;
     this.cameras.forEach((c) => this.applyCameraAspect(c, aspect));
   };
@@ -379,13 +352,11 @@ export class RendererManager {
     // 静态场景阴影图按需重画（WebGL）：阴影不依赖观察相机，轨道移动无需重画；
     // 只有场景内容变化（脏标记：图变更/几何重建）或活动内容（动画/粒子/物理）
     // 才重画，静态大场景免去每帧整套阴影 pass（DrawCall 约减半）
-    const gl = this.glRenderer;
-    if (gl?.shadowMap) {
-      gl.shadowMap.autoUpdate = false;
-      gl.shadowMap.needsUpdate = this.shadowDirtyRequested || contentActive;
+    if (this.device) {
+      this.device.setShadowMapOnDemand(this.shadowDirtyRequested || contentActive);
       this.shadowDirtyRequested = false;
     }
-    if (this.renderer) this.renderActive();
+    if (this.device) this.renderActive();
     this.tickStats();
   };
 
@@ -410,8 +381,7 @@ export class RendererManager {
 
   /** 获取渲染统计快照（调试面板用；网格/顶点数按需遍历并缓存 500ms） */
   getStats(): RenderStats {
-    const gl = this.glRenderer;
-    const info = gl?.info;
+    const info = this.device?.getStats();
     const now = performance.now();
     if (now - this.statsTraverseAt > 500) {
       this.statsTraverseAt = now;
@@ -433,24 +403,24 @@ export class RendererManager {
     }
     return {
       fps: Math.round(this.statsFps),
-      drawCalls: info?.render.calls ?? 0,
-      triangles: info?.render.triangles ?? 0,
-      lines: info?.render.lines ?? 0,
-      points: info?.render.points ?? 0,
-      geometries: info?.memory.geometries ?? 0,
-      textures: info?.memory.textures ?? 0,
-      programs: info?.programs?.length ?? 0,
+      drawCalls: info?.drawCalls ?? 0,
+      triangles: info?.triangles ?? 0,
+      lines: info?.lines ?? 0,
+      points: info?.points ?? 0,
+      geometries: info?.geometries ?? 0,
+      textures: info?.textures ?? 0,
+      programs: info?.programs ?? 0,
       meshes: this.statsMeshes,
       vertices: this.statsVertices,
     };
   }
 
   /**
-   * 渲染当前活动相机（含分层多 pass）：
+   * 渲染当前活动相机（含分层多 pass，经 RPI 管线）：
    * 相机掩码全开或在用层 ≤1 时单 pass（与旧渲染路径一致，零额外开销）；
    * 相机节点收窄了 Culling Mask 且场景占用多个掩码内层时按层拆 pass ——
-   * 每个 pass 只渲染该层对象，three 的灯光收集（light.layers vs 相机层）使
-   * 每盏灯只照亮其掩码内的层（灯光 Culling Mask 语义），详见 layerPass.ts。
+   * 每个 pass 只渲染该层对象，灯光收集（light.layers vs 相机层）使
+   * 每盏灯只照亮其掩码内的层（灯光 Culling Mask 语义），详见 RPI layerSet。
    */
   private renderActive(): void {
     const cam = this.activeCamera ?? this.camera;
@@ -458,13 +428,7 @@ export class RendererManager {
     // 布局视口只显示 Canvas 下的节点；灯光随场景子树隐藏 → 分层多 pass 自然
     // 退化为单 pass。场景视图 begin 返回 0，行为与旧渲染路径完全一致。
     const solo = this.uiSoloCb ? this.uiSoloCb.begin() : 0;
-    this.applyClearState(cam);
-    const bits = layerPassBits(this.scene, cam);
-    if (!bits) {
-      this.renderer.render(this.scene, cam);
-    } else {
-      renderLayerPasses(this.renderer, this.scene, cam, bits);
-    }
+    this.pipeline.renderView({ scene: this.scene, camera: cam, clear: this.clearDescFor(cam) });
     if (this.uiSoloCb && solo > 0) this.uiSoloCb.end();
     // 画中画（相机节点选中）：主渲染完成后离屏渲小视图并回贴右下角矩形
     this.renderPiP();
@@ -472,51 +436,46 @@ export class RendererManager {
 
   /**
    * 画中画 pass：提供方给出画中画相机与矩形（null = 本帧无）。
-   * 先整幅渲到离屏 RT（整附件清屏对主视图无副作用，WebGPU 语义安全），
-   * 再以全屏三角形把 RT 纹理 scissor 裁剪回贴主画布矩形（绘制不清屏，
-   * 两种后端一致）；离屏渲染期间场景背景/autoClear 由画中画相机的清除
-   * 状态接管，结束复原（背景是引擎全局属主，主渲染每帧重写）。
+   * 经 RPI 管线先整幅渲到离屏 RT（整附件清屏对主视图无副作用，WebGPU 语义
+   * 安全），再以全屏三角形把 RT 纹理 scissor 裁剪回贴主画布矩形（绘制不清屏，
+   * 两种后端一致）；离屏渲染期间清除状态由画中画相机的清除状态接管，结束
+   * 复原（背景是引擎全局属主，主渲染每帧重写）。
    */
   private renderPiP(): void {
     const req = this.pipProvider?.(this.appliedW, this.appliedH) ?? null;
-    if (!req || !this.renderer || this.appliedW < 1 || this.appliedH < 1) return;
-    const dpr = this.renderer.getPixelRatio();
+    if (!req || !this.device || this.appliedW < 1 || this.appliedH < 1) return;
+    const dpr = this.device.getPixelRatio();
     const prevBg = this.scene.background;
-    const prevClearColor = this.renderer.autoClearColor;
-    const prevClearDepth = this.renderer.autoClearDepth;
+    const target = this.pipeline.acquireTarget(req.rect.width * dpr, req.rect.height * dpr);
     try {
-      this.pipPass.beginRenderTarget(
-        this.renderer,
-        req.rect.width * dpr,
-        req.rect.height * dpr,
-      );
       req.begin();
-      this.applyClearState(req.camera);
-      const bits = layerPassBits(this.scene, req.camera);
-      if (!bits) {
-        this.renderer.render(this.scene, req.camera);
-      } else {
-        renderLayerPasses(this.renderer, this.scene, req.camera, bits);
-      }
+      this.pipeline.renderToTarget(target, {
+        scene: this.scene,
+        camera: req.camera,
+        clear: this.clearDescFor(req.camera),
+      });
     } finally {
       req.end();
       this.scene.background = prevBg;
-      this.renderer.autoClearColor = prevClearColor;
-      this.renderer.autoClearDepth = prevClearDepth;
-      this.pipPass.endRenderTarget(this.renderer);
     }
-    this.pipPass.blit(this.renderer, req.rect, this.appliedW, this.appliedH);
+    const x = this.appliedW - req.rect.right - req.rect.width;
+    const y = req.rect.bottom;
+    this.pipeline.blitTarget(
+      target,
+      { x, y, width: req.rect.width, height: req.rect.height },
+      this.appliedW,
+      this.appliedH,
+    );
   }
 
   get domElement(): HTMLElement {
-    return this.renderer.domElement;
+    return this.device.domElement;
   }
 
   /** 原始 WebGL 渲染器（仅 webgl 后端；离屏渲染等特殊用途；其他后端返回 null） */
   get glRenderer(): THREE.WebGLRenderer | null {
-    return this.activeBackend === "webgl"
-      ? (this.renderer as unknown as THREE.WebGLRenderer)
-      : null;
+    if (!this.device || this.activeBackend !== "webgl") return null;
+    return this.device.native as THREE.WebGLRenderer;
   }
 
   get orbitControls(): OrbitControls {
@@ -527,58 +486,5 @@ export class RendererManager {
   get aspect(): number {
     if (this.appliedW > 0 && this.appliedH > 0) return this.appliedW / this.appliedH;
     return this.camera ? this.camera.aspect : 1;
-  }
-}
-
-/**
- * 按后端创建渲染器：
- * - webgl → WebGLRenderer（稳定默认）；
- * - webgpu / auto → 动态加载 WebGPURenderer（three 内置 WebGL2 自动回退）；
- *   构造异常或模块不可用时兜底回退 WebGLRenderer。
- */
-async function createRendererHandle(
-  backend: RendererBackend,
-  antialias: number,
-  onCreated: (actual: RendererBackend | "webgpu") => void,
-): Promise<RendererHandle> {
-  const aa = antialias > 0;
-  const fallback = (why?: string): RendererHandle => {
-    if (why) console.warn(`[renderer] 使用 WebGLRenderer: ${why}`);
-    onCreated("webgl");
-    // preserveDrawingBuffer：仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲
-    // （WebGL 默认呈现后缓冲失效，不清颜色会退化成黑屏/花屏）
-    return new THREE.WebGLRenderer({
-      antialias: aa,
-      preserveDrawingBuffer: true,
-    }) as unknown as RendererHandle;
-  };
-
-  if (backend === "webgl") return fallback();
-
-  try {
-    const mod = (await import("three/webgpu")) as unknown as {
-      WebGPURenderer?: unknown;
-      default?: unknown;
-    };
-    const Ctor = mod.WebGPURenderer ?? mod.default;
-    if (typeof Ctor !== "function") throw new Error("WebGPURenderer not exported");
-    const instance = new (Ctor as new (params?: {
-      forceWebGL?: boolean;
-      antialias?: boolean;
-      samples?: number;
-    }) => unknown)({
-      forceWebGL: false,
-      antialias: aa,
-      samples: aa ? antialias : 0,
-    });
-    // WebGPU 后端为异步初始化：必须先 await renderer.init() 再 render()（WebGL 无此要求）
-    const maybeInit = instance as { init?: () => Promise<void> };
-    if (typeof maybeInit.init === "function") {
-      await maybeInit.init();
-    }
-    onCreated("webgpu");
-    return instance as RendererHandle;
-  } catch (e) {
-    return fallback(`WebGPU 不可用或初始化失败（${String(e)}），已回退 WebGL2/WebGL`);
   }
 }

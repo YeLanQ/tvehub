@@ -44,12 +44,8 @@ import {
 } from "../../../src/framework/layers";
 import { parseLightComponentSettings } from "../../../src/framework/lighting/types";
 import { SceneSynchronizer } from "../../../src/framework/engine/modules/SceneSynchronizer";
-import {
-  SKY_ONLY_FIRST_PASS,
-  layerPassBits,
-  populatedLayerBits,
-  renderLayerPasses,
-} from "../../../src/framework/engine/modules/layerPass";
+import { SKY_ONLY_FIRST_PASS, layerPassBits, populatedLayerBits } from "../../../src/framework/engine/modules/layerPass";
+import { renderLayerSet } from "../../../src/engine/rpi/layerSet";
 import type { GraphLike } from "../../../src/framework/scene/SceneClient";
 import { createSuite } from "../harness.mjs";
 
@@ -349,16 +345,18 @@ function findLight(root: THREE.Object3D): THREE.Light | null {
     layerPassBits(sceneB, freeCam) === null,
   );
 
-  // renderLayerPasses：调用序列、清屏/背景/相机层/天空面门控与恢复
+  // renderLayerSet（RPI 分层多 pass）：调用序列、清屏/背景/相机层/天空面门控与恢复
   const calls: Array<{ mask: number; clearColor: boolean; clearDepth: boolean; bg: unknown }> = [];
-  const fakeRenderer = {
-    autoClearColor: true,
-    autoClearDepth: true,
+  const fakeDevice = {
+    clear: { color: true, depth: true },
+    setAutoClear(color: boolean, depth: boolean) {
+      this.clear = { color, depth };
+    },
     render(s: THREE.Object3D, camera: THREE.Camera) {
       calls.push({
         mask: camera.layers.mask,
-        clearColor: this.autoClearColor,
-        clearDepth: this.autoClearDepth,
+        clearColor: this.clear.color,
+        clearDepth: this.clear.depth,
         bg: (s as THREE.Scene).background,
       });
     },
@@ -368,7 +366,10 @@ function findLight(root: THREE.Object3D): THREE.Light | null {
   scene.add(sky);
   scene.background = new THREE.Color(0x112233);
   cam.layers.mask = (1 << 1) | (1 << 3);
-  renderLayerPasses(fakeRenderer, scene, cam, layerPassBits(scene, cam)!);
+  renderLayerSet(fakeDevice, scene, cam, layerPassBits(scene, cam)!, {
+    color: true,
+    depth: true,
+  });
   check(
     "多 pass：首 pass 全清 + 背景 + 天空面，后续 pass 不清屏无背景无天空、逐层收窄",
     calls.length === 2 &&
@@ -382,11 +383,11 @@ function findLight(root: THREE.Object3D): THREE.Light | null {
       calls[1].bg === null,
   );
   check(
-    "多 pass 后恢复：相机层掩码/背景/autoClear 原样",
+    "多 pass 后恢复：相机层掩码/背景/清屏标志原样",
     cam.layers.mask === ((1 << 1) | (1 << 3)) &&
       scene.background !== null &&
-      fakeRenderer.autoClearColor &&
-      fakeRenderer.autoClearDepth &&
+      fakeDevice.clear.color &&
+      fakeDevice.clear.depth &&
       sky.visible,
   );
 }
