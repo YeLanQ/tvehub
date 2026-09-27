@@ -7,11 +7,13 @@
 - core/：tve.ts（SDK）、scripts.ts（脚本宿主）、tween.ts、log.ts（postLog）、
   utils.ts、particles.ts（GLSL 粒子材质）、particleNodeMaterial.ts + nodeMaterialHooks.ts
   + glslToTsl.ts（WebGPU/TSL，与 framework/material/tsl 词法器镜像）、lights.ts
-- runtime/：stage（createRenderer/createStage）、nodes（buildSceneTree 场景树重建）、
+- runtime/：stage（createRenderer/createStage——**经 RHI 创建设备 + RPI 组装
+  管线**，`src/engine` 源码构建时内联进 stage.mjs）、nodes（buildSceneTree 场景树重建）、
   camera、shadow（refitShadowCameras）、mesh、model（GLTF/FBX 实例化）、material、
   textures、sky、fog/heightFog、terrain、particles、animation(+worker)/animclip、
   audio、physics(+worker)、nav、logic、ui、batching（静态批处理）、layerpass
-  （Culling Mask 分 pass）、lod、shader(+Hooks)、graph-kernel/runtime/behaviors、
+  （Culling Mask 分 pass——已被 engine/rpi/layerSet 取代，产物保留无消费方）、
+  lod、shader(+Hooks)、graph-kernel/runtime/behaviors、
   pak/asset-bundle/resource（打包资产 shim）、loaders/compressed
 
 **player.mjs 只做装配**（952 行，源即产物手写维护）：main() 流程 =
@@ -30,9 +32,10 @@ tickShaderTime → scripts.fixedUpdate(dt)      // 1/60 固定步长，0..n 次
 → particlesApi.update                          // 位姿更新后再发射（world 出生点跟上）
 → scripts.lateUpdate(dt) → syncPose()          // 相机节点位姿回填渲染相机
 → refitShadowCameras(scene)                    // 每 20 帧节拍（静态冻结场景跳过）
-→ uiApi.update(cam) → applyClearFlags
-→ uiApi.beginRender → layerPassBits/renderLayerPasses（掩码全开=单 pass 零开销）
-→ uiApi.endRender
+→ uiApi.update(cam) → applyClearFlags             // 解析为清除描述 frameClear
+→ uiApi.beginRender → pipeline.renderView({scene, camera: cam, clear: frameClear})
+                                                 // RPI：分层多 pass 在管线内拆
+→ uiApi.endRender（叠加渲染走 pipeline.renderOverlay）
 ```
 
 **帧调度层（功耗，frame() 之外包一层 scheduleFrame）**：目标帧率
@@ -42,8 +45,8 @@ tickShaderTime → scripts.fixedUpdate(dt)      // 1/60 固定步长，0..n 次
 `performance.powerPreference`（"high-performance" / "low-power"，缺省 "default"）
 控制 GPU 偏好——缺省不再强制独显（原 high-performance 使混合 GPU 设备功耗数倍）。
 静态场景（无脚本/剪辑/物理/UI 画布/导航）且无投影灯时还会整体关闭阴影管线
-（`renderer.shadowMap.enabled = false`；有脚本时不推断——tve Light 组件可运行时开
-castShadow）。
+（`renderer.setShadowMapEnabled(false)`——renderer 即 RHI 设备；有脚本时不推断
+——tve Light 组件可运行时开 castShadow）。
 
 ## 使用例
 

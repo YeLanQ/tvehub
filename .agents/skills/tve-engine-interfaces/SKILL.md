@@ -8,14 +8,22 @@ description: TvE Hub 引擎侧全部接口设计：编辑器引擎（EditorEngin
 引擎是**双轨**结构，先分清你要动哪一轨：
 
 ```
-编辑器侧  src/framework/**            常驻 three（node_modules），跟随前端打包
+渲染抽象  src/engine/**                RHI（渲染硬件接口）+ RPI（渲染管线接口）
+  ├─ rhi/  types+registry+backends/three（唯一直接 import three 的设备层）
+  └─ rpi/  types+layerSet+backends/three（清除/分层多 pass/离屏回贴）
+     分层规则见 ARCHITECTURE.md 与 scripts/check-layers.mjs（three 只准
+     engine/*/backends + 台账存量；engine 不依赖上层/vue/tauri）
+
+编辑器侧  src/framework/**            Framework 层：可复用引擎功能与通用机制
   ├─ engine/EditorEngine.ts           编辑器引擎门面（3155 行）+ modules/ 12 个子系统
+  ├─ engine/modules/RendererManager   视口策略层（设备/管线经 src/engine 抽象）
   ├─ prototype/ + scene/              数据模型层：Node/Transform/ScenePrototype/SceneClient
   └─ camera/ lighting/ material/ …    各系统（与运行时模块一一对应）
 
 播放侧    src/runtime/**              纯构建产物 public/engine/**（不入库！）
   ├─ core/  tve.ts + scripts/tween/log/particles…   → public/engine/core/*.mjs
   └─ runtime/ stage/nodes/physics/…                  → public/engine/runtime/*.mjs
+             stage.ts 创建 RHI 设备+RPI 管线（src/engine 源码内联进产物）
              装配层 public/web-preview/player.mjs（源即产物，手写）
 
 权威状态  src-tauri/src/scene/        Rust 场景图（撤销历史也在后端）
@@ -55,6 +63,7 @@ description: TvE Hub 引擎侧全部接口设计：编辑器引擎（EditorEngin
 | Node/Transform/prefab 数据模型 | references/prototype-model.md |
 | 场景镜像/写通道/序列化契约 | references/scene-sync.md |
 | EditorEngine 门面与子系统 | references/editor-engine.md |
+| RHI/RPI 渲染抽象（src/engine，双轨共用） | ARCHITECTURE.md（仓库根） |
 | 场景图逻辑运行时（GNode/graph kernel） | references/graph-logic.md |
 | player.mjs 装配/帧循环/模块清单 | references/player-runtime.md |
 | 预览调试协议/单页内联/源↔产物映射 | references/runtime-comm.md |
