@@ -29,11 +29,6 @@ export function sameTransform(a: TransformSnapshot, b: TransformSnapshot): boole
   );
 }
 
-export function applySpawnOffset(node: { transform: { setPosition: (x: number, y: number, z: number) => void } }): void {
-  const r = () => (Math.random() - 0.5) * 3;
-  node.transform.setPosition(r(), 0.5 + Math.random(), r());
-}
-
 /** 容器型节点：未显式指定父级时唯一可作为「隐式父级」的类型集合
  *  （空组 + UI 画布/布局容器——用户明确用来组织层级的节点）。 */
 const IMPLICIT_CONTAINER_TYPE_KEYS = new Set<string>(["node", "uiCanvasNode", "uiLayoutNode"]);

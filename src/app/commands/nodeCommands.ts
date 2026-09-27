@@ -50,7 +50,7 @@ function asSubtype<T extends string>(list: readonly T[], v: unknown, fallback: T
   return list.includes(v as T) ? (v as T) : fallback;
 }
 
-/** node.add 可选 position（{x,y,z}，拖放落位）；非法/缺省回退引擎默认出生 */
+/** node.add 可选 position（{x,y,z}，出生落位）；非法/缺省落世界原点 */
 function asPosition(v: unknown): Vec3 | undefined {
   if (!v || typeof v !== "object") return undefined;
   const p = v as Record<string, unknown>;

@@ -59,7 +59,7 @@ import { bakeTerrainHeights, decodeSculptData, demBaseHeights, encodeSculptData 
 export type { GizmoMode } from "./modules/GizmoController";
 import { GizmoController, type GizmoMode } from "./modules/GizmoController";
 import { SceneSynchronizer } from "./modules/SceneSynchronizer";
-import { applyLightSpawn, applySpawnOffset, isImplicitContainer, snapshotTransform } from "./modules/utils";
+import { applyLightSpawn, isImplicitContainer, snapshotTransform } from "./modules/utils";
 import {
   buildProceduralSkyTexture,
   buildBandSkyTexture,
@@ -833,8 +833,6 @@ export class EditorEngine {
   addMesh(geometry: GeometryKind, parentId?: string, position?: Vec3): MeshNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createMesh(geometry, { parentId: parent?.id ?? null, position });
-    // 显式 position = 程序化落位（devtools/拖放），不再叠加随机出生偏移
-    if (!position) applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -844,7 +842,6 @@ export class EditorEngine {
   addDataMesh(parentId?: string, position?: Vec3): MeshNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createDataMesh({ parentId: parent?.id ?? null, position });
-    if (!position) applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -879,7 +876,6 @@ export class EditorEngine {
       }
       node.audio.source = source;
     }
-    applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;
@@ -901,7 +897,6 @@ export class EditorEngine {
   addParticleSystem(parentId?: string): ParticleSystemNode {
     const parent = this.resolveParent(parentId);
     const node = this.factory.createParticleSystem({ parentId: parent?.id ?? null });
-    applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;

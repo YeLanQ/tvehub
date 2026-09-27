@@ -6,7 +6,6 @@ export type { NodeHelper, HelperContext } from "./helpers/types";
 export {
   snapshotTransform,
   sameTransform,
-  applySpawnOffset,
   findNodeOwner,
   emissiveMat,
   disposeObject3D,
