@@ -35,7 +35,13 @@
   flex: 1;
   font-size: 11px;
   line-height: 1.7;
-  user-select: all !important;
+  /* 全局 base.scss 的 `* { user-select: none }` 直接命中每个子元素（直接匹配
+     优先于继承值），只在父级设 text 管不到日志文本——必须连同后代一起覆盖，
+     且只作用域在控制台内，不影响其他面板保持全局禁选 */
+  &,
+  * {
+    user-select: text !important;
+  }
 }
 
 .line {
@@ -43,7 +49,6 @@
   gap: 6px;
   padding: 0 10px;
   white-space: nowrap;
-  user-select: all !important;
 
   &:hover {
     background: var(--bg-hover);
