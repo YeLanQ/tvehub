@@ -23,6 +23,12 @@ import {
   configUsesTextureCompression,
 } from "../lib/web-preview-runtime";
 import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
+import {
+  defaultExportTemplateId,
+  loadBuildPrefs,
+  loadExportTemplates,
+  runBuild,
+} from "../lib/build-export";
 import { registerCommand } from "./registry";
 import { graphSidecarRel } from "../../framework/graph";
 
@@ -534,5 +540,58 @@ registerCommand({
       : await getAssetsStore().rename(root, relStr, finalName);
     if (!renamed) throw new Error(`重命名失败: ${relStr}`);
     return { renamed: relStr, newName: renamed };
+  },
+});
+
+registerCommand({
+  id: "projectBuild",
+  label: "构建导出",
+  group: "构建",
+  expose: true,
+  description:
+    "构建导出当前项目（与构建面板同一链路；singlePage/gzip/release/cdn/outDir/title 可选，缺省取 build.config.json 与默认模板）",
+  run: async (_ctx, args: any) => {
+    const root = requireRoot();
+    const project = getProjectStore();
+    const prefs = await loadBuildPrefs(root);
+    const singlePage = args?.singlePage === true;
+    // 模板形态与构建形态一致：single → 单页模板，multi → 多页模板
+    const templates = await loadExportTemplates();
+    const templateId =
+      typeof args?.template === "string" && args.template
+        ? args.template
+        : (templates.find((t) => t.mode === (singlePage ? "single" : "multi"))?.id ??
+          defaultExportTemplateId());
+    const result = await runBuild({
+      root,
+      channel: "web",
+      scenes: Array.isArray(args?.scenes) && args.scenes.length
+        ? args.scenes.map(String)
+        : prefs?.scenes.length
+          ? prefs.scenes
+          : [project.sceneRel || DEFAULT_SCENE_REL],
+      mainScene:
+        typeof args?.mainScene === "string" && args.mainScene
+          ? args.mainScene
+          : prefs?.mainScene || project.sceneRel || DEFAULT_SCENE_REL,
+      title:
+        typeof args?.title === "string" && args.title
+          ? args.title
+          : prefs?.title || project.projectName || "TvE Build",
+      debug: typeof args?.debug === "boolean" ? args.debug : (prefs?.debug ?? true),
+      templates: [templateId],
+      gzip: args?.gzip === true,
+      release: args?.release === true,
+      cdn: args?.cdn === true,
+      gzipBase: typeof args?.gzipBase === "string" ? args.gzipBase : "",
+      cdnBase: typeof args?.cdnBase === "string" ? args.cdnBase : "",
+      outDir: typeof args?.outDir === "string" && args.outDir ? args.outDir : undefined,
+    });
+    return {
+      ok: true,
+      output_dir: result.output_dir,
+      missing: result.missing,
+      single_page: singlePage,
+    };
   },
 });

@@ -42,6 +42,8 @@ const DEFAULT_TOOLS: DevToolPerm[] = [
   { id: "nodeSet", name: "节点设置", group: "节点", enabled: true },
   // 状态组
   { id: "state", name: "状态快照", group: "状态", enabled: true },
+  // 构建组
+  { id: "projectBuild", name: "构建导出", group: "构建", enabled: true },
   // 预览组
   { id: "previewOpen", name: "打开预览", group: "预览", enabled: true },
   { id: "previewClose", name: "关闭预览", group: "预览", enabled: true },
@@ -66,6 +68,7 @@ export const MCP_TOOLS: { name: string; description: string }[] = [
   { name: "project.open", description: "打开指定路径的项目" },
   { name: "project.close", description: "关闭当前项目（返回首页）" },
   { name: "project.create", description: "新建项目（默认 3D 模板；name 必填，parent 缺省用默认项目位置）" },
+  { name: "project.build", description: "构建导出当前项目（与构建面板同一链路；singlePage/gzip/release/cdn/outDir/title 可选）" },
   { name: "scene.list", description: "列出项目内的 .scene 场景文件" },
   { name: "scene.open", description: "打开指定场景" },
   { name: "scene.save", description: "保存当前场景" },
@@ -99,6 +102,7 @@ const METHOD_TOOL: Record<string, string> = {
   "project.open": "projectOpen",
   "project.close": "projectOpen",
   "project.create": "projectCreate",
+  "project.build": "projectBuild",
   "scene.list": "scene",
   "scene.open": "scene",
   "scene.save": "scene",
@@ -135,6 +139,7 @@ export const METHOD_TO_COMMAND: Record<string, string> = {
   "project.list": "project.recentList",
   "project.open": "project.open",
   "project.close": "project.close",
+  "project.build": "projectBuild",
   "scene.list": "scene.list",
   "scene.open": "scene.open",
   "scene.save": "scene.save",
