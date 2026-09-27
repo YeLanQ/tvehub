@@ -10,7 +10,7 @@ references/composables.md）。编辑均走 commit → 节点补丁进撤销。
 | 分区 | 用户能做什么 | 要点 |
 |---|---|---|
 | Transform | 位置/旋转(度)/缩放九字段（NumberField 拖拽微调） | commit 一次一步撤销 |
-| Mesh | 几何切换（基元）、模型路径、材质覆盖表 | 几何注册表驱动 |
+| Mesh | 几何切换（基元）、基元尺寸 size 逐轴编辑（xyz NumberField，min 0.01，一次一撤销）、模型路径、材质覆盖表 | 几何注册表驱动；scale=1 而外观非立方体时先看 size |
 | Data Mesh（source=data 时） | 导入数据网格（.json 显式 positions/indices/normals/uvs；.xyz/.csv 规则格点 x 最快）→ 载荷内嵌节点自包含；清除回基元；顶点/三角形/包围盒回显 | 层级「添加节点→网格→数据网格」建节点；导入前渲染基元占位 |
 | Material（节点/资产） | 挂载着色器下拉、渲染分支全参数（PBR/Unlit/Toon 数据驱动）、着色器 Properties 暴露参数、贴图槽（无/内置/项目三组） | 内置材质只读须先「复制到项目材质」；编辑即写引擎缓存 + 300ms 防抖写 .mat（useInspectorMaterial.ts:17） |
 | Light/Audio | 灯光类型/颜色/强度/阴影档位（off·hard·soft/分辨率）；音源资产/循环/空间化 2d·3d | 阴影档位 shadowType 优先于单字段 |

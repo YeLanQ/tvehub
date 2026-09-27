@@ -11,6 +11,7 @@ import { MeshNode } from "../../../framework/prototype/derived/Primitives";
 import { geometryRegistry, isModelAssetRel } from "../../../framework/mesh";
 import { getAssetsStore } from "../../stores/assets";
 import { isInternalAsset } from "../../../lib/internal-assets";
+import NumberField from "../NumberField.vue";
 
 const props = defineProps<{ node: MeshNode; rev?: number }>();
 
@@ -55,6 +56,11 @@ function onGeometryChange(e: Event): void {
   emit("update", "Set Geometry", value);
 }
 
+/** 逐轴提交尺寸（与变换字段同交互：NumberField commit 单轴数值） */
+function onSizeCommit(part: "x" | "y" | "z", value: number): void {
+  emit("update", "Set Mesh Size", { axis: part, value });
+}
+
 function onModelChange(e: Event): void {
   const value = (e.target as HTMLSelectElement).value;
   emit("update", "Set Model", value);
@@ -78,6 +84,20 @@ function onModelChange(e: Event): void {
         <select :value="node.geometry" @change="onGeometryChange($event)">
           <option v-for="g in geometryOptions" :key="g.key" :value="g.key">{{ g.label }}</option>
         </select>
+      </div>
+      <div class="field" :data-rev="rev">
+        <label>Size</label>
+        <div class="mesh-size-fields">
+          <NumberField
+            v-for="p in ['x', 'y', 'z'] as const"
+            :key="p"
+            :title="p"
+            :model-value="node.size[p]"
+            :step="0.1"
+            :min="0.01"
+            @commit="(v) => onSizeCommit(p, v)"
+          />
+        </div>
       </div>
     </template>
 

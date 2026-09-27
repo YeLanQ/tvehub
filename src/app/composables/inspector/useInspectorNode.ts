@@ -26,6 +26,26 @@ import type { AnimGraph } from "../../../framework/animation";
 import { isModelAssetRel, parseMeshData } from "../../../framework/mesh";
 import { dispatchCommand } from "../../commands";
 
+/** Set Mesh Size 载荷：逐轴提交（与变换字段同交互），axis 限定 xyz */
+export interface MeshSizePayload {
+  axis: "x" | "y" | "z";
+  value: number;
+}
+
+/**
+ * 解析基元尺寸提交载荷（纯函数，独立便于单测）：
+ * 轴限定 x/y/z、数值须有限且为正（几何尺寸非正无意义）；
+ * 不合法返回 null 供调用方丢弃（与 Import Mesh Data 的"非法不提交"同口径）。
+ */
+export function parseMeshSizePayload(value: unknown): MeshSizePayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const p = value as Partial<MeshSizePayload>;
+  if (p.axis !== "x" && p.axis !== "y" && p.axis !== "z") return null;
+  const num = Number(p.value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return { axis: p.axis, value: num };
+}
+
 /** inspector 系列共享上下文：由 useInspectorNode 构造，域组合式函数只消费它 */
 export interface InspectorNodeApi {
   /** 当前选中节点（选中项驱动；无选中为 undefined） */
@@ -123,6 +143,15 @@ export function useInspectorNode(): InspectorNodeApi {
           (m as MeshNode).geometry = value as MeshNode["geometry"];
         }, label);
         break;
+      case "Set Mesh Size": {
+        // 基元尺寸逐轴补丁（非法载荷丢弃不提交）；引擎经 properties 变更管线重建几何
+        const size = parseMeshSizePayload(value);
+        if (!size) return;
+        commit((m) => {
+          (m as MeshNode).size[size.axis] = size.value;
+        }, label);
+        break;
+      }
       case "Set Mesh Source": {
         const source = value === "model" ? "model" : value === "data" ? "data" : "primitive";
         commit((m) => {

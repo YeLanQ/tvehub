@@ -89,6 +89,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 2px;
 
   label {
     width: 80px;
@@ -145,6 +146,15 @@
 .inspector .vec3 .nf-input {
   width: 60px;
   flex: none;
+}
+
+/* Mesh 卡基元尺寸（Size）三轴行：跟随 .field 通栏控件（label 80 + gap 8 +
+   控件组占满余宽），与卡内 Geometry 下拉同边对齐；输入框在组内均分 */
+.inspector .mesh-size-fields {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
 }
 
 /* ---------- UI 卡片成对数值行（2D Transform / Anchor / Layout 的 field-row）---------- */
