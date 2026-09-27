@@ -10,4 +10,4 @@ export {
   findNodeOwner,
   emissiveMat,
   disposeObject3D,
-} from "./utils";
+} from "./utils";export { CameraPiPPass, computePiPRect, type PiPRect, type PiPRequest } from "./CameraPiP";

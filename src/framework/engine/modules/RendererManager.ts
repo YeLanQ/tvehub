@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { layerPassBits, renderLayerPasses } from "./layerPass";
+import { CameraPiPPass, type PiPRequest } from "./CameraPiP";
 
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
@@ -36,6 +37,12 @@ interface RendererHandle {
   autoClearDepth: boolean;
   setPixelRatio(value?: number): void;
   setSize(width: number, height: number, updateStyle?: boolean): void;
+  setRenderTarget(target: THREE.RenderTarget | null): void;
+  /** 逻辑像素入参（内部乘像素比）；画中画 scissor 回贴用 */
+  setScissor(x: number, y: number, w: number, h: number): void;
+  setViewport(x: number, y: number, w: number, h: number): void;
+  setScissorTest(test: boolean): void;
+  getPixelRatio(): number;
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   dispose(): void;
 }
@@ -84,6 +91,9 @@ export class RendererManager {
   private renderCb?: () => void;
   /** 清除状态提供方（引擎按活动相机节点的清除标志给出；缺省全清 + 全局背景） */
   private clearProvider: ((cam: THREE.Camera) => CameraClearState | null) | null = null;
+  /** 画中画提供方（引擎按选中相机节点逐帧解析；null 配置 = 无画中画） */
+  private pipProvider: ((viewW: number, viewH: number) => PiPRequest | null) | null = null;
+  private readonly pipPass = new CameraPiPPass();
   /** 着色器编译失败回调（three 的 program 报错 → 引擎事件 → 编辑器控制台） */
   private shaderErrorCb: ((message: string) => void) | null = null;
   /** UI 布局视图独占渲染钩子（begin 隐藏非画布子树返回数量；end 恢复；null = 无 UI） */
@@ -214,6 +224,7 @@ export class RendererManager {
     cancelAnimationFrame(this.raf);
     this.resizeObs?.disconnect();
     this.orbit?.dispose();
+    this.pipPass.dispose();
     if (this.renderer) {
       this.renderer.domElement.parentElement?.removeChild(this.renderer.domElement);
       this.renderer.dispose();
@@ -248,6 +259,11 @@ export class RendererManager {
   /** 注入清除状态提供方（每帧渲染前按活动相机调用；null 配置 = 保持默认全清与全局背景） */
   setClearProvider(provider: ((cam: THREE.Camera) => CameraClearState | null) | null): void {
     this.clearProvider = provider;
+  }
+
+  /** 注入画中画提供方（每帧主渲染完成后调用；null 配置 = 无画中画） */
+  setPiPProvider(provider: ((viewW: number, viewH: number) => PiPRequest | null) | null): void {
+    this.pipProvider = provider;
   }
 
   /** 注入 UI 布局视图独占渲染钩子（UISystem；场景视图/无画布时 begin 返回 0 零开销） */
@@ -450,6 +466,46 @@ export class RendererManager {
       renderLayerPasses(this.renderer, this.scene, cam, bits);
     }
     if (this.uiSoloCb && solo > 0) this.uiSoloCb.end();
+    // 画中画（相机节点选中）：主渲染完成后离屏渲小视图并回贴右下角矩形
+    this.renderPiP();
+  }
+
+  /**
+   * 画中画 pass：提供方给出画中画相机与矩形（null = 本帧无）。
+   * 先整幅渲到离屏 RT（整附件清屏对主视图无副作用，WebGPU 语义安全），
+   * 再以全屏三角形把 RT 纹理 scissor 裁剪回贴主画布矩形（绘制不清屏，
+   * 两种后端一致）；离屏渲染期间场景背景/autoClear 由画中画相机的清除
+   * 状态接管，结束复原（背景是引擎全局属主，主渲染每帧重写）。
+   */
+  private renderPiP(): void {
+    const req = this.pipProvider?.(this.appliedW, this.appliedH) ?? null;
+    if (!req || !this.renderer || this.appliedW < 1 || this.appliedH < 1) return;
+    const dpr = this.renderer.getPixelRatio();
+    const prevBg = this.scene.background;
+    const prevClearColor = this.renderer.autoClearColor;
+    const prevClearDepth = this.renderer.autoClearDepth;
+    try {
+      this.pipPass.beginRenderTarget(
+        this.renderer,
+        req.rect.width * dpr,
+        req.rect.height * dpr,
+      );
+      req.begin();
+      this.applyClearState(req.camera);
+      const bits = layerPassBits(this.scene, req.camera);
+      if (!bits) {
+        this.renderer.render(this.scene, req.camera);
+      } else {
+        renderLayerPasses(this.renderer, this.scene, req.camera, bits);
+      }
+    } finally {
+      req.end();
+      this.scene.background = prevBg;
+      this.renderer.autoClearColor = prevClearColor;
+      this.renderer.autoClearDepth = prevClearDepth;
+      this.pipPass.endRenderTarget(this.renderer);
+    }
+    this.pipPass.blit(this.renderer, req.rect, this.appliedW, this.appliedH);
   }
 
   get domElement(): HTMLElement {

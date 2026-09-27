@@ -51,6 +51,7 @@ import {
 } from "../fog";
 import { nextId } from "../../platform_abstraction/id";
 import { RendererManager, type RendererBackend, EDITOR_BACKGROUND_COLOR, type CameraClearState } from "./modules/RendererManager";
+import { computePiPRect, type PiPRequest } from "./modules/CameraPiP";
 import { HelperSystem } from "./modules/HelperSystem";
 import { TerrainPaintController, type TerrainToolBrush } from "./modules/TerrainPaintController";
 import type { SplatBuffer } from "../terrain/paint";
@@ -147,6 +148,8 @@ export interface EditorEvents extends Record<string, unknown> {
   "particles:changed": { nodeId: string };
   /** 逻辑运行器运行时变化（绑定/资产就绪/状态切换/黑板写入） */
   "logic:changed": { nodeId: string };
+  /** 画中画浮层状态（选中相机节点时编辑视口右下角取景渲染；DOM 浮层按此显隐定位） */
+  "pip:state": { active: boolean; width: number; height: number; label: string | null };
 }
 
 /** Vec2 近似相等（换父补偿的同值判定，容差远小于任何可视偏移） */
@@ -305,6 +308,18 @@ export class EditorEngine {
   private overlayVisible = true;
   /** 无场景相机时的回退提示是否已输出过（避免每次图事件刷屏） */
   private previewFallbackLogged = false;
+  /** 画中画相机（透视/正交）：选中相机节点时右下角取景渲染，独立于预览相机
+   *  （不注册进渲染器相机表——取景宽高比逐帧按画中画矩形设置，不随视口比例走） */
+  private readonly pipPerspCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+  private readonly pipOrthoCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 2000);
+  /** 画中画当前生效的相机节点（null = 未选中相机/预览中；清除状态按此给出） */
+  private pipNode: CameraNode | null = null;
+  /** 画中画渲染期间被隐藏的辅助物（渲染后按记录复原，避免覆盖其它显隐逻辑） */
+  private pipHidden: THREE.Object3D[] = [];
+  /** 画中画正交天空背景面是否处于启用态（endPiPPass 复原可见性用） */
+  private pipOrthoSkyActive = false;
+  /** 上次上报 DOM 浮层的画中画状态（变化才发事件，避免 resize 逐帧刷屏） */
+  private pipEmitted: { w: number; h: number; label: string } | null = null;
 
   constructor() {
     // 高度雾 chunk patch：必须先于任何材质 program 编译（此时尚无渲染发生）
@@ -572,6 +587,8 @@ export class EditorEngine {
       begin: () => this.uiSystem.beginSolo(),
       end: () => this.uiSystem.endSolo(),
     });
+    // 画中画（相机节点选中）：主渲染完成后在视口右下角按该相机取景离屏渲染
+    this.renderer.setPiPProvider((viewW, viewH) => this.resolvePiPRequest(viewW, viewH));
     // 空闲降帧的活动信号：有活动内容（动画播放/粒子发射/物理模拟/导航代理/
     // 逻辑运行/着色器 _Time 钩子）时视口保持全速，静止场景降频省电
     this.renderer.addActivityHook(() => this.animation.hasActive());
@@ -640,6 +657,8 @@ export class EditorEngine {
     // 幂等且容错：允许在引擎尚未 mount（或挂载中）时被销毁，不抛错
     if (this.disposed) return;
     this.disposed = true;
+    this.pipNode = null;
+    this.emitPiPState(null);
     this.unbindSceneEvents();
     this.graph.setTransport(null);
     window.removeEventListener("pointerdown", this.onCapturePointerDown, true);
@@ -2366,10 +2385,17 @@ export class EditorEngine {
       return;
     }
     const quad = this.ensureOrthoSkyQuad();
+    this.syncOrthoSkyQuadUniforms(ocam);
+    quad.visible = true;
+  }
+
+  /** 天空背景面 uniforms 贴合指定正交相机与全局天空纹理（预览与画中画共用） */
+  private syncOrthoSkyQuadUniforms(ocam: THREE.OrthographicCamera): void {
+    const quad = this.ensureOrthoSkyQuad();
     const u = quad.material.uniforms;
     // 天空纹理两种形态：等距柱状 2D（按光线方向采样 equirectUv）与
     // TextureCube 六面（CubeTexture，直接按光线方向 cube 采样）
-    const tex = this.skyApplied.texture;
+    const tex = this.skyApplied!.texture;
     const isCube = (tex as THREE.Texture & { isCubeTexture?: boolean }).isCubeTexture === true;
     u.uIsCube.value = isCube ? 1 : 0;
     u.tSky.value = isCube ? null : tex;
@@ -2389,7 +2415,6 @@ export class EditorEngine {
     ocam.updateMatrixWorld();
     (u.projInverse.value as THREE.Matrix4).copy(ocam.projectionMatrixInverse);
     (u.camWorld.value as THREE.Matrix4).copy(ocam.matrixWorld);
-    quad.visible = true;
   }
 
   /** 惰性创建全屏天空背景面（三角形铺满 NDC；最先绘制、不读写深度） */
@@ -2580,7 +2605,12 @@ export class EditorEngine {
     const want = mode === "preview";
     if (want === this.previewMode) return;
     this.previewMode = want;
-    if (want) this.previewFallbackLogged = false;
+    if (want) {
+      this.previewFallbackLogged = false;
+      // 预览接管整个视口：画中画立即关闭并上报（预览下渲染暂停，等不到下一帧）
+      this.pipNode = null;
+      this.emitPiPState(null);
+    }
     this.syncPreviewView();
   }
 
@@ -2591,6 +2621,11 @@ export class EditorEngine {
    */
   setRenderingActive(active: boolean): void {
     this.renderer.setPaused(!active);
+    if (!active) {
+      // 渲染暂停后不再有帧回调：画中画立即关闭并上报（浮层不能残留）
+      this.pipNode = null;
+      this.emitPiPState(null);
+    }
     // 后台渲染暂停（预览/脚本面板接管）时挂起编辑器音频上下文（进度保留），
     // 避免与网页预览面板的音频叠加；恢复渲染时解除挂起并补起 autoplay
     this.audio.setSuspended(!active);
@@ -2638,7 +2673,19 @@ export class EditorEngine {
 
   /** 把预览相机对齐到相机节点的世界变换与取景参数（按类型应用 fov 或正交范围） */
   private syncPreviewCameraTo(node: CameraNode): void {
-    const cam = this.previewCameraFor(node);
+    this.previewOrthoSize = node.orthoSize;
+    this.applyCameraNodeToThree(this.previewCameraFor(node), node, this.cameraViewAspect());
+  }
+
+  /**
+   * 把相机节点的取景参数（near/far/Culling Mask/fov 或正交范围）与世界变换
+   * 应用到指定 three 相机（预览渲染与画中画共用；正交宽高比由调用方决定）。
+   */
+  private applyCameraNodeToThree(
+    cam: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+    node: CameraNode,
+    orthoAspect: number,
+  ): void {
     // 模型层保证 near ≥ 0.01、far ≥ 1；真实相机还需要 far > near，这里兜底
     const near = Math.max(0.01, node.near);
     const far = Math.max(node.far, near + 1e-4);
@@ -2648,8 +2695,13 @@ export class EditorEngine {
     // RendererManager 在掩码内占用多层时按层拆 pass，使灯光 Culling Mask 一并生效
     cam.layers.mask = parseCullingMask(node.cullingMask);
     if (node.cameraType === "orthographic") {
-      this.previewOrthoSize = node.orthoSize;
-      this.syncOrthoPreviewFrustum();
+      const oc = cam as THREE.OrthographicCamera;
+      const halfH = Math.max(0.01, node.orthoSize);
+      oc.left = -halfH * orthoAspect;
+      oc.right = halfH * orthoAspect;
+      oc.top = halfH;
+      oc.bottom = -halfH;
+      oc.updateProjectionMatrix();
     } else {
       (cam as THREE.PerspectiveCamera).fov = node.fov;
       cam.updateProjectionMatrix();
@@ -2674,7 +2726,9 @@ export class EditorEngine {
     // 布局视图与场景视图同一背景规则：存在天空盒节点（启用且可见）时绘制天空，
     // 手动隐藏/停用后回退编辑器底色（全局背景由 applySkyFromGraph 维护，
     // 布局视图的独占渲染只隐藏场景内容，不影响背景）
-    const node = this.previewMode ? this.previewNode : null;
+    const isPiPCam =
+      !this.previewMode && (cam === this.pipPerspCamera || cam === this.pipOrthoCamera);
+    const node = this.previewMode ? this.previewNode : isPiPCam ? this.pipNode : null;
     if (!node) return null;
     switch (node.clearFlags) {
       case "solidColor":
@@ -2782,6 +2836,116 @@ export class EditorEngine {
     this.gizmo.setEditorEnabled(vis);
     this.helperSystem.setVisible(vis);
     this.animation.setOverlayVisible(vis);
+  }
+
+  // ===================== 画中画（选中相机节点的右下角取景） =====================
+
+  /**
+   * 画中画请求解析（渲染器主渲染完成后逐帧调用）：
+   * 场景编辑状态下选中 CameraNode → 返回其取景渲染请求（相机 + 右下角矩形 +
+   * 辅助物隐藏钩子）；否则返回 null 并确保浮层状态上报为关闭。
+   */
+  private resolvePiPRequest(viewW: number, viewH: number): PiPRequest | null {
+    const sel = this.selectedId ? this.graph.get(this.selectedId) : undefined;
+    const node = sel instanceof CameraNode ? sel : null;
+    const rect =
+      node && !this.previewMode ? computePiPRect(viewW, viewH, this.cameraViewAspect()) : null;
+    if (!node || !rect) {
+      this.pipNode = null;
+      this.emitPiPState(null);
+      return null;
+    }
+    this.pipNode = node;
+    const cam = node.cameraType === "orthographic" ? this.pipOrthoCamera : this.pipPerspCamera;
+    // 逐帧从节点同步取景/变换（物体世界变换实时读取，gizmo 拖拽中画中画跟随）
+    this.applyCameraNodeToThree(cam, node, rect.width / rect.height);
+    cam.updateMatrixWorld();
+    this.emitPiPState({ w: rect.width, h: rect.height, label: node.name });
+    return {
+      camera: cam,
+      rect,
+      begin: () => this.beginPiPPass(node, cam),
+      end: () => this.endPiPPass(),
+    };
+  }
+
+  /** 画中画状态上报（变化才发事件；DOM 浮层按此显隐与定位） */
+  private emitPiPState(state: { w: number; h: number; label: string } | null): void {
+    const prev = this.pipEmitted;
+    if (state) {
+      if (prev && prev.w === state.w && prev.h === state.h && prev.label === state.label) return;
+      this.pipEmitted = state;
+      this.events.emit("pip:state", {
+        active: true,
+        width: state.w,
+        height: state.h,
+        label: state.label,
+      });
+      return;
+    }
+    if (!prev) return;
+    this.pipEmitted = null;
+    this.events.emit("pip:state", { active: false, width: 0, height: 0, label: null });
+  }
+
+  /** 画中画渲染前隐藏编辑器辅助物（主渲染已结束，渲染完由 endPiPPass 复原） */
+  private beginPiPPass(
+    node: CameraNode,
+    cam: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+  ): void {
+    this.pipHidden.length = 0;
+    // 与 applyOverlayVisibility 同一套装饰集合：网格/相机体/图标/灯光装饰
+    this.renderer.scene.traverse((o) => {
+      if (
+        o.name === "__grid" ||
+        o.name === "__camBody" ||
+        o.name === "__camIcon" ||
+        o.name === "__audioIcon" ||
+        o.name === "__particleIcon"
+      ) {
+        if (o.visible) {
+          this.pipHidden.push(o);
+          o.visible = false;
+        }
+        return;
+      }
+      const ud = o.userData as { lamp?: boolean };
+      if (ud.lamp) {
+        // 保留真实灯光对象，仅隐藏装饰 mesh
+        o.children.forEach((c) => {
+          if (!(c as THREE.Light).isLight && c.visible) {
+            this.pipHidden.push(c);
+            c.visible = false;
+          }
+        });
+      }
+    });
+    this.gizmo.setEditorEnabled(false);
+    this.helperSystem.setVisible(false);
+    this.animation.setOverlayVisible(false);
+    // UI 画布贴合画中画相机（主渲染贴合的是编辑器相机）：画中画即真实游戏取景；
+    // 下一帧渲染回调会重新贴合活动相机，无需在此复原
+    this.uiSystem.update(cam, this.synchronizer.getObjectMap(), null);
+    // 正交相机 + 天空盒清除标志：天空由全屏背景面渲染（预览同款），贴合画中画相机
+    this.pipOrthoSkyActive = false;
+    if (node.cameraType === "orthographic" && node.clearFlags === "skybox" && this.skyApplied) {
+      this.syncOrthoSkyQuadUniforms(cam as THREE.OrthographicCamera);
+      if (this.orthoSkyQuad) this.orthoSkyQuad.visible = true;
+      this.pipOrthoSkyActive = true;
+    }
+  }
+
+  /** 画中画渲染结束：复原辅助物显隐（下一帧主渲染仍按场景编辑态显示） */
+  private endPiPPass(): void {
+    for (const o of this.pipHidden) o.visible = true;
+    this.pipHidden.length = 0;
+    this.gizmo.setEditorEnabled(true);
+    this.helperSystem.setVisible(true);
+    this.animation.setOverlayVisible(true);
+    if (this.pipOrthoSkyActive && this.orthoSkyQuad) {
+      this.orthoSkyQuad.visible = false;
+      this.pipOrthoSkyActive = false;
+    }
   }
 
   // ===================== 视口点击选择 =====================

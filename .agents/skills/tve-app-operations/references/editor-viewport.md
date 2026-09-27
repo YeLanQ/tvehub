@@ -20,6 +20,9 @@
   内部原语（mesh/light/camera/group）拖入同理（:71）。
 - 地形绘制：「绘制」按钮 → `editor.terrainPaint`（见 editor-terrain.md）。
 - 调试统计：视口调试按钮显隐 DebugStatsPanel（:222）。
+- 画中画：**选中相机节点**时视口右下角按该相机取景实时渲染（基准宽 280px 小视图 +
+  边框浮层，非交互，鼠标事件穿透；取消选中/进入预览或脚本视图即隐藏；正交取景、
+  清除标志与 Culling Mask 均按该节点的真实渲染语义生效）。
 
 ## 操作面：层级面板（HierarchyPanel.vue）
 

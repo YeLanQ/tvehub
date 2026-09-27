@@ -72,6 +72,51 @@
   font-size: 11px;
   color: var(--text-dim);
 }
+
+// —— 画中画浮层（选中相机节点；取景画面由渲染 pass 回贴在画布矩形内，浮层仅描边/标签）——
+.camera-pip {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 1px solid var(--accent, #4a9eff);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+
+  // 内描边：在亮/暗画面上都可辨
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+    border-radius: 3px;
+  }
+
+  .camera-pip__label,
+  .camera-pip__tag {
+    position: absolute;
+    top: 4px;
+    max-width: calc(100% - 8px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--text);
+  }
+
+  .camera-pip__label {
+    left: 4px;
+  }
+
+  .camera-pip__tag {
+    right: 4px;
+    max-width: none;
+    color: var(--text-dim);
+  }
+}
 // —— 地形绘制浮动面板 ——
 .paint-panel {
   position: absolute;

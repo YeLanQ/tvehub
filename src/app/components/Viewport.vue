@@ -9,10 +9,13 @@ import { isModelAssetRel } from "../../framework/mesh";
 import { logStore } from "../stores/log";
 import { Slider } from "../../ui-kit";
 import DebugStatsPanel from "./DebugStatsPanel.vue";
+import { PIP_MARGIN } from "../../framework/engine/modules/CameraPiP";
 import "../../styles/components/viewport.scss";
 
 const host = ref<HTMLDivElement | null>(null);
 const showDebugStats = ref(false);
+/** 画中画浮层边距（与渲染 pass 的矩形边距同源；宽高由引擎 pip:state 给出） */
+const pipMargin = PIP_MARGIN;
 
 const store = getEditorStore();
 const { state, engine } = store;
@@ -232,6 +235,21 @@ onBeforeUnmount(() => {
     </div>
 
     <DebugStatsPanel v-if="showDebugStats" />
+
+    <!-- 画中画（选中相机节点）：取景画面由渲染 pass 回贴在画布右下角，浮层只画边框与标签 -->
+    <div
+      v-if="state.pip.active"
+      class="camera-pip"
+      :style="{
+        right: `${pipMargin}px`,
+        bottom: `${pipMargin}px`,
+        width: `${state.pip.width}px`,
+        height: `${state.pip.height}px`,
+      }"
+    >
+      <span class="camera-pip__label mono">{{ state.pip.label || "相机" }}</span>
+      <span class="camera-pip__tag">画中画</span>
+    </div>
 
     <!-- 地形绘制浮动面板（激活时底部居中）：工具 / 模式或权重层 / 大小 / 强度 -->
     <div v-if="state.terrainPaintActive" class="paint-panel">

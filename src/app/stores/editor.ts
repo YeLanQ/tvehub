@@ -38,6 +38,8 @@ export interface EditorStore {
     terrainPaintActive: boolean;
     /** 激活绘制时捕获的材质层色（RGBA hex 数字；面板层按钮着色，最多 4 层） */
     terrainPaintLayers: number[];
+    /** 画中画浮层状态（选中相机节点时右下角取景渲染；浮层按此显隐定位） */
+    pip: { active: boolean; width: number; height: number; label: string | null };
   }>;
 }
 
@@ -70,6 +72,7 @@ export function getEditorStore(): EditorStore {
     dirty: false,
     terrainPaintActive: false,
     terrainPaintLayers: [] as number[],
+    pip: { active: false, width: 0, height: 0, label: null as string | null },
   });
 
   const bump = (): void => {
@@ -97,6 +100,13 @@ export function getEditorStore(): EditorStore {
   engine.events.on("physics:changed", bump);
   engine.events.on("particles:changed", bump);
   engine.events.on("logic:changed", bump);
+  // 画中画浮层状态（引擎按选中相机节点逐帧解析，变化才发事件）
+  engine.events.on("pip:state", (s) => {
+    state.pip.active = s.active;
+    state.pip.width = s.width;
+    state.pip.height = s.height;
+    state.pip.label = s.label;
+  });
   engine.history.events.on("changed", bump);
 
   // 脏标记：编辑器有改动（场景图/材质/撤销重做）→ 保存按钮标记 + 关闭提醒
