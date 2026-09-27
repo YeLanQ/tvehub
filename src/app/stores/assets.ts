@@ -138,6 +138,8 @@ export function getAssetsStore(): AssetsStore {
         // 移动前保存同样先等在途写落账（与 saveCurrentSceneToMain 同口径）
         if (!editor.engine.isDisposed()) await editor.engine.graph.quiesceWrites();
         await sceneApi.save();
+        const { markSceneSelfWrite } = await import("../services/fs-watch");
+        markSceneSelfWrite();
       } catch (e) {
         console.warn("移动场景前保存失败（按磁盘现有内容移动）:", e);
       }

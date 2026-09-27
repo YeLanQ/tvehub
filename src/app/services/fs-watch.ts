@@ -37,6 +37,19 @@ function extOf(rel: string): string {
 
 let installed = false;
 
+/**
+ * 自己写盘抑制窗：前端保存场景（saveCurrentSceneToMain / 搬家前 flush）后，
+ * watcher 会把我们自己的写盘当"外部修改"推回来——预览/构建流程先保存再切
+ * 视图，自动重载会把用户从预览拽回场景视图（真实事故）。保存路径调用
+ * markSceneSelfWrite() 打标，窗口内的事件不触发重载。
+ */
+const SELF_WRITE_SUPPRESS_MS = 2000;
+let lastSelfSceneWriteAt = 0;
+
+export function markSceneSelfWrite(): void {
+  lastSelfSceneWriteAt = Date.now();
+}
+
 /** 安装 fs-changed 监听（编辑器窗口启动时一次；幂等） */
 export function installFsWatch(): void {
   if (installed) return;
@@ -139,6 +152,8 @@ async function offerSceneReloadOnExternalChange(paths: string[]): Promise<void> 
   const rel = projectStore.sceneRel;
   if (!root) return;
   const isCurrentScene = Boolean(rel) && paths.includes(rel);
+  // 自己刚写过的盘（保存后 2s 内）不是外部修改，跳过分级响应
+  if (isCurrentScene && Date.now() - lastSelfSceneWriteAt < SELF_WRITE_SUPPRESS_MS) return;
 
   let dirty = false;
   if (isCurrentScene) {

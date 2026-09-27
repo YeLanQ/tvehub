@@ -3,6 +3,7 @@
 
 import { sceneApi } from "../../lib/scene-api";
 import { getEditorStore } from "../stores/editor";
+import { markSceneSelfWrite } from "../services/fs-watch";
 
 /**
  * 保存当前场景到当前打开的场景文件（sceneRel）。
@@ -15,4 +16,7 @@ export async function saveCurrentSceneToMain(): Promise<void> {
   const { engine } = getEditorStore();
   if (!engine.isDisposed()) await engine.graph.quiesceWrites();
   await sceneApi.save();
+  // 打自写标记：watcher 会把自己的保存推回 fs-changed，预览/构建先保存再切
+  // 视图，不标记会被"外部修改自动重载"拽回场景视图
+  markSceneSelfWrite();
 }
