@@ -79,7 +79,24 @@ pub(crate) fn write_export_dir(
         let _ = fs::remove_dir_all(&backup);
         fs::rename(out, &backup).map_err(|e| format!("换出旧导出目录失败: {}", e))?;
     }
-    if let Err(e) = fs::rename(&staging, out) {
+    // Windows 下批量新写文件后立即整目录换名，偶发被杀软/索引器的瞬时句柄
+    // 拒绝（os error 5）：短重试消化瞬时锁；持续失败多为外部进程长期持有
+    // （如 dev 时 vite watcher 监听了仓库内 .tmp）——按原语义报错并保留旧目录
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..4 {
+        match fs::rename(&staging, out) {
+            Ok(()) => {
+                last_err = None;
+                break;
+            }
+            Err(e) => {
+                eprintln!("[write_export] 目录换入重试 #{attempt}: {e}");
+                last_err = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(600));
+            }
+        }
+    }
+    if let Some(e) = last_err {
         // 换入失败把旧目录放回去：宁可继续服务旧内容，也不留一个空目录
         let restored = fs::rename(&backup, out).is_ok();
         let _ = fs::remove_dir_all(&staging);
