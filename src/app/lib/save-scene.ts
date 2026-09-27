@@ -2,11 +2,17 @@
 // 写盘（含 .meta 保障、脏标记清除）全部在 Rust 侧完成，前端只触发命令。
 
 import { sceneApi } from "../../lib/scene-api";
+import { getEditorStore } from "../stores/editor";
 
 /**
  * 保存当前场景到当前打开的场景文件（sceneRel）。
  * @throws 未打开场景或写入失败时抛错（后端错误信息透传）
  */
 export async function saveCurrentSceneToMain(): Promise<void> {
+  // 先等在途后端写提交落账：save 序列化的是后端会话快照，快速连续编辑的
+  // 尾部命令若尚未落账，落盘内容会静默落后于前端所见（批量建节点后立即
+  // 保存曾丢尾部 2-3 条操作）。
+  const { engine } = getEditorStore();
+  if (!engine.isDisposed()) await engine.graph.quiesceWrites();
   await sceneApi.save();
 }

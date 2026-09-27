@@ -5,13 +5,16 @@
 //   （asset:// 协议本身 no-store，缓存失效后重取即得新字节）；
 // - 脚本(.ts) → 工作台非脏标签页/元数据缓存重读（脏文件保护本地编辑）；
 // - 其余（增删/目录/.meta 等）→ 资产面板重扫，新文件/删除即时可见。
-// `.scene` 不自动重载：场景权威状态在编辑器会话内存中，外部覆盖后自动重装会
-// 冲掉未保存改动，仅记录日志提醒。
+// - .scene → 按脏态分级响应（scene-reload-action.ts）：非当前场景仅提示；
+//   当前场景脏走确认弹窗（重新载入/保留我的改动）；非脏自动重载 + 日志。
 // ---------------------------------------------------------------------------
 
 import { listen } from "@tauri-apps/api/event";
 import { AUDIO_EXTS } from "../../framework/audio/types";
 import { MODEL_EXTS } from "../../framework/mesh/types";
+import { confirm } from "../../ui-kit/composables/confirm";
+import { sceneReloadAction } from "../lib/scene-reload-action";
+import { sceneApi } from "../../lib/scene-api";
 import { getEditorStore } from "../stores/editor";
 import { getProjectStore } from "../stores/project";
 import { logStore } from "../stores/log";
@@ -45,8 +48,16 @@ export function installFsWatch(): void {
 
 async function handleFsChanged(payload: FsChangedPayload): Promise<void> {
   const projectStore = getProjectStore();
-  // 非当前工程的事件（残留监听/旧工程）忽略
-  if (!projectStore.currentPath || payload.root !== projectStore.currentPath) return;
+  // 非当前工程的事件（残留监听/旧工程）忽略。根目录不一致是异常态（正常打开
+  // 流两侧同源），留对比日志便于锁定开启方式差异导致的事件丢失（2026-09-28
+  // devtools 兜底开窗漏设项目根曾致热同步全哑）。
+  if (!projectStore.currentPath || payload.root !== projectStore.currentPath) {
+    logStore.log(
+      "warn",
+      `fs-changed 事件根目录不匹配，已忽略：payload.root=${payload.root} currentPath=${projectStore.currentPath ?? "(无项目)"}`,
+    );
+    return;
+  }
 
   const textures: string[] = [];
   const texcubes: string[] = [];
@@ -111,10 +122,60 @@ async function handleFsChanged(payload: FsChangedPayload): Promise<void> {
   }
 
   if (sceneChanged) {
-    logStore.log(
-      "info",
-      "场景文件已被外部修改：如需载入磁盘版本请重新打开该场景（未保存改动不会被覆盖）",
-      "scene",
-    );
+    void offerSceneReloadOnExternalChange(payload.paths);
   }
+}
+
+/** 外部场景重载处理进行中标记：弹窗期间的后续事件不再叠加弹窗 */
+let sceneReloadOfferInFlight = false;
+
+/**
+ * 外部 .scene 修改的分级响应（判定在 scene-reload-action.ts）：
+ * 非当前场景仅提示；当前场景脏走确认（重新载入将丢弃未保存改动）；非脏自动重载。
+ */
+async function offerSceneReloadOnExternalChange(paths: string[]): Promise<void> {
+  const projectStore = getProjectStore();
+  const root = projectStore.currentPath;
+  const rel = projectStore.sceneRel;
+  if (!root) return;
+  const isCurrentScene = Boolean(rel) && paths.includes(rel);
+
+  let dirty = false;
+  if (isCurrentScene) {
+    // 后端是脏标记权威；查询失败按脏处理（保守走确认，绝不静默丢改动）
+    try {
+      dirty = await sceneApi.dirty();
+    } catch {
+      dirty = true;
+    }
+  }
+
+  const action = sceneReloadAction(isCurrentScene, dirty);
+  if (action === "notice") {
+    logStore.log("info", `场景文件已被外部修改（${paths.filter((p) => p.endsWith(".scene")).join("、")}；当前打开的是 ${rel ?? "无"}）`, "scene");
+    return;
+  }
+  if (action === "confirm") {
+    if (sceneReloadOfferInFlight) return;
+    sceneReloadOfferInFlight = true;
+    let reload = false;
+    try {
+      reload = await confirm({
+        title: "检测到场景文件被外部修改",
+        message: "当前场景有未保存的改动，重新载入将丢弃这些改动（以磁盘版本为准）。",
+        confirmText: "重新载入",
+        cancelText: "保留我的改动",
+        danger: true,
+      });
+    } finally {
+      sceneReloadOfferInFlight = false;
+    }
+    if (!reload) {
+      logStore.log("info", "已保留未保存改动，未载入磁盘版本", "scene");
+      return;
+    }
+  }
+  const { reloadEditorScene } = await import("./editorService");
+  await reloadEditorScene(root, rel!);
+  logStore.log("info", "场景已从磁盘重新载入（外部修改）", "scene");
 }

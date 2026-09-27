@@ -204,7 +204,8 @@ registerCommand({
   expose: true,
   description: "保存当前场景",
   run: async () => {
-    await sceneApi.save();
+    // 走共享帮手：保存前等在途后端写提交落账（防快照抢跑漏尾部变更）
+    await saveCurrentSceneToMain();
     return { ok: true };
   },
 });

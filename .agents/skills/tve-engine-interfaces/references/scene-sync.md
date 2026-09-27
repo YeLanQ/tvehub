@@ -17,6 +17,9 @@ traverse/clone()/clear()/isEmpty`。
   后端 `scene:changed` 回执幂等回填；提交失败回滚镜像并告警；
 - 连续交互（gizmo 拖动/滑杆）只更新镜像，松手带 before/after 一次性提交
   （一次拖动 = 一个撤销步骤）；
+- `quiesceWrites()`：等待串行提交链排空（在途写全部落账）。**保存前必须先调**
+  （`saveCurrentSceneToMain` 已内置）——save 序列化后端会话快照，尾部命令未
+  落账时落盘内容会静默落后于前端所见；
 - `HistoryView`：后端历史状态对 UI 的只读视图（undo/redo 按钮态）。
 
 **SceneTransport**（写通道接口，10 方法）：`addNode/addTree/removeNodes/

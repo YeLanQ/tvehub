@@ -78,6 +78,10 @@ export async function handleProjectOpenedFromHome(
     const projectStore = getProjectStore();
     boot.activate("project");
     await projectStore.applyOpenedProject(root, name, rel);
+    // 项目根跟随交付流设置（asset:// 协议 + fs-changed 文件监视）：UI 流在
+    // openProject 内已设，devtools 兜底开窗/窗口交接只走本函数——漏设会导致
+    // 外部改动热同步全哑（材质改色/贴图/脚本外部保存都不刷新，直到重开项目）
+    await api.setCurrentProjectRoot(root);
     const store = getEditorStore();
     if (store.state.mounted && !store.engine.isDisposed()) {
       // 引擎先于项目挂载（编辑器窗口启动时无项目）：重注入资产访问器后再装载场景

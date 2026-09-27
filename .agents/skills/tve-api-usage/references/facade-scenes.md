@@ -11,7 +11,7 @@
 | `transport()` → `SceneTransport` | SceneClient 写通道（项目打开时注入引擎） |
 | `open(root, rel, force?)` → `SceneLoadResult` | 打开 .scene（读盘+迁移+建图，历史清零）；force=true 且会话已存在但干净 → 磁盘重装并广播 replace（asset.write 直写后重开即见磁盘版），脏会话仍复用 |
 | `loadDoc(doc, root?, rel?)` → `SceneLoadResult` | 前端文档整树替换会话（初始场景/兜底，不落盘） |
-| `save()` | 保存（后端序列化+写盘+清脏） |
+| `save()` | 保存（后端序列化+写盘+清脏）。**保存前必须先等在途写落账**：共享帮手 `saveCurrentSceneToMain` 已内置 `engine.graph.quiesceWrites()`（SceneClient 串行链排空），直调 `sceneApi.save()` 只限已自行 quiesce 的场景（如 assets 移动场景前的 flush） |
 | `doc()` → unknown | 读当前完整文档（devtools/快照用） |
 | `hierarchyRows(view, search)` → `{revision, rows}` | 层级面板行（后端 DFS+域过滤+搜索） |
 | `close()` / `dirty()` | 关闭会话 / 查未保存标记 |
@@ -33,10 +33,12 @@ engine.setSceneTransport(sceneApi.transport());
 sceneApi.subscribe((e) => { /* 按项目/场景过滤后 applyRemote */ });
 ```
 
-`src/app/lib/save-scene.ts:11`（统一保存入口，命令 editor.save 经此）：
+`src/app/lib/save-scene.ts`（统一保存入口，命令 editor.save / scene.save / 预览与构建经此；保存前排空 SceneClient 串行写链防快照抢跑漏尾部变更）：
 
 ```ts
 export async function saveCurrentSceneToMain(): Promise<void> {
+  const { engine } = getEditorStore();
+  if (!engine.isDisposed()) await engine.graph.quiesceWrites();
   await sceneApi.save();
 }
 ```

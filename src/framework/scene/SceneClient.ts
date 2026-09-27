@@ -326,6 +326,16 @@ export class SceneClient implements GraphLike {
     return next;
   }
 
+  /**
+   * 等待全部在途后端写提交落定（含调用时刻已入串行链的尾批）。
+   * 保存前必须先等它：save 序列化的是后端会话快照，快速连续编辑的尾部
+   * 命令若尚未落账，落盘内容会静默落后于前端所见（真实事故：批量建节点
+   * 后立即 save，最后 2-3 条操作丢失）。
+   */
+  async quiesceWrites(): Promise<void> {
+    await this.mutationChain;
+  }
+
   /** 标记节点在途提交（+1；提交时同步开启，早于串行链的微任务执行） */
   private pendingMark(ids: string[]): void {
     for (const id of ids) this.pendingEcho.set(id, (this.pendingEcho.get(id) ?? 0) + 1);

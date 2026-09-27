@@ -830,20 +830,21 @@ export class EditorEngine {
     this.graph.redo();
   }
 
-  addMesh(geometry: GeometryKind, parentId?: string): MeshNode {
+  addMesh(geometry: GeometryKind, parentId?: string, position?: Vec3): MeshNode {
     const parent = this.resolveParent(parentId);
-    const node = this.factory.createMesh(geometry, { parentId: parent?.id ?? null });
-    applySpawnOffset(node);
+    const node = this.factory.createMesh(geometry, { parentId: parent?.id ?? null, position });
+    // 显式 position = 程序化落位（devtools/拖放），不再叠加随机出生偏移
+    if (!position) applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;
   }
 
   /** 添加数据化网格节点（source=data；载荷经检查器「Data Mesh」卡导入） */
-  addDataMesh(parentId?: string): MeshNode {
+  addDataMesh(parentId?: string, position?: Vec3): MeshNode {
     const parent = this.resolveParent(parentId);
-    const node = this.factory.createDataMesh({ parentId: parent?.id ?? null });
-    applySpawnOffset(node);
+    const node = this.factory.createDataMesh({ parentId: parent?.id ?? null, position });
+    if (!position) applySpawnOffset(node);
     this.graph.add(node);
     this.select(node.id);
     return node;

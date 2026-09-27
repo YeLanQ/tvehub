@@ -66,7 +66,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description:
-    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/script/model；mesh 可带 subtype 几何，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 用 rel/path=脚本 .ts 相对路径，model/audio/terrain 用 path 或 rel 资产路径；parentId 或 parent 指定父节点，缺省挂根——仅当选中的是容器型节点（空组/UI 画布/布局）时才挂到其下，实体选中不隐式收子）",
+    "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/script/model；mesh 可带 subtype 几何与 position 出生落位，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 用 rel/path=脚本 .ts 相对路径，model/audio/terrain 用 path 或 rel 资产路径；parentId 或 parent 指定父节点，缺省挂根——仅当选中的是容器型节点（空组/UI 画布/布局）时才挂到其下，实体选中不隐式收子）",
   run: async (_ctx, args: any) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
@@ -84,11 +84,13 @@ registerCommand({
       case "mesh":
       case "meshnode":
         // subtype=data → 数据化网格节点（source=data，载荷经检查器导入）
+        // position：出生落位（{x,y,z}，缺省回退引擎默认出生偏移）
         node = subtype === "data"
-          ? engine().addDataMesh(parentId)
+          ? engine().addDataMesh(parentId, asPosition(args?.position))
           : engine().addMesh(
               asSubtype(GEOMETRY_KINDS, subtype ?? args?.geometry, "box"),
               parentId,
+              asPosition(args?.position),
             );
         break;
       case "light":

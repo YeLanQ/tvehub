@@ -21,7 +21,13 @@
 scene_open→材质/模型预取→场景构建→揭幕）、`disposeEditor()`（:459，幂等容错）、
 `reloadEditorScene(root, rel)`（切换场景重装会话）。
 
-**`fs-watch.ts`**：`installFsWatch()`（:38，项目目录变更→外部改盘事件）。
+**`fs-watch.ts`**：`installFsWatch()`（:38，项目目录变更→外部改盘事件）。分派：
+贴图/材质/着色器/模型/音频失效引擎缓存热刷新；脚本非脏标签页重读；`.scene`
+按脏态分级响应（`scene-reload-action.ts`：非当前场景仅提示、脏场景确认弹窗
+「重新载入/保留我的改动」、非脏自动从磁盘重载）。注意 watcher 依赖
+`set_current_project_root` 启动——UI 流在 openProject 内设置，窗口交付流
+（handoff/devtools 兜底开窗）由 `handleProjectOpenedFromHome` 设置（漏设则
+外部改动热同步全哑，fs-watch 会打 root 不匹配日志）。
 
 ## 使用例
 
