@@ -157,10 +157,11 @@
   gap: 4px;
 }
 
-/* ---------- UI 卡片成对数值行（2D Transform / Anchor / Layout 的 field-row）---------- */
+/* ---------- UI 卡片数值网格（2D Transform / Anchor / Layout 的 field-row）---------- */
+/* 固定两列：成对字段（X/Y、W/H、边距…）任何面板宽度下都并排，不塌成单列长表 */
 .inspector .ui-section .field-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 10px;
   padding: 2px 0;
 

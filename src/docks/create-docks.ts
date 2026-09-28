@@ -95,7 +95,7 @@ export function createDockSystem<P extends string>(cfg: DockSystemConfig<P>): Do
       floating,
       sizes: {
         left: clampNum(l.sizes?.left, 180, 560, d.sizes.left),
-        right: clampNum(l.sizes?.right, 200, 560, d.sizes.right),
+        right: clampNum(l.sizes?.right, 300, 560, d.sizes.right),
         bottom: clampNum(l.sizes?.bottom, 96, 480, d.sizes.bottom),
       },
     };
@@ -334,7 +334,7 @@ export function createDockSystem<P extends string>(cfg: DockSystemConfig<P>): Do
     const startBottom = layout.sizes.bottom;
     document.body.classList.add("dock-resizing");
     const leftMin = 180;
-    const rightMin = 200;
+    const rightMin = 300; /* 属性面板下限：保证成对字段两列网格可读 */
     const bottomMin = 96;
     const leftMax = 560;
     const rightMax = 560;
