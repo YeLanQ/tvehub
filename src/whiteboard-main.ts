@@ -8,9 +8,13 @@ import WhiteboardApp from "./whiteboard-window/WhiteboardApp.vue";
 import { getWhiteboardStore } from "./whiteboard-window/whiteboardStore";
 import { isTauri } from "./lib/tauri-env";
 import { api } from "./lib/api";
+import { installThemeSync } from "./app/lib/theme-colors";
 import "./styles/global.scss";
 import "./styles/components/toolbar.scss";
 import "./styles/whiteboard.scss";
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随其他窗口的实时修改
+installThemeSync();
 
 const store = getWhiteboardStore();
 

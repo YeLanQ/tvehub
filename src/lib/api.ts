@@ -280,6 +280,11 @@ export const api = {
   getDefaultProjectDir: () => invoke<string | null>("get_default_project_dir"),
   /** 设置默认项目位置（空值 = 清除） */
   setDefaultProjectDir: (dir: string) => invoke<void>("set_default_project_dir", { dir }),
+  /** 读取主题颜色自定义（键=颜色项 id，值=#rrggbb）；未设置返回空对象 */
+  getThemeColors: () => invoke<Record<string, string>>("get_theme_colors"),
+  /** 保存主题颜色自定义（空对象 = 清除全部，恢复默认） */
+  setThemeColors: (colors: Record<string, string>) =>
+    invoke<void>("set_theme_colors", { colors }),
   /** 扫描创意工坊仓库全部分类（public/repos/*，含各分类文件清单与目录路径） */
   listRepoCategories: () => invoke<RepoCategoryEntry[]>("list_repo_categories"),
   /** 读取仓库文件内容（category 分类目录下的 file；仅文本文件） */

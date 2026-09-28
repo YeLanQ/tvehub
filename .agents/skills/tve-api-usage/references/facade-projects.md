@@ -12,6 +12,7 @@
 | `trashPath(path)` | 移入系统回收站（目录/文件均可） |
 | `pickProjectFolder()` → path\|null | 选择文件夹对话框 |
 | `getDefaultProjectDir()` / `setDefaultProjectDir(dir)` | 新建项目默认父目录（null=未设置） |
+| `getThemeColors()` / `setThemeColors(colors)` | 主题颜色自定义（键=THEME_COLOR_DEFS 的 key，值=#rrggbb；空对象=清除全部）。set 后后端广播 `prefs:theme-changed`，各窗口 installThemeSync() 实时跟随 |
 
 类型：`RecentProject { path, name, sceneCount }`。
 

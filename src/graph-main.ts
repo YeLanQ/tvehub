@@ -15,9 +15,13 @@ import { debugLog, debugError } from "./lib/debug-log";
 import { api } from "./lib/api";
 import { sceneApi } from "./lib/scene-api";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
+import { installThemeSync } from "./app/lib/theme-colors";
 import "./styles/global.scss";
 
 debugLog("boot", "graph window script started");
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随其他窗口的实时修改
+installThemeSync();
 
 // 捕获全局错误（与编辑器/首页窗口一致的排查通道）
 window.addEventListener("error", (e) => {

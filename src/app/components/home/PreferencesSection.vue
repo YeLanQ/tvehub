@@ -1,18 +1,20 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
 // 首页·「偏好设置」分区：顶部类别栏（主题/项目/关于）与对应设置卡片。
-// - 主题：颜色项清单展示（编辑器仅深色主题，自定义与持久化待接入）；
+// - 主题：颜色自定义（THEME_COLOR_DEFS 见 lib/home-helpers，默认值取 ui-kit
+//   变量表产物 lan-theme；编辑态与持久化见 lib/theme-colors 的 useThemeColorEditor，
+//   改动即时应用并经后端广播到所有窗口，重置恢复默认深色主题）；
 // - 项目：默认项目位置（新建项目默认父目录，「浏览…」复用项目 store 的目录选择，
 //   经 lib/default-project-dir 持久化到应用配置目录，挂载时读取一次）；
 // - 关于：版本信息 + 第三方依赖开源许可清单（动态清单见 src/generated/
 //   license-registry.ts，由 scripts/sync-licenses.mjs 扫描 public/licenses/ 生成；
 //   「查看全文」按需 fetch 副本文本，许可正文不进主包）。
-// 主题色定义与类别清单见 lib/home-helpers。
 // ---------------------------------------------------------------------------
 import { onMounted, onUnmounted, ref } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getProjectStore } from "../../stores/project";
-import { PREFS_CATS, THEME_COLOR_DEFS } from "../../lib/home-helpers";
+import { PREFS_CATS, THEME_COLOR_DEFS, type ThemeColorDef } from "../../lib/home-helpers";
+import { useThemeColorEditor } from "../../lib/theme-colors";
 import {
   loadDefaultProjectDir,
   saveDefaultProjectDir,
@@ -29,6 +31,24 @@ const projectStore = getProjectStore();
 const APP_VERSION = __APP_VERSION__;
 
 const prefsCat = ref("theme");
+
+// ---- 主题颜色自定义（编辑态/应用/持久化在 lib/theme-colors）----
+
+const {
+  values: themeValues,
+  isModified: themeModified,
+  anyModified: themeAnyModified,
+  setColor: setThemeColorValue,
+  resetColor: resetThemeColor,
+  resetAll: resetAllThemeColors,
+  load: loadThemeColors,
+} = useThemeColorEditor();
+onMounted(() => void loadThemeColors());
+
+/** type=color 的 input 事件：取选择器值即时应用 */
+function onThemeColor(def: ThemeColorDef, e: Event) {
+  setThemeColorValue(def, (e.target as HTMLInputElement).value);
+}
 
 /** 默认项目位置（新建项目默认父目录） */
 const defaultProjectDir = ref("");
@@ -144,16 +164,32 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               class="theme-color-item"
             >
               <span class="theme-color-label">{{ def.label }}</span>
-              <input class="color-input" type="color" :value="def.defaultValue" />
-              <span class="mono color-hex">{{ def.defaultValue }}</span>
-              <button class="tpl-remove theme-color-reset">重置</button>
+              <input
+                class="color-input"
+                type="color"
+                :value="themeValues[def.key]"
+                @input="onThemeColor(def, $event)"
+              />
+              <span class="mono color-hex">{{ themeValues[def.key] }}</span>
+              <button
+                class="tpl-remove theme-color-reset"
+                :disabled="!themeModified(def)"
+                title="恢复该项默认值"
+                @click="resetThemeColor(def)"
+              >
+                重置
+              </button>
             </div>
           </div>
           <div class="theme-color-actions">
-            <button>全部重置</button>
+            <button :disabled="!themeAnyModified" @click="resetAllThemeColors()">
+              全部重置
+            </button>
           </div>
         </div>
-        <p class="hint">编辑器仅提供深色主题；颜色自定义与持久化待接入。</p>
+        <p class="hint">
+          改动即时生效并自动保存，所有窗口共用；「重置」恢复默认深色主题。
+        </p>
       </div>
     </template>
 

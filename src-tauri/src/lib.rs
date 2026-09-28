@@ -65,6 +65,37 @@ async fn set_default_project_dir(app: tauri::AppHandle, dir: String) -> Result<(
     Ok(())
 }
 
+/// 读取主题颜色自定义（键=颜色项 id，值=#rrggbb）；未设置返回空表
+#[tauri::command]
+async fn get_theme_colors(app: tauri::AppHandle) -> Result<std::collections::HashMap<String, String>, String> {
+    let prefs = store::load_app_prefs(&app);
+    let Some(obj) = prefs.get("theme_colors").and_then(|v| v.as_object()) else {
+        return Ok(std::collections::HashMap::new());
+    };
+    Ok(obj
+        .iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+        .collect())
+}
+
+/// 保存主题颜色自定义（空表 = 清除，全部恢复默认）
+#[tauri::command]
+async fn set_theme_colors(
+    app: tauri::AppHandle,
+    colors: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let mut prefs = store::load_app_prefs(&app);
+    if colors.is_empty() {
+        prefs.remove("theme_colors");
+    } else {
+        prefs.insert("theme_colors".into(), serde_json::json!(colors));
+    }
+    store::save_app_prefs(&app, &prefs);
+    // 广播给所有窗口（编辑器/图窗口等）实时跟随主题变化；home 自身幂等重放
+    let _ = app.emit("prefs:theme-changed", &colors);
+    Ok(())
+}
+
 /// 打开项目
 #[tauri::command]
 async fn open_project(app: tauri::AppHandle, path: String) -> Result<ProjectInfo, String> {
@@ -1051,6 +1082,8 @@ pub fn run() {
             repos::write_code_proto,
             repos::delete_code_proto,
            set_default_project_dir,
+            get_theme_colors,
+            set_theme_colors,
             scan_assets,
             scan_asset_db,
             read_text,

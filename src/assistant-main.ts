@@ -10,6 +10,10 @@ import { isTauri } from "./lib/tauri-env";
 import { uiStateGet, uiStateSet } from "./lib/ui-state";
 import { getAssistantStore } from "./assistant-window/store";
 import { getConversations } from "./assistant-window/conversations";
+import { installThemeSync } from "./app/lib/theme-colors";
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随其他窗口的实时修改
+installThemeSync();
 
 const KEY_WINDOW = "tve:ai:window";
 

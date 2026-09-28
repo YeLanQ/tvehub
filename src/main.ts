@@ -14,9 +14,13 @@ import { installFsWatch } from "./app/services/fs-watch";
 import { restoreDevToolsStatus, ensureCmdListener } from "./app/lib/devtools";
 import { api } from "./lib/api";
 import { getBootLoadingStore } from "./app/stores/boot-loading";
+import { installThemeSync } from "./app/lib/theme-colors";
 import type { WindowProjectPayload } from "./app/lib/window-handoff";
 
 debugLog("boot", "app script started");
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随首页偏好里的实时修改
+installThemeSync();
 
 // 捕获全局错误
 window.addEventListener("error", (e) => {

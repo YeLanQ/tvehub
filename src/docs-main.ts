@@ -5,6 +5,10 @@
 // emit_to，窗口已就绪时必达）。
 import { createApp } from "vue";
 import DocsWindowApp from "./docs-window/DocsWindowApp.vue";
+import { installThemeSync } from "./app/lib/theme-colors";
 import "./styles/global.scss";
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随其他窗口的实时修改
+installThemeSync();
 
 createApp(DocsWindowApp).mount("#app");

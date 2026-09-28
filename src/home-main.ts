@@ -6,9 +6,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import HomeView from "./app/components/HomeView.vue";
 import { isTauri } from "./lib/tauri-env";
 import { debugLog, debugError } from "./lib/debug-log";
+import { installThemeSync } from "./app/lib/theme-colors";
 import "./styles/global.scss";
 
 debugLog("boot", "home window script started");
+
+// 主题颜色自定义：恢复持久化覆盖 + 跟随其他窗口的实时修改
+installThemeSync();
 
 // 捕获全局错误（与编辑器窗口一致的排查通道）
 window.addEventListener("error", (e) => {
