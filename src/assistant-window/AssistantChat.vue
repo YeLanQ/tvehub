@@ -7,6 +7,8 @@
 //（./runs），切换会话或设置面板都不中断任务、不丢运行视图。
 // ---------------------------------------------------------------------------
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "../lib/tauri-env";
 import { toastErr } from "../ui-kit";
 import { api } from "../lib/api";
 import { getAssistantStore } from "./store";
@@ -249,6 +251,17 @@ watch(pickerQuery, () => {
   pickerSel.value = 0;
 });
 
+/** @ 候选清单失效：换工作区 / 文件变更（编辑器 fs-changed、助手自写）后置空，
+ *  下次打开浮层按当前工作区懒重查——列表若整个窗口生命周期只拉一次，
+ *  换项目后 @ 仍列上一个项目的文件；浮层开着时就地重查 */
+function invalidatePickerList(): void {
+  pickerList.value = [];
+  if (pickerOpen.value) void loadPickerList();
+}
+
+// 工作区切换即失效（activeRoot 是 reactive store 的 getter）
+watch(() => convs.activeRoot, invalidatePickerList);
+
 const card = computed(() => store.cards.find((c) => c.id === store.activeCardId) ?? null);
 const provider = computed(() => store.providers.find((p) => p.id === store.activeProviderId) ?? null);
 const canSend = computed(() => !activeRun.value?.busy && !!input.value.trim() && !!provider.value);
@@ -258,6 +271,12 @@ onMounted(async () => {
   scrollBottom();
   // 预热可加载资料索引（TTL 缓存）：发送时零等待拿到 docs/工坊目录
   void fetchLoadableCatalogs();
+  // 编辑器侧文件变更（后端 watcher 全窗口广播）→ @ 候选按根匹配失效
+  if (isTauri()) {
+    void listen<{ root: string }>("fs-changed", (e) => {
+      if (e.payload.root === convs.activeRoot) invalidatePickerList();
+    }).then((off) => (offFsChanged = off));
+  }
 });
 
 /** 文件树点文件 → 插入 @路径 引用（AssistantApp 经窗口事件投递） */
@@ -266,8 +285,18 @@ function onInsertFile(e: Event): void {
   insertRef(detail?.path ?? "");
   scrollBottom();
 }
+/** 助手自身写文件（tools.ts 在本窗口投递的 DOM 事件）→ @ 候选失效 */
+function onWorkspaceChanged(): void {
+  invalidatePickerList();
+}
+let offFsChanged: (() => void) | undefined;
 window.addEventListener("assistant:insert-file", onInsertFile);
-onBeforeUnmount(() => window.removeEventListener("assistant:insert-file", onInsertFile));
+window.addEventListener("assistant:workspace-changed", onWorkspaceChanged);
+onBeforeUnmount(() => {
+  window.removeEventListener("assistant:insert-file", onInsertFile);
+  window.removeEventListener("assistant:workspace-changed", onWorkspaceChanged);
+  offFsChanged?.();
+});
 
 // @文件引用解析（令牌格式 / 二进制判定 / 发送时附件注入）在 ./refs 纯函数模块
 
@@ -319,11 +348,14 @@ function scrollBottom(): void {
 /** 拉取工作区资产清单（浮层两种打开方式共用；与文件树同源：无需编辑器打开项目） */
 async function loadPickerList(): Promise<void> {
   pickerLoading.value = true;
+  const rootAtReq = convs.activeRoot;
   try {
-    const res = await execAssistantTool("asset.list", "{}", convs.activeRoot || undefined);
+    const res = await execAssistantTool("asset.list", "{}", rootAtReq || undefined);
     if (res && typeof res === "object" && "error" in res) {
       throw new Error(String(res.error));
     }
+    // 请求期间切了工作区：丢弃旧根结果（换根触发的失效不能被在途旧响应盖回）
+    if (convs.activeRoot !== rootAtReq) return;
     pickerList.value = (Array.isArray(res) ? res : []).filter(
       (a) => a.kind !== "dir",
     );

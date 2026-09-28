@@ -46,21 +46,24 @@ onMounted(async () => {
     void listen("projects:changed", () => scheduleRailSync()).then(
       (off) => (offProjectsChanged = off),
     );
-    // 助手自身写操作 → 打开中的文件树即时刷新（tools.ts 成功执行后投递）
-    void listen("assistant:workspace-changed", () => scheduleTreeRefresh()).then(
-      (off) => (offWorkspaceChanged = off),
-    );
+    // 编辑器侧文件变更（后端 watcher 全窗口广播）→ 打开中的文件树按根匹配刷新
+    void listen<{ root: string }>("fs-changed", (e) => {
+      if (e.payload.root === treeRoot.value) scheduleTreeRefresh();
+    }).then((off) => (offFsChanged = off));
     // 窗口隐藏期间错过的外部变更（项目被删/文件变动）在重新聚焦时补同步
     void getCurrentWindow()
       .listen("tauri://focus", () => scheduleRailSync(500))
       .then((off) => (offFocus = off));
   }
+  // 助手自身写操作 → 打开中的文件树即时刷新（tools.ts 在本窗口投递 DOM 事件，
+  // 必须用 addEventListener 订阅；原先误用 Tauri listen，监听永不触发）
+  window.addEventListener("assistant:workspace-changed", onWorkspaceChanged);
 });
 
 /** 项目列表外部变更防抖（同 HomeView 口径） */
 let rescanTimer: ReturnType<typeof setTimeout> | undefined;
 let offProjectsChanged: (() => void) | undefined;
-let offWorkspaceChanged: (() => void) | undefined;
+let offFsChanged: (() => void) | undefined;
 let offFocus: (() => void) | undefined;
 let treeTimer: ReturnType<typeof setTimeout> | undefined;
 let focusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -79,10 +82,16 @@ function scheduleTreeRefresh(): void {
   treeTimer = setTimeout(() => void refreshTree(), 400);
 }
 
+/** 助手自身写文件 → 树刷新（tools.ts 投递的窗口 DOM 事件） */
+function onWorkspaceChanged(): void {
+  scheduleTreeRefresh();
+}
+
 onBeforeUnmount(() => {
   offProjectsChanged?.();
-  offWorkspaceChanged?.();
+  offFsChanged?.();
   offFocus?.();
+  window.removeEventListener("assistant:workspace-changed", onWorkspaceChanged);
   clearTimeout(rescanTimer);
   clearTimeout(treeTimer);
   clearTimeout(focusTimer);
