@@ -1,8 +1,8 @@
 // 桥接核心 · 编解码：base64（atob/btoa，wx 环境无原生实现）与 TextEncoder/TextDecoder
 // 缺失兜底。GLTF 内嵌 data URI、fetch data: URL、createImageBitmap 均消费。
 
-import { bridgeActive } from "./host.js";
-import { setGlobal } from "./install.js";
+import { bridgeActive } from "./host.ts";
+import { setGlobal } from "./install.ts";
 
 const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

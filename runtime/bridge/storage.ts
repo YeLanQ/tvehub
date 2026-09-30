@@ -1,8 +1,8 @@
 // 桥接核心 · 存储：localStorage 形态（平台端点同步存储为后端）。
 // 迭代/清空能力端点未提供（存储盒不透明）：key(i)/clear 按 best-effort 处理。
 
-import { host, bridgeActive } from "./host.js";
-import { setGlobal, windowRef } from "./install.js";
+import { host, bridgeActive } from "./host.ts";
+import { setGlobal, windowRef } from "./install.ts";
 
 export function installStorageGlobals() {
   if (!bridgeActive()) return;

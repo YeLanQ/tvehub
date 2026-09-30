@@ -5,8 +5,8 @@
 // Promise 返回值。state 在首次 resume 后恒报 running（对齐浏览器解锁语义，
 // 防平台 state 永久 suspended 卡死自动播放判定）。
 
-import { host, bridgeActive } from "./host.js";
-import { setGlobal, windowRef } from "./install.js";
+import { host, bridgeActive } from "./host.ts";
+import { setGlobal, windowRef } from "./install.ts";
 
 function ensurePromise(value) {
   if (value && typeof value.then === "function") return value;

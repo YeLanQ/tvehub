@@ -4,11 +4,11 @@
 // onWindowResize → window resize + 视口状态更新、onError → window error。
 // 平台接线全部经端点（host），本模块只做事件合成与投递（平台无关）。
 
-import { host, bridgeActive } from "./host.js";
-import { winEvents } from "./env.js";
-import { makeEvent } from "./util.js";
-import { canvasEvents, screenCanvas } from "./canvas.js";
-import { docEvents, visibility } from "./dom.js";
+import { host, bridgeActive } from "./host.ts";
+import { winEvents } from "./env.ts";
+import { makeEvent } from "./util.ts";
+import { canvasEvents, screenCanvas } from "./canvas.ts";
+import { docEvents, visibility } from "./dom.ts";
 
 function pointerEvent(type, touch) {
   const x = Number(touch.clientX) || 0;

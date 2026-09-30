@@ -33,7 +33,7 @@ scene-api/ui-state），业务层改走门面。参考既有形态：`tve-api-us
 - 改了 src/runtime 导出面 → `smoke-runtime-modules.mjs` 红是**契约同步点**：
   去该套件补/改导出面断言，不是改套件迁就代码。
 - 改了帧循环/生命周期时序 → `smoke-script-hooks.mjs`。
-- 换了产物结构 → 先 `node scripts/build-runtime.mjs` 再跑（stale 产物会假红）。
+- 换了产物结构 → 先 `node runtime/scripts/engine.mjs` 再跑（stale 产物会假红）。
 
 ## 全红的处理顺序
 

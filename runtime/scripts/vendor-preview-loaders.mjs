@@ -12,14 +12,14 @@
 // public/engine 为纯构建产物目录（不入库）：本步骤已并入 build-runtime.mjs 的
 // 统一入口（buildRuntime() 先调 vendorPreviewLoaders()），dev 启动与 build 链
 // 自动补齐；所有写入均做变更检测（内容一致不落盘），重复执行幂等、不触发 watcher 抖动。
-// 也可单独运行：node scripts/vendor-preview-loaders.mjs（如升级 three 后主动同步）。
+// 也可单独运行：node runtime/scripts/vendor-preview-loaders.mjs（如升级 three 后主动同步）。
 // 若上游出现新的未知 import 会直接报错退出，避免静默产出缺依赖的文件。
 // ---------------------------------------------------------------------------
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const threeDir = join(root, "node_modules", "three");
 const outDir = join(root, "public", "engine", "runtime", "loaders");
 const coreDir = join(root, "public", "engine", "core");
@@ -63,7 +63,7 @@ export function vendorPreviewLoaders(why = "") {
   const threeVersion = JSON.parse(readFileSync(join(threeDir, "package.json"), "utf8")).version;
   const header = (src) =>
     `// Vendored from three@${threeVersion} examples/jsm/${src}\n` +
-    `// 由 scripts/vendor-preview-loaders.mjs 生成（import 已重写指向预览运行时本地文件），请勿手改。\n`;
+    `// 由 runtime/scripts/vendor-preview-loaders.mjs 生成（import 已重写指向预览运行时本地文件），请勿手改。\n`;
 
   let written = 0;
   mkdirSync(outDir, { recursive: true });
@@ -120,7 +120,7 @@ export function vendorPreviewLoaders(why = "") {
   return { threeVersion, written };
 }
 
-// 直接执行（node scripts/vendor-preview-loaders.mjs）时运行
+// 直接执行（node runtime/scripts/vendor-preview-loaders.mjs）时运行
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   try {

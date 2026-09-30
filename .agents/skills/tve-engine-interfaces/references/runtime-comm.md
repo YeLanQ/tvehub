@@ -18,10 +18,11 @@ base64ToBytes`）+ `asset-bundle.ts` + `resource.mjs`（resourceLoader）——
 gzip 归档（assets.gzip）与发布模式（uid 重命名 + 引用重写）的透明装载层；
 CDN 模式下 three 运行时从远程基址加载（构建期相对说明符重写保证兼容）。
 
-**文本读取通道**（编辑器侧）：`src/app/lib/web-preview-runtime.ts` 的
-`fetchWebPreviewRuntimeTexts(opts)` —— 清单来自 `src/generated/
-web-preview-files.ts`（自动扫描生成，勿手改）；物理按后端、WebGPU/Draco/Basis
-按项目开关条件包含。四种导出模式与局域网共享复用同一文本集。
+**文本读取通道**（编辑器侧）：`src/app/lib/runtime-supply.ts` 的
+`fetchChannelRuntimeFiles(channel, opts)`（web-preview-runtime.ts 为其兼容门面）
+—— 清单来自 `src/generated/channel-runtimes.ts`（由 runtime/scripts/manifest.mjs
+扫描双渠道自动生成，勿手改）；物理按后端、WebGPU/Draco/Basis 按项目开关条件
+包含。四种导出模式、微信渠道与局域网共享复用同一供给层。
 
 ## 使用例
 

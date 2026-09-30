@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use std::fs;
 
 use super::config::product_config;
+use super::content::build_content;
 use super::job::{BuildResult, JobCtx, Prepared};
-use super::release::apply_release;
-use super::scene_collect::{collect_scene_inputs, merge_scene_inputs};
+use super::release::minify_js_source;
 use super::ChannelPipeline;
 
 mod pack;
@@ -68,23 +68,19 @@ impl ChannelPipeline for WechatPipeline {
             );
         }
 
-        // —— 场景收集（共享阶段）：逐场景并行读盘 + 引用资产 + 合并去重 ——
+        // —— 导出内容内核：场景收集 + 引用资产 + release（与 web 渠道同源同构，
+        //    跨渠道一致性由 tests/consistency_e2e.rs 守护）——
         if ctx.cancelled() {
             return Err("任务已取消".into());
         }
         ctx.progress(0.15, "收集场景与资产");
-        let mut collected = merge_scene_inputs(collect_scene_inputs(&p.root_path, &job.scenes)?);
+        let content = build_content(&p.root_path, &job.scenes, job.release)?;
 
-        // 发布模式：uid 重命名 + 引用重写（作用于场景/资产数据面，脚本与运行时不参与）
-        let mut bin_converted: Vec<String> = Vec::new();
+        // release 一致性：用户脚本与 web 渠道同一压缩器同源压缩（此前仅 web 压缩）
         if job.release {
-            apply_release(
-                &p.root_path,
-                &mut collected.text_assets,
-                &mut collected.binaries,
-                &mut collected.scene_texts,
-                &mut bin_converted,
-            );
+            for text in user_scripts.values_mut() {
+                *text = minify_js_source(text);
+            }
         }
         ctx.progress(0.45, "组装内联数据");
 
@@ -93,7 +89,7 @@ impl ChannelPipeline for WechatPipeline {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(serde_json::Value::Null);
-        let main_name = collected
+        let main_name = content
             .packed
             .iter()
             .find(|s| s.rel == p.main_scene)
@@ -101,20 +97,20 @@ impl ChannelPipeline for WechatPipeline {
             .unwrap_or_default();
         // script-graph 检测沿用 config.rs 语义（files 键存在即标记）；微信无 gzip 基址
         let mut cfg_input = extra.clone();
-        for (rel, text) in &collected.text_assets {
+        for (rel, text) in &content.text_assets {
             cfg_input.entry(rel.clone()).or_insert_with(|| text.clone());
         }
-        let cfg = product_config(project_cfg, &collected.packed, &main_name, job.debug, &cfg_input, "");
+        let cfg = product_config(project_cfg, &content.packed, &main_name, job.debug, &cfg_input, "");
 
         // data.js：场景 + 文本资产 + 二进制资产（base64）全内联
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-        for (rel, text) in &collected.scene_texts {
+        for (rel, text) in &content.scene_texts {
             entries.push((rel.clone(), text.clone().into_bytes()));
         }
-        for (rel, text) in &collected.text_assets {
+        for (rel, text) in &content.text_assets {
             entries.push((rel.clone(), text.clone().into_bytes()));
         }
-        for (rel, bytes) in &collected.binaries {
+        for (rel, bytes) in &content.binaries {
             entries.push((rel.clone(), bytes.clone()));
         }
         for (rel, text) in &extra {
@@ -166,8 +162,8 @@ impl ChannelPipeline for WechatPipeline {
         let mut message = format!(
             "构建完成（appid: {appid}，方向: {orientation}；数据全内联，主包 {total_kb}KB）"
         );
-        if !collected.missing.is_empty() {
-            message.push_str(&format!("（{} 项缺失资产被跳过）", collected.missing.len()));
+        if !content.missing.is_empty() {
+            message.push_str(&format!("（{} 项缺失资产被跳过）", content.missing.len()));
         }
         Ok(BuildResult {
             ok: true,
@@ -175,14 +171,14 @@ impl ChannelPipeline for WechatPipeline {
             output_dir: p.out.display().to_string(),
             main_scene: p.main_scene.clone(),
             main_scene_name: main_name,
-            scenes: collected.packed,
+            scenes: content.packed,
             single_page: false,
             gzip: false,
             release: job.release,
             cdn: false,
-            bin_converted,
-            assets_packed: entries.len(),
-            missing: collected.missing,
+            bin_converted: content.bin_converted,
+            assets_packed: content.assets_packed,
+            missing: content.missing,
             message,
         })
     }

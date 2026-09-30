@@ -2,9 +2,9 @@
 // 持有原生引用的调用方自动获得完整 API）；canvas2d 工厂走端点离屏链，失败末级
 // 兜底屏上画布（2D 贴图/UI 文本消费）。
 
-import { host, bridgeActive } from "./host.js";
-import { view } from "./env.js";
-import { Emitter } from "./util.js";
+import { host, bridgeActive } from "./host.ts";
+import { view } from "./env.ts";
+import { Emitter } from "./util.ts";
 
 /** 屏上画布事件面（引擎 pointer 监听 + three webglcontextlost 监听共用） */
 export const canvasEvents = new Emitter();

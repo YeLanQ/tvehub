@@ -2,9 +2,9 @@
 // 视口与帧回调经平台端点（host）获取；顶层裸赋值（try 包裹）发生在 bundle 单一
 // 模块作用域内，一次生效于整包（详见 install.js 说明）。
 
-import { host, bridgeActive } from "./host.js";
-import { setGlobal, windowRef } from "./install.js";
-import { Emitter, mergeKeys } from "./util.js";
+import { host, bridgeActive } from "./host.ts";
+import { setGlobal, windowRef } from "./install.ts";
+import { Emitter, mergeKeys } from "./util.ts";
 
 /** 视口状态（逻辑像素）：host.onWindowResize 时更新 */
 export const view = { width: 375, height: 667, dpr: 2 };

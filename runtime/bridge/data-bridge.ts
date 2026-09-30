@@ -2,8 +2,8 @@
 // 产物中保留运行期 require）。数据注入 window/globalThis 双写——player 的 main()
 // 与 scripts.ts 的内联判定都从这里读取，零文件系统参与。
 
-import { bridgeActive } from "./host.js";
-import { setGlobal, windowRef } from "./install.js";
+import { bridgeActive } from "./host.ts";
+import { setGlobal, windowRef } from "./install.ts";
 
 import * as tveBuildData from "./data.js";
 

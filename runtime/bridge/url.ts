@@ -1,8 +1,8 @@
 // 桥接核心 · URL / URLSearchParams：相对解析以 locationShim 为基准（全内联架构下
 // 消费面 = pak 的 fetch shim 与 asset-bundle 的键归一化，覆盖 pathname/search/origin）。
 
-import { bridgeActive } from "./host.js";
-import { setGlobal } from "./install.js";
+import { bridgeActive } from "./host.ts";
+import { setGlobal } from "./install.ts";
 
 class URLSearchParamsShim {
   constructor(init) {

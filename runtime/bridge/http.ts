@@ -2,10 +2,10 @@
 // 全内联架构下 fetch 只消费两类来源：data: URL 与内联资产表（__TVE_BUILD_DATA.assets）；
 // 未命中返回 404 Response（附诊断日志）——不再走 wx 文件系统，懒装载竞态从源头消失。
 
-import { bridgeActive } from "./host.js";
-import { setGlobal, windowRef } from "./install.js";
-import { bytesToBase64, base64ToBytes } from "./codec.js";
-import { URLShim } from "./url.js";
+import { bridgeActive } from "./host.ts";
+import { setGlobal, windowRef } from "./install.ts";
+import { bytesToBase64, base64ToBytes } from "./codec.ts";
+import { URLShim } from "./url.ts";
 
 class TveBlob {
   constructor(parts, options) {

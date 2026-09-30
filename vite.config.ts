@@ -4,11 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import {
-  WEB_PREVIEW_ROOTS,
-  generateWebPreviewFiles,
-} from "./scripts/gen-web-preview-files.mjs";
-import { buildRuntime } from "./scripts/build-runtime.mjs";
-import { buildWechatRuntime } from "./scripts/build-wechat-runtime.mjs";
+  CHANNEL_RUNTIME_ROOTS,
+  generateChannelRuntimes,
+} from "./runtime/scripts/manifest.mjs";
+import { buildRuntime } from "./runtime/scripts/engine.mjs";
+import { buildWechatRuntime } from "./runtime/scripts/wechat.mjs";
 import {
   LICENSE_ROOT,
   syncLicenses,
@@ -44,7 +44,7 @@ const TEMPLATE_ROOT = "public/templates";
 const WEB_EXPORT_ROOT = "public/exports/web";
 const REGISTRY_PATH = "src/generated/template-registry.ts";
 
-// 网页运行产物清单的扫描/生成在 scripts/gen-web-preview-files.mjs（单一事实来源：
+// 运行时清单的扫描/生成在 runtime/scripts/manifest.mjs（单一事实来源：
 // 同一函数也被 package.json 的 build 脚本在 vue-tsc 之前调用，避免干净检出的
 // 类型检查因生成文件缺失而报 TS2307）。
 
@@ -114,14 +114,14 @@ function templateIndexPlugin(): Plugin {
     name: "three-visual-editor-template-index",
     buildStart() {
       generateTemplateRegistry();
-      generateWebPreviewFiles();
+      generateChannelRuntimes();
       syncLicenses(); // 依赖升级后补齐 public/licenses 副本
       generateLicenseRegistry();
       generateLanTheme(); // 局域网对外页面的主题色（事实源 = ui-kit 主题变量表）
     },
     configureServer(server) {
       generateTemplateRegistry();
-      generateWebPreviewFiles();
+      generateChannelRuntimes();
       syncLicenses();
       generateLicenseRegistry();
       generateLanTheme();
@@ -129,7 +129,7 @@ function templateIndexPlugin(): Plugin {
         const abs = path.resolve(root);
         if (fs.existsSync(abs)) server.watcher.add(abs);
       }
-      for (const root of WEB_PREVIEW_ROOTS) {
+      for (const root of CHANNEL_RUNTIME_ROOTS) {
         const abs = path.resolve(root);
         // chokidar 运行期接受 options 形参（vite 的 FSWatcher 类型只声明了单参重载）
         // @ts-expect-error 见上
@@ -138,8 +138,8 @@ function templateIndexPlugin(): Plugin {
       const onChange = (file: string) => {
         if (file.includes("template.json")) generateTemplateRegistry();
         const norm = file.split(path.sep).join("/");
-        if (WEB_PREVIEW_ROOTS.some((root) => norm.startsWith(`${root}/`))) {
-          generateWebPreviewFiles();
+        if (CHANNEL_RUNTIME_ROOTS.some((root) => norm.startsWith(`${root}/`))) {
+          generateChannelRuntimes();
         }
         // 许可证副本目录变化（新增库/手工补正文）→ 重建清单
         if (norm.startsWith(`${LICENSE_ROOT}/`)) generateLicenseRegistry();
@@ -268,7 +268,7 @@ function runtimeAssetGuardPlugin(): Plugin {
           res.end(
             `404 Not Found: ${pathOnly}\n` +
               "（该路径下文件不存在：这些都是构建/运行期资产——engine 可用 " +
-              "node scripts/build-runtime.mjs 再生，其余随仓库或子模块提供）\n",
+              "node runtime/scripts/engine.mjs 再生，其余随仓库或子模块提供）\n",
           );
           return;
         }
@@ -281,11 +281,11 @@ function runtimeAssetGuardPlugin(): Plugin {
 // 运行时自动编译插件（dev）：public/engine 为纯构建产物目录（不入库；源 =
 // src/runtime/** 编译 + src/runtime/extra/** 外部资产 + node_modules/three vendor），
 // 开发服务器启动时由 buildRuntime() 一次全量再生，并监听源目录变化防抖重建。
-// 构建期由 build 链的第一步 node scripts/build-runtime.mjs 负责（同一入口）。
+// 构建期由 build 链的 engine.mjs 步骤负责（同一入口）。
 // 注意：本插件必须排在 templateIndexPlugin 之前——dev 的 configureServer 按插件顺序
-// 执行，运行产物清单（generateWebPreviewFiles）扫描 public/engine，需先由本插件完成
+// 执行，运行产物清单（generateChannelRuntimes）扫描 public/engine，需先由本插件完成
 // 全量再生，干净检出首次启动的清单才完整。
-const RUNTIME_SRC_ROOTS = ["src/runtime", "src/framework"];
+const RUNTIME_SRC_ROOTS = ["src/runtime", "src/framework", "runtime/bridge"];
 
 function runtimeBuildPlugin(): Plugin {
   return {

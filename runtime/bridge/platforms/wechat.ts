@@ -8,8 +8,8 @@
 // - onError(handler) → handler(message: string)
 // - createOffscreenCanvas(w, h) → 离屏画布或 null（兜底链在本端点内闭合）
 
-import { setHost } from "../host.js";
-import { assertHost } from "../contract.js";
+import { setHost } from "../host.ts";
+import { assertHost } from "../contract.ts";
 
 const wxApi = (() => {
   try {

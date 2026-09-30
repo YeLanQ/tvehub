@@ -2,11 +2,11 @@
 // document 是残缺骨架，缺 createElementNS/getElementById），缺失时整体安装。
 // 画布消费走 canvas2d 工厂，图片消费走 net.js 的 Image 形态。
 
-import { bridgeActive } from "./host.js";
-import { locationShim } from "./env.js";
-import { Emitter, makeElementStub, mergeKeys } from "./util.js";
-import { createCanvas2d, screenCanvas } from "./canvas.js";
-import { createImageElement } from "./image.js";
+import { bridgeActive } from "./host.ts";
+import { locationShim } from "./env.ts";
+import { Emitter, makeElementStub, mergeKeys } from "./util.ts";
+import { createCanvas2d, screenCanvas } from "./canvas.ts";
+import { createImageElement } from "./image.ts";
 
 export const docEvents = new Emitter();
 

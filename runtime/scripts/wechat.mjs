@@ -13,17 +13,17 @@
 // - 多入口代码拆分（rollup）被刻意避开：tve 门面以 5 行静态文件转发主 bundle
 //   导出，包内少一组 chunk、少一类注册表变数。
 //
-// 用法：node scripts/build-wechat-runtime.mjs（package.json build 链与 vite 插件挂载）
+// 用法：node runtime/scripts/wechat.mjs（package.json build 链与 vite 插件挂载）
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const OUT_DIR = path.join(ROOT, "public/exports/wechat/runtime");
-const BRIDGE_DIR = path.join(ROOT, "scripts/runtime-bridge");
-const BOOTSTRAP = path.join(BRIDGE_DIR, "entries/wechat.js");
+const BRIDGE_DIR = path.join(ROOT, "runtime/bridge");
+const BOOTSTRAP = path.join(BRIDGE_DIR, "entries/wechat.ts");
 const PLAYER = path.join(ROOT, "public/web-preview/player.mjs");
 const RAPIER_SRC = path.join(ROOT, "public/engine/runtime/physics-engines/rapier.mjs");
 

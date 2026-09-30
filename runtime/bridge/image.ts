@@ -6,11 +6,11 @@
 //   仅平台 src 不可重定义时退化为包装器（桥接仍生效，但该对象不能再作纹理源）。
 // imageOrientation 选项忽略：翻转交给 UNPACK_FLIP_Y_WEBGL（纹理 flipY 默认 true）。
 
-import { host, bridgeActive } from "./host.js";
-import { setGlobal } from "./install.js";
-import { Emitter, makeEvent } from "./util.js";
-import { bytesToDataUrl, base64ToBytes } from "./codec.js";
-import { lookupAssetBytes } from "./http.js";
+import { host, bridgeActive } from "./host.ts";
+import { setGlobal } from "./install.ts";
+import { Emitter, makeEvent } from "./util.ts";
+import { bytesToDataUrl, base64ToBytes } from "./codec.ts";
+import { lookupAssetBytes } from "./http.ts";
 
 function sniffMime(src) {
   if (/\.jpe?g(\?|#|$)/i.test(src)) return "image/jpeg";

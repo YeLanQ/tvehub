@@ -4,8 +4,9 @@
 
 ```
 pnpm dev   = sync-version → vitest run → vite
-pnpm build = sync-version → build-runtime → gen-web-preview-files → sync-licenses
-             → gen-lan-theme → vue-tsc --noEmit → check:layers → vitest run → vite build
+pnpm build = sync-version → engine(runtime/scripts) → wechat(runtime/scripts) →
+             manifest(runtime/scripts) → sync-licenses → gen-lan-theme →
+             vue-tsc --noEmit → check:layers → vitest run → vite build
 ```
 
 - 单测挂在 dev 和 build 链上：**spec 红了连 dev server 都起不来**，先修再提交。

@@ -3,8 +3,8 @@
 // 剥 tve: 前缀（scripts.ts 对内联数据形态恒发 tve:<rel>）、小写折叠（开发者工具
 // 包内注册表小写归一）、补 ./ 前缀（微信 require 需显式相对形态）。
 
-import { bridgeActive } from "./host.js";
-import { setGlobal } from "./install.js";
+import { bridgeActive } from "./host.ts";
+import { setGlobal } from "./install.ts";
 
 function normalizeSpec(spec) {
   let rel = String(spec ?? "").replace(/\\/g, "/");

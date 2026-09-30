@@ -31,10 +31,10 @@ function check(name, ok, detail = "") {
 // 注意：ESM 模块一进程只求值一次——本场景用 query 串缓存击穿独立求值，
 // 避免污染场景 B 的「host 已注册」全流程。
 {
-  const { bridgeActive } = await import("./host.js?absent");
+  const { bridgeActive } = await import("./host.ts?absent");
   check("host 缺席：bridgeActive() 为 false", bridgeActive() === false);
   const before = new Set(Object.keys(globalThis));
-  await import("./env.js?absent");
+  await import("./env.ts?absent");
   const added = Object.keys(globalThis).filter((k) => !before.has(k));
   check("host 缺席：核心安装空转（未写 window 全局）", !added.includes("window"), `新增了 ${added.join(",")}`);
 }
@@ -121,8 +121,8 @@ function makeMockHost() {
   return host;
 }
 
-const { setHost, host } = await import("./host.js");
-const { assertHost, HOST_SURFACE, GLOBAL_SURFACE } = await import("./contract.js");
+const { setHost, host } = await import("./host.ts");
+const { assertHost, HOST_SURFACE, GLOBAL_SURFACE } = await import("./contract.ts");
 
 // assertHost 负例：缺方法注册即抛错（含方法名）
 let assertThrew = null;
@@ -142,17 +142,17 @@ setHost(mock);
 check("setHost：完整端点注册通过", host().platformId === "mock");
 
 // 核心链按渠道入口同序安装（平台端点已注册 → 激活）
-await import("./env.js");
-await import("./canvas.js");
-await import("./codec.js");
-await import("./url.js");
-await import("./image.js");
-await import("./dom.js");
-await import("./http.js");
-await import("./events.js");
-await import("./audio.js");
-await import("./storage.js");
-await import("./load-module.js");
+await import("./env.ts");
+await import("./canvas.ts");
+await import("./codec.ts");
+await import("./url.ts");
+await import("./image.ts");
+await import("./dom.ts");
+await import("./http.ts");
+await import("./events.ts");
+await import("./audio.ts");
+await import("./storage.ts");
+await import("./load-module.ts");
 
 // 全局覆盖：GLOBAL_SURFACE 全部就位（__TVE_BUILD_DATA 例外——由 data-bridge 安装，
 // 其依赖的 data.js 是导出期产物，此处以静态接线断言代替）
@@ -161,7 +161,7 @@ const missingGlobals = GLOBAL_SURFACE.filter(
 );
 check("GLOBAL_SURFACE：清单全部安装", missingGlobals.length === 0, `缺 ${missingGlobals.join(",")}`);
 {
-  const src = fs.readFileSync(new URL("./data-bridge.js", import.meta.url), "utf8");
+  const src = fs.readFileSync(new URL("./data-bridge.ts", import.meta.url), "utf8");
   check(
     "data-bridge：静态接线断言（import data.js + __TVE_BUILD_DATA 安装）",
     src.includes('from "./data.js"') && src.includes('setGlobal("__TVE_BUILD_DATA"'),
@@ -200,7 +200,7 @@ check(
   const readOnly = {};
   let inner = "";
   Object.defineProperty(readOnly, "src", { get: () => inner, configurable: true }); // 无 setter
-  const { host: h } = await import("./host.js");
+  const { host: h } = await import("./host.ts");
   const realCreate = h().createImage;
   h().createImage = () => readOnly;
   const wrapped = globalThis.document.createElement("img");
@@ -250,8 +250,8 @@ check(
 
 // 事件：平台触摸 → canvas 与 window 双监听面派发
 {
-  const { canvasEvents } = await import("./canvas.js");
-  const { winEvents } = await import("./env.js");
+  const { canvasEvents } = await import("./canvas.ts");
+  const { winEvents } = await import("./env.ts");
   let canvasHits = 0;
   let winHits = 0;
   canvasEvents.on("pointerdown", () => canvasHits++);
@@ -291,8 +291,8 @@ check(
     requestAnimationFrame: (fn) => setTimeout(fn, 16),
     cancelAnimationFrame: (id) => clearTimeout(id),
   };
-  const endpoint = await import("./platforms/wechat.js");
-  const { host: h } = await import("./host.js");
+  const endpoint = await import("./platforms/wechat.ts");
+  const { host: h } = await import("./host.ts");
   check("微信端点：assertHost 通过并注册", h().platformId === "wechat");
   const vp = h().getViewport();
   check("微信端点：视口取自系统信息", vp.width === 800 && vp.height === 360 && vp.dpr === 3);

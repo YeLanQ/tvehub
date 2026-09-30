@@ -2,7 +2,7 @@
 
 ## 契约
 
-`scripts/build-runtime.mjs` 导出 `buildRuntime(why = "")`（inFlight 串行化并发调用），
+`runtime/scripts/engine.mjs` 导出 `buildRuntime(why = "")`（inFlight 串行化并发调用），
 **三步固定顺序**：
 
 1. `vendorPreviewLoaders()`：three 三构建（core/module/webgpu min.js）+ 模型加载器
@@ -24,16 +24,16 @@
 - `runtime/loaders/draco/`：draco_decoder.wasm + draco_wasm_wrapper.js
   （draco_decoder.js 由 vendor-preview-loaders.mjs 生成入库，不在 extra）。
 
-**产物清单**：`src/generated/web-preview-files.ts`（gen:preview-files 自动扫描，
-勿手改）；`WEBGPU_FILES = [three.webgpu.min.js, particleNodeMaterial.mjs,
+**产物清单**：`src/generated/channel-runtimes.ts`（gen:channel-runtimes 自动扫描
+双渠道，勿手改）；`WEBGPU_FILES = [three.webgpu.min.js, particleNodeMaterial.mjs,
 glslToTsl.mjs, nodeMaterialHooks.mjs]`。
 **wasm 特判**：导出链路（文本 IPC）会损坏 wasm 二进制 → 导出始终排除 wasm 版，
-用 JS 版解码器（scripts/gen-web-preview-files.mjs）。
+用 JS 版解码器（runtime/scripts/manifest.mjs 统一清单生成）。
 
 ## 使用例
 
 改 src/runtime 任一源文件后：dev 下自动重建（防抖）；CI/构建走 `pnpm build`
-链；手动全量再生 `node scripts/build-runtime.mjs`。物理引擎升级 =
+链；手动全量再生 `node runtime/scripts/engine.mjs`。物理引擎升级 =
 换 extra/ 下产物 + 重扫清单。
 
 ## 测试例

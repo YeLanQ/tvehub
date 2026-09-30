@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GLOBAL_SURFACE } from "./contract.js";
+import { GLOBAL_SURFACE } from "./contract.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "surface-baseline.json");

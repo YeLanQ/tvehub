@@ -1,6 +1,7 @@
-//! 共享阶段 · 场景收集：逐场景并行读盘 + 收集引用资产（复用 preview::
-//! collect_scene_assets），合并去重 + 场景名去重。web / wechat 渠道共用的
-//! 收集主干；渠道差异只在合并去向（web 并入运行时 files / wechat 独立资产表）。
+//! 导出内容内核（渠道无关的「导出内容」生产者）：并行场景收集 + 引用资产合并
+//! 去重 + 发布模式处理（uid 重命名/引用重写/模型 bin 化）内聚为一个入口。
+//! web / wechat 渠道都只消费 ContentManifest 做包装——场景集合、资产集合、
+//! 缺失清单、release 生效由内核结构保证跨渠道一致（tests/consistency_e2e.rs 守护）。
 
 use std::collections::HashMap;
 use std::fs;
@@ -8,26 +9,24 @@ use std::path::Path;
 
 use super::classify::scene_entry_name;
 use super::job::PackedScene;
+use super::release::apply_release;
 
 /// 单场景并行收集结果
-pub(super) struct SceneInput {
+struct SceneInput {
     /// 场景项目相对路径
-    pub rel: String,
+    rel: String,
     /// 场景 JSON 文本
-    pub text: String,
+    text: String,
     /// 场景引用的文本资产（材质 .mat 等）
-    pub text_assets: HashMap<String, String>,
+    text_assets: HashMap<String, String>,
     /// 场景引用的二进制资产（贴图/模型/音频）
-    pub binaries: HashMap<String, Vec<u8>>,
+    binaries: HashMap<String, Vec<u8>>,
     /// 缺失资产清单
-    pub missing: Vec<String>,
+    missing: Vec<String>,
 }
 
 /// 逐场景并行读盘 + 收集引用资产（rayon；场景相互独立）
-pub(super) fn collect_scene_inputs(
-    root: &Path,
-    scenes: &[String],
-) -> Result<Vec<SceneInput>, String> {
+fn collect_scene_inputs(root: &Path, scenes: &[String]) -> Result<Vec<SceneInput>, String> {
     use rayon::prelude::*;
     scenes
         .par_iter()
@@ -49,22 +48,34 @@ pub(super) fn collect_scene_inputs(
         .collect()
 }
 
-/// 合并去重后的全量收集结果
-pub(super) struct CollectedScenes {
+/// 导出内容清单：渠道包装阶段的唯一内容来源（两渠道同源同构）
+pub(super) struct ContentManifest {
+    /// 场景清单（name/rel/file；重名自动加序号）
     pub packed: Vec<PackedScene>,
     /// 产物内场景键（scenes/<名>.json）→ 场景 JSON 文本
     pub scene_texts: Vec<(String, String)>,
-    /// 场景引用的文本资产（跨场景去重，保留首次）
+    /// 场景引用的文本资产（跨场景去重，保留首次；release 后为重命名+重写后形态）
     pub text_assets: HashMap<String, String>,
-    /// 场景引用的二进制资产（跨场景去重，保留首次）
+    /// 场景引用的二进制资产（同上）
     pub binaries: HashMap<String, Vec<u8>>,
     /// 缺失资产清单（跨场景累计）
     pub missing: Vec<String>,
+    /// release 生效产物：被二进制化的模型（项目相对路径）
+    pub bin_converted: Vec<String>,
+    /// 资产总数（口径：场景 + 文本资产 + 二进制；BuildResult.assets_packed 两渠道同公式）
+    pub assets_packed: usize,
 }
 
-/// 合并去重（or_insert 保留首次，跨场景共用资产只读一次）+ 场景名去重
-/// （串行累积 used_names，重名自动加序号）
-pub(super) fn merge_scene_inputs(inputs: Vec<SceneInput>) -> CollectedScenes {
+/// 构建导出内容：收集 + 合并去重（or_insert 保留首次）+ 场景名去重（串行累积，
+/// 重名自动加序号）+ release 处理（uid 重命名只作用于资产键——运行时键经
+/// is_runtime_code 过滤天然排除，渠道传入与否不影响结果）
+pub(super) fn build_content(
+    root: &Path,
+    scenes: &[String],
+    release: bool,
+) -> Result<ContentManifest, String> {
+    let inputs = collect_scene_inputs(root, scenes)?;
+
     let mut packed: Vec<PackedScene> = Vec::new();
     let mut used_names: Vec<String> = Vec::new();
     let mut scene_texts: Vec<(String, String)> = Vec::new();
@@ -93,11 +104,26 @@ pub(super) fn merge_scene_inputs(inputs: Vec<SceneInput>) -> CollectedScenes {
     for (i, (file, _)) in scene_texts.iter().enumerate() {
         packed[i].file = file.clone();
     }
-    CollectedScenes {
+
+    let mut bin_converted: Vec<String> = Vec::new();
+    if release {
+        apply_release(
+            root,
+            &mut text_assets,
+            &mut binaries,
+            &mut scene_texts,
+            &mut bin_converted,
+        );
+    }
+
+    let assets_packed = packed.len() + text_assets.len() + binaries.len();
+    Ok(ContentManifest {
         packed,
         scene_texts,
         text_assets,
         binaries,
         missing,
-    }
+        bin_converted,
+        assets_packed,
+    })
 }

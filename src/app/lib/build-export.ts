@@ -8,7 +8,7 @@ import { logStore } from "../stores/log";
 import { getScriptsStore } from "../stores/scripts";
 import { saveCurrentSceneToMain } from "./save-scene";
 import {
-  fetchWebPreviewRuntimeTexts,
+  fetchChannelRuntimeFiles,
   configUsesPhysics,
   configPhysicsBackend,
   configUsesWebgpu,
@@ -16,7 +16,6 @@ import {
   configUsesTextureCompression,
   withHtmlTitle,
 } from "./web-preview-runtime";
-import { WEB_WECHAT_RUNTIME_FILES, WEB_WECHAT_RAPIER_FILES } from "../../generated/wechat-runtime-files";
 import {
   loadProjectScripts,
   compileProjectScripts,
@@ -249,7 +248,7 @@ export async function runBuild(opts: {
   } catch {
     /* 配置读取失败按未启用处理 */
   }
-  const runtime = await fetchWebPreviewRuntimeTexts({
+  const runtime = await fetchChannelRuntimeFiles("web", {
     includePhysics: configUsesPhysics(physicsConfigText),
     physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
     includeWebgpu: configUsesWebgpu(physicsConfigText),
@@ -321,21 +320,6 @@ export async function runBuild(opts: {
   return result;
 }
 
-/** 微信运行时文本读取（/exports/wechat/runtime/**，随编辑器打包）。
- *  与 web 运行时同一 HTML 兜底拦截（SPA 兜底会把缺失文件当 JS 内联）。 */
-async function fetchWechatRuntimeText(rel: string): Promise<string> {
-  const url = `/${rel}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`读取微信运行时失败: ${url} (${res.status})——请重启编辑器等待运行时构建完成`);
-  }
-  const text = await res.text();
-  if (/^\s*<(!doctype|html)/i.test(text)) {
-    throw new Error(`读取微信运行时失败: ${url} 返回 HTML 兜底页（运行时文件缺失，请重启编辑器）`);
-  }
-  return text;
-}
-
 /** 微信小游戏渠道构建：预构建运行时（code.js/tve 门面 [+rapier]）+ 用户脚本
  *  CommonJS 编译 + 场景图注入 → Rust 组装全内联小游戏包。web 流程不经此分支。 */
 async function runWechatBuild(opts: {
@@ -348,7 +332,7 @@ async function runWechatBuild(opts: {
   wechatAppId?: string;
   wechatOrientation?: "portrait" | "landscape";
 }): Promise<BuildResult> {
-  // 物理按项目配置附带 rapier（jolt/ammo 由 Rust 侧预检明确报不支持）
+  // 物理按项目配置附带 rapier（jolt/ammo 由 Rust 管线预检明确报不支持）
   let physicsConfigText: string | null = null;
   try {
     physicsConfigText = await api.readText(opts.root, "project.config.json");
@@ -356,17 +340,13 @@ async function runWechatBuild(opts: {
     /* 配置读取失败按未启用处理 */
   }
   const backend = configPhysicsBackend(physicsConfigText);
-  const includeRapier = configUsesPhysics(physicsConfigText) && (backend ?? "rapier") === "rapier";
 
-  const runtime: Record<string, string> = {};
-  for (const f of WEB_WECHAT_RUNTIME_FILES) {
-    runtime[f.key] = await fetchWechatRuntimeText(f.rel);
-  }
-  if (includeRapier) {
-    for (const f of WEB_WECHAT_RAPIER_FILES) {
-      runtime[f.key] = await fetchWechatRuntimeText(f.rel);
-    }
-  }
+  // 运行时统一供给：预构建 bundle（+rapier，仅 rapier 后端时随包；jolt/ammo 由
+  // Rust 管线预检明确报不支持）
+  const runtime = await fetchChannelRuntimeFiles("wechat", {
+    includePhysics: configUsesPhysics(physicsConfigText),
+    physicsBackend: backend,
+  });
 
   // 用户脚本按微信渠道编译（CommonJS + tve 门面指向 engine/core/tve.js）
   try {
