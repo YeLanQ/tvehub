@@ -1,17 +1,25 @@
-//! web 渠道产物管线：场景资产收集（复用 preview::collect_scene_assets）→
-//! 发布模式处理 → gzip/形态分流组装 → 写盘 → 自描述结果。
+//! web 渠道产物管线（工厂桥接的渠道实现之一）：场景资产收集（共享阶段
+//! scene_collect）→ 发布模式处理 → gzip/形态分流组装（单页 single_page /
+//! 多文件 multi_file 子模块）→ 写盘 → 自描述结果。
+//!
+//! 渠道结构与微信渠道（../wechat/）对称：mod.rs 只做编排，产物形态各自
+//! 独立子模块；渠道无关的收集/发布/分类等阶段在 build 根的扁平模块。
 
 use std::collections::HashMap;
 use std::fs;
 
-use super::classify::{is_minifiable_script, is_runtime_code, scene_entry_name};
+use super::classify::{is_minifiable_script, is_runtime_code};
 use super::config::product_config;
-use super::job::{BuildResult, JobCtx, PackedScene, Prepared};
-use super::multi_file::assemble_multi_file;
+use super::job::{BuildResult, JobCtx, Prepared};
 use super::release::{apply_release, minify_js_source};
-use super::single_page::assemble_single_page;
+use super::scene_collect::{collect_scene_inputs, merge_scene_inputs};
 use super::urls::THREE_RUNTIME_FILES;
 use super::ChannelPipeline;
+
+mod multi_file;
+mod single_page;
+use self::multi_file::assemble_multi_file;
+use self::single_page::assemble_single_page;
 
 /// web 渠道：打包静态网页产物（多文件 / 单页 × gzip 可选 × 发布模式可选）
 pub struct WebPipeline;
@@ -29,55 +37,16 @@ impl ChannelPipeline for WebPipeline {
         }
         let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
 
-        // 逐场景：并行读盘 + 收集引用资产 → 合并去重（跨场景共用同一资产只读一次）
-        let mut packed: Vec<PackedScene> = Vec::new();
-        let mut used_names: Vec<String> = Vec::new();
-        let mut missing: Vec<String> = Vec::new();
-        let mut scene_texts: Vec<(String, String)> = Vec::new();
-
-        use rayon::prelude::*;
-        let scene_results: Vec<(
-            String,
-            String,
-            HashMap<String, String>,
-            HashMap<String, Vec<u8>>,
-            Vec<String>,
-        )> = job
-            .scenes
-            .par_iter()
-            .map(|rel| {
-                let text = crate::project::resolve_in_root(&p.root_path, rel)
-                    .and_then(|path| fs::read_to_string(&path).map_err(|e| e.to_string()))
-                    .map_err(|e| format!("读取场景失败 '{rel}': {e}"))?;
-                let mut sf: HashMap<String, String> = HashMap::new();
-                let mut sb: HashMap<String, Vec<u8>> = HashMap::new();
-                let sm = crate::preview::collect_scene_assets(&p.root_path, &text, &mut sf, &mut sb);
-                Ok::<_, String>((rel.clone(), text, sf, sb, sm))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        // 合并各场景独立收集结果到全局 map（去重：已存在不覆盖，保留首次读入）
-        for (_, _, sf, sb, sm) in &scene_results {
-            for (k, v) in sf {
-                files.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            for (k, v) in sb {
-                binaries.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            missing.extend(sm.iter().cloned());
+        // 场景收集（共享阶段）：逐场景并行读盘 + 引用资产 + 合并去重
+        ctx.progress(0.15, "收集场景与资产");
+        let mut collected = merge_scene_inputs(collect_scene_inputs(&p.root_path, &job.scenes)?);
+        // web 渠道语义：文本资产并入运行时 files（与 player.mjs/engine 同一命名
+        // 空间按相对路径落盘/归档）；二进制独立成 map 走归档或落盘
+        for (k, v) in collected.text_assets {
+            files.entry(k).or_insert(v);
         }
-        // 场景名去重需串行累积 used_names
-        for (rel, text, _, _, _) in scene_results {
-            let name = scene_entry_name(&rel, &mut used_names);
-            scene_texts.push((format!("scenes/{name}.json"), text));
-            packed.push(PackedScene {
-                name,
-                rel,
-                file: String::new(),
-            });
-        }
-        for (i, (file, _)) in scene_texts.iter().enumerate() {
-            packed[i].file = file.clone();
+        for (k, v) in collected.binaries {
+            binaries.entry(k).or_insert(v);
         }
 
         if ctx.cancelled() {
@@ -92,7 +61,7 @@ impl ChannelPipeline for WebPipeline {
                 &p.root_path,
                 &mut files,
                 &mut binaries,
-                &mut scene_texts,
+                &mut collected.scene_texts,
                 &mut bin_converted,
             );
         }
@@ -104,17 +73,18 @@ impl ChannelPipeline for WebPipeline {
                 .ok()
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .unwrap_or(serde_json::Value::Null);
-        let main_name = packed
+        let main_name = collected
+            .packed
             .iter()
             .find(|s| s.rel == p.main_scene)
             .map(|s| s.name.clone())
             .unwrap_or_default();
-        let cfg = product_config(project_cfg, &packed, &main_name, job.debug, &files, &p.gzip_base);
+        let cfg = product_config(project_cfg, &collected.packed, &main_name, job.debug, &files, &p.gzip_base);
 
         // 归档/内联条目：场景 JSON + 材质等文本（files 里非运行时代码的部分）+ 资产二进制
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
         if job.single_page || job.gzip {
-            for (rel, text) in scene_texts {
+            for (rel, text) in collected.scene_texts.drain(..) {
                 entries.push((rel, text.into_bytes()));
             }
             let mut code_files: HashMap<String, String> = HashMap::new();
@@ -132,7 +102,7 @@ impl ChannelPipeline for WebPipeline {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
         } else {
             // 多文件非 gzip：场景/材质/资产按相对路径落盘
-            for (rel, text) in scene_texts {
+            for (rel, text) in collected.scene_texts {
                 files.insert(rel, text);
             }
         }
@@ -182,9 +152,9 @@ impl ChannelPipeline for WebPipeline {
             // 单页 + gzip 时归档里含运行时代码条目，不计入资产数
             entries.len() - if job.single_page && job.gzip { code_n } else { 0 }
         } else {
-            binaries.len() + packed.len()
+            binaries.len() + collected.packed.len()
         };
-        let missing_n = missing.len();
+        let missing_n = collected.missing.len();
         let bin_n = bin_converted.len();
         let mut message = String::from("构建完成");
         if bin_n > 0 {
@@ -199,14 +169,14 @@ impl ChannelPipeline for WebPipeline {
             output_dir: p.out.display().to_string(),
             main_scene: p.main_scene.clone(),
             main_scene_name: main_name,
-            scenes: packed,
+            scenes: collected.packed,
             single_page: job.single_page,
             gzip: job.gzip,
             release: job.release,
             cdn: p.cdn_active,
             bin_converted,
             assets_packed,
-            missing: missing.clone(),
+            missing: collected.missing,
             message,
         })
     }

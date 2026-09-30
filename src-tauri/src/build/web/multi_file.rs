@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 
-use super::archive::build_archive_bytes;
-use super::classify::{is_entry_page, is_runtime_code};
-use super::specifiers::rewrite_specifier_text;
-use super::urls::three_cdn_remap;
+use crate::build::archive::build_archive_bytes;
+use crate::build::classify::{is_entry_page, is_runtime_code};
+use crate::build::specifiers::rewrite_specifier_text;
+use crate::build::urls::three_cdn_remap;
 
 /// 多文件产物附带的零依赖静态服务器脚本（node server.mjs [端口]）。
 /// 引导用户走 HTTP 而非 file://（fetch/Worker 在 file:// 下受限）。

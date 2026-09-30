@@ -1,17 +1,18 @@
 //! 构建导出（重任务工厂化）：前端收集运行时文本 → Rust 按渠道装配产物管线 →
 //! 写入 `<项目>/build/<渠道>/` → 返回自描述结果。
 //!
-//! 结构（工厂模式）：
+//! 结构（工厂 + 渠道子目录桥接）：
 //! - command：Tauri 命令 build_export——注册任务管理器（取消/进度），
 //!   收敛 IPC 参数为 BuildJob 后交给 run_build；
 //! - run_build：公共预检（渠道工厂取管线 → 场景/项目目录校验 → 地址归一化
 //!   → 输出目录解析）+ 调度 ChannelPipeline::build；
-//! - ChannelPipeline + channel_pipeline：渠道工厂——web 渠道由 web 模块实现，
-//!   wechat（微信小游戏）渠道由 wechat 模块实现（预构建 bundle + 数据全内联）；
-//! - 各阶段小模块：classify（文件分类）、urls（远程地址/three CDN）、
-//!   specifiers（模块说明符重写）、archive（gzip 归档/单页内联）、
-//!   refs + release（发布模式）、config（产物 config）、
-//!   single_page / multi_file（两种产物形态组装）。
+//! - ChannelPipeline + channel_pipeline：渠道工厂——渠道实现各自成目录、只经
+//!   工厂桥接互不可见（web/：WebPipeline + single_page/multi_file 组装子模块；
+//!   wechat/：WechatPipeline + pack 包文件生成/preflight 能力预检子模块）；
+//! - 共享阶段（扁平模块，渠道无关）：classify（文件分类）、urls（远程地址/
+//!   three CDN）、specifiers（模块说明符重写）、archive（gzip 归档/单页内联）、
+//!   refs + release（发布模式）、config（产物 config）、scene_collect（场景
+//!   收集主干，web 与 wechat 共用）。
 //!
 //! web 渠道行为（自 build.rs 单体时代保留）：
 //! - 打包选中场景及其引用资产（.mat 材质/贴图/模型）与网页运行时（player +
@@ -33,15 +34,13 @@ mod classify;
 mod command;
 mod config;
 mod job;
-mod multi_file;
 mod refs;
 mod release;
-mod single_page;
+mod scene_collect;
 mod specifiers;
 mod urls;
 mod web;
 mod wechat;
-mod wechat_pack;
 
 // 命令与数据从模块根再导出：lib.rs 的命令注册表保持 build::build_export 的读法
 // （glob 带出 tauri 命令宏生成的隐藏符号，与 lanshare 同一做法）

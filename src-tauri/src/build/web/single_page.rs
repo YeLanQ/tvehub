@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use super::archive::inline_data_script;
-use super::classify::is_entry_page;
-use super::specifiers::rewrite_module_imports;
-use super::urls::three_cdn_remap;
+use crate::build::archive::inline_data_script;
+use crate::build::classify::is_entry_page;
+use crate::build::specifiers::rewrite_module_imports;
+use crate::build::urls::three_cdn_remap;
 
 /// 单页引导脚本：从内联数据取运行时代码（非 gzip 的 code 字段，或 gzip 归档里的
 /// player.mjs/engine/** 条目），为每个模块生成 Blob URL 并注入 import map
