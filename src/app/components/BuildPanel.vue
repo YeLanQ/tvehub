@@ -2,11 +2,11 @@
 /**
  * 构建导出面板：左栏渠道卡片 + 右栏配置区）：
  * - 通用设置：构建场景多选（默认全选）、主场景；
- * - 渠道设置：Web（页面标题/调试模式）；微信小游戏（占位，构建按钮禁用）；
- * - 构建 → Rust 把选中场景 + 引用资产 + 网页运行时打包到 <项目>/build/<渠道>/；
+ * - 渠道设置：Web（导出模板/标题/gzip/CDN）；微信小游戏（AppID/屏幕方向）；
+ * - 构建 → Rust 把选中场景 + 引用资产 + 运行时打包到 <项目>/build/<渠道>/；
  * - 结果区展示产物信息与缺失资产，支持「打开构建目录」；
  * - 预览复用编辑器「网页预览」的设计：本地静态服务（服务 build/<渠道>）+ 内嵌
- *   iframe + 在浏览器打开 + 停止。
+ *   iframe + 在浏览器打开 + 停止（web 渠道）。
  * 构建配置归属项目自身（项目根 build.config.json）；重开面板读回配置。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
@@ -64,6 +64,10 @@ const cdn = ref(false);
 const gzipBase = ref("");
 /** Three CDN 地址（three.js 远程基址，CDN 模式下生效；空 = 内嵌 three.js） */
 const cdnBase = ref("");
+/** 微信小游戏 AppID（可选；空 = 继承上次产物 > touristappid 游客模式） */
+const wechatAppId = ref("");
+/** 微信小游戏屏幕方向 */
+const wechatOrientation = ref<"portrait" | "landscape">("portrait");
 
 // 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）
 watch(release, (v) => {
@@ -159,6 +163,8 @@ async function restoreState(): Promise<void> {
     cdn.value = prefs.cdn;
     gzipBase.value = prefs.gzipBase;
     cdnBase.value = prefs.cdnBase;
+    wechatAppId.value = prefs.wechatAppId ?? "";
+    wechatOrientation.value = prefs.wechatOrientation ?? "portrait";
     // 兼容旧配置（两者曾可同时为 true）：发布模式优先
     if (release.value) debug.value = false;
   } else {
@@ -173,6 +179,8 @@ async function restoreState(): Promise<void> {
     cdn.value = false;
     gzipBase.value = "";
     cdnBase.value = "";
+    wechatAppId.value = "";
+    wechatOrientation.value = "portrait";
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -198,6 +206,8 @@ async function persistPrefs(): Promise<void> {
     cdn: cdn.value,
     gzipBase: gzipBase.value,
     cdnBase: cdnBase.value,
+    wechatAppId: wechatAppId.value,
+    wechatOrientation: wechatOrientation.value,
   };
   try {
     await saveBuildPrefs(projectStore.currentPath, prefs);
@@ -225,6 +235,8 @@ async function doBuild(): Promise<void> {
       cdn: cdn.value,
       gzipBase: gzipBase.value,
       cdnBase: cdnBase.value,
+      wechatAppId: wechatAppId.value || undefined,
+      wechatOrientation: wechatOrientation.value,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -380,7 +392,9 @@ watch(projectScenes, (next, prev) => {
                 <option v-for="s in selectedScenes" :key="s" :value="s">{{ s }}</option>
               </select>
             </div>
-            <p class="bp-note">主场景为构建产物的默认入口场景；产物内可用 <code>?scene=场景名</code> 切换其他场景。</p>
+            <p class="bp-note">
+              主场景为构建产物的默认入口场景。<template v-if="channel === 'web'">产物内可用 <code>?scene=场景名</code> 切换其他场景。</template><template v-else>微信包内以主场景启动（无查询参数切换）。</template>
+            </p>
           </section>
 
           <!-- 渠道设置 -->
@@ -498,10 +512,58 @@ watch(projectScenes, (next, prev) => {
                 </label>
               </div>
             </template>
-            <p v-else class="bp-note">
-              微信小游戏渠道即将支持：计划输出 game.json / adapter 与微信开发者工具所需的项目结构。
-              当前可先用 Web 渠道验证内容。
-            </p>
+            <template v-else-if="channel === 'wechat'">
+              <div class="bp-field col">
+                <label for="bp-wechat-appid">
+                  AppID
+                  <span class="bp-label-hint">可选，留空走继承链</span>
+                </label>
+                <input
+                  id="bp-wechat-appid"
+                  v-model="wechatAppId"
+                  placeholder="wx1234567890abcdef"
+                  spellcheck="false"
+                />
+                <p class="bp-note">
+                  留空时继承上次产物中的 AppID（首次构建为 touristappid
+                  游客模式：可运行模拟器，真机预览需真实 AppID）。更换 AppID
+                  后需在微信开发者工具重新导入工程。
+                </p>
+              </div>
+              <div class="bp-field">
+                <label>屏幕方向</label>
+                <div class="bp-check-row">
+                  <label class="bp-check">
+                    <input v-model="wechatOrientation" type="radio" value="portrait" />
+                    <span>竖屏</span>
+                  </label>
+                  <label class="bp-check">
+                    <input v-model="wechatOrientation" type="radio" value="landscape" />
+                    <span>横屏</span>
+                  </label>
+                </div>
+              </div>
+              <div class="bp-field">
+                <label for="bp-wechat-release">发布模式</label>
+                <label class="bp-check">
+                  <input id="bp-wechat-release" v-model="release" type="checkbox" />
+                  <span>资源 uid 重命名 + 引用重写 + JSON 压缩（与调试模式互斥）</span>
+                </label>
+              </div>
+              <div class="bp-field">
+                <label for="bp-wechat-debug">调试模式</label>
+                <label class="bp-check">
+                  <input id="bp-wechat-debug" v-model="debug" type="checkbox" />
+                  <span>运行日志输出到控制台（与发布模式互斥）</span>
+                </label>
+              </div>
+              <p class="bp-note">
+                产物为微信小游戏工程（场景与资产全内联，运行期零文件系统）：用「微信开发者工具」导入
+                <code>build/wechat</code> 目录即可运行。当前限制：物理仅支持
+                rapier 后端；Draco/Basis 压缩资产不支持（请关闭压缩后构建）。包体积不做构建期限制，由开发者工具在发布时判定。
+              </p>
+            </template>
+            <p v-else class="bp-note">该渠道暂未支持。</p>
           </section>
 
           <!-- 输出与结果 -->
@@ -522,7 +584,9 @@ watch(projectScenes, (next, prev) => {
                 </span>
               </div>
               <div class="bp-result-line bp-muted">
-                {{ result.single_page ? "单页" : "多文件" }}{{ result.gzip ? " · gzip" : "" }}{{
+                {{ result.channel === "wechat" ? "小游戏包" : result.single_page ? "单页" : "多文件" }}{{
+                  result.gzip ? " · gzip" : ""
+                }}{{
                   result.release ? " · 发布" : ""
                 }}{{ result.cdn ? " · CDN" : "" }}{{
                   result.bin_converted.length ? ` · 模型→bin ${result.bin_converted.length}` : ""
@@ -530,8 +594,14 @@ watch(projectScenes, (next, prev) => {
                 · 场景 {{ result.scenes.length }} 个 · 资产 {{ result.assets_packed }} 项 · 主场景
                 {{ result.main_scene_name || result.main_scene || "—" }}
               </div>
-              <div v-if="!result.single_page" class="bp-result-line bp-hint">
+              <div
+                v-if="!result.single_page && result.channel !== 'wechat'"
+                class="bp-result-line bp-hint"
+              >
                 提示：在输出目录运行 <code>node server.mjs</code> 启动本地 HTTP 服务器后访问（勿直接双击 index.html）
+              </div>
+              <div v-else-if="result.channel === 'wechat'" class="bp-result-line bp-hint">
+                提示：用「微信开发者工具」导入输出目录运行；如出现旧报错/白屏，先清除工具编译缓存再重新编译。
               </div>
               <div v-if="result.missing.length" class="bp-missing">
                 <span class="bp-missing-title">缺失资产（已跳过 {{ result.missing.length }} 项）：</span>
@@ -566,6 +636,7 @@ watch(projectScenes, (next, prev) => {
           打开构建目录
         </button>
         <button
+          v-if="result?.channel !== 'wechat'"
           :disabled="!result || previewLoading"
           title="在面板内预览构建产物（本地静态服务）"
           @click="startPreview"

@@ -197,6 +197,13 @@
   text-overflow: ellipsis;
 }
 
+/* 横排单选/复选组（如微信屏幕方向） */
+.bp-check-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 /* 字段纵向布局（标签在上、内容在下，如导出模板/构建场景） */
 .bp-field.col {
   flex-direction: column;

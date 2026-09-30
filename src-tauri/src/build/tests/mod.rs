@@ -2,4 +2,5 @@
 mod cdn_e2e;
 mod e2e;
 mod release_e2e;
+mod wechat_e2e;
 

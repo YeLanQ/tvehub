@@ -8,6 +8,7 @@ import {
   generateWebPreviewFiles,
 } from "./scripts/gen-web-preview-files.mjs";
 import { buildRuntime } from "./scripts/build-runtime.mjs";
+import { buildWechatRuntime } from "./scripts/build-wechat-runtime.mjs";
 import {
   LICENSE_ROOT,
   syncLicenses,
@@ -294,14 +295,21 @@ function runtimeBuildPlugin(): Plugin {
       await buildRuntime("dev 初始编译").catch((e: unknown) => {
         console.error("[runtime-build] 编译失败:", e instanceof Error ? e.message : e);
       });
+      // 微信小游戏运行时 bundle（消费 public/engine 产物；失败不阻塞 dev，
+      // 仅构建微信渠道导出时需要）
+      await buildWechatRuntime("dev 初始编译").catch((e: unknown) => {
+        console.error("[runtime-build] 微信运行时构建失败:", e instanceof Error ? e.message : e);
+      });
       let timer: ReturnType<typeof setTimeout> | null = null;
       const schedule = () => {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = null;
-          void buildRuntime("源变化").catch((e: unknown) => {
-            console.error("[runtime-build] 重建失败:", e instanceof Error ? e.message : e);
-          });
+          void buildRuntime("源变化")
+            .then(() => buildWechatRuntime("源变化"))
+            .catch((e: unknown) => {
+              console.error("[runtime-build] 重建失败:", e instanceof Error ? e.message : e);
+            });
         }, 500);
       };
       for (const root of RUNTIME_SRC_ROOTS) {

@@ -6,8 +6,8 @@
 //!   收敛 IPC 参数为 BuildJob 后交给 run_build；
 //! - run_build：公共预检（渠道工厂取管线 → 场景/项目目录校验 → 地址归一化
 //!   → 输出目录解析）+ 调度 ChannelPipeline::build；
-//! - ChannelPipeline + channel_pipeline：渠道工厂——web 渠道由 web 模块
-//!   实现；新增渠道（如 wechat 微信小游戏）注册实现即可，命令层与前端配置不动；
+//! - ChannelPipeline + channel_pipeline：渠道工厂——web 渠道由 web 模块实现，
+//!   wechat（微信小游戏）渠道由 wechat 模块实现（预构建 bundle + 数据全内联）；
 //! - 各阶段小模块：classify（文件分类）、urls（远程地址/three CDN）、
 //!   specifiers（模块说明符重写）、archive（gzip 归档/单页内联）、
 //!   refs + release（发布模式）、config（产物 config）、
@@ -40,6 +40,8 @@ mod single_page;
 mod specifiers;
 mod urls;
 mod web;
+mod wechat;
+mod wechat_pack;
 
 // 命令与数据从模块根再导出：lib.rs 的命令注册表保持 build::build_export 的读法
 // （glob 带出 tauri 命令宏生成的隐藏符号，与 lanshare 同一做法）
@@ -58,10 +60,10 @@ pub trait ChannelPipeline: Send + Sync {
 }
 
 /// 渠道工厂：按渠道 id 装配产物管线。未注册渠道在此明确报"暂未支持"
-/// （wechat 为前端 UI 占位渠道；实现后在此注册即可）
 pub fn channel_pipeline(channel: &str) -> Result<Box<dyn ChannelPipeline>, String> {
     match channel {
         "web" => Ok(Box::new(web::WebPipeline)),
+        "wechat" => Ok(Box::new(wechat::WechatPipeline)),
         other => Err(format!("构建渠道 '{other}' 暂未支持")),
     }
 }
@@ -106,7 +108,9 @@ pub fn run_build(job: BuildJob, ctx: &JobCtx) -> Result<BuildResult, String> {
         }
         None => root_path.join("build").join(&job.channel),
     };
-    if !job.files.contains_key("index.html") {
+    // 入口页预检仅对 web 渠道生效（wechat 渠道的入口是预构建 code.js，由
+    // 其管线自行校验；其余渠道走各管线的自查）
+    if job.channel == "web" && !job.files.contains_key("index.html") {
         return Err("网页运行时缺少 index.html".to_string());
     }
     let prepared = job::Prepared {

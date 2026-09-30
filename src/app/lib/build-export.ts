@@ -16,10 +16,15 @@ import {
   configUsesTextureCompression,
   withHtmlTitle,
 } from "./web-preview-runtime";
-import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "./script-compile";
+import { WEB_WECHAT_RUNTIME_FILES, WEB_WECHAT_RAPIER_FILES } from "../../generated/wechat-runtime-files";
+import {
+  loadProjectScripts,
+  compileProjectScripts,
+  ensureEntryScript,
+} from "./script-compile";
 import { graphSidecarRel } from "../../framework/graph";
 
-/** 构建渠道（wechat 为 UI 占位，后端未实现——构建按钮禁用并提示） */
+/** 构建渠道 */
 export interface BuildChannel {
   id: "web" | "wechat";
   label: string;
@@ -29,7 +34,12 @@ export interface BuildChannel {
 
 export const BUILD_CHANNELS: BuildChannel[] = [
   { id: "web", label: "Web", desc: "打包为可部署的静态网页（player 运行时 + 场景 + 资产）", supported: true },
-  { id: "wechat", label: "微信小游戏", desc: "适配微信小游戏环境（即将支持）", supported: false },
+  {
+    id: "wechat",
+    label: "微信小游戏",
+    desc: "打包为微信小游戏工程（预构建运行时 + 数据全内联，导入开发者工具运行）",
+    supported: true,
+  },
 ];
 
 /** 导出模板（内置 + 用户自定义统一结构） */
@@ -134,6 +144,10 @@ export interface BuildPrefs {
   gzipBase: string;
   /** Three CDN 地址（three.js 远程基址，CDN 模式下生效；空 = 内嵌 three.js） */
   cdnBase: string;
+  /** 微信小游戏 AppID（可选；空 = 继承上次产物 > touristappid 游客模式） */
+  wechatAppId?: string;
+  /** 微信小游戏屏幕方向（portrait / landscape） */
+  wechatOrientation: "portrait" | "landscape";
 }
 
 /** 项目根下的构建配置文件（与 project.config.json 同级同风格） */
@@ -159,6 +173,8 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
       cdn: cfg.cdn === true,
       gzipBase: typeof cfg.gzipBase === "string" ? cfg.gzipBase : "",
       cdnBase: typeof cfg.cdnBase === "string" ? cfg.cdnBase : "",
+      wechatAppId: typeof cfg.wechatAppId === "string" ? cfg.wechatAppId : "",
+      wechatOrientation: cfg.wechatOrientation === "landscape" ? "landscape" : "portrait",
     };
   } catch {
     return null;
@@ -180,6 +196,8 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     cdn: prefs.cdn,
     gzipBase: prefs.gzipBase,
     cdnBase: prefs.cdnBase,
+    wechatAppId: prefs.wechatAppId ?? "",
+    wechatOrientation: prefs.wechatOrientation ?? "portrait",
   };
   await api.writeText(root, BUILD_CONFIG_REL, JSON.stringify(next, null, 2));
 }
@@ -205,6 +223,10 @@ export async function runBuild(opts: {
   cdnBase: string;
   /** 产物落盘目录（项目相对路径；缺省 build/web/，如局域网共享用 .tmp/share） */
   outDir?: string;
+  /** 微信小游戏 AppID（可选；空 = 继承上次产物 > touristappid 游客模式） */
+  wechatAppId?: string;
+  /** 微信小游戏屏幕方向（wechat 渠道；缺省 portrait） */
+  wechatOrientation?: "portrait" | "landscape";
 }): Promise<BuildResult> {
   // 产物内容与编辑器一致：构建前把当前编辑场景落盘（后端按磁盘内容读取）
   try {
@@ -214,6 +236,10 @@ export async function runBuild(opts: {
   }
   // 脚本同理：编辑中的脏脚本先落盘（编译按磁盘内容读取）
   await getScriptsStore().saveAll();
+
+  if (opts.channel === "wechat") {
+    return runWechatBuild(opts);
+  }
 
   // 物理启用状态与后端、渲染后端（WebGPU 运行时）、Draco/纹理压缩解码器
   // 都在项目配置中：体积大的可选运行时按需包含
@@ -283,6 +309,104 @@ export async function runBuild(opts: {
     cdnBase: opts.cdnBase,
     files: runtime,
     outDir: opts.outDir,
+  });
+  logStore.log("success", `构建完成: ${result.output_dir}`, "build");
+  if (result.missing.length) {
+    logStore.log(
+      "warn",
+      `构建缺失 ${result.missing.length} 项资产（已跳过）: ${result.missing.join(", ")}`,
+      "build",
+    );
+  }
+  return result;
+}
+
+/** 微信运行时文本读取（/exports/wechat/runtime/**，随编辑器打包）。
+ *  与 web 运行时同一 HTML 兜底拦截（SPA 兜底会把缺失文件当 JS 内联）。 */
+async function fetchWechatRuntimeText(rel: string): Promise<string> {
+  const url = `/${rel}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`读取微信运行时失败: ${url} (${res.status})——请重启编辑器等待运行时构建完成`);
+  }
+  const text = await res.text();
+  if (/^\s*<(!doctype|html)/i.test(text)) {
+    throw new Error(`读取微信运行时失败: ${url} 返回 HTML 兜底页（运行时文件缺失，请重启编辑器）`);
+  }
+  return text;
+}
+
+/** 微信小游戏渠道构建：预构建运行时（code.js/tve 门面 [+rapier]）+ 用户脚本
+ *  CommonJS 编译 + 场景图注入 → Rust 组装全内联小游戏包。web 流程不经此分支。 */
+async function runWechatBuild(opts: {
+  root: string;
+  scenes: string[];
+  mainScene: string;
+  debug: boolean;
+  release: boolean;
+  outDir?: string;
+  wechatAppId?: string;
+  wechatOrientation?: "portrait" | "landscape";
+}): Promise<BuildResult> {
+  // 物理按项目配置附带 rapier（jolt/ammo 由 Rust 侧预检明确报不支持）
+  let physicsConfigText: string | null = null;
+  try {
+    physicsConfigText = await api.readText(opts.root, "project.config.json");
+  } catch {
+    /* 配置读取失败按未启用处理 */
+  }
+  const backend = configPhysicsBackend(physicsConfigText);
+  const includeRapier = configUsesPhysics(physicsConfigText) && (backend ?? "rapier") === "rapier";
+
+  const runtime: Record<string, string> = {};
+  for (const f of WEB_WECHAT_RUNTIME_FILES) {
+    runtime[f.key] = await fetchWechatRuntimeText(f.rel);
+  }
+  if (includeRapier) {
+    for (const f of WEB_WECHAT_RAPIER_FILES) {
+      runtime[f.key] = await fetchWechatRuntimeText(f.rel);
+    }
+  }
+
+  // 用户脚本按微信渠道编译（CommonJS + tve 门面指向 engine/core/tve.js）
+  try {
+    await ensureEntryScript(opts.root);
+    const scripts = await loadProjectScripts(opts.root);
+    if (scripts.length) {
+      const { files: jsFiles, errors } = await compileProjectScripts(scripts, "wechat");
+      Object.assign(runtime, jsFiles);
+      for (const [rel, err] of Object.entries(errors)) {
+        logStore.log("error", `脚本编译失败 ${rel}: ${err}（该脚本不参与构建）`, "build");
+      }
+    }
+  } catch (e) {
+    logStore.log("warn", `脚本编译跳过: ${e}`, "build");
+  }
+  // 场景图注入（与 web 渠道同一 config.scriptGraph 标记语义）
+  try {
+    const graphText = await api.readText(opts.root, graphSidecarRel(opts.mainScene));
+    if (graphText.trim()) runtime["script-graph.json"] = graphText;
+  } catch {
+    /* 无图文件按无图构建处理 */
+  }
+
+  const result = await api.buildExport({
+    root: opts.root,
+    channel: "wechat",
+    scenes: opts.scenes,
+    mainScene: opts.mainScene,
+    title: "",
+    debug: opts.debug,
+    singlePage: false,
+    gzip: false,
+    release: opts.release,
+    cdn: false,
+    gzipBase: "",
+    cdnBase: "",
+    files: runtime,
+    outDir: opts.outDir,
+    wechatAppid: opts.wechatAppId || undefined,
+    wechatOrientation: opts.wechatOrientation ?? "portrait",
   });
   logStore.log("success", `构建完成: ${result.output_dir}`, "build");
   if (result.missing.length) {

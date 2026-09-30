@@ -17,13 +17,14 @@ export function scriptJsPath(srcRel: string): string {
 }
 
 /**
- * 计算从脚本目录指向运行时模块（engine/core/tve.mjs）的相对导入说明符。
+ * 计算从脚本目录指向运行时模块的相对导入说明符。
  * @param scriptRel 脚本源路径（如 "src/main.ts"、"src/ui/button.ts"）
+ * @param target 运行时目标模块路径（缺省 ESM 门面；微信渠道传 engine/core/tve.js）
  */
-export function tveImportFor(scriptRel: string): string {
+export function tveImportFor(scriptRel: string, target = "engine/core/tve.mjs"): string {
   const dir = scriptRel.includes("/") ? scriptRel.slice(0, scriptRel.lastIndexOf("/")) : "";
   const fromParts = dir ? dir.split("/") : [];
-  const toParts = "engine/core/tve.mjs".split("/");
+  const toParts = target.split("/");
   const file = toParts.pop() as string;
   let common = 0;
   while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {

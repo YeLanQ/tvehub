@@ -93,6 +93,8 @@ fn build_export_release_renames_and_rewrites() {
                 ),
             ]),
                 out_dir: None,
+            wechat_appid: None,
+            wechat_orientation: None,
             },
             &JobCtx::default(),
     )

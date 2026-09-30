@@ -27,6 +27,9 @@ pub async fn build_export(
     cdn_base: String,
     files: HashMap<String, String>,
     out_dir: Option<String>,
+    // 微信小游戏渠道专属：AppID（空 = 继承上次产物 > touristappid）与屏幕方向
+    wechat_appid: Option<String>,
+    wechat_orientation: Option<String>,
 ) -> Result<BuildResult, String> {
     // 注册到任务管理器：支持取消 + 进度广播 + 多项目隔离
     let handle = state.register(&app, "export", Some(&root), crate::task::Priority::Normal);
@@ -54,6 +57,8 @@ pub async fn build_export(
                 cdn_base,
                 files,
                 out_dir,
+                wechat_appid,
+                wechat_orientation,
             },
             &ctx,
         );

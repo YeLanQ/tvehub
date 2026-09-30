@@ -12,7 +12,7 @@ import { api } from "../../../lib/api";
 import { logStore } from "../../stores/log";
 import { loadAssetTemplate } from "../asset-templates";
 import { scriptClassNameFromStem } from "../script-prototypes";
-import { compileScript, type CompiledScript } from "./compile";
+import { compileScript, type CompiledScript, type CompileTarget } from "./compile";
 import { scriptJsPath } from "./paths";
 
 // ---------------------------------------------------------------------------
@@ -103,17 +103,20 @@ export interface ProjectScriptsCompileResult {
  *  预览面板刷新/连续构建不再重复做全量 TS 转译）。 */
 const compileCache = new Map<string, CompiledScript>();
 
-/** 全量编译项目脚本（单个失败跳过并记录，不阻断导出） */
+/** 全量编译项目脚本（单个失败跳过并记录，不阻断导出）。
+ *  target 决定编译形态（web=ESM / wechat=CommonJS），并参与编译缓存键——
+ *  同一会话先后构建两个渠道不得复用对方产物。 */
 export async function compileProjectScripts(
   scripts: ProjectScript[],
+  target: CompileTarget = "web",
 ): Promise<ProjectScriptsCompileResult> {
   const files: Record<string, string> = {};
   const errors: Record<string, string> = {};
   for (const s of scripts) {
-    const key = `${s.rel}\u0000${s.source}`;
+    const key = `${target}\u0000${s.rel}\u0000${s.source}`;
     let cached = compileCache.get(key);
     if (!cached) {
-      cached = await compileScript(s.source, s.rel);
+      cached = await compileScript(s.source, s.rel, { target });
       compileCache.set(key, cached);
     }
     if (cached.error || !cached.js) {

@@ -59,6 +59,8 @@ export const b = T ? 2 : 0;
                 cdn_base: three_base.into(),
                 files: runtime_files(single),
                 out_dir: None,
+            wechat_appid: None,
+            wechat_orientation: None,
             },
             &JobCtx::default(),
         )

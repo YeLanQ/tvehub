@@ -36,6 +36,10 @@ pub struct BuildJob {
     pub files: HashMap<String, String>,
     /// 产物落盘目录（项目相对路径；缺省 build/<渠道>/）
     pub out_dir: Option<String>,
+    /// 微信小游戏 AppID（可选；缺省走「上次产物继承 > touristappid」链）
+    pub wechat_appid: Option<String>,
+    /// 微信小游戏屏幕方向（"portrait" / "landscape"；缺省 portrait）
+    pub wechat_orientation: Option<String>,
 }
 
 /// 任务运行期上下文：取消检查与进度上报（命令层注入，单元测试传默认值）

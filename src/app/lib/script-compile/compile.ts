@@ -147,8 +147,9 @@ function injectComponentKeys(
   );
 }
 
-/** 裸组件字段声明收集/注入 transformer（默认导出类；已有该静态成员则跳过） */
-function componentFieldTransformer(ts: TsModule): ts.TransformerFactory<ts.SourceFile> {
+/** 裸组件字段声明收集/注入 transformer（默认导出类；已有该静态成员则跳过）。
+ *  wechat.ts 的 CJS 编译复用同一 transformer（导出仅供渠道编译变体使用） */
+export function componentFieldTransformer(ts: TsModule): ts.TransformerFactory<ts.SourceFile> {
   return (context) => (sf: ts.SourceFile) => {
     const importedNames = collectImportedNames(ts, sf);
     const visitor = (node: ts.Node): ts.Node => {
@@ -186,8 +187,24 @@ export interface CompiledScript {
   error: string | null;
 }
 
-/** 编译单个脚本：转译 + tve 说明符重写 + 裸组件字段声明元数据注入 */
-export async function compileScript(source: string, scriptRel: string): Promise<CompiledScript> {
+/** 编译目标渠道：web = ESM（默认，行为不变）；wechat = CommonJS（见 wechat.ts） */
+export type CompileTarget = "web" | "wechat";
+
+export interface CompileOptions {
+  target?: CompileTarget;
+}
+
+/** 编译单个脚本：转译 + tve 说明符重写 + 裸组件字段声明元数据注入。
+ *  默认（web）路径逻辑不变；wechat 目标委托渠道编译变体。 */
+export async function compileScript(
+  source: string,
+  scriptRel: string,
+  options?: CompileOptions,
+): Promise<CompiledScript> {
+  if (options?.target === "wechat") {
+    const { compileScriptWechat } = await import("./wechat");
+    return compileScriptWechat(source, scriptRel);
+  }
   const ts = await loadTs();
   const preprocessed = rewriteTveSpecifiers(ts, source, tveImportFor(scriptRel));
   const out = ts.transpileModule(preprocessed, {

@@ -127,8 +127,57 @@ export function generateWebPreviewFiles() {
   return base.length;
 }
 
+// ---------------------------------------------------------------------------
+// 微信小游戏运行时清单（独立生成文件，不触碰 web-preview 清单）：
+// 扫描 public/exports/wechat/runtime（scripts/build-wechat-runtime.mjs 产物），
+// 键 = 包内相对路径（剥 exports/wechat/runtime/ 前缀）。rapier 体积大，单独分组
+// 由前端按项目物理配置决定是否随产物；jolt/ammo 微信渠道 v1 不支持（无清单项）。
+// ---------------------------------------------------------------------------
+
+/** 微信运行时源目录（相对项目根；vite 插件据此挂文件监听） */
+export const WEB_WECHAT_RUNTIME_ROOT = "public/exports/wechat/runtime";
+
+/** 生成清单的目标文件（相对项目根） */
+export const WECHAT_RUNTIME_FILES_PATH = "src/generated/wechat-runtime-files.ts";
+
+/** 微信渠道随包的物理引擎文件（rapier CJS 预转换产物） */
+const WECHAT_RAPIER_PREFIX = "engine/runtime/physics-engines/";
+
+/**
+ * 生成 src/generated/wechat-runtime-files.ts，返回 { total, base }。
+ * 清单条目 { key, rel }：key = 包内相对路径（files map 键），rel = public 下仓库路径
+ * （前端 fetch URL = /<rel>）。
+ */
+export function generateWechatRuntimeFiles() {
+  const all = listFilesRecursive(WEB_WECHAT_RUNTIME_ROOT).map((f) => ({
+    key: f.replace(/^public\/exports\/wechat\/runtime\//, ""),
+    rel: f.replace(/^public\//, ""),
+  }));
+  const base = all
+    .filter((f) => !f.key.startsWith(WECHAT_RAPIER_PREFIX))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const rapier = all
+    .filter((f) => f.key.startsWith(WECHAT_RAPIER_PREFIX))
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  const content =
+    `// 由 scripts/gen-web-preview-files.mjs 自动生成（vite 启动/构建与 pnpm build\n` +
+    `// 时重建；请勿手动编辑。微信小游戏渠道专用清单，与 web-preview 清单互相独立）\n` +
+    `export interface WechatRuntimeFile { key: string; rel: string; }\n` +
+    `export const WEB_WECHAT_RUNTIME_FILES: WechatRuntimeFile[] = ${JSON.stringify(base, null, 2)};\n` +
+    `export const WEB_WECHAT_RAPIER_FILES: WechatRuntimeFile[] = ${JSON.stringify(rapier, null, 2)};\n`;
+  const target = path.join(ROOT, WECHAT_RUNTIME_FILES_PATH);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+  return { total: base.length + rapier.length, base: base.length, rapier: rapier.length };
+}
+
 // 直接执行（node scripts/gen-web-preview-files.mjs）：生成并打印结果
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const count = generateWebPreviewFiles();
   console.log(`[gen-web-preview-files] 已生成 ${count} 项 → ${RUNTIME_FILES_PATH}`);
+  const wechat = generateWechatRuntimeFiles();
+  console.log(
+    `[gen-web-preview-files] 微信运行时清单 ${wechat.base} 项 + rapier ${wechat.rapier} 项 → ${WECHAT_RUNTIME_FILES_PATH}`,
+  );
 }

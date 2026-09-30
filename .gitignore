@@ -40,3 +40,8 @@ public/engine/
 reports/
 .tmp-smoke-full.log
 .tmp-cov.log
+
+# 微信小游戏运行时 = 纯构建产物目录（源 = scripts/wechat-runtime/** +
+# public/web-preview + public/engine），由 scripts/build-wechat-runtime.mjs
+# 一次全量再生，不入库（与 public/engine/ 同一 doctrine）
+public/exports/wechat/runtime/

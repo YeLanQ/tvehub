@@ -243,6 +243,9 @@ export const api = {
     files: Record<string, string>;
     /** 产物落盘目录（项目相对路径；缺省 build/<channel>/），如局域网共享用 .tmp/share */
     outDir?: string;
+    /** 微信小游戏渠道：AppID（缺省 = 继承上次产物 > touristappid）与屏幕方向 */
+    wechatAppid?: string;
+    wechatOrientation?: string;
   }) => invoke<BuildResult>("build_export", args),
   /** 扫描 exe 旁 public 目录下的用户自定义模板
    *  （kind: "templates"=项目模板 / "exports-web"=web 导出模板） */

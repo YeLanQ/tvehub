@@ -21,7 +21,7 @@
 | `exportWebPreviewFromScene(root, sceneRel, files)` | 当前场景导出预览产物（场景/贴图后端直读盘；files=网页运行时文本） |
 | `startWebPreviewServer(root, dir?)` → baseUrl | 起本地静态服务（缺省 .tmp/web-preview，可指 build/<channel>） |
 | `stopWebPreview()` | 停服务释放端口 |
-| `buildExport(args)` → `BuildResult` | 构建导出（channel/scenes/mainScene/singlePage/gzip/release/cdn/...） |
+| `buildExport(args)` → `BuildResult` | 构建导出（channel/web 渠道: scenes/mainScene/singlePage/gzip/release/cdn/...；wechat 渠道: wechatAppid/wechatOrientation 可选） |
 | `scanUserTemplates(kind)` / `readUserTemplateText(kind, dir, rel)` | exe 旁用户自定义模板（"templates"\|"exports-web"） |
 
 ## 使用例
