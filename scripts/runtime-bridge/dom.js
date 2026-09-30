@@ -1,8 +1,9 @@
-// 适配层 · document：平台已有 document 不整体替换（键级合并——工具游戏帧的
+// 桥接核心 · document：平台已有 document 不整体替换（键级合并——工具游戏帧的
 // document 是残缺骨架，缺 createElementNS/getElementById），缺失时整体安装。
 // 画布消费走 canvas2d 工厂，图片消费走 net.js 的 Image 形态。
 
-import { isWechatRuntime, locationShim } from "./env.js";
+import { bridgeActive } from "./host.js";
+import { locationShim } from "./env.js";
 import { Emitter, makeElementStub, mergeKeys } from "./util.js";
 import { createCanvas2d, screenCanvas } from "./canvas.js";
 import { createImageElement } from "./image.js";
@@ -113,7 +114,7 @@ documentStub.head = makeElementStub("head");
 export const documentShim = documentStub;
 
 export function installDocument() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   let existing = null;
   try {
     existing = typeof document !== "undefined" ? document : null;

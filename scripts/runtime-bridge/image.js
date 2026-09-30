@@ -1,12 +1,13 @@
-// 适配层 · 图片。纹理源身份是硬约束：微信 WebGL 的 texImage2D/texSubImage2D 只
-// 接受原生 wx image / wx canvas（包装对象报 "Overload resolution failed"），因此：
-// - createImageBitmap：解析字节 → 原生 wx image（补 close），解析出的是纹理源本体；
+// 桥接核心 · 图片。纹理源身份是硬约束：平台 WebGL 的 texImage2D/texSubImage2D 只
+// 接受原生平台 image / canvas（包装对象报 "Overload resolution failed"），因此：
+// - createImageBitmap：解析字节 → 原生平台 image（补 close），解析出的是纹理源本体；
 // - Image 元素（three ImageLoader / createElementNS("img")）：优先同对象增强
-//   （src 访问器做内联表桥接——运行期零文件系统，wx image.src 直读包文件必败），
+//   （src 访问器做内联表桥接——运行期零文件系统，image.src 直读包文件必败），
 //   仅平台 src 不可重定义时退化为包装器（桥接仍生效，但该对象不能再作纹理源）。
 // imageOrientation 选项忽略：翻转交给 UNPACK_FLIP_Y_WEBGL（纹理 flipY 默认 true）。
 
-import { wxApi, isWechatRuntime, setGlobal } from "./env.js";
+import { host, bridgeActive } from "./host.js";
+import { setGlobal } from "./install.js";
 import { Emitter, makeEvent } from "./util.js";
 import { bytesToDataUrl, base64ToBytes } from "./codec.js";
 import { lookupAssetBytes } from "./http.js";
@@ -47,11 +48,11 @@ function bytesOf(input) {
 
 function loadNativeImage(bytes, mimeHint) {
   return new Promise((resolve, reject) => {
-    if (!isWechatRuntime || !wxApi || typeof wxApi.createImage !== "function") {
+    if (!bridgeActive()) {
       reject(new Error("图片能力不可用"));
       return;
     }
-    const img = wxApi.createImage();
+    const img = host().createImage();
     img.onload = (res) => {
       const detail = (res && res.detail) || res || {};
       try {
@@ -110,7 +111,7 @@ function enhanceImageInPlace(native) {
           if (prevLoad) prevLoad(res);
         };
         native.onerror = (err) => {
-          console.warn(`[tve-wechat] 图片加载失败: ${src}`, (err && err.errMsg) || "");
+          console.warn(`[runtime-bridge] 图片加载失败: ${src}`, (err && err.errMsg) || "");
           em.emit("error", makeEvent("error", { target: native }));
           if (prevError) prevError(err);
         };
@@ -149,7 +150,7 @@ function wrapImage(native) {
       em.emit("load", makeEvent("load", { target: el }));
     };
     native.onerror = (err) => {
-      console.warn("[tve-wechat] 图片加载失败（包装器形态）", (err && err.errMsg) || "");
+      console.warn("[runtime-bridge] 图片加载失败（包装器形态）", (err && err.errMsg) || "");
       em.emit("error", makeEvent("error", { target: el }));
     };
   }
@@ -185,10 +186,10 @@ function wrapImage(native) {
 
 /** Image 元素：优先同对象增强（纹理源身份 + src 桥接双保证），失败退化包装器 */
 export function createImageElement() {
-  const native = isWechatRuntime && wxApi && typeof wxApi.createImage === "function" ? wxApi.createImage() : null;
+  const native = bridgeActive() ? host().createImage() : null;
   if (!native) return wrapImage(null);
   if (enhanceImageInPlace(native)) return native;
-  console.warn("[tve-wechat] image src 不可重定义，退化为包装器（该图片不能再作纹理源）");
+  console.warn("[runtime-bridge] image src 不可重定义，退化为包装器（该图片不能再作纹理源）");
   return wrapImage(native);
 }
 
@@ -204,11 +205,11 @@ function ImageClass(width, height) {
 }
 
 export function installImageGlobals() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   setGlobal("Image", ImageClass);
   setGlobal("createImageBitmap", createImageBitmapShim);
   return { ImageClass, createImageBitmapShim };
 }
 
-// 求值期安装（bootstrap 以 import 装配，见该文件说明）
+// 求值期安装（渠道入口以 import 装配，见 entries 说明）
 installImageGlobals();

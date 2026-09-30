@@ -36,7 +36,7 @@ export class Emitter {
       try {
         fn(event);
       } catch (e) {
-        console.error("[tve-wechat] 监听器异常:", type, e);
+        console.error("[runtime-bridge] 监听器异常:", type, e);
       }
     }
     return true;

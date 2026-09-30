@@ -1,7 +1,8 @@
-// 适配层 · URL / URLSearchParams：相对解析以 locationShim 为基准（全内联架构下
+// 桥接核心 · URL / URLSearchParams：相对解析以 locationShim 为基准（全内联架构下
 // 消费面 = pak 的 fetch shim 与 asset-bundle 的键归一化，覆盖 pathname/search/origin）。
 
-import { setGlobal, isWechatRuntime } from "./env.js";
+import { bridgeActive } from "./host.js";
+import { setGlobal } from "./install.js";
 
 class URLSearchParamsShim {
   constructor(init) {
@@ -134,7 +135,7 @@ function joinPath(dir, rel) {
 }
 
 export function installUrlGlobals() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   setGlobal("URL", URLShim);
   setGlobal("URLSearchParams", URLSearchParamsShim);
   return { URLShim, URLSearchParamsShim };

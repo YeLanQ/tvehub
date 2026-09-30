@@ -22,7 +22,8 @@ import esbuild from "esbuild";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = path.join(ROOT, "public/exports/wechat/runtime");
-const BOOTSTRAP = path.join(ROOT, "scripts/wechat-runtime/bootstrap.js");
+const BRIDGE_DIR = path.join(ROOT, "scripts/runtime-bridge");
+const BOOTSTRAP = path.join(BRIDGE_DIR, "entries/wechat.js");
 const PLAYER = path.join(ROOT, "public/web-preview/player.mjs");
 const RAPIER_SRC = path.join(ROOT, "public/engine/runtime/physics-engines/rapier.mjs");
 
@@ -216,10 +217,30 @@ function writeTveFacade() {
 /** node 冒烟：最小存根下 require 产物（CJS 形态 + tve 门面可达性） */
 async function smokeRequireBundle() {
   const { execFileSync } = await import("node:child_process");
-  const smoke = path.join(ROOT, "scripts/wechat-runtime/smoke.cjs");
+  const smoke = path.join(BRIDGE_DIR, "smoke.cjs");
   execFileSync(
     process.execPath,
     [smoke, path.join(OUT_DIR, "code.js")],
+    { stdio: "inherit", timeout: 60_000 },
+  );
+}
+
+/** 契约一致性测试：桥接核心语义 + 平台端点（实验室判定集固化，见 bridge.spec.mjs） */
+async function runBridgeSpec() {
+  const { execFileSync } = await import("node:child_process");
+  execFileSync(
+    process.execPath,
+    [path.join(BRIDGE_DIR, "bridge.spec.mjs")],
+    { stdio: "inherit", timeout: 120_000 },
+  );
+}
+
+/** 漂移守卫：统一运行时源码的全局用法对照桥接覆盖清单（未覆盖新增 = 构建失败） */
+async function runSurfaceCheck() {
+  const { execFileSync } = await import("node:child_process");
+  execFileSync(
+    process.execPath,
+    [path.join(BRIDGE_DIR, "check-surface.mjs")],
     { stdio: "inherit", timeout: 60_000 },
   );
 }
@@ -231,6 +252,8 @@ export async function buildWechatRuntime(reason = "") {
   const codeBytes = await buildMainBundle();
   const rapierBytes = await buildRapier();
   const facadeBytes = writeTveFacade();
+  await runSurfaceCheck();
+  await runBridgeSpec();
   await smokeRequireBundle();
   const kb = (n) => `${(n / 1024).toFixed(1)}KB`;
   console.log(

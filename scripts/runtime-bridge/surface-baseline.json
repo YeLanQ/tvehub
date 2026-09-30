@@ -1,0 +1,6 @@
+{
+  "global:HTMLElement": "graph-runtime 的 DOM 目标 instanceof 守卫；微信下画布非 HTMLElement 走降级分支，无害",
+  "global:IntersectionObserver": "player 帧循环可见性门控，typeof 守卫；适配层已安装立即相交存根",
+  "global:ResizeObserver": "stage 尺寸观察，typeof 守卫；适配层已安装存根（window resize 事件兜底）",
+  "global:Worker": "动画/物理 Worker 创建；内联数据模式（data.js）下 workerUrl 恒空，走主线程回退"
+}

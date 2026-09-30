@@ -1,8 +1,9 @@
-// 适配层 · 画布：首调 wx.createCanvas() 得屏上画布（WebGL 渲染目标），同对象
-// 增强（不包装——持有原生引用的调用方自动获得完整 API）；canvas2d 工厂走
-// OffscreenCanvas → 二次 createCanvas → 屏上画布的兜底链（2D 贴图/UI 文本消费）。
+// 桥接核心 · 画布：屏上画布经端点创建（WebGL 渲染目标），同对象增强（不包装——
+// 持有原生引用的调用方自动获得完整 API）；canvas2d 工厂走端点离屏链，失败末级
+// 兜底屏上画布（2D 贴图/UI 文本消费）。
 
-import { wxApi, isWechatRuntime, view } from "./env.js";
+import { host, bridgeActive } from "./host.js";
+import { view } from "./env.js";
 import { Emitter } from "./util.js";
 
 /** 屏上画布事件面（引擎 pointer 监听 + three webglcontextlost 监听共用） */
@@ -46,41 +47,20 @@ function enhanceCanvas(canvas, surface) {
   return canvas;
 }
 
-/** 屏上画布：wx.createCanvas() 首调即屏上画布，整个包内只调这一次 */
-export const screenCanvas = isWechatRuntime
-  ? enhanceCanvas(wxApi.createCanvas(), canvasEvents)
-  : null;
+/** 屏上画布：端点 createScreenCanvas 的首调结果，桥接内仅此一次 */
+export const screenCanvas = bridgeActive() ? enhanceCanvas(host().createScreenCanvas(), canvasEvents) : null;
 
 /** canvas2d 工厂：离屏 2D 画布（天空盒程序化贴图 / UI 文本测量等消费）。
- *  兜底链：createOffscreenCanvas({type:"2d"}) → createOffscreenCanvas() →
- *  二次 wx.createCanvas()（首画布已被屏上占用，二次得离屏）→ 屏上画布（2D 必败末级）。 */
+ *  端点离屏链失败时末级兜底屏上画布（2D context 获取必败，仅作形态兜底）。 */
 export function createCanvas2d(width, height) {
-  if (!isWechatRuntime) return null;
+  if (!bridgeActive()) return null;
   let canvas = null;
   try {
-    if (typeof wxApi.createOffscreenCanvas === "function") {
-      canvas = wxApi.createOffscreenCanvas({ type: "2d", width, height });
-    }
+    canvas = host().createOffscreenCanvas(width, height);
   } catch {
     canvas = null;
   }
-  if (!canvas) {
-    try {
-      if (typeof wxApi.createOffscreenCanvas === "function") {
-        canvas = wxApi.createOffscreenCanvas();
-      }
-    } catch {
-      canvas = null;
-    }
-  }
-  if (!canvas) {
-    try {
-      canvas = wxApi.createCanvas();
-    } catch {
-      canvas = null;
-    }
-  }
-  if (!canvas) canvas = screenCanvas; // 末级：2D context 获取必败，仅作形态兜底
+  if (!canvas) canvas = screenCanvas;
   enhanceCanvas(canvas, null);
   try {
     if (width > 0) canvas.width = width;

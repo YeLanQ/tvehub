@@ -1,8 +1,9 @@
-// 适配层 · HTTP：Response/Request/Headers/Blob/AbortController 最小实现 + fetch 垫片。
+// 桥接核心 · HTTP：Response/Request/Headers/Blob/AbortController 最小实现 + fetch 垫片。
 // 全内联架构下 fetch 只消费两类来源：data: URL 与内联资产表（__TVE_BUILD_DATA.assets）；
 // 未命中返回 404 Response（附诊断日志）——不再走 wx 文件系统，懒装载竞态从源头消失。
 
-import { setGlobal, windowRef, isWechatRuntime } from "./env.js";
+import { bridgeActive } from "./host.js";
+import { setGlobal, windowRef } from "./install.js";
 import { bytesToBase64, base64ToBytes } from "./codec.js";
 import { URLShim } from "./url.js";
 
@@ -293,12 +294,12 @@ export async function fetchShim(input, init) {
   }
   const bytes = lookupAssetBytes(request.url);
   if (bytes) return new TveResponse(bytes, { status: 200, url: request.url });
-  console.warn(`[tve-wechat] fetch 未命中内联资产: ${request.url}`);
+  console.warn(`[runtime-bridge] fetch 未命中内联资产: ${request.url}`);
   return new TveResponse(new Uint8Array(0), { status: 404, statusText: "Not Found", url: request.url });
 }
 
 export function installHttpGlobals() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   setGlobal("Blob", TveBlob);
   setGlobal("Headers", TveHeaders);
   setGlobal("Response", TveResponse);

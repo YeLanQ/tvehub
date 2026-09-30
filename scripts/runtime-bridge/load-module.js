@@ -1,9 +1,10 @@
-// 适配层 · 用户脚本动态加载：bundle 构建期已把 scripts.mjs 的动态 import(spec)
+// 桥接核心 · 用户脚本动态加载：bundle 构建期已把 scripts.mjs 的动态 import(spec)
 // 改写为 __tveLoadModule(spec)（引擎源零改动）。此处实现 spec → 包内 require：
 // 剥 tve: 前缀（scripts.ts 对内联数据形态恒发 tve:<rel>）、小写折叠（开发者工具
 // 包内注册表小写归一）、补 ./ 前缀（微信 require 需显式相对形态）。
 
-import { isWechatRuntime, setGlobal } from "./env.js";
+import { bridgeActive } from "./host.js";
+import { setGlobal } from "./install.js";
 
 function normalizeSpec(spec) {
   let rel = String(spec ?? "").replace(/\\/g, "/");
@@ -18,7 +19,7 @@ function loadModule(spec) {
 }
 
 export function installLoadModule() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   setGlobal("__tveLoadModule", loadModule);
 }
 

@@ -1,7 +1,8 @@
-// 适配层 · 编解码：base64（atob/btoa，wx 环境无原生实现）与 TextEncoder/TextDecoder
+// 桥接核心 · 编解码：base64（atob/btoa，wx 环境无原生实现）与 TextEncoder/TextDecoder
 // 缺失兜底。GLTF 内嵌 data URI、fetch data: URL、createImageBitmap 均消费。
 
-import { setGlobal, isWechatRuntime } from "./env.js";
+import { bridgeActive } from "./host.js";
+import { setGlobal } from "./install.js";
 
 const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -99,7 +100,7 @@ class TextDecoderShim {
 }
 
 export function installCodecGlobals() {
-  if (!isWechatRuntime) return;
+  if (!bridgeActive()) return;
   if (typeof globalThis.btoa !== "function") setGlobal("btoa", (s) => bytesToBase64(new TextEncoderShim().encode(String(s))));
   if (typeof globalThis.atob !== "function") setGlobal("atob", (s) => new TextDecoderShim().decode(base64ToBytes(String(s))));
   if (typeof globalThis.TextEncoder !== "function") setGlobal("TextEncoder", TextEncoderShim);

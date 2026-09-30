@@ -1,11 +1,12 @@
-// 适配层 · 音频：three 的 AudioContext.getContext() 走 `new (window.AudioContext ||
-// window.webkitAudioContext)()`——构造器返回 Proxy 门面（转发原生 wx AudioContext，
-// 覆写 resume/state/suspend/close）。不直接改写平台 ctx：resume 等是只读访问器
+// 桥接核心 · 音频：three 的 AudioContext.getContext() 走 `new (window.AudioContext ||
+// window.webkitAudioContext)()`——构造器返回 Proxy 门面（转发原生平台 AudioContext，
+// 覆写 resume/state/suspend/close）。不直接改写平台 ctx：resume 等可能是只读访问器
 // （赋值即抛 "which has only a getter"），引擎的 `ctx.resume().catch()` 又要求
 // Promise 返回值。state 在首次 resume 后恒报 running（对齐浏览器解锁语义，
 // 防平台 state 永久 suspended 卡死自动播放判定）。
 
-import { wxApi, isWechatRuntime, setGlobal, windowRef } from "./env.js";
+import { host, bridgeActive } from "./host.js";
+import { setGlobal, windowRef } from "./install.js";
 
 function ensurePromise(value) {
   if (value && typeof value.then === "function") return value;
@@ -69,13 +70,8 @@ function makeAudioFacade(native) {
 }
 
 export function installAudioGlobals() {
-  if (!isWechatRuntime) return;
-  let ctx = null;
-  try {
-    if (wxApi && typeof wxApi.createWebAudioContext === "function") ctx = wxApi.createWebAudioContext();
-  } catch (e) {
-    console.warn("[tve-wechat] WebAudio 创建失败（音频将静音）", e);
-  }
+  if (!bridgeActive()) return;
+  const ctx = host().createAudioContext();
   if (!ctx) return;
 
   const facade = makeAudioFacade(ctx);
