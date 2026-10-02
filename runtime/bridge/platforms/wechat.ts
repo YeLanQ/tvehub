@@ -9,6 +9,7 @@
 // - createOffscreenCanvas(w, h) → 离屏画布或 null（兜底链在本端点内闭合）
 
 import { setHost } from "../host.ts";
+import { bridgeLog } from "../log.ts";
 import { assertHost } from "../contract.ts";
 
 const wxApi = (() => {
@@ -76,7 +77,7 @@ async function instantiateWasmViaFile(bytes, imports) {
       fsm.writeFileSync(path, buffer, "binary");
       return await wxWasm.instantiate(path, imports);
     } catch (e) {
-      console.warn("[runtime-bridge] wasm 文件形态实例化失败，回落直传字节", e);
+      bridgeLog("warn", "[runtime-bridge] wasm 文件形态实例化失败，回落直传字节", e);
     }
   }
   return await wxWasm.instantiate(buffer, imports);
@@ -199,7 +200,7 @@ const wechatHost = {
     try {
       if (typeof wxApi.createWebAudioContext === "function") return wxApi.createWebAudioContext();
     } catch (e) {
-      console.warn("[runtime-bridge] WebAudio 创建失败（音频将静音）", e);
+      bridgeLog("warn", "[runtime-bridge] WebAudio 创建失败（音频将静音）", e);
     }
     return null;
   },
@@ -314,7 +315,7 @@ function bindTouch(name, handler) {
       }
     });
   } catch (e) {
-    console.warn(`[runtime-bridge] ${name} 桥接失败`, e);
+    bridgeLog("warn", `[runtime-bridge] ${name} 桥接失败`, e);
   }
 }
 
@@ -329,7 +330,7 @@ function bindKey(name, handler) {
       });
     });
   } catch (e) {
-    console.warn(`[runtime-bridge] ${name} 桥接失败`, e);
+    bridgeLog("warn", `[runtime-bridge] ${name} 桥接失败`, e);
   }
 }
 

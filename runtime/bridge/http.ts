@@ -3,6 +3,7 @@
 // 未命中返回 404 Response（附诊断日志）——不再走 wx 文件系统，懒装载竞态从源头消失。
 
 import { bridgeActive } from "./host.ts";
+import { bridgeLog } from "./log.ts";
 import { setGlobal, windowRef } from "./install.ts";
 import { bytesToBase64, base64ToBytes } from "./codec.ts";
 import { URLShim } from "./url.ts";
@@ -294,7 +295,7 @@ export async function fetchShim(input, init) {
   }
   const bytes = lookupAssetBytes(request.url);
   if (bytes) return new TveResponse(bytes, { status: 200, url: request.url });
-  console.warn(`[runtime-bridge] fetch 未命中内联资产: ${request.url}`);
+  bridgeLog("warn", `[runtime-bridge] fetch 未命中内联资产: ${request.url}`);
   return new TveResponse(new Uint8Array(0), { status: 404, statusText: "Not Found", url: request.url });
 }
 

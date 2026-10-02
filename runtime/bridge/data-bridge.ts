@@ -4,6 +4,7 @@
 
 import { bridgeActive } from "./host.ts";
 import { setGlobal, windowRef } from "./install.ts";
+import { bridgeLog, flushBridgeLogs } from "./log.ts";
 
 import * as tveBuildData from "./data.js";
 
@@ -11,7 +12,8 @@ export function installBuildData() {
   if (!bridgeActive()) return;
   const data = tveBuildData && (tveBuildData.default ?? tveBuildData);
   if (!data || typeof data !== "object") {
-    console.error("[runtime-bridge] data.js 形态异常（缺少 config/assets）");
+    bridgeLog("error", "[runtime-bridge] data.js 形态异常（缺少 config/assets）");
+    flushBridgeLogs();
     return;
   }
   setGlobal("__TVE_BUILD_DATA", data);
@@ -21,6 +23,8 @@ export function installBuildData() {
   } catch {
     /* window 未就绪时忽略 */
   }
+  // 门控事实源已就位：定 release/debug 口径并回放安装期缓冲日志
+  flushBridgeLogs();
 }
 
 // 求值期安装（bootstrap 以 import 装配，见该文件说明）

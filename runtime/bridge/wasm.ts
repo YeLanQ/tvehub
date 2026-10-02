@@ -10,6 +10,7 @@
 
 import { bridgeActive, host } from "./host.ts";
 import { setGlobal } from "./install.ts";
+import { bridgeLog } from "./log.ts";
 
 /**
  * 组装 WebAssembly 垫片（纯函数，便于契约测试）。
@@ -122,16 +123,17 @@ export function installWasmShim() {
   const shim = buildWasmShim(instantiateBound);
   if (!existing) {
     setGlobal("WebAssembly", shim);
-    console.log("[runtime-bridge] WebAssembly 垫片已安装（经平台端点 instantiateWasm 实例化）");
+    bridgeLog("log", "[runtime-bridge] WebAssembly 垫片已安装（经平台端点 instantiateWasm 实例化）");
     return;
   }
   const added = Object.keys(shim).filter((k) => typeof existing[k] === "undefined");
   if (patchWasmGlobal(existing, shim)) {
-    console.log(
+    bridgeLog(
+      "log",
       `[runtime-bridge] 平台 WebAssembly 残缺（缺 ${added.join(", ") || "—"}），已补齐并统一切换到端点 instantiateWasm 链路`,
     );
   } else {
-    console.warn("[runtime-bridge] 平台 WebAssembly 残缺且不可修补，wasm 物理将不可用");
+    bridgeLog("warn", "[runtime-bridge] 平台 WebAssembly 残缺且不可修补，wasm 物理将不可用");
   }
 }
 

@@ -1,3 +1,5 @@
+import { bridgeLog } from "./log.ts";
+
 // 微信小游戏运行时适配层 —— 共享工具（随 bundle 最先求值，见 bootstrap.js 的装配顺序）。
 // 只依赖 wx 原生 API；不使用 eval / new Function（沙箱可能禁用动态求值）。
 
@@ -36,7 +38,7 @@ export class Emitter {
       try {
         fn(event);
       } catch (e) {
-        console.error("[runtime-bridge] 监听器异常:", type, e);
+        bridgeLog("error", "[runtime-bridge] 监听器异常:", type, e);
       }
     }
     return true;

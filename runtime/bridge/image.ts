@@ -7,6 +7,7 @@
 // imageOrientation 选项忽略：翻转交给 UNPACK_FLIP_Y_WEBGL（纹理 flipY 默认 true）。
 
 import { host, bridgeActive } from "./host.ts";
+import { bridgeLog } from "./log.ts";
 import { setGlobal } from "./install.ts";
 import { Emitter, makeEvent } from "./util.ts";
 import { bytesToDataUrl, base64ToBytes } from "./codec.ts";
@@ -111,7 +112,7 @@ function enhanceImageInPlace(native) {
           if (prevLoad) prevLoad(res);
         };
         native.onerror = (err) => {
-          console.warn(`[runtime-bridge] 图片加载失败: ${src}`, (err && err.errMsg) || "");
+          bridgeLog("warn", `[runtime-bridge] 图片加载失败: ${src}`, (err && err.errMsg) || "");
           em.emit("error", makeEvent("error", { target: native }));
           if (prevError) prevError(err);
         };
@@ -150,7 +151,7 @@ function wrapImage(native) {
       em.emit("load", makeEvent("load", { target: el }));
     };
     native.onerror = (err) => {
-      console.warn("[runtime-bridge] 图片加载失败（包装器形态）", (err && err.errMsg) || "");
+      bridgeLog("warn", "[runtime-bridge] 图片加载失败（包装器形态）", (err && err.errMsg) || "");
       em.emit("error", makeEvent("error", { target: el }));
     };
   }
@@ -189,7 +190,7 @@ export function createImageElement() {
   const native = bridgeActive() ? host().createImage() : null;
   if (!native) return wrapImage(null);
   if (enhanceImageInPlace(native)) return native;
-  console.warn("[runtime-bridge] image src 不可重定义，退化为包装器（该图片不能再作纹理源）");
+  bridgeLog("warn", "[runtime-bridge] image src 不可重定义，退化为包装器（该图片不能再作纹理源）");
   return wrapImage(native);
 }
 

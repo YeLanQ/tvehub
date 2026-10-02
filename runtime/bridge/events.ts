@@ -5,6 +5,7 @@
 // 平台接线全部经端点（host），本模块只做事件合成与投递（平台无关）。
 
 import { host, bridgeActive } from "./host.ts";
+import { bridgeLog } from "./log.ts";
 import { winEvents } from "./env.ts";
 import { makeEvent } from "./util.ts";
 import { canvasEvents, screenCanvas } from "./canvas.ts";
@@ -59,7 +60,7 @@ function bridgeTouch(name, type) {
   try {
     host()[name]((touch) => dispatchPointer(type, touch));
   } catch (e) {
-    console.warn(`[runtime-bridge] ${name} 桥接失败`, e);
+    bridgeLog("warn", `[runtime-bridge] ${name} 桥接失败`, e);
   }
 }
 
@@ -71,7 +72,7 @@ function bridgeKeyboard(name, type) {
       winEvents.emit(type, ev);
     });
   } catch (e) {
-    console.warn(`[runtime-bridge] ${name} 桥接失败`, e);
+    bridgeLog("warn", `[runtime-bridge] ${name} 桥接失败`, e);
   }
 }
 

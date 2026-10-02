@@ -382,6 +382,41 @@ check(
   );
 }
 
+// ---------------------------------------------------------------- 场景 D2：桥接日志门控
+// release 构建（config.debug !== true）零 console 输出；安装期日志缓冲待
+// data-bridge 装配后按门控回放（?query 缓存击穿拿独立门控实例）。
+// 断言在 console 恢复后进行——check 自身的输出不进采样。
+{
+  const { bridgeLog, flushBridgeLogs } = await import("./log.ts?gate");
+  const emitted = [];
+  const results = {};
+  const origWarn = console.warn;
+  const origLog = console.log;
+  console.warn = (...a) => emitted.push(a.join(" "));
+  console.log = (...a) => emitted.push(a.join(" "));
+
+  bridgeLog("warn", "[t] buffered-install-log");
+  results.buffered = emitted.length === 0;
+  globalThis.__TVE_BUILD_DATA = { config: { debug: true }, assets: {} };
+  flushBridgeLogs();
+  bridgeLog("log", "[t] live-debug-log");
+  results.debug =
+    emitted.length === 2 && emitted[0].includes("buffered-install-log") && emitted[1].includes("live-debug-log");
+  globalThis.__TVE_BUILD_DATA = { config: {}, assets: {} };
+  flushBridgeLogs();
+  bridgeLog("warn", "[t] muted-release");
+  globalThis.__TVE_BUILD_DATA = undefined;
+  flushBridgeLogs();
+  bridgeLog("error", "[t] muted-no-config");
+  results.muted = emitted.length === 2;
+
+  console.warn = origWarn;
+  console.log = origLog;
+  check("日志门控：装配前缓冲不发", results.buffered);
+  check("日志门控：debug 回放缓冲并实时放行", results.debug, JSON.stringify(emitted));
+  check("日志门控：release/配置缺失一律静默", results.muted, JSON.stringify(emitted));
+}
+
 // ---------------------------------------------------------------- 场景 E：真机 wasm 加载链闭环
 // 复刻真机实例化链（端点落盘用户目录 → WXWebAssembly 文件形态读盘编译）：
 // 用手写最小 wasm 模块（导出 f() = 42）经微信端点 instantiateWasm 全链落地，
