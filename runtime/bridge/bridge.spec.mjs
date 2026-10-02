@@ -49,9 +49,14 @@ function makeMockHost() {
   const keyHandlers = [];
   const lifecycle = { show: [], hide: [], resize: [], error: [] };
   const storage = new Map();
+  const wasmCalls = [];
   const host = {
     platformId: "mock",
     available: () => true,
+    instantiateWasm: (bytes, imports) => {
+      wasmCalls.push({ bytes, imports });
+      return Promise.resolve({ module: {}, instance: { exports: {} } });
+    },
     getViewport: () => ({ width: 844, height: 390, dpr: 2 }),
     requestAnimationFrame: (fn) => setTimeout(() => fn(Date.now()), 16),
     cancelAnimationFrame: (id) => clearTimeout(id),
@@ -117,6 +122,7 @@ function makeMockHost() {
     __touchHandlers: touchHandlers,
     __keyHandlers: keyHandlers,
     __lifecycle: lifecycle,
+    __wasmCalls: wasmCalls,
   };
   return host;
 }
@@ -271,6 +277,8 @@ check(
 // wx 桩置于 globalThis 后导入平台端点：assertHost 通过 + 能力面可用。
 {
   const wxStorageBox = {};
+  const wasmWrites = [];
+  const wasmInstantiates = [];
   globalThis.wx = {
     platform: "devtools",
     getSystemInfoSync: () => ({ windowWidth: 800, windowHeight: 360, pixelRatio: 3 }),
@@ -290,6 +298,17 @@ check(
     onError() {},
     requestAnimationFrame: (fn) => setTimeout(fn, 16),
     cancelAnimationFrame: (id) => clearTimeout(id),
+    env: { USER_DATA_PATH: "wxfile://usr" },
+    getFileSystemManager: () => ({
+      writeFileSync: (path, data, encoding) => wasmWrites.push({ path, data, encoding }),
+    }),
+  };
+  // 真机形态：标准 WebAssembly 缺位、WXWebAssembly.instantiate 只认文件路径
+  globalThis.WXWebAssembly = {
+    instantiate: (pathOrBuffer, imports) => {
+      wasmInstantiates.push({ arg: pathOrBuffer, imports });
+      return Promise.resolve({ module: {}, instance: { exports: {} } });
+    },
   };
   const endpoint = await import("./platforms/wechat.ts");
   const { host: h } = await import("./host.ts");
@@ -299,6 +318,144 @@ check(
   const off = h().createOffscreenCanvas(64, 32);
   check("微信端点：离屏画布兜底链可用", off && off.width === 64);
   check("微信端点：storage 回环", (h().storageSet("a", "b"), h().storageGet("a") === "b"));
+
+  // instantiateWasm：字节落盘用户目录 → WXWebAssembly.instantiate(path) 文件形态
+  const wasmResult = await h().instantiateWasm(new Uint8Array([1, 2, 3, 4]), { env: {} });
+  check(
+    "微信端点：instantiateWasm 落盘用户目录并走 WXWebAssembly 文件形态",
+    wasmResult && wasmResult.instance
+      && wasmWrites.length === 1
+      && wasmWrites[0].encoding === "binary"
+      && wasmWrites[0].path === wasmInstantiates[0].arg
+      && wasmWrites[0].path.startsWith("wxfile://usr/tve-wasm-")
+      && wasmWrites[0].path.endsWith(".wasm")
+      && wasmInstantiates[0].imports && wasmInstantiates[0].imports.env !== undefined,
+  );
+  // 同字节重复实例化 → 同名文件（内容哈希稳定）
+  await h().instantiateWasm(new Uint8Array([1, 2, 3, 4]), {});
+  check(
+    "微信端点：同内容 wasm 命名稳定",
+    wasmInstantiates.length === 2 && wasmInstantiates[1].arg === wasmInstantiates[0].arg,
+  );
+}
+
+// ---------------------------------------------------------------- 场景 D：WebAssembly 垫片
+// node 自带原生 WebAssembly → 安装空转；垫片组装为纯函数单独验证。
+{
+  const before = globalThis.WebAssembly;
+  const { buildWasmShim, installWasmShim, isCompleteWebAssembly, patchWasmGlobal } = await import("./wasm.ts");
+  installWasmShim();
+  check("wasm 垫片：完整原生 WebAssembly 在位时安装空转", globalThis.WebAssembly === before);
+
+  const shimCalls = [];
+  const shim = buildWasmShim((bytes, imports) => {
+    shimCalls.push({ bytes, imports });
+    return Promise.resolve({ module: {}, instance: { exports: {} } });
+  });
+  const r1 = await shim.instantiate(new Uint8Array([9]), { a: 1 });
+  check("wasm 垫片：instantiate 委托端点（字节 + imports 透传）", r1 && r1.instance && shimCalls[0].imports.a === 1);
+  await shim.instantiateStreaming({ arrayBuffer: () => Promise.resolve(new Uint8Array([8]).buffer) }, { b: 2 });
+  check("wasm 垫片：instantiateStreaming 读全量字节走同链路", shimCalls[1].imports.b === 2);
+  check(
+    "wasm 垫片：Instance/Module/RuntimeError 构造器在位（引擎产物消费面）",
+    typeof shim.Instance === "function" && typeof shim.Module === "function"
+      && new shim.RuntimeError("x") instanceof Error,
+  );
+  check("wasm 垫片：validate 保守桩（残缺平台走非 SIMD/JS 兜底）", shim.validate() === false);
+  check(
+    "wasm 垫片：完整性探测（node 原生完整 / 空对象残缺）",
+    isCompleteWebAssembly(globalThis.WebAssembly) === true && isCompleteWebAssembly({}) === false,
+  );
+  // 微信子上下文残缺形态：有 instantiate 缺 validate 等 → 成员级修补
+  const partial = { instantiate: () => {}, extraNative: 1 };
+  check(
+    "wasm 垫片：残缺平台修补（缺的补上、原生保留）",
+    patchWasmGlobal(partial, shim) === true && typeof partial.validate === "function"
+      && typeof partial.Instance === "function" && partial.extraNative === 1,
+  );
+  const partial2 = { instantiate: () => {} };
+  patchWasmGlobal(partial2, shim);
+  await partial2.instantiate(new Uint8Array([1]), { c: 3 });
+  check(
+    "wasm 垫片：残缺平台的 instantiate 强制切到端点链路",
+    partial2.instantiate === shim.instantiate && shimCalls[2].imports.c === 3,
+  );
+}
+
+// ---------------------------------------------------------------- 场景 E：真机 wasm 加载链闭环
+// 复刻真机实例化链（端点落盘用户目录 → WXWebAssembly 文件形态读盘编译）：
+// 用手写最小 wasm 模块（导出 f() = 42）经微信端点 instantiateWasm 全链落地，
+// 并断言产物侧 rapier 产物在 cjs 形态下可初始化建世界。wechat 构建链内产物
+// 已就绪；独立运行缺产物时跳过产物断言（不判失败）。
+{
+  const { buildWasmShim } = await import("./wasm.ts");
+  const fsp = await import("node:fs");
+  const pathMod = await import("node:path");
+  const os = await import("node:os");
+  const userDir = fsp.mkdtempSync(pathMod.join(os.tmpdir(), "tve-wasm-spec-"));
+  // 端点侧 wx 桩升级为真实落盘（场景 C 的对象引用仍被端点持有）
+  globalThis.wx.getFileSystemManager = () => ({
+    writeFileSync: (p, data) => fsp.writeFileSync(p, Buffer.from(data)),
+  });
+  globalThis.wx.env.USER_DATA_PATH = userDir;
+  // WXWebAssembly 桩升级为真实编译：读盘字节交原生 WebAssembly（= 真机文件形态
+  // 语义）；包内相对路径按微信包根（public/exports/wechat/runtime）解析，绝对
+  // 路径（字节链落盘的用户目录）直接使用
+  const nativeWa = globalThis.WebAssembly;
+  const repoRoot = pathMod.resolve(new URL("../..", import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, ""));
+  const pkgRoot = pathMod.join(repoRoot, "public", "exports", "wechat", "runtime");
+  globalThis.WXWebAssembly.instantiate = (p, imports) => {
+    if (typeof p !== "string") throw new TypeError("WXWebAssembly stub: expect file path");
+    const file = pathMod.isAbsolute(p) ? p : pathMod.join(pkgRoot, p);
+    return nativeWa.instantiate(new Uint8Array(fsp.readFileSync(file)), imports);
+  };
+
+  // 最小 wasm：magic+version / type ()->i32 / func / export "f" / code (i32.const 42)
+  const minimalWasm = new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+    0x03, 0x02, 0x01, 0x00,
+    0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00,
+    0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b,
+  ]);
+  try {
+    const endpointInstantiate = (await import("./host.ts")).host().instantiateWasm.bind(null);
+    const shim = buildWasmShim(endpointInstantiate);
+    const result = await shim.instantiate(minimalWasm, {});
+    const callResult = result.instance.exports.f();
+    check(
+      "wasm 加载链：最小 wasm 经垫片+端点落盘+文件形态编译并调用导出",
+      callResult === 42,
+      `exports.f() = ${callResult}`,
+    );
+  } catch (e) {
+    check("wasm 加载链：最小 wasm 经垫片+端点落盘+文件形态编译并调用导出", false, e && e.message);
+  }
+
+  // 产物侧：rapier 产物 cjs 形态可初始化（原生编译路径；缺产物按跳过）
+  const engineFile = new URL("../../public/exports/wechat/runtime/engine/runtime/physics-engines/rapier.js", import.meta.url);
+  if (fs.existsSync(engineFile)) {
+    try {
+      const vm = await import("node:vm");
+      const text = fsp.readFileSync(engineFile, "utf8");
+      const wrapper = vm.runInThisContext(
+        `(function (exports, require, module) {\n${text}\n})`,
+        { filename: "rapier.js" },
+      );
+      const m = { exports: {} };
+      wrapper(m.exports, () => ({}), m);
+      const R = m.exports.default;
+      await R.init();
+      const world = new R.World({ x: 0, y: -9.81, z: 0 });
+      world.timestep = 1 / 60;
+      world.step();
+      world.free();
+      check("wasm 加载链：rapier 产物 cjs 形态初始化并步进一帧", true);
+    } catch (e) {
+      check("wasm 加载链：rapier 产物 cjs 形态初始化并步进一帧", false, e && (e.stack || e.message));
+    }
+  }
+  fsp.rmSync(userDir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------- 汇总

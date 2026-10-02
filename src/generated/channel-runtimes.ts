@@ -459,14 +459,48 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "key": "engine/core/tve.js",
         "rel": "exports/wechat/runtime/engine/core/tve.js",
         "url": "/exports/wechat/runtime/engine/core/tve.js"
+      },
+      {
+        "key": "engine/runtime/loaders/meshopt_decoder.wasm",
+        "rel": "exports/wechat/runtime/engine/runtime/loaders/meshopt_decoder.wasm",
+        "url": "/exports/wechat/runtime/engine/runtime/loaders/meshopt_decoder.wasm"
       }
     ],
     "groups": {
+      "physics:ammo": [
+        {
+          "key": "engine/runtime/physics-engines/ammo/ammo-esm.js",
+          "rel": "exports/wechat/runtime/engine/runtime/physics-engines/ammo/ammo-esm.js",
+          "url": "/exports/wechat/runtime/engine/runtime/physics-engines/ammo/ammo-esm.js"
+        },
+        {
+          "key": "engine/runtime/physics-engines/ammo/ammo.wasm",
+          "rel": "exports/wechat/runtime/engine/runtime/physics-engines/ammo/ammo.wasm",
+          "url": "/exports/wechat/runtime/engine/runtime/physics-engines/ammo/ammo.wasm"
+        }
+      ],
+      "physics:jolt": [
+        {
+          "key": "engine/runtime/physics-engines/jolt.js",
+          "rel": "exports/wechat/runtime/engine/runtime/physics-engines/jolt.js",
+          "url": "/exports/wechat/runtime/engine/runtime/physics-engines/jolt.js"
+        },
+        {
+          "key": "engine/runtime/physics-engines/jolt.wasm",
+          "rel": "exports/wechat/runtime/engine/runtime/physics-engines/jolt.wasm",
+          "url": "/exports/wechat/runtime/engine/runtime/physics-engines/jolt.wasm"
+        }
+      ],
       "physics:rapier": [
         {
           "key": "engine/runtime/physics-engines/rapier.js",
           "rel": "exports/wechat/runtime/engine/runtime/physics-engines/rapier.js",
           "url": "/exports/wechat/runtime/engine/runtime/physics-engines/rapier.js"
+        },
+        {
+          "key": "engine/runtime/physics-engines/rapier.wasm",
+          "rel": "exports/wechat/runtime/engine/runtime/physics-engines/rapier.wasm",
+          "url": "/exports/wechat/runtime/engine/runtime/physics-engines/rapier.wasm"
         }
       ]
     }

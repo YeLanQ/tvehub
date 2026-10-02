@@ -1,12 +1,13 @@
 // 微信 bundle 冒烟：node 下以最小浏览器存根 require 产物 code.js——验证 CJS
-// 形态可加载（无存活 import/export/动态 import）、__tveFacade 门面导出可达。
+// 形态可加载（无存活 import/export/动态 import）、__tveFacade 门面导出可达；
+// 物理引擎产物（rapier/jolt/ammo CJS 预转换）额外验证可加载并导出工厂。
 // isWechatRuntime=false 时适配层整体空转；player 的 main() 在首个 await 处挂起，
 // 进程随即退出，不产生副作用。
 "use strict";
 
 const codePath = process.argv[2];
 if (!codePath) {
-  console.error("usage: node smoke.cjs <code.js>");
+  console.error("usage: node smoke.cjs <code.js> [physics-engine.js …]");
   process.exit(1);
 }
 
@@ -68,22 +69,42 @@ try {
   // 仓库 package.json 的 type:module 会让 require 把 .js 当 ESM，故不走 require）
   const fs = require("node:fs");
   const vm = require("node:vm");
-  const text = fs.readFileSync(codePath, "utf8");
-  const wrapper = vm.runInThisContext(
-    `(function (exports, require, module, __filename, __dirname) {\n${text}\n})`,
-    { filename: codePath },
-  );
-  const module_ = { exports: {} };
-  const realRequire = require("node:module").createRequire(codePath);
-  const requireFromBundle = (spec) => {
-    // data.js 由导出期生成，构建冒烟以桩数据代替（形态校验走 data-bridge 的容错）
-    if (spec === "./data.js") return { config: {}, assets: {} };
-    return realRequire(spec);
+  const loadAsCjs = (filePath) => {
+    const text = fs.readFileSync(filePath, "utf8");
+    const wrapper = vm.runInThisContext(
+      `(function (exports, require, module, __filename, __dirname) {\n${text}\n})`,
+      { filename: filePath },
+    );
+    const module_ = { exports: {} };
+    const realRequire = require("node:module").createRequire(filePath);
+    const requireFromBundle = (spec) => {
+      // data.js 由导出期生成，构建冒烟以桩数据代替（形态校验走 data-bridge 的容错）
+      if (spec === "./data.js") return { config: {}, assets: {} };
+      return realRequire(spec);
+    };
+    wrapper(module_.exports, requireFromBundle, module_, filePath, require("node:path").dirname(filePath));
+    return module_.exports;
   };
-  wrapper(module_.exports, requireFromBundle, module_, codePath, require("node:path").dirname(codePath));
-  mod = module_.exports;
+  mod = loadAsCjs(codePath);
+
+  // 物理引擎产物：可加载 + 暴露引擎工厂（rapier = default.init 对象、jolt =
+  // default 工厂函数、ammo = initAmmo 命名导出）
+  const engineFiles = process.argv.slice(3);
+  for (const enginePath of engineFiles) {
+    const engineMod = loadAsCjs(enginePath);
+    const d = engineMod.default;
+    const shape =
+      typeof d === "function" ? "default()" :
+      d && typeof d.init === "function" ? "default.init()" :
+      typeof engineMod.initAmmo === "function" ? "initAmmo()" : null;
+    if (!shape) {
+      console.error(`[wechat-smoke] 物理引擎产物无工厂导出: ${enginePath} (${Object.keys(engineMod).slice(0, 6)})`);
+      process.exit(4);
+    }
+    console.log(`[wechat-smoke] engine ok: ${require("node:path").basename(enginePath)}（exports ${shape}）`);
+  }
 } catch (e) {
-  console.error("[wechat-smoke] code.js 加载失败:", e && (e.stack || e.message || e));
+  console.error("[wechat-smoke] 加载失败:", e && (e.stack || e.message || e));
   process.exit(2);
 }
 

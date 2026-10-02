@@ -25,6 +25,63 @@ const wxApi = (() => {
   return null;
 })();
 
+// WXWebAssembly：真机小游戏唯一的 wasm 入口（标准 WebAssembly 全局缺位），
+// instantiate 首参数只认包内/本地文件路径——字节形态需先落盘用户目录。
+const wxWasm = (() => {
+  try {
+    if (typeof WXWebAssembly !== "undefined" && WXWebAssembly) return WXWebAssembly;
+  } catch {
+    /* 同上 */
+  }
+  try {
+    if (typeof GameGlobal !== "undefined" && GameGlobal && GameGlobal.WXWebAssembly) {
+      return GameGlobal.WXWebAssembly;
+    }
+  } catch {
+    /* 同上 */
+  }
+  return null;
+})();
+
+/** 字节 → 稳定文件名哈希（FNV-1a，引擎版本不变则同名跳过重复写盘） */
+function wasmFileHash(bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < view.length; i++) {
+    h ^= view[i];
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/** 字节归一为 ArrayBuffer（TypedArray 可能带 byteOffset，复制出独立缓冲） */
+function toArrayBuffer(bytes) {
+  if (bytes instanceof ArrayBuffer) return bytes;
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes.buffer ?? bytes);
+  return view.slice().buffer;
+}
+
+/**
+ * 实例化 wasm：字节落盘用户目录 → WXWebAssembly.instantiate(path)。
+ * 路径形态全基础库可用；目录缺失/写盘失败时回落直传字节（新基础库兼容），
+ * 全链失败抛出（物理世界创建入口会把报错落到日志，游戏继续无物理运行）。
+ */
+async function instantiateWasmViaFile(bytes, imports) {
+  const buffer = toArrayBuffer(bytes);
+  const dir = wxApi && wxApi.env && wxApi.env.USER_DATA_PATH;
+  const fsm = wxApi && typeof wxApi.getFileSystemManager === "function" ? wxApi.getFileSystemManager() : null;
+  if (dir && fsm && typeof fsm.writeFileSync === "function") {
+    const path = `${dir}/tve-wasm-${wasmFileHash(new Uint8Array(buffer))}.wasm`;
+    try {
+      fsm.writeFileSync(path, buffer, "binary");
+      return await wxWasm.instantiate(path, imports);
+    } catch (e) {
+      console.warn("[runtime-bridge] wasm 文件形态实例化失败，回落直传字节", e);
+    }
+  }
+  return await wxWasm.instantiate(buffer, imports);
+}
+
 function readViewport() {
   try {
     const info = wxApi && typeof wxApi.getSystemInfoSync === "function" ? wxApi.getSystemInfoSync() || {} : {};
@@ -42,6 +99,43 @@ const wechatHost = {
 
   available() {
     return !!wxApi;
+  },
+
+  // wasm 实例化能力（桥接核心 WebAssembly 垫片的落地机制）：
+  // - 包内路径形态（构建期改写的引擎胶水）：WXWebAssembly.instantiate(path) 直连
+  //   ——基础库只认代码包内 .wasm/.wasm.br 文件路径（wxfile: 用户目录与字节直传
+  //   均被拒，2026-10 工具实报）；WXWebAssembly 缺席时原生 WebAssembly 兜底
+  //   （读包内文件为字节）。
+  // - 字节形态（垫片兜底链）：落盘用户目录 → 直传字节。
+  instantiateWasm(source, imports) {
+    if (typeof source === "string") {
+      if (wxWasm && typeof wxWasm.instantiate === "function") {
+        return wxWasm.instantiate(source, imports);
+      }
+      try {
+        if (typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function") {
+          const fsm = wxApi && typeof wxApi.getFileSystemManager === "function" ? wxApi.getFileSystemManager() : null;
+          if (fsm && typeof fsm.readFileSync === "function") {
+            const bytes = fsm.readFileSync(source);
+            return WebAssembly.instantiate(bytes, imports);
+          }
+        }
+      } catch {
+        /* 读包文件失败按不支持 */
+      }
+      return null;
+    }
+    if (wxWasm && typeof wxWasm.instantiate === "function") {
+      return instantiateWasmViaFile(source, imports);
+    }
+    try {
+      if (typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function") {
+        return WebAssembly.instantiate(toArrayBuffer(source), imports);
+      }
+    } catch {
+      /* 沙箱遮蔽时读 free 标识符可能抛错 */
+    }
+    return null;
   },
 
   getViewport: readViewport,

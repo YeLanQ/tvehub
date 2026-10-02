@@ -1,5 +1,5 @@
 //! 微信小游戏渠道端到端：搭最小临时项目跑 wechat 管线，校验包结构、数据内联、
-//! 用户脚本小写化、appid 继承链、屏幕方向与 v1 能力边界报错。
+//! 用户脚本小写化、appid 继承链、屏幕方向、物理引擎随包与能力边界报错。
 
 use std::collections::HashMap;
 use std::fs;
@@ -50,6 +50,11 @@ fn wechat_files() -> HashMap<String, String> {
         (
             "script-graph.json".to_string(),
             r#"{"nodes":[]}"#.to_string(),
+        ),
+        // meshopt 解码 wasm（bundle 内联依赖的随包资产，base64 过 IPC）
+        (
+            "engine/runtime/loaders/meshopt_decoder.wasm".to_string(),
+            "AGFzbQ==".to_string(),
         ),
     ])
 }
@@ -135,6 +140,15 @@ fn wechat_export_end_to_end() {
     // base64 校验：png 内容 [1,2,3,4] → AQIDBA==
     assert!(data.contains("AQIDBA=="), "二进制资产应 base64 内联");
 
+    // meshopt wasm 按 base64 解码为二进制写盘（"AGFzbQ==" = [0,97,115,109]）
+    let meshopt = fs::read(out.join("engine/runtime/loaders/meshopt_decoder.wasm"))
+        .unwrap_or_else(|e| panic!("meshopt wasm 应按二进制写盘: {e}"));
+    assert_eq!(
+        meshopt,
+        vec![0u8, 0x61, 0x73, 0x6d],
+        "meshopt wasm 应为 base64 解码后的原始字节"
+    );
+
     // 用户脚本文件名小写化（键折叠，内容不动）；NTFS 大小写不敏感，exists() 会
     // 假阳性，改为列目录断言实际写入名
     let src_names: Vec<String> = fs::read_dir(out.join("src"))
@@ -217,14 +231,38 @@ fn wechat_channel_guards() {
     let err = expect_err(run_build(wechat_job(&root, files), &JobCtx::default()));
     assert!(err.contains("index.html"), "web 形态文件混入应报错: {err}");
 
-    // jolt 物理后端 → v1 不支持
+    // jolt 物理后端 → 构建通过，且后端引擎产物随包（物理后端不设限）
     fs::write(
         root.join("project.config.json"),
         r#"{"physics":{"physicsEnabled":true,"backend":"jolt"}}"#,
     )
     .unwrap();
-    let err = expect_err(run_build(wechat_job(&root, wechat_files()), &JobCtx::default()));
-    assert!(err.contains("rapier"), "jolt 后端应报仅支持 rapier: {err}");
+    let mut files = wechat_files();
+    files.insert(
+        "engine/runtime/physics-engines/jolt.js".to_string(),
+        "// jolt cjs 预转换产物\n".to_string(),
+    );
+    // .wasm 经 base64 传入（[0,97,115,109,1,0,0,0] = "\0asm\x01\0\0\0"），管线解码为二进制
+    files.insert(
+        "engine/runtime/physics-engines/jolt.wasm".to_string(),
+        "AGFzbQEAAAA=".to_string(),
+    );
+    run_build(wechat_job(&root, files), &JobCtx::default())
+        .unwrap_or_else(|e| panic!("jolt 后端构建应当通过: {e}"));
+    let out2 = root.join("build/wechat");
+    assert!(
+        out2.join("engine/runtime/physics-engines/jolt.js").is_file(),
+        "jolt 引擎产物应随包写入"
+    );
+    let wasm_bytes = fs::read(out2.join("engine/runtime/physics-engines/jolt.wasm"))
+        .unwrap_or_else(|e| panic!("jolt wasm 应按二进制写盘: {e}"));
+    assert_eq!(
+        wasm_bytes,
+        vec![0u8, 0x61, 0x73, 0x6d, 1, 0, 0, 0],
+        "wasm 应为 base64 解码后的原始字节"
+    );
+    // 恢复无物理配置，供后续用例使用
+    fs::write(root.join("project.config.json"), r#"{"designResolution":{"width":1280,"height":720}}"#).unwrap();
 
     // Draco 压缩启用 → v1 不支持
     fs::write(

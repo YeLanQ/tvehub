@@ -4,17 +4,21 @@
 //! 架构（与 web 渠道完全独立，渠道结构对称）：
 //! - 运行时代码 = 仓库构建期预打的单文件 CJS bundle（code.js，含微信适配层 +
 //!   player + engine + three）+ tve 门面（engine/core/tve.js），经前端 IPC 传入；
+//!   物理引擎随包 = 胶水 .js（文本）+ .wasm（base64 过 IPC，解码按字节写盘——
+//!   基础库 WXWebAssembly 只认代码包内 .wasm 文件路径）；
 //! - 数据全内联：场景/资产 → data.js（config + assets{rel: base64}），运行期零
 //!   文件系统参与——「自定义后缀不进包 / 路径大小写」两类问题类别整体消失；
 //! - 用户脚本（src/**.js，前端已按 CommonJS 编译）小写文件名进包（开发者工具
 //!   包内注册表小写归一），经 tve.js 门面 require 引擎 API；
 //! - 工程文件（game.js/game.json/project.config.json）由 pack 子模块生成。
 //!
-//! 子模块：pack（包文件生成）、preflight（v1 能力边界预检）；场景收集走共享
+//! 子模块：pack（包文件生成）、preflight（能力边界预检）；场景收集走共享
 //! 阶段 scene_collect，渠道无关阶段在 build 根的扁平模块。
 
 use std::collections::HashMap;
 use std::fs;
+
+use base64::Engine as _;
 
 use super::config::product_config;
 use super::content::build_content;
@@ -134,8 +138,18 @@ impl ChannelPipeline for WechatPipeline {
         let appid = resolve_appid(job.wechat_appid.as_deref(), &p.out);
 
         let mut package: HashMap<String, String> = HashMap::new();
+        let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
         for (rel, text) in runtime_files {
-            package.insert(rel, text);
+            // .wasm 运行时文件（物理引擎）经前端 base64 传入：文本 IPC 通道会
+            // UTF-8 损坏二进制，此处解码进 binaries 按字节写盘
+            if rel.ends_with(".wasm") {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(text.as_bytes())
+                    .map_err(|e| format!("微信运行时 wasm 文件 base64 解码失败 '{rel}': {e}"))?;
+                binaries.insert(rel, bytes);
+            } else {
+                package.insert(rel, text);
+            }
         }
         for (rel, text) in user_scripts {
             package.insert(rel, text);
@@ -154,9 +168,11 @@ impl ChannelPipeline for WechatPipeline {
         package.insert("README.txt".to_string(), readme(&appid, orientation));
         // 包体积不做构建期限制：由微信开发者工具在预览/上传发布时按其规则判定
 
-        let total_kb = package.values().map(|t| t.len()).sum::<usize>() / 1024;
+        let total_kb = (package.values().map(|t| t.len()).sum::<usize>()
+            + binaries.values().map(|b| b.len()).sum::<usize>())
+            / 1024;
         ctx.progress(0.9, "写入产物");
-        crate::preview::write_export_dir(&p.out, package, &HashMap::new())
+        crate::preview::write_export_dir(&p.out, package, &binaries)
             .map_err(|e| format!("写入构建产物失败: {e}"))?;
 
         let mut message = format!(
@@ -184,10 +200,12 @@ impl ChannelPipeline for WechatPipeline {
     }
 }
 
-/// 预构建微信运行时文件键（前端按 wechat-runtime-files 清单传入；rapier 按项目
-/// 物理配置附带）
+/// 预构建微信运行时文件键（前端按 wechat-runtime-files 清单传入；物理引擎按
+/// 项目后端附带：engine/runtime/physics-engines/{rapier|jolt|ammo/**}.{js,wasm}；
+/// meshopt 解码 wasm 为 bundle 内联依赖的随包资产：engine/runtime/loaders/）
 fn is_wechat_runtime_key(rel: &str) -> bool {
     rel == "code.js"
         || rel == "engine/core/tve.js"
+        || rel == "engine/runtime/loaders/meshopt_decoder.wasm"
         || rel.starts_with("engine/runtime/physics-engines/")
 }

@@ -62,6 +62,22 @@ function fetchRuntimeText(url: string, cacheKey: string): Promise<string> {
   return p;
 }
 
+/** .wasm 运行时文件：二进制经文本 IPC 会 UTF-8 损坏，改读 arrayBuffer 并以
+ *  base64 进 files map（Rust 管线按 .wasm 键解码为二进制写盘）。 */
+function fetchRuntimeWasmBase64(url: string): Promise<string> {
+  return fetch(url).then(async (res) => {
+    if (!res.ok) throw new Error(`读取运行时失败: ${url} (${res.status})`);
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  });
+}
+
 /** 拉取指定渠道的运行时文本（base + 条件组，按清单 key 组装 files map） */
 export async function fetchChannelRuntimeFiles(
   channel: RuntimeChannel,
@@ -81,13 +97,17 @@ export async function fetchChannelRuntimeFiles(
     if (opts.includeWebgpu) groupKeys.push("webgpu");
     if (opts.includeDracoDecoder) groupKeys.push("draco");
     if (opts.includeBasisDecoder) groupKeys.push("basis");
-  } else if (opts.includePhysics && (opts.physicsBackend ?? "rapier") === "rapier") {
-    // wechat：物理仅支持 rapier（jolt/ammo 由 Rust 管线预检明确报不支持）
-    groupKeys.push("physics:rapier");
+  } else if (opts.includePhysics) {
+    // wechat：物理引擎按后端随包（rapier/jolt/ammo CJS 预转换产物；真机 wasm
+    // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）
+    const key = `physics:${opts.physicsBackend || "rapier"}`;
+    groupKeys.push(spec.groups[key] ? key : "physics:rapier");
   }
 
   const list: ChannelRuntimeFile[] = [...spec.base, ...groupKeys.flatMap((k) => spec.groups[k] ?? [])];
-  const texts = await Promise.all(list.map((f) => fetchRuntimeText(f.url, f.url)));
+  const texts = await Promise.all(
+    list.map((f) => (f.key.endsWith(".wasm") ? fetchRuntimeWasmBase64(f.url) : fetchRuntimeText(f.url, f.url))),
+  );
   const files: Record<string, string> = {};
   for (let i = 0; i < list.length; i++) files[list[i].key] = texts[i];
   return files;

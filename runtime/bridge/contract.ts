@@ -24,11 +24,29 @@ export interface HostViewport {
   dpr: number;
 }
 
-/** 平台端点：渠道接入的唯一职责面（~22 方法；实现放在 platforms/<id>.ts） */
+/** WebAssembly.instantiate 的实例化结果（module/instance 与标准一致） */
+export interface WasmInstantiateResult {
+  module: unknown;
+  instance: unknown;
+}
+
+/** 平台端点：渠道接入的唯一职责面（~23 方法；实现放在 platforms/<id>.ts） */
 export interface HostEndpoint {
   platformId: string;
   /** 平台是否可用（wx 缺席等场景为 false → 桥接核心整体空转） */
   available(): boolean;
+  /**
+   * 实例化 wasm。两种来源形态：
+   * - string：代码包内 .wasm 文件路径（构建期改写的引擎胶水直连），平台以
+   *   原生路径形态实例化（微信 = WXWebAssembly.instantiate(path)）；
+   * - ArrayBuffer | Uint8Array：引擎解码出的内嵌 wasm 字节（垫片兜底链：
+   *   落盘用户目录 → 直传字节）。
+   * 平台无法实例化时返回 null（垫片不安装/调用方降级）。
+   */
+  instantiateWasm(
+    source: ArrayBuffer | Uint8Array | string,
+    imports: unknown,
+  ): Promise<WasmInstantiateResult> | null;
   getViewport(): HostViewport;
   requestAnimationFrame(fn: (now: number) => void): number;
   cancelAnimationFrame(id: number): void;
@@ -58,6 +76,7 @@ export interface HostEndpoint {
 export const HOST_SURFACE: string[] = [
   "platformId",
   "available",
+  "instantiateWasm",
   "getViewport",
   "requestAnimationFrame",
   "cancelAnimationFrame",

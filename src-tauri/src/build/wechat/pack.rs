@@ -153,16 +153,19 @@ pub(super) fn readme(appid: &str, orientation: &str) -> String {
 - data.js            全内存数据（项目配置 + 场景 + 资产 base64 内联，运行期零文件系统）
 - engine/core/tve.js 用户脚本 tve API 门面（转发 code.js）
 - src/               用户脚本（CommonJS 编译产物）
-- engine/runtime/physics-engines/rapier.js  物理引擎（启用物理的项目随包）
+- engine/runtime/physics-engines/  物理引擎（启用物理的项目按后端随包：
+  rapier/jolt/ammo 的胶水 .js + .wasm 文件）
+- engine/runtime/loaders/meshopt_decoder.wasm  meshopt 解码（GLTFLoader 依赖）
 
 已知限制
 --------
 - 包体积：本构建不做限制，由微信开发者工具在预览/上传发布时按其规则判定
   （超限时工具会给出具体提示）；
-- 物理：仅支持 rapier 后端（jolt/ammo 不随包）；Draco/Basis 压缩资产不支持
+- 物理：rapier/jolt/ammo 三后端均支持——wasm 以代码包内 .wasm 文件随包，由
+  桥接层经 WXWebAssembly.instantiate(路径) 实例化；Draco/Basis 压缩资产不支持
   （依赖 Worker，启用压缩的项目请关闭后重新构建）；
-- Worker 类能力走主线程回退（动画/物理自动降级）；真机（iOS/Android）未在
-  本渠道验证，请以开发者工具模拟器验收为准。
+- Worker 类能力走主线程回退（动画/物理自动降级）；真机（iOS/Android）wasm 物理
+  未经实机验证，请以开发者工具模拟器验收为准。
 "#
     )
 }

@@ -7,7 +7,7 @@
 // 条件组（体积大的可选运行时按需打包）：
 // - web：physics:<ammo|jolt|rapier>（按后端）、webgpu（three WebGPU 构建 + 粒子
 //   TSL 材质）、draco / basis（解码器 JS，按项目资源配置）
-// - wechat：physics:rapier（CJS 预转换产物；jolt/ammo v1 不支持，无清单项）
+// - wechat：physics:<rapier|jolt|ammo>（CJS 预转换产物，按项目物理后端随包）
 //
 // 两处调用，保证任何入口都拿到最新清单：
 // - vite.config.ts 的索引插件：dev 启动 / 构建 / 运行时文件增删时重建；
@@ -59,9 +59,9 @@ const EXPORT_EXCLUDED = new Set([
 const DRACO_DECODER_FILES = ["engine/runtime/loaders/draco/draco_decoder.js"];
 const BASIS_DECODER_FILES = ["engine/runtime/loaders/basis/basis_transcoder.js"];
 
-/** 微信渠道随包的物理引擎文件前缀（rapier CJS 预转换产物；jolt/ammo 不支持） */
-const WECHAT_RAPIER_PREFIX = "engine/runtime/physics-engines/";
-const WECHAT_RUNTIME_PREFIX = "exports/wechat/runtime/";
+/** 微信渠道随包的物理引擎文件前缀（CJS 预转换产物；键 = 产物内相对路径，
+ *  前缀下第一段目录/文件名（剥 .js）即后端 id：rapier.js / jolt.js / ammo/**） */
+const WECHAT_PHYSICS_PREFIX = "engine/runtime/physics-engines/";
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {
@@ -128,15 +128,27 @@ function scanWechat() {
     };
   });
   const base = all
-    .filter((f) => !f.key.startsWith(WECHAT_RAPIER_PREFIX))
+    .filter((f) => !f.key.startsWith(WECHAT_PHYSICS_PREFIX))
     .sort((a, b) => a.key.localeCompare(b.key));
-  const rapier = all
-    .filter((f) => f.key.startsWith(WECHAT_RAPIER_PREFIX))
-    .sort((a, b) => a.key.localeCompare(b.key));
+  // 物理引擎按后端分组（与 web 渠道同规则：前缀下第一段目录，否则剥扩展名；
+  // 胶水 .js 与随包 .wasm 归同一后端组）
+  const byBackend = {};
+  for (const f of all) {
+    if (!f.key.startsWith(WECHAT_PHYSICS_PREFIX)) continue;
+    const rest = f.key.slice(WECHAT_PHYSICS_PREFIX.length);
+    const backend = rest.includes("/")
+      ? rest.slice(0, rest.indexOf("/"))
+      : rest.replace(/\.(js|mjs|wasm)$/, "");
+    (byBackend[backend] ??= []).push(f);
+  }
+  const groups = {};
+  for (const k of Object.keys(byBackend).sort()) {
+    groups[`physics:${k}`] = byBackend[k].sort((a, b) => a.key.localeCompare(b.key));
+  }
   return {
     id: "wechat",
     base,
-    groups: { "physics:rapier": rapier },
+    groups,
   };
 }
 

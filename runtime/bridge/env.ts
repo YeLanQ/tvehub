@@ -171,9 +171,19 @@ function installMiscGlobals() {
   } catch {
     perf = null;
   }
+  let perfShim = null;
   if (!perf || typeof perf.now !== "function") {
     const base = Date.now();
-    setGlobal("performance", { now: () => Date.now() - base, timeOrigin: base });
+    perfShim = { now: () => Date.now() - base, timeOrigin: base };
+    setGlobal("performance", perfShim);
+  }
+  // window.performance：wasm 侧（rapier static accessor）读 window.performance.now()
+  // 作时钟基准，缺失即在 wasm 内部 panic（unreachable）——win 对象必须补挂同一实例
+  const perfRef = perf && typeof perf.now === "function" ? perf : perfShim;
+  try {
+    win.performance = perfRef;
+  } catch {
+    /* 平台 window 只读该键时忽略（原生已在） */
   }
   setGlobal("requestAnimationFrame", win.requestAnimationFrame);
   setGlobal("cancelAnimationFrame", win.cancelAnimationFrame);

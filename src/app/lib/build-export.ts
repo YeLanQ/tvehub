@@ -320,7 +320,7 @@ export async function runBuild(opts: {
   return result;
 }
 
-/** 微信小游戏渠道构建：预构建运行时（code.js/tve 门面 [+rapier]）+ 用户脚本
+/** 微信小游戏渠道构建：预构建运行时（code.js/tve 门面 [+物理引擎]）+ 用户脚本
  *  CommonJS 编译 + 场景图注入 → Rust 组装全内联小游戏包。web 流程不经此分支。 */
 async function runWechatBuild(opts: {
   root: string;
@@ -332,7 +332,7 @@ async function runWechatBuild(opts: {
   wechatAppId?: string;
   wechatOrientation?: "portrait" | "landscape";
 }): Promise<BuildResult> {
-  // 物理按项目配置附带 rapier（jolt/ammo 由 Rust 管线预检明确报不支持）
+  // 物理按项目配置附带对应后端引擎（rapier/jolt/ammo 随包；真机 wasm 经桥接垫片）
   let physicsConfigText: string | null = null;
   try {
     physicsConfigText = await api.readText(opts.root, "project.config.json");
@@ -341,8 +341,7 @@ async function runWechatBuild(opts: {
   }
   const backend = configPhysicsBackend(physicsConfigText);
 
-  // 运行时统一供给：预构建 bundle（+rapier，仅 rapier 后端时随包；jolt/ammo 由
-  // Rust 管线预检明确报不支持）
+  // 运行时统一供给：预构建 bundle（+项目后端对应的物理引擎 CJS 产物）
   const runtime = await fetchChannelRuntimeFiles("wechat", {
     includePhysics: configUsesPhysics(physicsConfigText),
     physicsBackend: backend,
