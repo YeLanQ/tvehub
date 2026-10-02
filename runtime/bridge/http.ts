@@ -1,8 +1,9 @@
 // 桥接核心 · HTTP：Response/Request/Headers/Blob/AbortController 最小实现 + fetch 垫片。
-// 全内联架构下 fetch 只消费两类来源：data: URL 与内联资产表（__TVE_BUILD_DATA.assets）；
-// 未命中返回 404 Response（附诊断日志）——不再走 wx 文件系统，懒装载竞态从源头消失。
+// fetch 消费三类来源：data: URL、内联资产表（场景/小文本）与文件化资产清单
+// （二进制落盘包内文件，经端点 readPackageFile 读取）；未命中返回 404 Response
+// （附诊断日志）——文件读取限定在「构建期清单 + 代码包」内，无懒装载竞态面。
 
-import { bridgeActive } from "./host.ts";
+import { bridgeActive, host } from "./host.ts";
 import { bridgeLog } from "./log.ts";
 import { setGlobal, windowRef } from "./install.ts";
 import { bytesToBase64, base64ToBytes } from "./codec.ts";
@@ -234,8 +235,9 @@ class AbortControllerShim {
 }
 
 /** 内联资产表查找：与 pak 安装垫片同一套键归一化变体（不含小写折叠——数据键
- *  与场景引用同源同大小写，全内联下不经过文件系统）。导出供 Image src 桥接
- *  （three ImageLoader 路径不走 fetch，需独立查表转 data URL）。 */
+ *  与场景引用同源同大小写）。资产文件化后二进制不在表内：内联 miss 落到
+ *  assetFiles 清单（rel → 包内文件路径）→ 端点 readPackageFile 同步读字节。
+ *  导出供 Image src 桥接（three ImageLoader 路径不走 fetch，需独立查表）。 */
 export function lookupAssetBytes(url) {
   let href = "";
   try {
@@ -253,7 +255,7 @@ export function lookupAssetBytes(url) {
   }
   const data = globalThis.__TVE_BUILD_DATA;
   const assets = data && data.assets;
-  if (!assets) return null;
+  if (!assets && !(data && data.assetFiles)) return null;
   const keys = [path.replace(/^\/+/, "")];
   const base = href.replace(/[^/]*$/, "");
   const basePath = (() => {
@@ -265,9 +267,22 @@ export function lookupAssetBytes(url) {
   })();
   if (basePath && path.startsWith(basePath)) keys.push(path.slice(basePath.length).replace(/^\/+/, ""));
   if (path.startsWith("./")) keys.push(path.slice(2));
+  // ① 内联表（场景/小文本资产）
   for (const key of keys) {
-    const hit = assets[key];
+    const hit = assets && assets[key];
     if (hit) return base64ToBytes(hit);
+  }
+  // ② 文件化资产清单：rel → 包内路径 → 端点同步读字节（同步读保证本函数
+  //    的同步契约不破；端点 null = 不支持/缺失，走调用方降级）
+  const assetFiles = data && data.assetFiles;
+  if (assetFiles) {
+    const endpoint = host();
+    for (const key of keys) {
+      const file = assetFiles[key];
+      if (!file) continue;
+      const bytes = endpoint && typeof endpoint.readPackageFile === "function" ? endpoint.readPackageFile(file) : null;
+      if (bytes) return new Uint8Array(bytes);
+    }
   }
   return null;
 }

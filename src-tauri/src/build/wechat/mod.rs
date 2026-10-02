@@ -6,6 +6,10 @@
 //!   player + engine + three）+ tve 门面（engine/core/tve.js），经前端 IPC 传入；
 //!   物理引擎随包 = 胶水 .js（文本）+ .wasm（base64 过 IPC，解码按字节写盘——
 //!   基础库 WXWebAssembly 只认代码包内 .wasm 文件路径）；
+//! - 资产文件化（2.0）：场景/小文本资产 base64 内联进 data.js，二进制资产
+//!   （贴图/模型/音频）按 assets/<uid><safe-ext> 原始字节落盘，data.js 带
+//!   assetFiles 清单（rel → 文件路径），桥接层查内联表 miss 时经端点
+//!   readPackageFile 读包内文件——33% base64 税从资产上移除；
 //! - 数据全内联：场景/资产 → data.js（config + assets{rel: base64}），运行期零
 //!   文件系统参与——「自定义后缀不进包 / 路径大小写」两类问题类别整体消失；
 //! - 用户脚本（src/**.js，前端已按 CommonJS 编译）小写文件名进包（开发者工具
@@ -15,7 +19,7 @@
 //! 子模块：pack（包文件生成）、preflight（能力边界预检）；场景收集走共享
 //! 阶段 scene_collect，渠道无关阶段在 build 根的扁平模块。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use base64::Engine as _;
@@ -29,8 +33,8 @@ use super::ChannelPipeline;
 mod pack;
 mod preflight;
 use self::pack::{
-    data_js, game_js, game_json, project_config_json, project_private_config_json, readme,
-    resolve_appid,
+    asset_file_name, data_js, game_js, game_json, project_config_json, project_private_config_json,
+    readme, resolve_appid,
 };
 use self::preflight::preflight_project;
 
@@ -106,7 +110,9 @@ impl ChannelPipeline for WechatPipeline {
         }
         let cfg = product_config(project_cfg, &content.packed, &main_name, job.debug, &cfg_input, "");
 
-        // data.js：场景 + 文本资产 + 二进制资产（base64）全内联
+        // data.js：场景 + 文本资产 + script-graph（base64 内联，体量小、热路径零
+        // FS 读）；二进制资产文件化落盘（assets/<uid><safe-ext> 原始字节），data.js 只
+        // 带「rel → 文件路径」清单——33% base64 税从资产上移除
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
         for (rel, text) in &content.scene_texts {
             entries.push((rel.clone(), text.clone().into_bytes()));
@@ -114,13 +120,17 @@ impl ChannelPipeline for WechatPipeline {
         for (rel, text) in &content.text_assets {
             entries.push((rel.clone(), text.clone().into_bytes()));
         }
-        for (rel, bytes) in &content.binaries {
-            entries.push((rel.clone(), bytes.clone()));
-        }
         for (rel, text) in &extra {
             entries.push((rel.clone(), text.clone().into_bytes()));
         }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut used_names: HashSet<String> = HashSet::new();
+        let mut asset_files: Vec<(String, String)> = content
+            .binaries
+            .keys()
+            .map(|rel| (rel.clone(), asset_file_name(rel, &mut used_names)))
+            .collect();
+        asset_files.sort_by(|a, b| a.0.cmp(&b.0));
 
         // —— 包组装 ——
         let orientation = job
@@ -154,8 +164,14 @@ impl ChannelPipeline for WechatPipeline {
         for (rel, text) in user_scripts {
             package.insert(rel, text);
         }
+        // 文件化资产：构建期原始字节直接落盘（不走 IPC，无编码税）
+        for (rel, file) in &asset_files {
+            if let Some(bytes) = content.binaries.get(rel) {
+                binaries.insert(file.clone(), bytes.clone());
+            }
+        }
         package.insert("game.js".to_string(), game_js());
-        package.insert("data.js".to_string(), data_js(cfg, &entries)?);
+        package.insert("data.js".to_string(), data_js(cfg, &entries, &asset_files)?);
         package.insert("game.json".to_string(), game_json(orientation));
         package.insert(
             "project.config.json".to_string(),

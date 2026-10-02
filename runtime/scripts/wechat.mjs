@@ -235,11 +235,15 @@ function transformMeshopt(text, wasmOut) {
   const ready2 = out.includes(READY2) ? READY2 : null;
   const ready1 = !ready2 && out.includes(READY1) ? READY1 : null;
   if (!ready2 && !ready1) throw new Error("[wechat-bundle] meshopt instantiate 锚点未命中");
+  const varName = ready2 ? "ready2" : "ready";
   return replaceExact(
     out,
     ready2 ?? ready1,
-    (ready2 ? "var ready2 = " : "var ready = ") +
-      `globalThis.__tveInstantiateWasmFile(${JSON.stringify(PATH)}, {}).then(function(result) {`,
+    // 钩子缺位（桥接未激活的求值环境，如 node 冒烟）走拒绝而非 TypeError：
+    // ready 的 rejection 由消费方（decodeGltfBufferAsync）与缺失降级承担
+    `var ${varName} = typeof globalThis.__tveInstantiateWasmFile === "function"` +
+      ` ? globalThis.__tveInstantiateWasmFile(${JSON.stringify(PATH)}, {})` +
+      ` : Promise.reject(new Error("[wechat] wasm hook unavailable")).then(function(result) {`,
     "meshopt instantiate 锚点",
   );
 }
@@ -498,7 +502,7 @@ async function smokeRequireBundle(engineSizes) {
   const { execFileSync } = await import("node:child_process");
   const smoke = path.join(BRIDGE_DIR, "smoke.cjs");
   const engineFiles = PHYSICS_ENGINES
-    .filter((def) => engines[def.key] !== undefined)
+    .filter((def) => engineSizes[def.key] !== undefined)
     .map((def) => path.join(OUT_DIR, def.out));
   execFileSync(
     process.execPath,

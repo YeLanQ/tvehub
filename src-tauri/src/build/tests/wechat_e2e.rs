@@ -111,7 +111,24 @@ fn wechat_export_end_to_end() {
     assert!(!out.join("index.html").exists(), "微信包不应有 index.html");
     assert!(!out.join("player.mjs").exists(), "微信包不应有 player.mjs（预构建进 code.js）");
     assert!(!out.join("scenes").exists(), "场景内联进 data.js，不落盘");
-    assert!(!out.join("assets").exists(), "资产内联进 data.js，不落盘");
+    // 资产文件化 2.0：assets/ 目录只允许 uid 文件名（16 位哈希 + 白名单扩展名，
+    // 文件化命名见 pack::asset_file_name）；原始资产路径（如 textures/a.png）不得散落
+    let uid_file = |name: &str| -> bool {
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+        stem.len() == 16 && stem.chars().all(|c| c.is_ascii_hexdigit())
+            && ["png", "jpg", "gif", "webp", "mp3", "wav", "ogg", "m4a", "bin"].contains(&ext)
+    };
+    if out.join("assets").is_dir() {
+        for entry in fs::read_dir(out.join("assets")).unwrap() {
+            let entry = entry.unwrap();
+            assert!(
+                entry.file_type().unwrap().is_file() && uid_file(&entry.file_name().to_string_lossy()),
+                "assets/ 下应只有 uid 文件名的文件化资产: {:?}",
+                entry.file_name()
+            );
+        }
+    }
 
     // game.js 入口仅 require code.js；game.json 屏幕方向缺省 portrait
     let game_js = fs::read_to_string(out.join("game.js")).unwrap();
@@ -130,15 +147,30 @@ fn wechat_export_end_to_end() {
         serde_json::from_str(&fs::read_to_string(out.join("project.private.config.json")).unwrap()).unwrap();
     assert_eq!(private["condition"], serde_json::json!({}), "私有配置 condition 必须为空");
 
-    // data.js：config（含 scriptGraph 标记）+ 资产表（场景/.mat/.png base64）
+    // data.js：config（含 scriptGraph 标记）+ 场景/文本资产 base64 内联 + 资产
+    // 文件化清单（assetFiles：rel → 包内文件路径；二进制不交 base64 税）
     let data = fs::read_to_string(out.join("data.js")).unwrap();
     assert!(data.starts_with("module.exports = "), "data.js 必须是 CJS 模块");
     assert!(data.contains("\"scriptGraph\":\"./script-graph.json\""), "图文件存在时 config 应标记 scriptGraph");
     assert!(data.contains("\"scenes/Main.json\""), "场景应进内联资产表");
     assert!(data.contains("\"assets/materials/M.mat\""), "文本材质应进内联资产表");
-    assert!(data.contains("\"assets/textures/a.png\""), "二进制贴图应进内联资产表");
-    // base64 校验：png 内容 [1,2,3,4] → AQIDBA==
-    assert!(data.contains("AQIDBA=="), "二进制资产应 base64 内联");
+    assert!(data.contains("\"assetFiles\""), "data.js 应携带资产文件化清单");
+    // 二进制贴图文件化：清单映射 assets/<uid>.png，data.js 不再含其 base64（[1,2,3,4] → AQIDBA==）
+    assert!(
+        data.contains("\"assets/textures/a.png\":\"assets/"),
+        "二进制贴图应出现在 assetFiles 清单"
+    );
+    assert!(!data.contains("AQIDBA=="), "二进制资产不应再 base64 内联（税已移除）");
+    // 落盘文件为原始字节（[1,2,3,4]），扩展名白名单内保留 .png（assets/ 目录）
+    let af_dir = out.join("assets");
+    let af_names: Vec<String> = fs::read_dir(&af_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(af_names.len(), 1, "assets/ 文件化资产应只有一个");
+    assert!(af_names[0].ends_with(".png"), "白名单扩展名应保留: {}", af_names[0]);
+    let png_bytes = fs::read(af_dir.join(&af_names[0])).unwrap();
+    assert_eq!(png_bytes, vec![1u8, 2, 3, 4], "文件化资产应为原始字节");
 
     // meshopt wasm 按 base64 解码为二进制写盘（"AGFzbQ==" = [0,97,115,109]）
     let meshopt = fs::read(out.join("engine/runtime/loaders/meshopt_decoder.wasm"))
@@ -272,6 +304,89 @@ fn wechat_channel_guards() {
     .unwrap();
     let err = expect_err(run_build(wechat_job(&root, wechat_files()), &JobCtx::default()));
     assert!(err.contains("Draco"), "Draco 启用应报不支持: {err}");
+
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn wechat_release_levers() {
+    // release/debug 差异面核实（用户可见口径：release 不应「什么都不做」）：
+    // 杠杆 1 = 用户脚本压缩（code.js 等预构建产物与模式无关，仓库构建期已压缩）；
+    // 杠杆 2 = data.js 的 config.debug 位。同项目双跑对比两处落盘结果。
+    let base = std::env::temp_dir().join(format!("tve-wechat-rel-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = setup_project(&base);
+    let out = root.join("build/wechat");
+
+    // 带注释与空白的胖脚本（压缩杠杆的可观测量）
+    let fat_script = "// 入口说明注释\n".to_string()
+        + &"// 说明行\nconst speed = 10; \nconst jump  =  5;\n".repeat(40)
+        + "module.exports = { speed, jump };\n";
+    let mut files = wechat_files();
+    files.insert("src/Main.js".to_string(), fat_script);
+
+    // debug 构建
+    run_build(wechat_job(&root, files.clone()), &JobCtx::default()).unwrap();
+    let debug_script = fs::read_to_string(out.join("src/main.js")).unwrap();
+    let debug_data = fs::read_to_string(out.join("data.js")).unwrap();
+    let mut debug_files: Vec<(String, usize)> = fs::read_dir(&out)
+        .unwrap()
+        .map(|e| {
+            let p = e.unwrap().path();
+            let rel = p.file_name().unwrap().to_string_lossy().into_owned();
+            (rel, fs::metadata(&p).unwrap().len() as usize)
+        })
+        .collect();
+    debug_files.sort();
+
+    // release 构建
+    let job = BuildJob {
+        debug: false,
+        release: true,
+        ..wechat_job(&root, files)
+    };
+    run_build(job, &JobCtx::default()).unwrap();
+    let release_script = fs::read_to_string(out.join("src/main.js")).unwrap();
+    let release_data = fs::read_to_string(out.join("data.js")).unwrap();
+    let mut release_files: Vec<(String, usize)> = fs::read_dir(&out)
+        .unwrap()
+        .map(|e| {
+            let p = e.unwrap().path();
+            let rel = p.file_name().unwrap().to_string_lossy().into_owned();
+            (rel, fs::metadata(&p).unwrap().len() as usize)
+        })
+        .collect();
+    release_files.sort();
+    for (name, dsize) in &debug_files {
+        if let Some((_, rsize)) = release_files.iter().find(|(n, _)| n == name) {
+            if dsize != rsize {
+                eprintln!("[diff] {name}: debug {dsize} B → release {rsize} B");
+            }
+        }
+    }
+
+    // 杠杆 1：脚本被压缩（注释/空白消失，体积下降）
+    assert!(
+        release_script.len() < debug_script.len() && !release_script.contains("//"),
+        "release 应压缩用户脚本（debug {} B → release {} B）",
+        debug_script.len(),
+        release_script.len()
+    );
+    // 杠杆 2：data.js 仅差 debug 位
+    assert!(debug_data.contains("\"debug\":true"), "debug 构建 config 应带 debug:true");
+    assert!(release_data.contains("\"debug\":false"), "release 构建 config 应带 debug:false");
+    // 口径说明：包体总量不保证 release ≤ debug——release 的资产 uid 重命名以
+    // 身份稳定为先（.meta uuid / 16 位路径哈希），短路径会被拉长（微型项目可
+    // 反增几十字节）；体积收益主要来自模型二进制化与脚本压缩，在有真实资产
+    // 的项目上体现。预构建运行时（code.js/引擎）与模式无关，debug/release 的
+    // 包体 KB 级一致属预期。
+    eprintln!(
+        "[wechat_release_levers] 包体对比：debug {} B → release {} B（脚本 {} B → {} B）",
+        debug_files.iter().map(|(_, s)| s).sum::<usize>(),
+        release_files.iter().map(|(_, s)| s).sum::<usize>(),
+        debug_script.len(),
+        release_script.len()
+    );
 
     let _ = fs::remove_dir_all(&base);
 }

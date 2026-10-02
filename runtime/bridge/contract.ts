@@ -47,6 +47,11 @@ export interface HostEndpoint {
     source: ArrayBuffer | Uint8Array | string,
     imports: unknown,
   ): Promise<WasmInstantiateResult> | null;
+  /**
+   * 读代码包内文件为字节（资产文件化：二进制资产按清单落盘，运行期经此读取）。
+   * rel 为包内相对路径（如 "assets/<uid>.png"）。平台不支持/读取失败返回 null。
+   */
+  readPackageFile(rel: string): ArrayBuffer | null;
   getViewport(): HostViewport;
   requestAnimationFrame(fn: (now: number) => void): number;
   cancelAnimationFrame(id: number): void;
@@ -77,6 +82,7 @@ export const HOST_SURFACE: string[] = [
   "platformId",
   "available",
   "instantiateWasm",
+  "readPackageFile",
   "getViewport",
   "requestAnimationFrame",
   "cancelAnimationFrame",

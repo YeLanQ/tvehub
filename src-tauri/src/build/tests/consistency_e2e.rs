@@ -153,21 +153,38 @@ fn export_content_consistent_across_channels() {
         let mut web_keys = BTreeSet::new();
         collect_content_keys(&web_out, &web_out, &mut web_keys);
         let data = parse_data_js(&fs::read_to_string(wx_out.join("data.js")).unwrap());
-        let wx_keys: BTreeSet<String> = data["assets"]
+        // 资产键集 = data.assets 内联键（场景/小文本）∪ data.assetFiles 文件化键
+        // （二进制资产文件化后不再 base64 内联）
+        let mut wx_keys: BTreeSet<String> = data["assets"]
             .as_object()
             .expect("data.assets 必须是对象")
             .keys()
             .cloned()
             .collect();
+        for key in data["assetFiles"]
+            .as_object()
+            .expect("data.assetFiles 必须是对象")
+            .keys()
+        {
+            wx_keys.insert(key.clone());
+        }
         println!("[dbg] temp={:?} web_out={:?} exists={} web_keys={:?} wx_keys={:?}", std::env::temp_dir(), web_out, web_out.is_dir(), web_keys, wx_keys);
         assert_eq!(web_keys, wx_keys, "资产键集合一致(release={release}) web={web_keys:?} wx={wx_keys:?}");
 
-        // 内容一致：逐键字节级等价（文本资产与二进制同样成立）
+        // 内容一致：逐键字节级等价（文本资产走 assets 内联；二进制走 assetFiles
+        // 指向的 assets/ 包内文件）
         for key in &web_keys {
             let web_bytes = fs::read(web_out.join(key)).unwrap();
-            let wx_bytes = BASE64
-                .decode(data["assets"][key.as_str()].as_str().unwrap())
-                .unwrap_or_else(|e| panic!("资产 {key} base64 解码失败: {e}"));
+            let wx_bytes = match data["assets"][key.as_str()].as_str() {
+                Some(b64) => BASE64.decode(b64).unwrap_or_else(|e| panic!("资产 {key} base64 解码失败: {e}")),
+                None => {
+                    let file = data["assetFiles"][key.as_str()]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("资产 {key} 既不在 assets 也不在 assetFiles"));
+                    fs::read(wx_out.join(file))
+                        .unwrap_or_else(|e| panic!("文件化资产 {key}（{file}）读取失败: {e}"))
+                }
+            };
             assert_eq!(web_bytes, wx_bytes, "资产内容不一致(release={release}): {key}");
         }
 

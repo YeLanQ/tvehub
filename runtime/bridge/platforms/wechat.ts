@@ -205,6 +205,22 @@ const wechatHost = {
     return null;
   },
 
+  // 读代码包内文件为字节（资产文件化清单的落地机制）：readFileSync 无 encoding
+  // 返回 ArrayBuffer，支持代码包相对路径；失败/不支持返回 null（调用方走缺失降级）。
+  // byteLength duck-type 判定：instanceof 跨 realm（vm/多上下文）不可靠。
+  readPackageFile(rel) {
+    try {
+      const fsm = wxApi && typeof wxApi.getFileSystemManager === "function" ? wxApi.getFileSystemManager() : null;
+      if (fsm && typeof fsm.readFileSync === "function") {
+        const bytes = fsm.readFileSync(rel);
+        return bytes && typeof bytes.byteLength === "number" ? bytes : null;
+      }
+    } catch {
+      /* 文件不存在/读取失败按缺失处理 */
+    }
+    return null;
+  },
+
   onTouchStart(handler) {
     bindTouch("onTouchStart", handler);
   },

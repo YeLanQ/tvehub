@@ -50,6 +50,7 @@ function makeMockHost() {
   const lifecycle = { show: [], hide: [], resize: [], error: [] };
   const storage = new Map();
   const wasmCalls = [];
+  const packageFiles = new Map();
   const host = {
     platformId: "mock",
     available: () => true,
@@ -57,6 +58,7 @@ function makeMockHost() {
       wasmCalls.push({ bytes, imports });
       return Promise.resolve({ module: {}, instance: { exports: {} } });
     },
+    readPackageFile: (rel) => packageFiles.get(String(rel)) ?? null,
     getViewport: () => ({ width: 844, height: 390, dpr: 2 }),
     requestAnimationFrame: (fn) => setTimeout(() => fn(Date.now()), 16),
     cancelAnimationFrame: (id) => clearTimeout(id),
@@ -123,6 +125,7 @@ function makeMockHost() {
     __keyHandlers: keyHandlers,
     __lifecycle: lifecycle,
     __wasmCalls: wasmCalls,
+    __packageFiles: packageFiles,
   };
   return host;
 }
@@ -271,6 +274,26 @@ check(
 {
   globalThis.localStorage.setItem("k", "v");
   check("存储：localStorage 形态接端点回环", globalThis.localStorage.getItem("k") === "v");
+}
+
+// 资产文件化清单兜底：内联表 miss → assetFiles 映射 → readPackageFile 字节
+// （fetch 垫片 / Image src 桥接 / pak native 回退链共用的同一收口）
+{
+  const { lookupAssetBytes, fetchShim } = await import("./http.ts");
+  const prevData = globalThis.__TVE_BUILD_DATA;
+  globalThis.__TVE_BUILD_DATA = {
+    config: { debug: true },
+    assets: {},
+    assetFiles: { "assets/tex/a.png": "assets/abc123.png" },
+  };
+  mock.__packageFiles.set("assets/abc123.png", new Uint8Array([1, 2, 3, 4]).buffer);
+  const bytes = lookupAssetBytes("assets/tex/a.png");
+  check("资产文件化：内联 miss → 清单 → readPackageFile 字节", !!bytes && bytes.length === 4 && bytes[0] === 1);
+  const res = await fetchShim("./assets/tex/a.png");
+  check("资产文件化：fetch 垫片经清单命中 200", res.ok === true);
+  check("资产文件化：清单未命中返回 null（404 语义不变）", lookupAssetBytes("assets/none.png") === null);
+  globalThis.__TVE_BUILD_DATA = prevData;
+  mock.__packageFiles.delete("assets/abc123.png");
 }
 
 // ---------------------------------------------------------------- 场景 C：微信平台端点（wx 桩）
