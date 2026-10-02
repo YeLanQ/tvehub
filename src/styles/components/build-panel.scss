@@ -189,7 +189,7 @@
   white-space: nowrap;
 }
 .bp-check input {
-  accent-color: var(--accent);
+  accent-color: var(--check);
   flex-shrink: 0;
 }
 .bp-check span {
@@ -245,7 +245,7 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 .bp-tpl input {
-  accent-color: var(--accent);
+  accent-color: var(--check);
   flex-shrink: 0;
 }
 
@@ -350,7 +350,7 @@
   background: var(--bg-hover);
 }
 .bp-scene-item input {
-  accent-color: var(--accent);
+  accent-color: var(--check);
   flex-shrink: 0;
 }
 .bp-scene-name {
