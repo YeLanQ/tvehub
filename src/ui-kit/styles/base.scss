@@ -77,6 +77,12 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+// 勾选框/单选框选中色：强调灰在暗底下选中态不显眼，走独立 --check 令牌
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--check);
+}
+
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;

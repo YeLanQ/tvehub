@@ -23,7 +23,7 @@
 
   input {
     margin: 0;
-    accent-color: var(--accent);
+    accent-color: var(--check);
   }
 }
 
@@ -58,7 +58,7 @@
 
   input {
     margin: 0;
-    accent-color: var(--accent);
+    accent-color: var(--check);
   }
 }
 
@@ -107,7 +107,7 @@
   input[type="checkbox"] {
     width: 14px;
     height: 14px;
-    accent-color: var(--accent);
+    accent-color: var(--check);
   }
 
   input[type="color"] {
