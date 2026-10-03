@@ -79,3 +79,35 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     expect(engines).not.toContain("engine/runtime/physics-engines/jolt.js");
   });
 });
+
+describe("fetchChannelRuntimeFiles web 可选运行时", () => {
+  it("正常：物理启用随当前后端引擎（胶水 + .wasm 以 base64 进 files map）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("web", {
+      includePhysics: true,
+      physicsBackend: "rapier",
+    });
+    const engines = runtimeKeys(files);
+    expect(engines).toContain("engine/runtime/physics-engines/rapier.mjs");
+    expect(engines).toContain("engine/runtime/physics-engines/rapier.wasm");
+    expect(files["engine/runtime/physics-engines/rapier.wasm"]).toBe("AGFzbQ==");
+    expect(engines).not.toContain("engine/runtime/physics-engines/jolt.mjs");
+  });
+
+  it("正常：启用 Draco 压缩随 wasm 解码器（wrapper JS + .wasm）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("web", { includeDracoDecoder: true });
+    expect(Object.keys(files)).toContain("engine/runtime/loaders/draco/draco_wasm_wrapper.js");
+    expect(Object.keys(files)).toContain("engine/runtime/loaders/draco/draco_decoder.wasm");
+    expect(files["engine/runtime/loaders/draco/draco_decoder.wasm"]).toBe("AGFzbQ==");
+  });
+
+  it("边界：未启用任何可选运行时只随 base 清单（解码器/物理引擎不随）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("web", {});
+    const keys = Object.keys(files);
+    expect(runtimeKeys(files)).toHaveLength(0);
+    expect(keys.some((k) => k.includes("loaders/draco/"))).toBe(false);
+    expect(keys.some((k) => k.includes("loaders/basis/"))).toBe(false);
+  });
+});

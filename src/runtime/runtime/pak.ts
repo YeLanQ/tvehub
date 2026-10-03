@@ -51,7 +51,13 @@ export function installAssetShim(map) {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     try {
-      const url = typeof input === "string" ? input : input && input.url;
+      // 入参三种形态都识别：字符串 / URL 对象（.href）/ Request（.url）
+      const url =
+        typeof input === "string"
+          ? input
+          : typeof URL !== "undefined" && input instanceof URL
+            ? input.href
+            : input && input.url;
       if (typeof url === "string" && !init?.body) {
         const u = new URL(url, location.href);
         if (u.origin === location.origin || u.protocol === "file:") {

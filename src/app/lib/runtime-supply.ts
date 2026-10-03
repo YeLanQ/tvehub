@@ -22,9 +22,9 @@ export interface ChannelRuntimeOptions {
   physicsBackend?: string | null;
   /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出 */
   includeWebgpu?: boolean;
-  /** 项目启用 Draco 压缩 → Draco JS 解码器随导出 */
+  /** 项目启用 Draco 压缩 → Draco wasm 解码器（wrapper JS + .wasm）随导出 */
   includeDracoDecoder?: boolean;
-  /** 项目启用纹理压缩 → Basis 转码器 JS 随导出 */
+  /** 项目启用纹理压缩 → Basis 转码器（胶水 JS + .wasm）随导出 */
   includeBasisDecoder?: boolean;
 }
 

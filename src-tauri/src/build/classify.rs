@@ -26,13 +26,15 @@ pub(super) fn is_runtime_code(rel: &str) -> bool {
         || is_entry_page(rel)
 }
 
-/// 运行时支撑数据（Draco JS 解码器等按文件名被加载器 fetch 的 engine/ 下非模块
-/// 文件）：不算运行时代码（单页/gzip 模式进资产表经 fetch 拦截供数据，而非内联成
-/// blob 模块——解码器无 export、内联后无法按文件名取回），也不参与发布模式 uid
-/// 改名（DRACOLoader 按固定文件名 decoderPath + "draco_decoder.js" 拉取）。
+/// 运行时支撑数据（Draco/Basis 解码器与 wasm 二进制等按文件名被加载器 fetch 的
+/// engine/ 下非模块文件）：不算运行时代码（单页/gzip 模式进资产表经 fetch 拦截
+/// 供数据，而非内联成 blob 模块——解码器无 export、内联后无法按文件名取回，wasm
+/// 二进制文本化即损坏），也不参与发布模式 uid 改名（DRACOLoader 等按固定文件名
+/// decoderPath + 文件名拉取）。
 pub(super) fn is_runtime_support_data(rel: &str) -> bool {
     rel.starts_with("engine/runtime/loaders/draco/")
         || rel.starts_with("engine/runtime/loaders/basis/")
+        || (rel.starts_with("engine/") && rel.ends_with(".wasm"))
 }
 
 /// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html

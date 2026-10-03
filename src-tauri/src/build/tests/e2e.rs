@@ -51,6 +51,11 @@ fn build_export_end_to_end_all_modes() {
                 "src/main.js".to_string(),
                 "import { engine } from \"../engine/core/tve.mjs\";\nengine.log(\"hi\");\n".to_string(),
             ),
+            // .wasm 运行时文件（前端 base64 混在文本 map 里传入）
+            (
+                "engine/runtime/physics-engines/rapier.wasm".to_string(),
+                "AGFzbQEAAAA=".to_string(),
+            ),
         ])
     };
     let scenes = vec!["assets/Main.scene".to_string()];
@@ -79,6 +84,21 @@ fn build_export_end_to_end_all_modes() {
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));
 
         let out = root.join("build/web");
+        let wasm_path = out.join("engine/runtime/physics-engines/rapier.wasm");
+        // .wasm 运行时文件按形态分流：多文件 = 真实文件（原始字节，物理 Worker 可取）；
+        // 单页 = 内联资产表 base64（fetch 垫片供数），不落盘文件
+        let wasm_bytes = [0u8, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
+        if single_page {
+            assert!(!wasm_path.exists(), "单页不落盘 wasm 文件");
+            let html = fs::read_to_string(out.join("index.html")).unwrap();
+            if gzip {
+                assert!(!html.contains("AGFzbQEAAAA="), "gzip 单页 wasm 在压缩归档内，明文不含 base64");
+            } else {
+                assert!(html.contains("AGFzbQEAAAA="), "单页 wasm 内联进资产表（fetch 垫片供数）");
+            }
+        } else {
+            assert_eq!(fs::read(&wasm_path).unwrap(), wasm_bytes, "多文件 wasm 按原始字节落盘（gzip 模式也在归档外）");
+        }
         if single_page {
             // 单页：产物只剩一个入口 HTML
             let written: Vec<String> = fs::read_dir(&out)

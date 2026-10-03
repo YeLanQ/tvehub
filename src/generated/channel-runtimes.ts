@@ -390,9 +390,9 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "url": "/engine/runtime/physics-engines/ammo/ammo-glue.mjs"
         },
         {
-          "key": "engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs",
-          "rel": "engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs",
-          "url": "/engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs"
+          "key": "engine/runtime/physics-engines/ammo/ammo.wasm",
+          "rel": "engine/runtime/physics-engines/ammo/ammo.wasm",
+          "url": "/engine/runtime/physics-engines/ammo/ammo.wasm"
         }
       ],
       "physics:jolt": [
@@ -400,6 +400,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "key": "engine/runtime/physics-engines/jolt.mjs",
           "rel": "engine/runtime/physics-engines/jolt.mjs",
           "url": "/engine/runtime/physics-engines/jolt.mjs"
+        },
+        {
+          "key": "engine/runtime/physics-engines/jolt.wasm",
+          "rel": "engine/runtime/physics-engines/jolt.wasm",
+          "url": "/engine/runtime/physics-engines/jolt.wasm"
         }
       ],
       "physics:rapier": [
@@ -407,6 +412,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "key": "engine/runtime/physics-engines/rapier.mjs",
           "rel": "engine/runtime/physics-engines/rapier.mjs",
           "url": "/engine/runtime/physics-engines/rapier.mjs"
+        },
+        {
+          "key": "engine/runtime/physics-engines/rapier.wasm",
+          "rel": "engine/runtime/physics-engines/rapier.wasm",
+          "url": "/engine/runtime/physics-engines/rapier.wasm"
         }
       ],
       "webgpu": [
@@ -433,9 +443,14 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
       ],
       "draco": [
         {
-          "key": "engine/runtime/loaders/draco/draco_decoder.js",
-          "rel": "engine/runtime/loaders/draco/draco_decoder.js",
-          "url": "/engine/runtime/loaders/draco/draco_decoder.js"
+          "key": "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+          "rel": "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+          "url": "/engine/runtime/loaders/draco/draco_wasm_wrapper.js"
+        },
+        {
+          "key": "engine/runtime/loaders/draco/draco_decoder.wasm",
+          "rel": "engine/runtime/loaders/draco/draco_decoder.wasm",
+          "url": "/engine/runtime/loaders/draco/draco_decoder.wasm"
         }
       ],
       "basis": [
@@ -443,6 +458,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "key": "engine/runtime/loaders/basis/basis_transcoder.js",
           "rel": "engine/runtime/loaders/basis/basis_transcoder.js",
           "url": "/engine/runtime/loaders/basis/basis_transcoder.js"
+        },
+        {
+          "key": "engine/runtime/loaders/basis/basis_transcoder.wasm",
+          "rel": "engine/runtime/loaders/basis/basis_transcoder.wasm",
+          "url": "/engine/runtime/loaders/basis/basis_transcoder.wasm"
         }
       ]
     }

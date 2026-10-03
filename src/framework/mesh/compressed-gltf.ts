@@ -28,9 +28,9 @@ export interface CompressedGltfSetup {
   dracoBase: string;
   /** Basis 转码器目录基路径（以 / 结尾；含 basis_transcoder.{js,wasm}） */
   basisBase: string;
-  /** Draco 解码器形态：wasm（默认，编辑器内置目录含 wrapper+wasm）/ js（web 运行时
-   * 用——产物经「文本 IPC」通道分发，二进制 wasm 无法安全通过，目录只含
-   * draco_decoder.js） */
+  /** Draco 解码器形态：wasm（默认，解码器目录含 wrapper+wasm；web 运行时同编辑器
+   *  形态——wasm 以文件随产物，文本 IPC 经 base64 通道传递）/ js（目录只含
+   *  draco_decoder.js 的纯 JS 形态，现无消费方，保留作降级开关） */
   decoderType?: "js" | "wasm";
   /** 原始渲染器实例（WebGLRenderer / WebGPURenderer）；缺省跳过 KTX2 探测
    * （web 运行时无渲染器注入，KTX2 解码保持不可用） */

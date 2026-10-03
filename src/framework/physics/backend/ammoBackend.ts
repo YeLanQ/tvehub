@@ -10,6 +10,7 @@
 
 import type { Vec3 } from "../../prototype/types";
 import type { RigidBodyMode } from "../types";
+import { installWasmFileHook } from "../wasm-file-hook";
 import type {
   ColliderShapeDesc,
   IPhysicsBody,
@@ -171,12 +172,14 @@ let ammoPromise: Promise<AmmoAPI> | null = null;
 
 /**
  * 动态加载 ammo ESM 初始化器（public/engine/runtime/physics-engines/ammo/ammo-esm.mjs；
- * wasm 以 base64 内联，无外部 .wasm 文件依赖，编辑器与播放器共用同一份文件）。
+ * wasm 文件化——经全局钩子 __tveInstantiateWasmFile 加载同目录 ammo.wasm，编辑器
+ * canvas 侧在加载前安装该钩子（web 播放器/物理 Worker/微信桥接各自已装））。
  * URL 在运行时拼接（public 资产不经打包器），@vite-ignore 阻止构建期解析。
  */
 function loadAmmo(engineBaseUrl: string): Promise<AmmoAPI> {
   if (!ammoPromise) {
     ammoPromise = (async () => {
+      installWasmFileHook();
       const base = engineBaseUrl.replace(/\/+$/, "");
       const url = new URL(`${base}/ammo-esm.mjs`, document.baseURI).href;
       const mod = (await import(/* @vite-ignore */ url)) as {

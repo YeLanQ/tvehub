@@ -5,8 +5,9 @@
 // 维护列表（曾因漏登记 layerpass.mjs 导致预览 404）。
 //
 // 条件组（体积大的可选运行时按需打包）：
-// - web：physics:<ammo|jolt|rapier>（按后端）、webgpu（three WebGPU 构建 + 粒子
-//   TSL 材质）、draco / basis（解码器 JS，按项目资源配置）
+// - web：physics:<ammo|jolt|rapier>（按后端，胶水 .mjs + 同目录 .wasm 文件——
+//   运行时经全局钩子加载 .wasm，不再内联进 JS）、webgpu（three WebGPU 构建 + 粒子
+//   TSL 材质）、draco / basis（解码器胶水 JS + .wasm，按项目资源配置）
 // - wechat：physics:<rapier|jolt|ammo>（CJS 预转换产物，按项目物理后端随包）
 //
 // 两处调用，保证任何入口都拿到最新清单：
@@ -47,17 +48,22 @@ const WEBGPU_FILES = [
   "engine/core/nodeMaterialHooks.mjs",
 ];
 
-/** 导出产物始终排除的解码器文件：wasm 二进制经文本 IPC 通道会 UTF-8 损坏，
- *  且 web 运行时用 JS 版 Draco（decoderType:"js"），wasm 版与 wrapper 仅编辑器用。 */
-const EXPORT_EXCLUDED = new Set([
-  "engine/runtime/loaders/draco/draco_decoder.wasm",
+/** Draco/Basis 解码器（wasm 形态：胶水 JS + .wasm 二进制；three 的
+ *  DRACOLoader/KTX2Loader 主线程取数后 postMessage 进解码 Worker）：
+ *  仅当项目启用对应压缩时随导出产物。wasm 二进制经前端 base64 过 IPC，
+ *  Rust 管线按字节写盘/内联（runtime-supply 的 .wasm 特判）。 */
+const DRACO_DECODER_FILES = [
   "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+  "engine/runtime/loaders/draco/draco_decoder.wasm",
+];
+const BASIS_DECODER_FILES = [
+  "engine/runtime/loaders/basis/basis_transcoder.js",
   "engine/runtime/loaders/basis/basis_transcoder.wasm",
-]);
+];
 
-/** Draco/Basis 解码器 JS：仅当项目启用对应压缩时随导出产物 */
-const DRACO_DECODER_FILES = ["engine/runtime/loaders/draco/draco_decoder.js"];
-const BASIS_DECODER_FILES = ["engine/runtime/loaders/basis/basis_transcoder.js"];
+/** 导出产物始终排除的文件：draco_decoder.js 为纯 JS 解码器（web 运行时与编辑器
+ *  均用 wasm 解码器形态），仅留在本地产物目录，不随任何产物分发。 */
+const EXPORT_EXCLUDED = new Set(["engine/runtime/loaders/draco/draco_decoder.js"]);
 
 /** 微信渠道随包的物理引擎文件前缀（CJS 预转换产物；键 = 产物内相对路径，
  *  前缀下第一段目录/文件名（剥 .js）即后端 id：rapier.js / jolt.js / ammo/**） */
@@ -100,7 +106,7 @@ function scanWeb() {
     const rest = f.slice(PHYSICS_PREFIX.length);
     const backend = rest.includes("/")
       ? rest.slice(0, rest.indexOf("/"))
-      : rest.replace(/\.mjs$/, "");
+      : rest.replace(/\.(mjs|wasm)$/, "");
     (byBackend[backend] ??= []).push(f);
   }
   const groups = {};

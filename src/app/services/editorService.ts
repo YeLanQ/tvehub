@@ -230,7 +230,7 @@ export function mountEditor(container: HTMLElement): Promise<void> {
             "error",
             `压缩模型解码器不可用（压缩模型将无法解析）：${decoderUnavailable
               .map((u) => `${u.name} — ${u.reason}`)
-              .join("；")}。public/engine 为构建产物，请确认构建完成（node scripts/build-runtime.mjs）`,
+              .join("；")}。public/engine 为构建产物，请确认构建完成（node runtime/scripts/engine.mjs）`,
             "gltf",
           );
         } else {

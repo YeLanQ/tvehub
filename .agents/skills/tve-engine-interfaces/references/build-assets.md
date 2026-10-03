@@ -18,8 +18,9 @@
 再生 + 源变化防抖重建）。**public/engine 不入库**，任何机器一次全量再生。
 
 **extra/ 资产清单**（外部资产事实源，手动维护）：
-- `runtime/physics-engines/`：rapier.mjs（@dimforge/rapier3d-compat 产物）、
-  jolt.mjs（wasm 内联）、ammo/ 三件套（scripts/make-ammo-esm.cjs 生成）；
+- `runtime/physics-engines/`：rapier.mjs（@dimforge/rapier3d-compat 产物，wasm
+  base64 内联）、jolt.mjs（wasm 内联）、ammo/ 三件套（scripts/make-ammo-esm.cjs
+  生成；ammo-esm.mjs 为钩子化最终形态，ammo-wasm-b64.mjs 仅作构建期 wasm 抽取源）；
 - `runtime/loaders/basis/`：basis_transcoder.js/.wasm（KTX2 转码）；
 - `runtime/loaders/draco/`：draco_decoder.wasm + draco_wasm_wrapper.js
   （draco_decoder.js 由 vendor-preview-loaders.mjs 生成入库，不在 extra）。
@@ -27,8 +28,17 @@
 **产物清单**：`src/generated/channel-runtimes.ts`（gen:channel-runtimes 自动扫描
 双渠道，勿手改）；`WEBGPU_FILES = [three.webgpu.min.js, particleNodeMaterial.mjs,
 glslToTsl.mjs, nodeMaterialHooks.mjs]`。
-**wasm 特判**：导出链路（文本 IPC）会损坏 wasm 二进制 → 导出始终排除 wasm 版，
-用 JS 版解码器（runtime/scripts/manifest.mjs 统一清单生成）。
+
+**wasm 文件化**（runtime/scripts/wasm-fileize.mjs，engine.mjs 构建链步骤）：物理
+胶水不再内联 wasm——rapier/jolt 经锚点改写为全局钩子
+`__tveInstantiateWasmFile(path, imports)` 加载同目录 .wasm 文件（与微信桥接层
+同一契约；安装方 = src/framework/physics/wasm-file-hook.ts：播放器主线程/物理
+Worker 由 physics.ts 顶层安装，编辑器 canvas 由 ammoBackend 安装），ammo.wasm 由
+extra b64 抽取落盘；dev 产物根 = public/，单页产物 wasm 进内联资产表经 fetch
+垫片供数，多文件产物 .wasm 一律真实文件落盘（gzip 归档例外：Worker 命中不到
+主线程垫片）。Draco/Basis 解码器切 wasm 形态（three 主线程取数 postMessage 进
+解码 Worker），draco_decoder.js 不随产物（manifest EXPORT_EXCLUDED）。
+**多文件 gzip 特判**：.wasm 不进 assets.gzip（Rust web 管线 binaries 分流）。
 
 ## 使用例
 

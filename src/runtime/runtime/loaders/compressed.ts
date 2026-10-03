@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
 // 运行时压缩 glTF 解码出口（编译为 public/engine/runtime/loaders/compressed.mjs，
-// 由 scripts/build-runtime.mjs 在构建/预览时自动生成，产物 DO NOT EDIT）。
+// 由 runtime/scripts/engine.mjs 在构建/预览时自动生成，产物 DO NOT EDIT）。
 // 单一事实源 = src/framework/mesh/compressed-gltf.ts（编辑器同源），本文件只做
 // 播放侧目标适配：
 // - 解码器目录固定为产物内页面根相对路径（多文件产物为真实文件；单页/gzip 产物
 //   经 pak.mjs 的 fetch 拦截从归档/内联表供数）；
-// - 无渲染器可注入 → KTX2 探测跳过（压缩纹理暂不支持，编辑器内已支持；basisBase
-//   传占位值，仅在 renderer 存在时才会被使用）；
-// - JS 版 Draco 解码器：运行时文件走「文本 IPC」产物通道，二进制 wasm 无法安全
-//   通过（UTF-8 往返损坏）；JS 解码慢约一倍，属加载期一次性成本。
+// - wasm 解码器：Draco/Basis 的 wasm 以文件随产物（文本 IPC 经 base64 通道传递，
+//   Rust 侧按字节落盘/内联）。three 的 DRACOLoader/KTX2Loader 在主线程以
+//   arraybuffer 取 wasm 再 postMessage 进解码 Worker，垫片/真实文件/内联表统一走
+//   fetch，产物形态无感知；
+// - 渲染器注入（KTX2 探测压缩纹理格式）：player 在 createRenderer 后经
+//   setRuntimeRenderer 传入，先于首个模型加载（编辑器侧本就直接传 renderer）。
 // ---------------------------------------------------------------------------
 import type { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
@@ -20,14 +22,20 @@ const DRACO_DECODER_DIR = "./engine/runtime/loaders/draco/";
 const BASIS_TRANSCODER_DIR = "./engine/runtime/loaders/basis/";
 
 let ready = false;
+let renderer: unknown;
+
+/** 播放器渲染器注入（KTX2 压缩纹理格式探测用；createRenderer 之后、模型加载前调用） */
+export function setRuntimeRenderer(instance: unknown): void {
+  renderer = instance;
+  if (ready) ensureSetup();
+}
 
 function ensureSetup(): void {
-  if (ready) return;
   ready = true;
   setupCompressedGltfSupport({
     dracoBase: DRACO_DECODER_DIR,
     basisBase: BASIS_TRANSCODER_DIR,
-    decoderType: "js",
+    ...(renderer !== undefined ? { renderer } : {}),
   });
 }
 

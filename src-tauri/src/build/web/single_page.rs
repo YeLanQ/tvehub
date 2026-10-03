@@ -59,10 +59,13 @@ const SINGLE_PAGE_BOOTSTRAP: &str = r#"<script>
             var pl = view.getUint32(off, true); off += 4;
             var path = dec.decode(new Uint8Array(buf, off, pl)); off += pl;
             var dl = view.getUint32(off, true); off += 4;
+            // engine/ 二进制（.wasm）按字节走资产表（player 侧解 pak 供 fetch 垫片），
+            // 不文本化解码成 blob 模块
             if (
-              path === entry ||
-              path.lastIndexOf("engine/", 0) === 0 ||
-              path.lastIndexOf("src/", 0) === 0
+              (path === entry ||
+                ((path.lastIndexOf("engine/", 0) === 0 ||
+                  path.lastIndexOf("src/", 0) === 0) &&
+                  !/\.wasm$/.test(path)))
             )
               code[path] = dec.decode(new Uint8Array(buf, off, dl));
             off += dl;

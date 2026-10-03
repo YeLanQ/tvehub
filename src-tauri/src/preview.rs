@@ -24,6 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use base64::Engine as _;
+
 /// Tauri managed：各窗口的网页预览服务器（多会话：按 webview label 分键，
 /// 每个窗口独立服务器 + 独立临时端口，避免 A 窗口热切换目录后 B 窗口串台）。
 #[derive(Default)]
@@ -397,6 +399,28 @@ pub(crate) fn collect_scene_assets(
     missing
 }
 
+/// .wasm 运行时文件分流：前端清单把二进制 wasm 以 base64 混在 files map 里传入
+/// （文本 IPC 通道会 UTF-8 损坏二进制），此处解码进 binaries 按字节写盘。
+/// web 预览导出与 web 构建管线共用（微信管线有同构逻辑，错误文案渠道化）。
+pub(crate) fn split_wasm_base64_files(
+    files: &mut HashMap<String, String>,
+    binaries: &mut HashMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    let wasm_keys: Vec<String> = files
+        .keys()
+        .filter(|rel| rel.ends_with(".wasm"))
+        .cloned()
+        .collect();
+    for rel in wasm_keys {
+        let text = files.remove(&rel).expect("key 刚从本 map 收集");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(text.as_bytes())
+            .map_err(|e| format!("运行时 wasm 文件 base64 解码失败 '{rel}': {e}"))?;
+        binaries.insert(rel, bytes);
+    }
+    Ok(())
+}
+
 /// 从当前场景导出网页预览产物：
 /// - files 由前端提供网页运行时（index.html / player.mjs / engine/** 模块与 three 运行时 / config.json，
 ///   属 WebView 打包资源，前端 fetch 一次传入）；
@@ -418,7 +442,9 @@ pub async fn export_web_preview_from_scene(
     let mut files = files;
     files.insert("scene.json".to_string(), scene_text.clone());
 
+    // 前端运行时清单里的 .wasm（base64）分流进 binaries 按字节写盘
     let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
+    split_wasm_base64_files(&mut files, &mut binaries)?;
     collect_scene_assets(&root_path, &scene_text, &mut files, &mut binaries);
 
     write_export(&root, files, &binaries)
@@ -949,7 +975,29 @@ fn respond(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use super::{collect_scene_assets, gltf_sibling_rel, start_server_inproc, stop_server_inproc, write_export_dir};
+    use super::{collect_scene_assets, gltf_sibling_rel, split_wasm_base64_files, start_server_inproc, stop_server_inproc, write_export_dir};
+
+    /// .wasm 键（base64）从文本 files 分流进 binaries 按字节写盘；非 wasm 键不动；
+    /// 非法 base64 报错。
+    #[test]
+    fn split_wasm_base64_files_routes_wasm_keys_to_binaries() {
+        use base64::Engine as _;
+        let mut files = std::collections::HashMap::new();
+        files.insert("index.html".to_string(), "<html>".to_string());
+        files.insert(
+            "engine/runtime/physics-engines/rapier.wasm".to_string(),
+            base64::engine::general_purpose::STANDARD.encode([0u8, 0x61, 0x73, 0x6d, 1]),
+        );
+        let mut binaries = std::collections::HashMap::new();
+        split_wasm_base64_files(&mut files, &mut binaries).expect("合法 base64");
+        assert!(!files.contains_key("engine/runtime/physics-engines/rapier.wasm"), "wasm 键移出文本表");
+        assert_eq!(binaries.get("engine/runtime/physics-engines/rapier.wasm").unwrap(), &[0, 0x61, 0x73, 0x6d, 1]);
+        assert_eq!(files.get("index.html").unwrap(), "<html>", "文本键不动");
+
+        let mut bad = std::collections::HashMap::new();
+        bad.insert("engine/x.wasm".to_string(), "!!not-base64!!".to_string());
+        assert!(split_wasm_base64_files(&mut bad, &mut std::collections::HashMap::new()).is_err());
+    }
 
     /// 导出目录必须整体换入：成功时旧文件清干净、无暂存残留；
     /// 中途失败（非法路径）时旧产物原样保留——共享/预览不能撞到半成品。

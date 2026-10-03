@@ -3,8 +3,12 @@
 // 与编辑器 framework/physics 同一套数据语义（组件字段/签名差异/固定步长/
 // static|kinematic|dynamic 三形态），实现为免打包的原生 ESM：
 // - 引擎（WASM）按物理配置的 backend 惰性加载（项目 config.json 的 physics 字段，
-//   旧产物回退场景 settings.physics），物理引擎构建位于
-//   ./physics-engines/（rapier.mjs / jolt.mjs / ammo/ammo.wasm.js，随导出发布）；
+//   旧产物回退场景 settings.physics），物理引擎构建位于 ./physics-engines/
+//   （rapier.mjs / jolt.mjs / ammo/ammo-esm.mjs 胶水 + 同目录 .wasm 文件，随导出
+//   发布）；wasm 不内联进 JS——胶水经全局钩子 __tveInstantiateWasmFile 按产物根
+//   相对路径加载 .wasm 文件，主线程与 Worker 通用（安装见 wasm-file-hook.ts，
+//   本模块顶层即装：主线程覆盖单页回退，Worker 覆盖物理线程；node 等裸环境由
+//   测试脚本自行供桩）；
 // - physicsEnabled === true 时自动开始模拟；
 //   未启用时返回安全空转 API（脚本调用不报错）；
 // - 脚本经 engine.physics（tve.mjs 转发 host.physics，按节点 id 寻址）驱动
@@ -16,6 +20,9 @@
 
 import * as THREE from "../core/three.module.min.js";
 import { postLog } from "../core/log";
+import { installWasmFileHook } from "../../framework/physics/wasm-file-hook";
+
+installWasmFileHook();
 
 /** 固定模拟步长（秒）与每帧最大子步数（与编辑器一致） */
 const FIXED_DT = 1 / 60;

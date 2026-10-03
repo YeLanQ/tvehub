@@ -34,6 +34,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { vendorPreviewLoaders } from "./vendor-preview-loaders.mjs";
+import { fileizePhysicsEngines } from "./wasm-fileize.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ENGINE_DIR = path.join(ROOT, "public", "engine");
@@ -186,7 +187,16 @@ function collectInputs() {
 /** 把 src/runtime/extra/** 字节级原样拷到 public/engine/**（映射 extra/<rel> → engine/<rel>）。
  *  内容不一致才写入：避免每次 dev 启动重写 7.4 MB 二进制、触发运行产物清单等 watcher 抖动。
  *  必须在 vite build() 之前执行——physics.ts 对 rapier/jolt/ammo 的相对动态 import 由
- *  vendorExternalPlugin 外部化，前提是 engine 下对应文件已存在（干净检出后这些副本不入库）。 */
+ *  vendorExternalPlugin 外部化，前提是 engine 下对应文件已存在（干净检出后这些副本不入库）。
+ *  跳过项 = 物理胶水的「非最终形态」：rapier/jolt 内联 wasm 构建与 ammo 的 b64 模块
+ *  由 fileizePhysicsEngines() 产出钩子化胶水 + .wasm 文件（见 wasm-fileize.mjs），
+ *  原样拷出会把带内联 wasm 的旧形态留在产物里。 */
+const EXTRA_VERBATIM_SKIP = new Set([
+  "runtime/physics-engines/rapier.mjs",
+  "runtime/physics-engines/jolt.mjs",
+  "runtime/physics-engines/ammo/ammo-wasm-b64.mjs",
+]);
+
 function copyExtraAssets() {
   if (!fs.existsSync(EXTRA_SRC)) return;
   let copied = 0;
@@ -196,6 +206,7 @@ function copyExtraAssets() {
       const relName = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(abs, relName);
       else if (e.name === "README.md") continue; // 目录说明文档不拷入产物
+      else if (EXTRA_VERBATIM_SKIP.has(relName)) continue; // 物理胶水走 wasm 文件化产出
       else {
         const dest = path.join(ENGINE_DIR, relName);
         const srcBuf = fs.readFileSync(abs);
@@ -285,10 +296,11 @@ let inFlight = null;
 export function buildRuntime(why = "") {
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    const t0 = Date.now();
-    vendorPreviewLoaders();
-    copyExtraAssets();
-    const input = collectInputs();
+  const t0 = Date.now();
+  vendorPreviewLoaders();
+  copyExtraAssets();
+  const fileizeReport = fileizePhysicsEngines();
+  const input = collectInputs();
     // write:false —— 产物先在内存里做后处理（说明符修正 + banner）再与磁盘比对落盘。
     // 让 rollup 直接写会无条件更新 mtime（内容一致也写），dev 每次启动都因此触发一批
     // watcher change 事件，见 writeOutputs。
@@ -327,9 +339,10 @@ export function buildRuntime(why = "") {
     });
     const [written, unchanged] = writeOutputs(result);
     verifyOutput(input);
+    const fileizeSummary = Object.keys(fileizeReport).join("/") || "—";
     console.log(
       `[build-runtime] web 运行时已编译（${why || "手动"}，${Date.now() - t0}ms）→ public/engine` +
-        `（写入 ${written}，未变 ${unchanged}）`,
+        `（写入 ${written}，未变 ${unchanged}；wasm 文件化: ${fileizeSummary}）`,
     );
   })().finally(() => {
     inFlight = null;

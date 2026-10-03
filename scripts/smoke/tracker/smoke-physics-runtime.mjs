@@ -14,7 +14,14 @@
 // 运行：pnpm smoke physics-runtime
 // ---------------------------------------------------------------------------
 import { createRequire } from "node:module";
-import { createSuite, installDomShim, runtimeURL as runtime, coreURL as core } from "../harness.mjs";
+import { join } from "node:path";
+import {
+  ROOT,
+  createSuite,
+  installDomShim,
+  runtimeURL as runtime,
+  coreURL as core,
+} from "../harness.mjs";
 
 const { ok, finish } = createSuite();
 
@@ -29,6 +36,13 @@ globalThis.window.parent = {
     if (m.level === "error") console.log(`  [preview] ${m.text}`);
   },
 };
+// wasm 文件化钩子桩：物理胶水经 __tveInstantiateWasmFile 按产物根相对路径加载
+// .wasm 文件（浏览器由 wasm-file-hook 安装；node 冒烟直接读盘实例化——dev 的
+// 产物根 = public/）
+globalThis.__tveInstantiateWasmFile = (path, imports) =>
+  import("node:fs/promises")
+    .then((fs) => fs.readFile(join(ROOT, "public", path)))
+    .then((bytes) => WebAssembly.instantiate(bytes, imports));
 
 const { createPhysics } = await import(runtime("physics.mjs"));
 const THREE = await import(core("three.module.min.js"));

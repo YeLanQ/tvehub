@@ -24,6 +24,7 @@ import { createTerrains, applyTerrainSplatmaps } from "../engine/runtime/terrain
 import { findFogNode, applyFogFromNode } from "../engine/runtime/fog.mjs";
 import { ensureHeightFogChunk } from "../engine/runtime/heightFog.mjs";
 import { createPhysicsWorker as createPhysics } from "../engine/runtime/physics.mjs";
+import { setRuntimeRenderer } from "../engine/runtime/loaders/compressed.mjs";
 import { buildSceneTree } from "../engine/runtime/nodes.mjs";
 import { optimizeScene } from "../engine/runtime/batching.mjs";
 import { createClipAnimations } from "../engine/runtime/animclip.mjs";
@@ -178,6 +179,10 @@ async function main() {
   const { renderer: initialRenderer, pipeline: initialPipeline, backend } = await createRenderer(cfg);
   let renderer = initialRenderer;
   let pipeline = initialPipeline;
+  // KTX2 压缩纹理格式探测需要渲染器实例（先于首个模型加载注入；重复调用幂等）。
+  // renderer 是 RHI 设备对象，detectSupport 读的是原生 three 渲染器的
+  // extensions/hasFeature → 传 device.native
+  setRuntimeRenderer(initialRenderer.native ?? initialRenderer);
   // 立方体贴图采样约定按后端不同（GL vs D3D）：天空纹理翻转策略随之后定（见 sky.mjs）
   configureSkyOrientation(backend);
   if (backend === "webgpu") {
@@ -423,6 +428,8 @@ async function main() {
     (clear.flags === "depthOnly" || clear.flags === "colorOnly")
   ) {
     ({ renderer, pipeline } = await recreateWebGLRendererPreserveBuffer(cfg, renderer));
+    // 渲染器重建后 KTX2 重新探测（compressed-gltf 按实例变化幂等重检）
+    setRuntimeRenderer(renderer.native ?? renderer);
   }
 
   // 正交相机的天空背景面：three.js 的纹理背景只支持透视相机（立方体路径按贴在

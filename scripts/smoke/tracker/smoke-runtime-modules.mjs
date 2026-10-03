@@ -96,16 +96,16 @@ console.log("[2] 后端相关模块的导出面（WebGPU 装配所需）");
 console.log("[3] 导入闭包：运行时模块的静态导入都在服务清单内");
 {
   // 预览/导出只服务清单里的文件；某个模块 import 了清单外的文件 → 预览服务返回
-  // HTML 404 → 浏览器报 "Unexpected token '<'"（曾发生：新增翻译器后清单未跟上）
-  const genText = readFileSync(resolve(root, "src/generated/web-preview-files.ts"), "utf8");
-  const group = (name) => {
-    const m = new RegExp(`${name}[^=]*=\\s*\\[([\\s\\S]*?)\\]`).exec(genText);
-    return m ? [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]) : [];
-  };
+  // HTML 404 → 浏览器报 "Unexpected token '<'"（曾发生：新增翻译器后清单未跟上）。
+  // 清单单一事实源 = generated/channel-runtimes（manifest.mjs 生成），web 渠道
+  // base + 条件组全覆盖
+  const genText = readFileSync(resolve(root, "src/generated/channel-runtimes.ts"), "utf8");
+  const m = /CHANNEL_RUNTIMES[^=]*=\s*(\{[\s\S]*\});\s*$/.exec(genText);
+  if (!m) throw new Error("channel-runtimes.ts 缺少 CHANNEL_RUNTIMES 值");
+  const manifest = JSON.parse(m[1]).web;
   const served = new Set([
-    ...group("WEB_PREVIEW_RUNTIME_FILES"),
-    ...group("WEB_PREVIEW_WEBGPU_FILES"),
-    ...[...genText.matchAll(/"([^"]*physics-engines[^"]*)"/g)].map((m) => m[1]),
+    ...manifest.base.map((f) => f.key),
+    ...Object.values(manifest.groups).flat().map((f) => f.key),
   ]);
   const missing = [];
   for (const rel of served) {
@@ -118,8 +118,8 @@ console.log("[3] 导入闭包：运行时模块的静态导入都在服务清单
       continue;
     }
     const baseDir = inWebPreview ? "web-preview" : "";
-    for (const m of readFileSync(abs, "utf8").matchAll(/from\s*["'](\.[^"']+)["']/g)) {
-      let target = normalize(join(baseDir, dirname(rel), m[1])).split("\\").join("/");
+    for (const hit of readFileSync(abs, "utf8").matchAll(/from\s*["'](\.[^"']+)["']/g)) {
+      let target = normalize(join(baseDir, dirname(rel), hit[1])).split("\\").join("/");
       if (target.startsWith("web-preview/")) target = target.slice("web-preview/".length);
       if (!served.has(target)) missing.push(`${rel} → ${target}`);
     }

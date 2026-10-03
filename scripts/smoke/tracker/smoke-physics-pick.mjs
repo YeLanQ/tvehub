@@ -16,8 +16,9 @@
 // 运行：pnpm smoke physics-pick
 // ---------------------------------------------------------------------------
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { createSuite, installDomShim, coreURL as core, engineURL as engineMod } from "../harness.mjs";
 
 const { ok, finish } = createSuite();
@@ -68,6 +69,12 @@ export default class Picker extends Component {
 }
 `,
 );
+
+// wasm 文件化钩子桩：物理胶水按产物根相对路径加载 .wasm（dev 产物根 = public/；
+// 浏览器由 wasm-file-hook 安装，node 冒烟直接读盘实例化）
+globalThis.__tveInstantiateWasmFile = (path, imports) =>
+  readFile(join(root, "public", path))
+    .then((bytes) => WebAssembly.instantiate(bytes, imports));
 
 const { createPhysics } = await import(engineMod("runtime/physics.mjs"));
 const THREE = await import(core("three.module.min.js"));

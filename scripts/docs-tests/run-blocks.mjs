@@ -7,7 +7,7 @@ import ts from "typescript";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { buildRuntime } from "../build-runtime.mjs";
+import { buildRuntime } from "../../runtime/scripts/engine.mjs";
 import { resetFailures, drainFailures } from "./expect.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

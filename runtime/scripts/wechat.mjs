@@ -13,10 +13,12 @@
 //   （锚点断言命中次数，失配即构建失败）：scripts.mjs 动态 import →
 //   __tveLoadModule、player.mjs import.meta.url 合法化 + WebGPU 分支改写、
 //   physics.mjs 引擎动态 import 改写（微信产物禁止变量/外部动态 import）。
-// - 物理引擎与 meshopt 的 wasm 抽成包内 .wasm 文件：基础库 WXWebAssembly.
-//   instantiate 只认代码包内路径（wxfile: 用户目录与字节直传均被拒）；胶水
-//   改写为桥接钩子 __tveInstantiateWasmFile(path, imports) 直连，内嵌字节串
-//   全部剥除（bundle 从 ~2.8MB/引擎 降到胶水体量）。
+// - 物理引擎 wasm 以包内 .wasm 文件随包：基础库 WXWebAssembly.instantiate 只认
+//   代码包内路径（wxfile: 用户目录与字节直传均被拒）。web 渠道的 wasm 文件化
+//   （runtime/scripts/wasm-fileize.mjs）已把 public/engine 胶水统一改写为桥接钩子
+//   __tveInstantiateWasmFile(path, imports) 直连 + 内嵌字节串剥除，本构建只做 cjs
+//   形态转换（jolt 剥 node 分支；ammo 胶水改真模块 + 入口工厂直取），.wasm 直接
+//   取产物同目录文件；meshopt 仍在本构建内定点改写（web 产物保留内联形态）。
 // - 多入口代码拆分（rollup）被刻意避开：tve 门面以 5 行静态文件转发主 bundle
 //   导出，包内少一组 chunk、少一类注册表变数。
 //
@@ -33,10 +35,10 @@ const BRIDGE_DIR = path.join(ROOT, "runtime/bridge");
 const BOOTSTRAP = path.join(BRIDGE_DIR, "entries/wechat.ts");
 const PLAYER = path.join(ROOT, "public/web-preview/player.mjs");
 
-/** 物理引擎产物：源（public/engine 构建产物）→ 包内 CJS 胶水 + 独立 .wasm 文件。
+/** 物理引擎产物：源（public/engine 钩子化产物）→ 包内 CJS 胶水 + 独立 .wasm 文件。
  *  键名与 physics.mjs 引擎动态 import 的改写目标（tve:engine/runtime/**.js）对齐；
- *  wasm 抽成包内文件（基础库 WXWebAssembly.instantiate 只认代码包内路径），
- *  wasm 路径必须与胶水改写内引用的路径一致。 */
+ *  wasm 以包内文件随包（基础库 WXWebAssembly.instantiate 只认代码包内路径），
+ *  包内路径必须与 web 产物胶水钩子引用的路径一致（同源同布局）。 */
 const PHYSICS_ENGINES = [
   {
     key: "rapier",
@@ -57,21 +59,6 @@ const PHYSICS_ENGINES = [
     wasm: "engine/runtime/physics-engines/ammo/ammo.wasm",
   },
 ];
-
-/** 单引号字符串字面量扫描：返回含引号的完整区间终点（处理反斜杠转义） */
-function scanSingleQuotedEnd(text, startIdx) {
-  let i = startIdx + 1;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
-    if (ch === "'") return i;
-    i += 1;
-  }
-  throw new Error("[wechat-bundle] 单引号字符串未闭合");
-}
 
 /** meshopt 的 unpack 解码（对齐 vendored meshopt_decoder.module.js 的算法） */
 function meshoptUnpack(data) {
@@ -101,87 +88,19 @@ function assertWasmMagic(bytes, label) {
   if (bytes[4] !== 1) throw new Error(`[wechat-bundle] ${label} wasm 版本非 1`);
 }
 
-/** rapier 定点改写：内嵌 base64 → 包内路径；fetch 分发 → 桥接钩子；load IIFE → 直收钩子结果。
- *  同时把解码出的 wasm 字节写入 wasmOut（构建期抽包内 .wasm 文件）。 */
-function transformRapier(text, wasmOut) {
-  const PATH = "engine/runtime/physics-engines/rapier.wasm";
-  // R1：默认 init 的内嵌 base64 → 路径字符串（bundle 减重 ~2.2MB）。
-  // 源形态为 ng.toByteArray("<b64>").buffer —— 尾部 .buffer 一并替换为纯路径串
-  const r1Start = text.indexOf('ng.toByteArray("');
-  if (r1Start < 0) throw new Error("[wechat-bundle] rapier 内嵌 base64 锚点未命中");
-  const b64Start = r1Start + 'ng.toByteArray("'.length;
-  const b64End = text.indexOf('")', b64Start);
-  if (b64End < 0) throw new Error("[wechat-bundle] rapier 内嵌 base64 未闭合");
-  const DOT_BUFFER = '").buffer';
-  if (!text.startsWith(DOT_BUFFER, b64End)) {
-    throw new Error("[wechat-bundle] rapier base64 尾部 .buffer 锚点不符");
-  }
-  const b64 = text.slice(b64Start, b64End);
-  wasmOut.push(Buffer.from(b64, "base64"));
-  let out = replaceExact(
-    text,
-    text.slice(r1Start, b64End + DOT_BUFFER.length),
-    JSON.stringify(PATH),
-    "rapier 内嵌 base64 锚点",
-  );
-  // R2：字符串输入分发（原 fetch）→ 桥接钩子（I 与调用点同作用域）
-  const R2 = '("string"==typeof A||"function"==typeof Request&&A instanceof Request||"function"==typeof URL&&A instanceof URL)&&(A=fetch(A))';
-  out = replaceExact(
-    out,
-    R2,
-    R2.replace("fetch(A)", "globalThis.__tveInstantiateWasmFile(A,I)"),
-    "rapier fetch 分发锚点",
-  );
-  // R3：load IIFE（Response/bytes 分支链在微信全部走不通）整体替换为直收钩子结果
-  const r3Start = out.indexOf("const{instance:g,module:C}=await");
-  if (r3Start < 0) throw new Error("[wechat-bundle] rapier load IIFE 锚点未命中");
-  const r3EndMarker = "}(await A,I);";
-  const r3End = out.indexOf(r3EndMarker, r3Start);
-  if (r3End < 0) throw new Error("[wechat-bundle] rapier load IIFE 结束锚点未命中");
-  return replaceExact(
-    out,
-    out.slice(r3Start, r3End + r3EndMarker.length),
-    "const{instance:g,module:C}=await A;",
-    "rapier load IIFE 整体替换锚点",
-  );
-}
-
-/** jolt 定点改写：注入 emscripten 标准的 Module.instantiateWasm 钩子 + 剥内嵌字节串
- *  + 剥 node 环境分支（node:module 动态 import 在 cjs 输出无法存活）。
- *  钩子在位时 emscripten 在 `if(d) return` 短路，`na` 字节串永不使用。 */
-function transformJolt(text, wasmOut) {
-  const PATH = "engine/runtime/physics-engines/jolt.wasm";
+/** jolt 定点改写：剥 node 环境分支（node:module 动态 import 在 cjs 输出无法存活，
+ *  且产物不允许 import.meta 残留）。wasm 钩子化与内嵌字节串剥除已在 web 渠道
+ *  wasm 文件化时完成（runtime/scripts/wasm-fileize.mjs），此处源即最终形态。 */
+function transformJolt(text) {
   // node 环境分支剥除（微信恒非 node）；`if(aa)…;else if(…)` 结构保持（主干挂空语句）
   const NODE_REQUIRE = String.raw`if(aa){let {createRequire:a}=await import("node:module");var ba=a(import.meta.url)}`;
   const NODE_FS = String.raw`ba("node:fs"),da.startsWith("file:")&&ba("node:path").dirname(ba("node:url").fileURLToPath(da)),process.argv.length>1&&(ca=process.argv[1].replace(/\\/g,"/")),process.argv.slice(2)`;
-  let out = replaceExact(
+  return replaceExact(
     replaceExact(text, NODE_REQUIRE, "if(aa){}", "jolt node createRequire 分支锚点"),
     NODE_FS,
     "void 0",
     "jolt node fs 分支锚点",
   );
-  const J1 = "async function Jolt(moduleArg={}){var Module=moduleArg;";
-  const HOOK =
-    `async function Jolt(moduleArg={}){var Module=moduleArg;` +
-    `if(!Module.instantiateWasm){Module.instantiateWasm=function(imports,receiveInstance){` +
-    `return globalThis.__tveInstantiateWasmFile(${JSON.stringify(PATH)},imports).then(function(res){` +
-    `receiveInstance(res.instance,res.module);return res.instance&&res.instance.exports;});};}`;
-  out = replaceExact(out, J1, HOOK, "jolt 工厂入口锚点");
-  // J2：剥内嵌字节串（解码抽包内 .wasm 文件）
-  const j2Start = out.indexOf("na??=caa('");
-  if (j2Start < 0) throw new Error("[wechat-bundle] jolt 内嵌字节串锚点未命中");
-  const strStart = j2Start + "na??=caa(".length;
-  const strEnd = scanSingleQuotedEnd(out, strStart);
-  const literal = out.slice(strStart, strEnd + 1);
-  const decoded = new Function(`return ${literal}`)();
-  const bytes = Buffer.alloc(decoded.length);
-  for (let i = 0; i < decoded.length; i++) {
-    if (decoded.charCodeAt(i) > 255) throw new Error("[wechat-bundle] jolt 内嵌串含非字节字符");
-    bytes[i] = decoded.charCodeAt(i);
-  }
-  assertWasmMagic(bytes, "jolt");
-  wasmOut.push(bytes);
-  return replaceExact(out, out.slice(j2Start, strEnd + 2), "na=void 0;", "jolt 内嵌字节串剥除锚点");
 }
 
 /** ammo 胶水改真模块（绕开 new Function 巨串求值——设备端 eval 限制与工具编译
@@ -408,10 +327,11 @@ async function buildMainBundle() {
   return { code: bytes, meshoptWasm: wasmOut.length ? wasmOut[0].length : 0 };
 }
 
-/** 物理引擎 CJS 预转换（rapier/jolt/ammo 全部随包）：胶水内嵌 wasm 抽成包内
- *  .wasm 文件（基础库 WXWebAssembly.instantiate 只认代码包内路径），胶水改写为
- *  桥接钩子直连（bundle 减重：内嵌字节串全部剥除）。源缺失按跳过（导出期供给
- *  会对缺失文件报错）。 */
+/** 物理引擎 CJS 预转换（rapier/jolt/ammo 全部随包）：源 = public/engine 的钩子化
+ *  产物（wasm 已在 web 渠道 wasm 文件化时抽成同目录 .wasm，见 wasm-fileize.mjs），
+ *  微信侧只做 cjs 形态转换（jolt 剥 node 分支；ammo 胶水改真模块 + 入口工厂直取），
+ *  .wasm 直接取产物同目录文件随包（桥接垫片经 WXWebAssembly 以包内路径直连）。
+ *  源缺失按跳过（导出期供给会对缺失文件报错）。 */
 async function buildPhysicsEngines() {
   const sizes = {};
   for (const def of PHYSICS_ENGINES) {
@@ -420,27 +340,37 @@ async function buildPhysicsEngines() {
       console.warn(`[wechat-bundle] 缺少 ${def.src}，跳过 ${def.key} 物理引擎转换`);
       continue;
     }
+    const wasmSrc = path.join(ROOT, "public", def.wasm);
+    if (!fs.existsSync(wasmSrc)) {
+      console.warn(
+        `[wechat-bundle] 缺少 ${path.relative(ROOT, wasmSrc)}（先构建 web 运行时），跳过 ${def.key}`,
+      );
+      continue;
+    }
     const srcText = await fs.promises.readFile(srcPath, "utf8");
-    const wasmOut = [];
     const entryFile = def.src.replace(/^.*\//, "");
     const entryFilter =
       def.key === "ammo"
         ? /(ammo-esm|ammo-glue)\.mjs$/
         : new RegExp(`${entryFile.replace(/\./g, "\\.")}$`);
-    const enginePlugin = {
-      name: "tve-wechat-engine-transform",
-      setup(build) {
-        build.onLoad({ filter: entryFilter }, async (args) => {
-          if (def.key === "rapier") return { contents: transformRapier(srcText, wasmOut), loader: "js" };
-          if (def.key === "jolt") return { contents: transformJolt(srcText, wasmOut), loader: "js" };
-          // ammo：胶水改真模块 + 入口工厂直取（eval 零参与）
-          if (args.path.replace(/^.*[\\/]/, "") === "ammo-glue.mjs") {
-            return { contents: transformAmmoGlue(args.path), loader: "js" };
-          }
-          return { contents: transformAmmoEntry(srcText), loader: "js" };
-        });
-      },
-    };
+    const enginePlugin =
+      def.key === "rapier"
+        ? []
+        : [
+            {
+              name: "tve-wechat-engine-transform",
+              setup(build) {
+                build.onLoad({ filter: entryFilter }, async (args) => {
+                  if (def.key === "jolt") return { contents: transformJolt(srcText), loader: "js" };
+                  // ammo：胶水改真模块 + 入口工厂直取（eval 零参与）
+                  if (args.path.replace(/^.*[\\/]/, "") === "ammo-glue.mjs") {
+                    return { contents: transformAmmoGlue(args.path), loader: "js" };
+                  }
+                  return { contents: transformAmmoEntry(srcText), loader: "js" };
+                });
+              },
+            },
+          ];
     const outfile = path.join(OUT_DIR, def.out);
     fs.mkdirSync(path.dirname(outfile), { recursive: true });
     await esbuild.build({
@@ -452,27 +382,15 @@ async function buildPhysicsEngines() {
       minify: true,
       legalComments: "none",
       charset: "utf8",
-      define: def.key === "ammo" ? { __TVE_WECHAT__: "true" } : undefined,
       outfile,
-      plugins: [enginePlugin],
+      plugins: enginePlugin,
       logLevel: "warning",
     });
-    // ammo 的 wasm 从 b64 产物抽取（其余引擎在 transform 内抽取）
-    if (def.key === "ammo") {
-      const b64File = path.join(ROOT, "public/engine/runtime/physics-engines/ammo/ammo-wasm-b64.mjs");
-      const b64Text = await fs.promises.readFile(b64File, "utf8");
-      const b64 = /export default "([A-Za-z0-9+/=]+)";/.exec(b64Text);
-      if (!b64) throw new Error("[wechat-bundle] ammo-wasm-b64 锚点未命中");
-      const bytes = Buffer.from(b64[1], "base64");
-      assertWasmMagic(bytes, "ammo");
-      wasmOut.push(bytes);
-    }
-    // 包内 .wasm 文件（与胶水同目录、同主名）
-    if (wasmOut.length) {
-      const wasmPath = path.join(OUT_DIR, def.wasm);
-      fs.writeFileSync(wasmPath, wasmOut[0]);
-      sizes[`${def.key}Wasm`] = wasmOut[0].length;
-    }
+    // 包内 .wasm 文件（与胶水同目录、同主名）：产物字节直拷 + 魔数断言
+    const wasmBytes = await fs.promises.readFile(wasmSrc);
+    assertWasmMagic(wasmBytes, def.key);
+    fs.writeFileSync(path.join(OUT_DIR, def.wasm), wasmBytes);
+    sizes[`${def.key}Wasm`] = wasmBytes.length;
     const text = await fs.promises.readFile(outfile, "utf8");
     assertCjsOutput(text, def.out);
     if (text.includes("import.meta")) {

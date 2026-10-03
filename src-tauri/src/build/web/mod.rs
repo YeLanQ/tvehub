@@ -28,6 +28,10 @@ impl ChannelPipeline for WebPipeline {
     fn build(&self, p: &Prepared, ctx: &JobCtx) -> Result<BuildResult, String> {
         let job = &p.job;
         let mut files = job.files.clone();
+        // 前端运行时清单里的 .wasm（base64 混在文本 map 里）分流进 binaries：
+        // 文本 IPC 通道会 UTF-8 损坏二进制，按字节写盘/内联
+        let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
+        crate::preview::split_wasm_base64_files(&mut files, &mut binaries)?;
         // CDN 模式：three.js 运行时不内嵌，代码里指向 three 的相对 import 在
         // 产物组装阶段统一重写为 CDN 绝对 URL；其余 engine/ 模块仍内嵌
         if p.cdn_active {
@@ -35,7 +39,6 @@ impl ChannelPipeline for WebPipeline {
                 files.remove(rel);
             }
         }
-        let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
 
         // 导出内容内核：场景收集 + 引用资产合并去重 + release 处理（与 wechat
         // 渠道同源同构，跨渠道一致性由 tests/consistency_e2e.rs 守护）
@@ -85,9 +88,18 @@ impl ChannelPipeline for WebPipeline {
                 }
             }
             files = code_files;
+            // 单页：wasm 一并内联进资产表（物理回退主线程，fetch 垫片供数）；
+            // 多文件 gzip：.wasm 保持真实文件落盘——gzip 归档里的条目只能被主线程
+            // 的 fetch 垫片命中，物理 Worker / three 解码 Worker 的取数拿不到
+            let mut archived = HashMap::new();
             for (rel, bytes) in binaries.drain() {
-                entries.push((rel, bytes));
+                if job.gzip && !job.single_page && rel.ends_with(".wasm") {
+                    archived.insert(rel, bytes);
+                } else {
+                    entries.push((rel, bytes));
+                }
             }
+            binaries = archived;
             entries.sort_by(|a, b| a.0.cmp(&b.0));
         } else {
             // 多文件非 gzip：场景/材质/资产按相对路径落盘
