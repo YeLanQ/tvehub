@@ -61,8 +61,10 @@ const BASIS_DECODER_FILES = [
   "engine/runtime/loaders/basis/basis_transcoder.wasm",
 ];
 
-/** 导出产物始终排除的文件：draco_decoder.js 为纯 JS 解码器（web 运行时与编辑器
- *  均用 wasm 解码器形态），仅留在本地产物目录，不随任何产物分发。 */
+/** web 导出产物始终排除的文件：draco_decoder.js 为纯 JS 解码器（web 运行时与
+ *  编辑器均用 wasm 解码器形态），仅留在本地产物目录，不随 web 产物分发。微信
+ *  渠道不受此清单管辖：解码器由 runtime/scripts/wechat/draco.mjs 拷入微信产物
+ *  目录随包（主线程内联解码，draco-inline.ts）。 */
 const EXPORT_EXCLUDED = new Set(["engine/runtime/loaders/draco/draco_decoder.js"]);
 
 /** 微信渠道随包的物理引擎文件前缀（CJS 预转换产物；键 = 产物内相对路径，

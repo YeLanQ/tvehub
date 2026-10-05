@@ -262,6 +262,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "url": "/engine/runtime/loaders/compressed.mjs"
       },
       {
+        "key": "engine/runtime/loaders/draco-inline.mjs",
+        "rel": "engine/runtime/loaders/draco-inline.mjs",
+        "url": "/engine/runtime/loaders/draco-inline.mjs"
+      },
+      {
         "key": "engine/runtime/loaders/fflate.module.js",
         "rel": "engine/runtime/loaders/fflate.module.js",
         "url": "/engine/runtime/loaders/fflate.module.js"
@@ -494,6 +499,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "key": "engine/core/tve.js",
         "rel": "exports/wechat/runtime/engine/core/tve.js",
         "url": "/exports/wechat/runtime/engine/core/tve.js"
+      },
+      {
+        "key": "engine/runtime/loaders/draco/draco_decoder.js",
+        "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js",
+        "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js"
       },
       {
         "key": "engine/runtime/loaders/meshopt_decoder.wasm",

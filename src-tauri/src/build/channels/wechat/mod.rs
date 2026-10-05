@@ -232,10 +232,12 @@ impl ChannelPipeline for WechatPipeline {
 
 /// 预构建微信运行时文件键（前端按 wechat-runtime-files 清单传入；物理引擎按
 /// 项目后端附带：engine/runtime/physics-engines/{rapier|jolt|ammo/**}.{js,wasm}；
-/// meshopt 解码 wasm 为 bundle 内联依赖的随包资产：engine/runtime/loaders/）
+/// meshopt 解码 wasm 与 Draco 纯 JS 解码器为 bundle 依赖的随包资产：
+/// engine/runtime/loaders/）
 fn is_wechat_runtime_key(rel: &str) -> bool {
     rel == "code.js"
         || rel == "engine/core/tve.js"
         || rel == "engine/runtime/loaders/meshopt_decoder.wasm"
+        || rel == "engine/runtime/loaders/draco/draco_decoder.js"
         || rel.starts_with("engine/runtime/physics-engines/")
 }

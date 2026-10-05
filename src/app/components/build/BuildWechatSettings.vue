@@ -58,7 +58,7 @@ const debug = defineModel<boolean>("debug", { required: true });
   </div>
   <p class="bp-note">
     产物为微信小游戏工程（场景与资产全内联，运行期零文件系统）：用「微信开发者工具」导入
-    <code>build/wechat</code> 目录即可运行。当前限制：物理仅支持
-    rapier 后端；Draco/Basis 压缩资产不支持（请关闭压缩后构建）。包体积不做构建期限制，由开发者工具在发布时判定。
+    <code>build/wechat</code> 目录即可运行。当前限制：Basis 纹理压缩不支持（请关闭「纹理压缩」后构建）；Draco
+    压缩模型经主线程纯 JS 解码器加载（略慢于 wasm，属一次性加载成本）。包体积不做构建期限制，由开发者工具在发布时判定。
   </p>
 </template>

@@ -22,7 +22,7 @@
 | `runtime/physics-engines/jolt.mjs` | 上游 JoltPhysics.js 官方 wasm 内联构建 | 从官方发行版手工替换 |
 | `runtime/physics-engines/ammo/{ammo-esm.mjs, ammo-glue.mjs, ammo-wasm-b64.mjs}` | kripken/ammo.js（zlib License） | 把上游 `ammo.wasm.js` + `ammo.wasm.wasm` 放入本目录，跑 `node scripts/make-ammo-esm.cjs`（脚本会生成三件套并删除原始文件） |
 | `runtime/loaders/basis/{basis_transcoder.js, basis_transcoder.wasm}` | three `examples/jsm/libs/basis/` | 升级 three 后从 node_modules 手工替换 |
-| `runtime/loaders/draco/{draco_wasm_wrapper.js, draco_decoder.wasm}` | three `examples/jsm/libs/draco/gltf/` | 同上（`draco_decoder.js` 不在此列——它由 `scripts/vendor-preview-loaders.mjs` 生成并入库） |
+| `runtime/loaders/draco/{draco_wasm_wrapper.js, draco_decoder.wasm}` | three `examples/jsm/libs/draco/gltf/` | 同上（`draco_decoder.js` 不在此列——它由 `runtime/scripts/vendor-preview-loaders.mjs` 构建期从 three gltf 变体拷入 public/engine，不入库；微信渠道随包以此为源） |
 
 这些资产在导出链路中的角色见 `scripts/gen-web-preview-files.mjs`（清单与
 导出包含/排除特判）与 `src-tauri/src/build.rs`（`engine/runtime/loaders/draco|basis/`

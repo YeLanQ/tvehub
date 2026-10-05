@@ -1,13 +1,16 @@
-// 微信 bundle · 守卫与工程文件：构建链三道子进程守卫（surface 漂移守卫 /
-// bridge 契约测试 / bundle 冒烟）+ tve 门面生成。三个守卫也有独立 npm script
-// （pnpm check:surface / pnpm test:bridge；冒烟依赖产物，仅在构建链内跑）。
+// 微信 bundle · 守卫与工程文件：构建链四道子进程守卫（surface 漂移守卫 /
+// bridge 契约测试 / bundle 冒烟 / Draco 内联解码冒烟）+ tve 门面生成。前三个
+// 守卫也有独立 npm script（pnpm check:surface / pnpm test:bridge；冒烟依赖
+// 产物，仅在构建链内跑）。
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "../lib/paths.mjs";
 import { TVE_FACADE } from "../../bridge/protocol.ts";
 import { PHYSICS_ENGINES } from "./engines.mjs";
+import { DRACO_JS_KEY } from "./draco.mjs";
 
 /** 漂移守卫：统一运行时源码的全局用法对照桥接覆盖清单（未覆盖新增 = 构建失败） */
 export function runSurfaceCheck() {
@@ -34,6 +37,17 @@ export function smokeRequireBundle(engineSizes) {
   execFileSync(
     process.execPath,
     [smoke, path.join(WECHAT_RUNTIME_DIR, "code.js"), ...engineFiles],
+    { stdio: "inherit", timeout: 120_000 },
+  );
+}
+
+/** Draco 内联解码冒烟：编码器现场压缩最小网格 → 随包解码器真字节解码回归
+ *  （依赖随包产物，仅在解码器已拷入时执行；见 ./draco-smoke.mjs） */
+export function runDracoDecodeSmoke(dracoBytes) {
+  if (!dracoBytes) return;
+  execFileSync(
+    process.execPath,
+    [path.join(path.dirname(fileURLToPath(import.meta.url)), "draco-smoke.mjs"), path.join(WECHAT_RUNTIME_DIR, DRACO_JS_KEY)],
     { stdio: "inherit", timeout: 120_000 },
   );
 }

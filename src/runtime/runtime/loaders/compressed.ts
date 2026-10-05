@@ -9,6 +9,10 @@
 //   Rust 侧按字节落盘/内联）。three 的 DRACOLoader/KTX2Loader 在主线程以
 //   arraybuffer 取 wasm 再 postMessage 进解码 Worker，垫片/真实文件/内联表统一走
 //   fetch，产物形态无感知；
+// - 微信渠道（桥接钩子 __tveLoadModule 在场 = 桥接层已装配）：注入
+//   DracoInlineLoader 主线程内联解码（无 Worker/无 wasm，解码器为包内纯 JS 模块），
+//   web 与编辑器预览的 DRACOLoader wasm 形态不受影响。钩子名对齐
+//   runtime/bridge/protocol.ts 的 TVE_LOAD_MODULE（引擎源保持字面量登记）；
 // - 渲染器注入（KTX2 探测压缩纹理格式）：player 在 createRenderer 后经
 //   setRuntimeRenderer 传入，先于首个模型加载（编辑器侧本就直接传 renderer）。
 // ---------------------------------------------------------------------------
@@ -17,6 +21,7 @@ import {
   applyCompressedGltfSupport,
   setupCompressedGltfSupport,
 } from "../../../framework/mesh/compressed-gltf";
+import { DracoInlineLoader } from "./draco-inline";
 
 const DRACO_DECODER_DIR = "./engine/runtime/loaders/draco/";
 const BASIS_TRANSCODER_DIR = "./engine/runtime/loaders/basis/";
@@ -36,6 +41,9 @@ function ensureSetup(): void {
     dracoBase: DRACO_DECODER_DIR,
     basisBase: BASIS_TRANSCODER_DIR,
     ...(renderer !== undefined ? { renderer } : {}),
+    ...(typeof (globalThis as { __tveLoadModule?: unknown }).__tveLoadModule === "function"
+      ? { dracoDecoder: new DracoInlineLoader() }
+      : {}),
   });
 }
 

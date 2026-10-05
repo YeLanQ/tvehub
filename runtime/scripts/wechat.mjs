@@ -7,6 +7,7 @@
 //   engine/runtime/physics-engines/jolt.js/.wasm     jolt 同上
 //   engine/runtime/physics-engines/ammo/ammo-esm.js/.wasm  ammo 同上
 //   engine/runtime/loaders/meshopt_decoder.wasm      meshopt（GLTFLoader 内联依赖）
+//   engine/runtime/loaders/draco/draco_decoder.js    Draco 纯 JS 解码器（主线程内联解码）
 //
 // 关键决策（与 web 渠道隔离）：
 // - 引擎源码 src/runtime/** 零改动；对本包内三处运行时形态做构建期定点改写
@@ -36,7 +37,8 @@ import { assertCjsOutput } from "./lib/anchor.mjs";
 import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "./lib/paths.mjs";
 import { wechatTransformPlugin } from "./wechat/transforms.mjs";
 import { buildPhysicsEngines } from "./wechat/engines.mjs";
-import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, writeTveFacade } from "./wechat/guards.mjs";
+import { copyDracoJsDecoder } from "./wechat/draco.mjs";
+import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, writeTveFacade } from "./wechat/guards.mjs";
 import { MESHOPT_WASM_PATH } from "../bridge/protocol.ts";
 
 /** 产物体积上限告警阈值（微信主包 4MB，data.js 由导出期另计） */
@@ -73,20 +75,23 @@ export async function buildWechatRuntime(reason = "") {
   const label = reason ? `（${reason}）` : "";
   const main = await buildMainBundle();
   const engines = await buildPhysicsEngines();
+  const dracoBytes = copyDracoJsDecoder();
   const facadeBytes = writeTveFacade();
   runSurfaceCheck();
   runBridgeSpec();
   smokeRequireBundle(engines);
+  runDracoDecodeSmoke(dracoBytes);
   const kb = (n) => `${(n / 1024).toFixed(1)}KB`;
   const engineSummary = Object.entries(engines)
     .map(([key, bytes]) => `${key} ${kb(bytes)}`)
     .join(" + ");
   console.log(
     `[wechat-bundle] 构建完成${label}: code.js ${kb(main.code)} + tve.js ${kb(facadeBytes)}` +
+      (dracoBytes ? ` + draco_decoder.js ${kb(dracoBytes)}（主线程内联解码）` : "") +
       (engineSummary ? ` + ${engineSummary}` : "") +
       ` → public/exports/wechat/runtime/`,
   );
-  return { codeBytes: main.code, engines, facadeBytes };
+  return { codeBytes: main.code, engines, facadeBytes, dracoBytes };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

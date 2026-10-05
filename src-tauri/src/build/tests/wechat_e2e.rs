@@ -296,14 +296,32 @@ fn wechat_channel_guards() {
     // 恢复无物理配置，供后续用例使用
     fs::write(root.join("project.config.json"), r#"{"designResolution":{"width":1280,"height":720}}"#).unwrap();
 
-    // Draco 压缩启用 → v1 不支持
+    // Draco 压缩启用 → 已支持（主线程内联解码）：构建通过，纯 JS 解码器随包
     fs::write(
         root.join("project.config.json"),
         r#"{"resources":{"dracoCompression":true}}"#,
     )
     .unwrap();
+    let mut draco_files = wechat_files();
+    draco_files.insert(
+        "engine/runtime/loaders/draco/draco_decoder.js".to_string(),
+        "var DracoDecoderModule = (() => function() {})();\nmodule.exports = DracoDecoderModule;\n".to_string(),
+    );
+    run_build(wechat_job(&root, draco_files), &JobCtx::default())
+        .unwrap_or_else(|e| panic!("Draco 启用应构建通过（主线程内联解码）: {e}"));
+    assert!(
+        root.join("build/wechat/engine/runtime/loaders/draco/draco_decoder.js").is_file(),
+        "Draco 纯 JS 解码器应随包写入"
+    );
+
+    // Basis 纹理压缩 → 仍不支持（KTX2Loader 依赖 Worker）
+    fs::write(
+        root.join("project.config.json"),
+        r#"{"resources":{"textureCompression":true}}"#,
+    )
+    .unwrap();
     let err = expect_err(run_build(wechat_job(&root, wechat_files()), &JobCtx::default()));
-    assert!(err.contains("Draco"), "Draco 启用应报不支持: {err}");
+    assert!(err.contains("Basis"), "Basis 启用应报不支持: {err}");
 
     let _ = fs::remove_dir_all(&base);
 }

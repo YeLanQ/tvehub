@@ -14,12 +14,31 @@ import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import type { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { BufferGeometry } from "three";
 
 /** 解码器就绪状态（loaders.ts 拼错误提示 / 诊断用） */
 export interface CompressedGltfSupport {
   draco: boolean;
   ktx2: boolean;
   meshopt: boolean;
+}
+
+/** DRACOLoader 的结构子集 = GLTFLoader 实际消费面（构造期 preload + 逐
+ *  primitive decodeDracoFile；后者是 three 未进 .d.ts 的内部 API，故与
+ *  DRACOLoader 真身在类型面经 unknown 互转）。微信渠道注入主线程内联实现
+ * （src/runtime/runtime/loaders/draco-inline.ts：沙箱无 Worker 且 Function 被
+ *  hijack，DRACOLoader 的 Blob Worker 链无法存活），web/编辑器仍用真身 */
+export interface DracoDecoderLike {
+  preload(): unknown;
+  decodeDracoFile(
+    buffer: ArrayBufferLike,
+    callback: (geometry: BufferGeometry) => void,
+    attributeIDs: Record<string, number>,
+    attributeTypes: Record<string, string>,
+    vertexColorSpace: string,
+    onError?: (error: unknown) => void,
+  ): unknown;
+  dispose?(): unknown;
 }
 
 /** 解码器初始化参数（URL 基路径由应用层经 asset:// 构造，framework 不依赖 lib 层） */
@@ -32,12 +51,15 @@ export interface CompressedGltfSetup {
    *  形态——wasm 以文件随产物，文本 IPC 经 base64 通道传递）/ js（目录只含
    *  draco_decoder.js 的纯 JS 形态，现无消费方，保留作降级开关） */
   decoderType?: "js" | "wasm";
+  /** 注入的 Draco 解码器实例（微信渠道主线程内联实现）；提供时忽略
+   *  dracoBase/decoderType 的 Draco 侧配置 */
+  dracoDecoder?: DracoDecoderLike;
   /** 原始渲染器实例（WebGLRenderer / WebGPURenderer）；缺省跳过 KTX2 探测
-   * （web 运行时无渲染器注入，KTX2 解码保持不可用） */
+   *  （web 运行时无渲染器注入，KTX2 解码保持不可用） */
   renderer?: unknown;
 }
 
-let dracoLoader: DRACOLoader | null = null;
+let dracoLoader: DracoDecoderLike | null = null;
 let ktx2Loader: KTX2Loader | null = null;
 let lastRenderer: unknown;
 
@@ -90,11 +112,17 @@ export async function probeDecoderAssets(setup: {
 /** 注入解码器基路径并探测 KTX2 支持（编辑器挂载后调用；重复调用幂等） */
 export function setupCompressedGltfSupport(setup: CompressedGltfSetup): void {
   if (!dracoLoader) {
-    dracoLoader = new DRACOLoader().setDecoderPath(setup.dracoBase);
-    if (setup.decoderType === "js") {
-      // r185 起该 API 标记废弃（r194 移除），但 JS 模式仍需它选路 dep_js；
-      // three 版本钉在 0.185.x，告警可忽略
-      dracoLoader.setDecoderConfig({ type: "js" });
+    if (setup.dracoDecoder) {
+      dracoLoader = setup.dracoDecoder;
+    } else {
+      const loader = new DRACOLoader().setDecoderPath(setup.dracoBase);
+      if (setup.decoderType === "js") {
+        // r185 起该 API 标记废弃（r194 移除），但 JS 模式仍需它选路 dep_js；
+        // three 版本钉在 0.185.x，告警可忽略
+        loader.setDecoderConfig({ type: "js" });
+      }
+      // decodeDracoFile 是 three 未进 .d.ts 的内部 API，运行时在——经 unknown 收窄
+      dracoLoader = loader as unknown as DracoDecoderLike;
     }
   }
   if (setup.renderer == null || setup.renderer === lastRenderer) return;
@@ -111,7 +139,11 @@ export function setupCompressedGltfSupport(setup: CompressedGltfSetup): void {
 
 /** 给 GLTFLoader 挂全部已就绪的解码器（每次解析前调用；未初始化的能力跳过） */
 export function applyCompressedGltfSupport(loader: GLTFLoader): void {
-  if (dracoLoader) loader.setDRACOLoader(dracoLoader);
+  if (dracoLoader) {
+    // DracoDecoderLike 为结构兼容注入件（preload/decodeDracoFile），与
+    // DRACOLoader 无类型面交集（见接口注释），GLTFLoader 的类型面按真身收口
+    loader.setDRACOLoader(dracoLoader as unknown as DRACOLoader);
+  }
   if (ktx2Loader) loader.setKTX2Loader(ktx2Loader);
   loader.setMeshoptDecoder(MeshoptDecoder);
 }
