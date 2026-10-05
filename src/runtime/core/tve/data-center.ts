@@ -8,6 +8,36 @@
 // 结构化克隆 → JSON → 原引用的顺序降级兜底。
 // ---------------------------------------------------------------------------
 
+/** 数据中心配置项（configure 增量合并；与 tve.d.ts DataCenterOptions 镜像） */
+export interface DataCenterOptions {
+  hotLimit?: number;
+  coldTtl?: number;
+  autoSweep?: boolean;
+  sweepInterval?: number;
+}
+
+/** 统计快照（与 tve.d.ts DataCenterStats 镜像） */
+export interface DataCenterStats {
+  hot: number;
+  cold: number;
+  sweeps: number;
+  promotions: number;
+  hits: number;
+  misses: number;
+}
+
+/** 热数据元信息（LRU 清扫依据） */
+interface DataMeta {
+  lastAccess: number;
+  accessSeq: number;
+}
+
+/** 冷数据条目（冻结快照 + 降冷时刻） */
+interface ColdEntry {
+  snapshot: unknown;
+  cooledAt: number;
+}
+
 const DATA_DEFAULT_OPTIONS = {
   hotLimit: 64,
   coldTtl: 30000,
@@ -16,7 +46,7 @@ const DATA_DEFAULT_OPTIONS = {
 };
 
 /** 深拷贝冻结快照：结构化克隆 → JSON → 原引用（逐级兜底） */
-function dataFreezeClone(value) {
+function dataFreezeClone(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   try {
     return structuredClone(value);
@@ -32,10 +62,21 @@ function dataFreezeClone(value) {
 }
 
 class DataCenter {
-  constructor(options) {
-    this.__hot = new Map();
-    this.__meta = new Map();
-    this.__cold = new Map();
+  __hot: Map<string, unknown>;
+  __meta: Map<string, DataMeta>;
+  __cold: Map<string, ColdEntry>;
+  __options: Required<DataCenterOptions>;
+  __lastSweep: number;
+  __sweeps: number;
+  __accessSeq: number;
+  __promotions: number;
+  __hits: number;
+  __misses: number;
+
+  constructor(options?: DataCenterOptions) {
+    this.__hot = new Map<string, unknown>();
+    this.__meta = new Map<string, DataMeta>();
+    this.__cold = new Map<string, ColdEntry>();
     this.__options = { ...DATA_DEFAULT_OPTIONS };
     this.__lastSweep = Date.now();
     this.__sweeps = 0;
@@ -46,8 +87,8 @@ class DataCenter {
     if (options) this.configure(options);
   }
 
-  configure(options) {
-    const o = options && typeof options === "object" ? options : {};
+  configure(options: DataCenterOptions): void {
+    const o: DataCenterOptions = options && typeof options === "object" ? options : {};
     if (typeof o.hotLimit === "number" && Number.isFinite(o.hotLimit)) {
       this.__options.hotLimit = Math.max(1, Math.floor(o.hotLimit));
     }
@@ -60,35 +101,35 @@ class DataCenter {
     }
   }
 
-  __now() {
+  __now(): number {
     return Date.now();
   }
 
-  __lazySweep() {
+  __lazySweep(): void {
     const now = this.__now();
     if (this.__options.autoSweep && now - this.__lastSweep >= this.__options.sweepInterval) {
       this.sweep();
     }
   }
 
-  __coolKey(key, now) {
+  __coolKey(key: string, now: number): boolean {
     const value = this.__hot.get(key);
-    const meta = this.__meta.get(key);
     this.__hot.delete(key);
     this.__meta.delete(key);
     this.__cold.set(key, { snapshot: dataFreezeClone(value), cooledAt: now });
     return true;
   }
 
-  __warmKey(key) {
+  __warmKey(key: string): void {
     const entry = this.__cold.get(key);
     this.__cold.delete(key);
-    this.__hot.set(key, entry.snapshot);
+    // 断言安全：调用点均以 __cold.has(key) 为前提，冷区条目必然存在
+    this.__hot.set(key, entry!.snapshot);
     this.__meta.set(key, { lastAccess: this.__now(), accessSeq: (this.__accessSeq += 1) });
     this.__promotions += 1;
   }
 
-  set(key, value) {
+  set(key: string, value: unknown): void {
     if (typeof key !== "string" || !key) return;
     this.__lazySweep();
     this.__cold.delete(key);
@@ -96,13 +137,14 @@ class DataCenter {
     this.__meta.set(key, { lastAccess: this.__now(), accessSeq: (this.__accessSeq += 1) });
   }
 
-  get(key, defaultValue) {
+  get(key: string, defaultValue?: unknown): unknown {
     if (typeof key !== "string" || !key) return defaultValue;
     this.__lazySweep();
     if (this.__hot.has(key)) {
       const meta = this.__meta.get(key);
-      meta.lastAccess = this.__now();
-      meta.accessSeq = (this.__accessSeq += 1);
+      // hot 命中时 meta 必然存在（set/__warmKey 写 hot 时同步写入）
+      meta!.lastAccess = this.__now();
+      meta!.accessSeq = (this.__accessSeq += 1);
       this.__hits += 1;
       return this.__hot.get(key);
     }
@@ -115,13 +157,13 @@ class DataCenter {
     return defaultValue;
   }
 
-  has(key) {
+  has(key: string): boolean {
     if (typeof key !== "string" || !key) return false;
     this.__lazySweep();
     return this.__hot.has(key) || this.__cold.has(key);
   }
 
-  delete(key) {
+  delete(key: string): boolean {
     if (typeof key !== "string" || !key) return false;
     this.__lazySweep();
     const existed = this.__hot.delete(key);
@@ -130,19 +172,19 @@ class DataCenter {
     return existed || coldExisted;
   }
 
-  keys() {
+  keys(): string[] {
     return [...this.__hot.keys(), ...this.__cold.keys()];
   }
 
-  hotKeys() {
+  hotKeys(): string[] {
     return [...this.__hot.keys()];
   }
 
-  coldKeys() {
+  coldKeys(): string[] {
     return [...this.__cold.keys()];
   }
 
-  warm(key) {
+  warm(key: string): boolean {
     if (typeof key !== "string" || !key) return false;
     if (this.__cold.has(key)) {
       this.__warmKey(key);
@@ -151,14 +193,14 @@ class DataCenter {
     return this.__hot.has(key);
   }
 
-  cool(key) {
+  cool(key: string): boolean {
     if (typeof key !== "string" || !key) return false;
     if (!this.__hot.has(key)) return false;
     this.__coolKey(key, this.__now());
     return true;
   }
 
-  sweep() {
+  sweep(): number {
     const now = this.__now();
     this.__lastSweep = now;
     let cooled = 0;
@@ -182,7 +224,7 @@ class DataCenter {
     return cooled;
   }
 
-  stats() {
+  stats(): DataCenterStats {
     return {
       hot: this.__hot.size,
       cold: this.__cold.size,

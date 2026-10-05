@@ -3,13 +3,23 @@
 // - WebGL 后端：onBeforeCompile 字符串替换，把钩子 GLSL 注入到 #include <chunk> 处
 // - WebGPU/TSL 后端：暂占位（后续用 TSL 节点组合实现）
 import * as THREE from "../core/three.module.min.js";
+import type { ShaderHook, ShaderProp } from "./shader";
 
 const TIME_UNIFORM = "_Time";
 const EXT_UV_VARYING = "vExtUv";
 const HOOK_SIG_KEY = "__tveHookSig";
 const HOOK_UNIFORMS_KEY = "__tveHookUniforms";
 
-const HOOK_POINTS = {
+/** Hook 注入点（内置着色器 chunk 锚位与变量映射） */
+interface HookPoint {
+  shader: "vertex" | "fragment";
+  include: string;
+  position: "before" | "after";
+  varMap: Record<string, string>;
+  prelude?: string;
+}
+
+const HOOK_POINTS: Record<string, HookPoint> = {
   Vertex: {
     shader: "vertex",
     include: "begin_vertex",
@@ -46,7 +56,28 @@ const HOOK_POINTS = {
   },
 };
 
-function remapVars(code, varMap) {
+/** .shader 解析结果中被注入消费的子集（shader.ts parseShader 输出） */
+interface ShaderExt {
+  hooks: ShaderHook[];
+  properties: ShaderProp[];
+  base: string;
+  include: string;
+}
+
+/** 钩子 uniform 对象（three IUniform 的强类型视图） */
+interface TveUniform {
+  value: unknown;
+}
+
+/** 材质 userData 上的钩子 uniform 表 */
+type TveUniformTable = Record<string, TveUniform>;
+
+/** 贴图加载面（applyShaderHooks 异步贴图回填用） */
+interface ShaderTexLoader {
+  loadTexture?(rel: string, srgb: boolean): Promise<THREE.Texture | null>;
+}
+
+function remapVars(code: string, varMap: Record<string, string>): string {
   let result = code;
   for (const [src, dst] of Object.entries(varMap)) {
     if (src === dst) continue;
@@ -56,7 +87,7 @@ function remapVars(code, varMap) {
 }
 
 /** 轻量文本哈希（djb2；只用于变更检测与程序缓存 key） */
-function hashText(text) {
+function hashText(text: string): number {
   let h = 5381;
   for (let i = 0; i < text.length; i++) {
     h = ((h << 5) + h + text.charCodeAt(i)) | 0;
@@ -71,14 +102,14 @@ function hashText(text) {
  * 不同钩子集合会复用同一条 program（后一个材质渲染出前一个材质的效果）。
  * 属性「值」不参与：值走 uniform，改值不应触发重编。
  */
-function hookSignature(ext) {
+function hookSignature(ext: ShaderExt | null): string {
   if (!ext) return "";
   const hookSig = ext.hooks.map((h) => `${h.name}:${hashText(h.code)}`).join("|");
   const propSig = ext.properties.map((p) => `${p.key}:${p.kind}`).join(",");
   return `${ext.base}#${hookSig}#${propSig}#${hashText(ext.include)}`;
 }
 
-function uniformInitialValue(prop) {
+function uniformInitialValue(prop: ShaderProp): TveUniform {
   switch (prop.kind) {
     case "color": {
       const hex = typeof prop.default === "number" ? prop.default : 0xffffff;
@@ -96,18 +127,19 @@ function uniformInitialValue(prop) {
   }
 }
 
-function writeUniformValue(uniform, prop, raw) {
+function writeUniformValue(uniform: TveUniform, prop: ShaderProp, raw: unknown): void {
   const v = raw ?? prop.default;
   switch (prop.kind) {
     case "color": {
       const hex = typeof v === "number" ? v : 0xffffff;
       const c = new THREE.Color().setHex(hex & 0xffffff);
-      uniform.value.set(c.r, c.g, c.b, 1);
+      // color 属性 uniform 初值即 Vector4，此处断言安全
+      (uniform.value as THREE.Vector4).set(c.r, c.g, c.b, 1);
       break;
     }
     case "vector": {
       const a = Array.isArray(v) ? v : [0, 0, 0, 0];
-      uniform.value.set(a[0] ?? 0, a[1] ?? 0, a[2] ?? 0, a[3] ?? 0);
+      (uniform.value as THREE.Vector4).set(a[0] ?? 0, a[1] ?? 0, a[2] ?? 0, a[3] ?? 0);
       break;
     }
     case "int":
@@ -127,7 +159,7 @@ function writeUniformValue(uniform, prop, raw) {
  * （典型报错：'viewDir' : redefinition / 'n' : redefinition）。
  * Hook 之间通过端口变量通信，不共享局部变量。
  */
-function assembleHookCode(hook) {
+function assembleHookCode(hook: ShaderHook): string {
   const point = HOOK_POINTS[hook.name];
   if (!point) return "";
   const prelude = point.prelude ? point.prelude + "\n" : "";
@@ -135,8 +167,8 @@ function assembleHookCode(hook) {
   return "{\n" + prelude + userCode + "\n}";
 }
 
-function uniformDeclarations(ext, hookNames) {
-  const lines = [];
+function uniformDeclarations(ext: ShaderExt, hookNames: Set<string>): string {
+  const lines: string[] = [];
   for (const prop of ext.properties) {
     const ty = prop.kind === "color" || prop.kind === "vector" ? "vec4" : prop.kind === "texture" ? "sampler2D" : "float";
     lines.push(`uniform ${ty} ${prop.key};`);
@@ -147,23 +179,23 @@ function uniformDeclarations(ext, hookNames) {
   return lines.join("\n");
 }
 
-function injectAfter(shader, chunk, code) {
+function injectAfter(shader: string, chunk: string, code: string): string {
   const tag = `#include <${chunk}>`;
   const idx = shader.indexOf(tag);
   if (idx < 0) return shader;
   return shader.slice(0, idx + tag.length) + "\n" + code + "\n" + shader.slice(idx + tag.length);
 }
 
-function injectBefore(shader, chunk, code) {
+function injectBefore(shader: string, chunk: string, code: string): string {
   const tag = `#include <${chunk}>`;
   const idx = shader.indexOf(tag);
   if (idx < 0) return shader;
   return shader.slice(0, idx) + code + "\n" + shader.slice(idx);
 }
 
-function ensureUniformTable(mat) {
-  const ud = mat.userData;
-  let table = ud[HOOK_UNIFORMS_KEY];
+function ensureUniformTable(mat: THREE.Material): TveUniformTable {
+  const ud = mat.userData as Record<string, unknown>;
+  let table = ud[HOOK_UNIFORMS_KEY] as TveUniformTable | undefined;
   if (!table) {
     table = {};
     ud[HOOK_UNIFORMS_KEY] = table;
@@ -172,29 +204,31 @@ function ensureUniformTable(mat) {
 }
 
 // 在册钩子材质（每帧推进 _Time；材质释放时自动出册）
-const liveHookMaterials = new Set();
+const liveHookMaterials = new Set<THREE.Material>();
 
-function registerHookMaterial(mat) {
+function registerHookMaterial(mat: THREE.Material): void {
   if (liveHookMaterials.has(mat)) return;
   liveHookMaterials.add(mat);
   mat.addEventListener("dispose", () => liveHookMaterials.delete(mat));
 }
 
-function unregisterHookMaterial(mat) {
+function unregisterHookMaterial(mat: THREE.Material): void {
   liveHookMaterials.delete(mat);
 }
 
 /** 渲染循环推进：设置全部在册钩子材质的 _Time（秒） */
-export function tickAllHookTime(seconds) {
+export function tickAllHookTime(seconds: number): void {
   if (liveHookMaterials.size === 0) return;
   for (const mat of liveHookMaterials) {
-    const table = mat.userData?.[HOOK_UNIFORMS_KEY];
+    const table = (mat.userData as Record<string, unknown> | undefined)?.[
+      HOOK_UNIFORMS_KEY
+    ] as TveUniformTable | undefined;
     const t = table?.[TIME_UNIFORM];
     if (t) t.value = seconds;
   }
 }
 
-function buildOnBeforeCompile(ext, mat) {
+function buildOnBeforeCompile(ext: ShaderExt, mat: THREE.Material): (shader: THREE.WebGLProgramParametersWithUniforms) => void {
   const hookNames = new Set(ext.hooks.map((h) => h.name));
   const decls = uniformDeclarations(ext, hookNames);
   const includeBlock = ext.include ? `\n${ext.include}\n` : "";
@@ -244,8 +278,8 @@ function buildOnBeforeCompile(ext, mat) {
 }
 
 /** 共享白色 1×1 空贴图 */
-let emptyTex = null;
-function emptyTexture() {
+let emptyTex: THREE.DataTexture | null = null;
+function emptyTexture(): THREE.DataTexture {
   if (!emptyTex) {
     const data = new Uint8Array([255, 255, 255, 255]);
     const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
@@ -256,8 +290,13 @@ function emptyTexture() {
 }
 
 /** 应用着色器钩子到材质（注入片段 + 同步 uniform 值） */
-export function applyShaderHooks(mat, ext, props, loader) {
-  const ud = mat.userData;
+export function applyShaderHooks(
+  mat: THREE.Material,
+  ext: ShaderExt | null,
+  props: Record<string, unknown> | undefined,
+  loader?: ShaderTexLoader,
+): void {
+  const ud = mat.userData as Record<string, unknown>;
   const sig = hookSignature(ext);
 
   if (!ext || ext.hooks.length === 0) {
@@ -266,7 +305,7 @@ export function applyShaderHooks(mat, ext, props, loader) {
       delete ud[HOOK_UNIFORMS_KEY];
       mat.onBeforeCompile = () => {};
       // 交还程序缓存 key 的默认实现（onBeforeCompile.toString()）
-      delete mat.customProgramCacheKey;
+      delete (mat as { customProgramCacheKey?: unknown }).customProgramCacheKey;
       mat.needsUpdate = true;
       unregisterHookMaterial(mat);
     }
@@ -312,6 +351,6 @@ export function applyShaderHooks(mat, ext, props, loader) {
 }
 
 /** 材质是否挂载了着色器钩子 */
-export function hasShaderHooks(mat) {
-  return !!mat.userData?.[HOOK_SIG_KEY];
+export function hasShaderHooks(mat: THREE.Material): boolean {
+  return !!(mat.userData as Record<string, unknown> | undefined)?.[HOOK_SIG_KEY];
 }

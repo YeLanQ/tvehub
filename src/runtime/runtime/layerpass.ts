@@ -8,12 +8,15 @@
 // 与编辑器 src/framework/engine/modules/layerPass.ts 同一算法（两边运行时独立，
 // 无法共享模块，保持镜像；改动需两侧同步）。
 // ---------------------------------------------------------------------------
+import * as THREE from "../core/three.module.min.js";
 
 /** 收集场景中可见可渲染体占用的层位掩码（网格/线/点/精灵；不可见子树跳过） */
-export function populatedLayerBits(scene) {
+export function populatedLayerBits(scene: THREE.Scene): number {
   let bits = 0;
-  scene.traverseVisible((o) => {
-    if (o.isMesh === true || o.isLine === true || o.isPoints === true || o.isSprite === true) {
+  scene.traverseVisible((o: THREE.Object3D) => {
+    // isMesh/isLine/isPoints/isSprite 为 three 运行时标志（分散在各子类类型上），结构断言
+    const r = o as THREE.Object3D & { isMesh?: boolean; isLine?: boolean; isPoints?: boolean; isSprite?: boolean };
+    if (r.isMesh === true || r.isLine === true || r.isPoints === true || r.isSprite === true) {
       bits |= o.layers.mask;
     }
   });
@@ -21,8 +24,8 @@ export function populatedLayerBits(scene) {
 }
 
 /** 层位掩码 → 升序单层位列表（每项为单层位掩码） */
-function bitsOf(bits) {
-  const out = [];
+function bitsOf(bits: number): number[] {
+  const out: number[] = [];
   for (let i = 0; i < 32; i++) {
     if (bits & (1 << i)) out.push(1 << i);
   }
@@ -39,18 +42,20 @@ function bitsOf(bits) {
  * 渲染体占用层与（掩码全开时的）灯光部分掩码标记在**单次** traverseVisible 内同时
  * 收集：旧实现按需各走一遍全场景，常见单 pass 路径每帧也要两次全树遍历。
  */
-export function layerPassBits(scene, camera) {
+export function layerPassBits(scene: THREE.Scene, camera: THREE.Camera): number[] | null {
   const fullMask = camera.layers.mask === -1;
   let populated = 0;
   let anyLight = false;
   let hasPartialLight = false;
-  scene.traverseVisible((o) => {
-    if (o.isLight === true) {
+  scene.traverseVisible((o: THREE.Object3D) => {
+    if ((o as THREE.Light).isLight === true) {
       anyLight = true;
       if (o.layers.mask !== -1) hasPartialLight = true;
       return;
     }
-    if (o.isMesh === true || o.isLine === true || o.isPoints === true || o.isSprite === true) {
+    // isMesh/isLine/isPoints/isSprite 为 three 运行时标志（分散在各子类类型上），结构断言
+    const r = o as THREE.Object3D & { isMesh?: boolean; isLine?: boolean; isPoints?: boolean; isSprite?: boolean };
+    if (r.isMesh === true || r.isLine === true || r.isPoints === true || r.isSprite === true) {
       populated |= o.layers.mask;
     }
   });
@@ -76,13 +81,18 @@ export const UI_ONLY_FIRST_PASS = "uiOnlyFirstPass";
  * 不清屏、不画背景（scene.background 置空）、隐藏天空背景面与 UI 画布，叠加绘制。
  * 结束后恢复相机层掩码/背景/autoClear 标志。
  */
-export function renderLayerPasses(renderer, scene, camera, bits) {
+export function renderLayerPasses(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  bits: number[],
+): void {
   const prevMask = camera.layers.mask;
   const prevBg = scene.background;
   const prevClearColor = renderer.autoClearColor;
   const prevClearDepth = renderer.autoClearDepth;
-  const firstPassOnly = [];
-  scene.traverse((o) => {
+  const firstPassOnly: THREE.Object3D[] = [];
+  scene.traverse((o: THREE.Object3D) => {
     if (
       o.userData &&
       (o.userData[SKY_ONLY_FIRST_PASS] === true || o.userData[UI_ONLY_FIRST_PASS] === true) &&
@@ -92,7 +102,7 @@ export function renderLayerPasses(renderer, scene, camera, bits) {
     }
   });
   try {
-    bits.forEach((bit, i) => {
+    bits.forEach((bit: number, i: number) => {
       camera.layers.mask = bit;
       if (i > 0) {
         scene.background = null;

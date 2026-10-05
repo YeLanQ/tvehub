@@ -13,16 +13,50 @@
 // TSL 命名空间由 three 的 WebGPU 构建导出（THREE.TSL），故不需要 three/tsl 那一份
 // （它带裸导入，浏览器无打包器无法解析）。
 import * as THREE from "./three.webgpu.min.js";
+import type { TslNode } from "./three.webgpu.min.js";
 import { FADE_OUT_FRACTION, getParticleSpriteTexture } from "./particles";
+import type { ParticleSettings } from "./particles";
+
+/** TSL 命名空间消费面（SpriteNodeMaterial 装配用；结构对齐 three.webgpu 垫片） */
+type TslLib = typeof THREE.TSL;
+
+/** 粒子贴图（程序化软圆点或外部 sprite 贴图） */
+type SpriteTexture = ReturnType<typeof getParticleSpriteTexture>;
+
+/** SpriteNodeMaterial 槽位（WebGPU 构建的节点精灵材质；结构声明） */
+interface SpriteNodeMaterialLike {
+  name: string;
+  map: SpriteTexture | null;
+  sizeAttenuation: boolean;
+  needsUpdate: boolean;
+  positionNode: TslNode | null;
+  scaleNode: TslNode | null;
+  colorNode: TslNode | null;
+  transparent: boolean;
+  depthWrite: boolean;
+  depthTest: boolean;
+  blending: number;
+  dispose(): void;
+}
 
 /** sRGB hex → 线性空间的 vec3 分量（与 GLSL 版 THREE.Color 的转换一致） */
-function linearComponents(hex) {
+function linearComponents(hex: number): [number, number, number] {
   const c = new THREE.Color().setHex(hex & 0xffffff);
   return [c.r, c.g, c.b];
 }
 
 class NodeParticleMaterial {
-  constructor(tsl, settings) {
+  readonly tsl: TslLib;
+  readonly sprite: SpriteTexture;
+  currentTexture: SpriteTexture;
+  readonly uStartColor: TslNode;
+  readonly uEndColor: TslNode;
+  readonly uStartSize: TslNode;
+  readonly uColorOver: TslNode;
+  readonly uSizeOver: TslNode;
+  readonly material: SpriteNodeMaterialLike;
+
+  constructor(tsl: TslLib, settings: ParticleSettings) {
     this.tsl = tsl;
     this.sprite = getParticleSpriteTexture();
     this.currentTexture = this.sprite;
@@ -38,7 +72,7 @@ class NodeParticleMaterial {
       depthWrite: false,
       depthTest: true,
       blending: settings.blending === "normal" ? THREE.NormalBlending : THREE.AdditiveBlending,
-    });
+    }) as unknown as SpriteNodeMaterialLike;
     material.name = "ParticleNodeMaterial";
     material.map = this.sprite;
     // 世界单位尺寸（不做 "-z 补偿"）；缩放由 scaleNode 给出
@@ -56,22 +90,22 @@ class NodeParticleMaterial {
     const rgb = tsl.mix(this.uStartColor, tsl.mix(this.uStartColor, this.uEndColor, t), this.uColorOver);
     const fade = tsl.min(tsl.float(1.0), tsl.oneMinus(t).div(FADE_OUT_FRACTION));
     const alpha = tsl.mix(tsl.float(1.0), fade, this.uColorOver);
-    material.colorNode = tsl.vec4(rgb.x, rgb.y, rgb.z, alpha);
+    material.colorNode = tsl.vec4(rgb.x as TslNode, rgb.y as TslNode, rgb.z as TslNode, alpha);
 
     this.setSettings(settings);
   }
 
-  setSettings(s) {
+  setSettings(s: ParticleSettings): void {
     const [sr, sg, sb] = linearComponents(s.startColor);
     const [er, eg, eb] = linearComponents(s.endColor);
-    this.uStartColor.value.set(sr, sg, sb);
-    this.uEndColor.value.set(er, eg, eb);
+    (this.uStartColor.value as THREE.Vector3).set(sr, sg, sb);
+    (this.uEndColor.value as THREE.Vector3).set(er, eg, eb);
     this.uStartSize.value = s.startSize;
     this.uColorOver.value = s.colorOverLifetime ? 1 : 0;
     this.uSizeOver.value = s.sizeOverLifetime ? 1 : 0;
   }
 
-  setTexture(tex) {
+  setTexture(tex: SpriteTexture | null): void {
     const next = tex ?? this.sprite;
     if (this.material.map === next) return;
     // 有无贴图切换会改变着色器定义（需重编）；换另一张贴图不必
@@ -81,18 +115,30 @@ class NodeParticleMaterial {
     if (redefine) this.material.needsUpdate = true;
   }
 
-  dispose() {
+  dispose(): void {
     this.material.dispose();
   }
+}
+
+/** TSL 粒子材质工厂（settings → 材质句柄；与 GLSL 版 ParticleMaterialHandle 同接口） */
+export interface NodeParticleMaterialFactory {
+  (settings: ParticleSettings): {
+    material: SpriteNodeMaterialLike;
+    currentTexture: SpriteTexture;
+    setSettings(next: ParticleSettings): void;
+    setTexture(tex: SpriteTexture | null): void;
+    dispose(): void;
+  };
 }
 
 /**
  * 创建 TSL 粒子材质工厂（WebGPU 后端）。构建不含 TSL 命名空间或
  * SpriteNodeMaterial 时返回 null，调用方回退 GLSL 材质并告警。
  */
-export function createNodeParticleMaterialFactory() {
+export function createNodeParticleMaterialFactory(): NodeParticleMaterialFactory | null {
   const tsl = THREE.TSL;
   if (!tsl || typeof tsl.attribute !== "function") return null;
   if (typeof THREE.SpriteNodeMaterial !== "function") return null;
-  return (settings) => new NodeParticleMaterial(tsl, settings);
+  return (settings: ParticleSettings) =>
+    new NodeParticleMaterial(tsl, settings) as unknown as ReturnType<NodeParticleMaterialFactory>;
 }

@@ -5,13 +5,8 @@
 // logic.update 之前跑 onUpdate）。
 // ---------------------------------------------------------------------------
 import { state } from "./state";
-
-/** 状态快照（引擎自有形状） */
-interface LogicStateInfo {
-  id: string;
-  name: string;
-  time: number;
-}
+import type { BtActionHandler, LogicStateInfo } from "./state";
+import type { Entity } from "./entity";
 
 function host() {
   return state.host?.logic ?? null;
@@ -20,45 +15,48 @@ function host() {
 const logicApi = {
   // —— 状态机 ——
   /** 状态机当前状态（未绑定/未就绪 null） */
-  fsmState(entity): LogicStateInfo | null {
+  fsmState(entity: Entity): LogicStateInfo | null {
     return host()?.fsmStateOf(entity?.id) ?? null;
   },
   /** 发射状态机事件（进入当前状态以来的首次发射有效） */
-  fire(entity, event) {
+  fire(entity: Entity, event: string): void {
     host()?.fire(entity?.id, String(event ?? ""));
   },
-  setFsmParam(entity, name, value) {
+  setFsmParam(entity: Entity, name: string, value: number | boolean): void {
     host()?.setFsmParam(entity?.id, String(name ?? ""), value);
   },
-  getFsmParam(entity, name) {
+  getFsmParam(entity: Entity, name: string): number | boolean | undefined {
     return host()?.getFsmParam(entity?.id, String(name ?? ""));
   },
   /** 强制切换状态（stateId 或状态名；未知忽略） */
-  forceFsmState(entity, stateId) {
+  forceFsmState(entity: Entity, stateId: string): void {
     host()?.forceState(entity?.id, String(stateId ?? ""));
   },
   /** 订阅状态进入（match = 状态 id/名，空 = 任意；返回解绑函数） */
-  onFsmEnter(entity, match, cb) {
+  onFsmEnter(entity: Entity, match: string, cb: (state: LogicStateInfo) => void): () => void {
     return host()?.onFsmEnter(entity?.id, String(match ?? ""), cb) ?? (() => {});
   },
   /** 订阅状态退出（参数同 onFsmEnter） */
-  onFsmExit(entity, match, cb) {
+  onFsmExit(entity: Entity, match: string, cb: (state: LogicStateInfo) => void): () => void {
     return host()?.onFsmExit(entity?.id, String(match ?? ""), cb) ?? (() => {});
   },
   /** 订阅任意过渡（cb(from, to)；返回解绑函数） */
-  onFsmTransition(entity, cb) {
+  onFsmTransition(
+    entity: Entity,
+    cb: (from: LogicStateInfo, to: LogicStateInfo) => void,
+  ): () => void {
     return host()?.onFsmTransition(entity?.id, cb) ?? (() => {});
   },
 
   // —— 行为树 ——
   /** 行为树整树最近一次 tick 结果（"success" | "failure" | "running" | null） */
-  btStatus(entity) {
+  btStatus(entity: Entity): string | null {
     return host()?.btStatusOf(entity?.id) ?? null;
   },
-  setBtParam(entity, name, value) {
+  setBtParam(entity: Entity, name: string, value: number | boolean): void {
     host()?.setBtParam(entity?.id, String(name ?? ""), value);
   },
-  getBtParam(entity, name) {
+  getBtParam(entity: Entity, name: string): number | boolean | undefined {
     return host()?.getBtParam(entity?.id, String(name ?? ""));
   },
   /**
@@ -67,17 +65,17 @@ const logicApi = {
    * session.seq 在动作被重启（上一帧 running、本帧未被求值）时自增，
    * 有状态的动作据此复位自身状态。
    */
-  onAction(entity, name, handler) {
+  onAction(entity: Entity, name: string, handler: BtActionHandler): () => void {
     return host()?.onAction(entity?.id, String(name ?? ""), handler) ?? (() => {});
   },
 
   // —— 通用 ——
   /** 运行开关（暂停/恢复该实体上的运行器；恢复时未启动则从入口开始） */
-  setRunning(entity, running) {
+  setRunning(entity: Entity, running: boolean): void {
     host()?.setRunning(entity?.id, running !== false);
   },
   /** 重启（状态回入口/黑板回默认/清运行记忆） */
-  restart(entity) {
+  restart(entity: Entity): void {
     host()?.restart(entity?.id);
   },
 };

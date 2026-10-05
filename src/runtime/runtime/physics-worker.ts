@@ -102,7 +102,9 @@ self.onmessage = async (e: MessageEvent) => {
         const { nodes, terrains, settings } = msg;
         const proxyNodes = buildProxyTree(nodes);
         allNodes = proxyNodes;
-        api = (await createPhysics({ nodes: proxyNodes, terrains, settings })) as PhysicsApiView;
+        // createPhysics 现已类型化（physics.ts PhysicsApi）；worker 只消费记录视图，
+        // RaycastOptions 与 Record 入参不可直接比较 → 经 unknown 双重断言
+        api = (await createPhysics({ nodes: proxyNodes, terrains, settings })) as unknown as PhysicsApiView;
         const bodyInfos: Record<string, PhysicsBodyInfo> = {};
         for (const { nodeId } of proxyNodes) {
           const info = api.bodyInfo(nodeId);

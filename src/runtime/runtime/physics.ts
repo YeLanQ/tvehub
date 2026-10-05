@@ -16,6 +16,238 @@
 
 import * as THREE from "../core/three.module.min.js";
 import { postLog } from "../core/log";
+import type { NodeJson } from "./node-json";
+import type { SceneNodeEntry } from "./nodes";
+
+// ---------------------------------------------------------------------------
+// 类型（JSON 宽松视图 + 组件收敛 + 后端控制面 + Worker 协议）
+// ---------------------------------------------------------------------------
+
+/** JSON 来源的宽松对象（索引签名放行未知键） */
+type UnknownRec = Record<string, unknown>;
+
+/** 物理三维向量（纯数据；跨后端/Worker 边界传输） */
+interface PhysVec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** 物理四元数（纯数据） */
+interface PhysQuat {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
+/** 刚体设置（parseRigidBody 收敛结果） */
+interface RigidBodySettings {
+  mode: "static" | "kinematic" | "dynamic";
+  mass: number;
+  linearDamping: number;
+  angularDamping: number;
+  gravityScale: number;
+  ccd: boolean;
+  lockRotation: boolean;
+  upright: boolean;
+}
+
+/** 碰撞体设置（parseCollider 收敛结果） */
+interface ColliderSettings {
+  shape: "box" | "sphere" | "capsule" | "cylinder" | "convex" | "heightfield";
+  autoSize: boolean;
+  size: PhysVec3;
+  offset: PhysVec3;
+  friction: number;
+  restitution: number;
+  isSensor: boolean;
+  /** heightfield 采样档（0 = 自动对齐地形网格密度） */
+  resolution: number;
+}
+
+/** 地形烘焙高度网格（heightfield 碰撞消费；SceneTerrainEntry.data 由 createTerrain 产出） */
+interface TerrainGridData {
+  heights: Float32Array;
+  gridSize: number;
+  size: number;
+}
+
+/** 碰撞形状描述（colliderDescFor 产物；各后端 buildShape 消费） */
+interface ColliderDesc {
+  shape: ColliderSettings["shape"];
+  halfExtents: PhysVec3;
+  radius: number;
+  halfHeight: number;
+  /** convex 采样点分量数组（x,y,z 扁平；世界缩放已烘入） */
+  points: number[];
+  /** heightfield 高度采样（行主序 [z][x]）；非 heightfield 为 null */
+  heights: Float32Array | null;
+  samples: number;
+  terrainSizeX: number;
+  terrainSizeZ: number;
+  minHeight: number;
+  maxHeight: number;
+  offset: PhysVec3;
+  friction: number;
+  restitution: number;
+  isSensor: boolean;
+}
+
+/** 建体描述（world.createBody 消费） */
+interface BodyDesc {
+  nodeId: string;
+  mode: "static" | "kinematic" | "dynamic";
+  position: PhysVec3;
+  quaternion: PhysQuat;
+  colliders: ColliderDesc[];
+  mass: number;
+  linearDamping: number;
+  angularDamping: number;
+  gravityScale: number;
+  ccd: boolean;
+  lockRotation: boolean;
+  upright: boolean;
+}
+
+/** 刚体句柄（world.createBody 返回；api 经节点 id 寻址调用） */
+interface BodyHandle {
+  nodeId: string;
+  setMode(mode: "static" | "kinematic" | "dynamic"): void;
+  setKinematicTarget(p: PhysVec3, q: PhysQuat): void;
+  setTransform(p: PhysVec3, q: PhysQuat): void;
+  readTransform(): { position: PhysVec3; quaternion: PhysQuat } | null;
+  setMass(mass: number): void;
+  setDamping(l: number, a: number): void;
+  setGravityScale(s: number): void;
+  setCcd(on: boolean): void;
+  applyImpulse(v: PhysVec3): void;
+  applyForce(v: PhysVec3): void;
+  setLinearVelocity(v: PhysVec3): void;
+  setAngularVelocity(v: PhysVec3): void;
+  getLinearVelocity(): PhysVec3 | null;
+  wakeUp(): void;
+  /** 后端原生体（后端内部销毁/索引用；跨句柄边界为 unknown） */
+  raw: unknown;
+}
+
+/** 碰撞事件（节点 id 对 + 开始/结束） */
+interface CollisionEvent {
+  a: string;
+  b: string;
+  started: boolean;
+}
+
+/** 射线投射命中 */
+interface RayHit {
+  nodeId: string;
+  point: PhysVec3;
+  normal: PhysVec3;
+  distance: number;
+}
+
+/** 射线投射选项 */
+interface RaycastOptions {
+  origin: PhysVec3;
+  direction: PhysVec3;
+  maxDistance?: number;
+  excludeNodeIds?: string[];
+}
+
+/** 后端世界（loadXxx().createWorld 产物；三后端同构控制面） */
+interface PhysicsWorld {
+  setGravity(g: PhysVec3): void;
+  createBody(desc: BodyDesc): BodyHandle | null;
+  destroyBody(b: BodyHandle): void;
+  step(dt: number): void;
+  takeCollisionEvents(): CollisionEvent[];
+  castRay(options: RaycastOptions): RayHit[];
+  dispose(): void;
+}
+
+/** 后端加载器（动态 import 的 wasm 胶水工厂） */
+type PhysicsBackendLoader = () => Promise<{ createWorld(gravity: PhysVec3): PhysicsWorld }>;
+type PhysicsBackendId = "rapier" | "jolt" | "ammo";
+
+/** 节点物理体信息（bodyInfo 返回；getComponent("rigidBody") 门面数据源） */
+interface BodyInfo {
+  mode: string;
+  gravityScale: number;
+  colliderCount: number;
+}
+
+/** 运动学目标位姿（setKinematicTarget 缓存；step 时消费） */
+interface KinematicTarget {
+  p: PhysVec3;
+  q: PhysQuat;
+}
+
+/** 物理控制面（未启用/未就绪时安全空转；worker 模式同接口 + dispose） */
+interface PhysicsApi {
+  /** 运行线程标识（调试面板/回退告警消费） */
+  workerMode: boolean;
+  /** 每帧推进（渲染循环调用） */
+  update(dt: number): void;
+  setGravity(x: number, y: number, z: number): void;
+  applyImpulse(nodeId: string, x: number, y: number, z: number): void;
+  applyForce(nodeId: string, x: number, y: number, z: number): void;
+  setLinearVelocity(nodeId: string, x: number, y: number, z: number): void;
+  setAngularVelocity(nodeId: string, x: number, y: number, z: number): void;
+  getLinearVelocity(nodeId: string): PhysVec3 | null;
+  bodyInfo(nodeId: string): BodyInfo | null;
+  setGravityScale(nodeId: string, scale: number): void;
+  wakeUp(nodeId: string): void;
+  /** 射线投射（worker 模式异步；主线程同步） */
+  castRay(options: RaycastOptions): RayHit[] | Promise<RayHit[]>;
+  /** 碰撞事件排空（脚本宿主每帧调用） */
+  drainCollisions(): CollisionEvent[];
+  /** 仅 worker 代理提供（终止线程） */
+  dispose?(): void;
+}
+
+/** scene.settings.physics JSON（backend/gravity/physicsEnabled） */
+interface ScenePhysicsSettingsJson {
+  backend?: unknown;
+  physicsEnabled?: unknown;
+  gravity?: { x?: unknown; y?: unknown; z?: unknown };
+  [key: string]: unknown;
+}
+
+/** 物理绑定节点输入（player 传 SceneNodeEntry；worker 代理节点多带 nodeId 字段） */
+type PhysNodeInput = SceneNodeEntry & { nodeId?: string };
+
+/** 地形条目输入（player 传 SceneTerrainEntry；worker 只传高度场纯数据） */
+interface TerrainInput {
+  json?: { id?: unknown; [key: string]: unknown } | null;
+  data?: unknown;
+}
+
+/** createPhysics 入参 */
+interface CreatePhysicsOptions {
+  /** buildSceneTree 的全节点注册表 */
+  nodes: ReadonlyArray<PhysNodeInput>;
+  /** buildSceneTree 的地形节点收集（heightfield 碰撞读取烘焙高度网格） */
+  terrains?: ReadonlyArray<TerrainInput>;
+  /** scene.settings.physics */
+  settings?: ScenePhysicsSettingsJson | Record<string, unknown> | null;
+}
+
+/** 节点物理绑定（组件解析产物 + 后端体句柄 + 动力学插值位姿缓存） */
+interface PhysicsBinding {
+  nodeId: string | undefined;
+  obj: THREE.Object3D;
+  rb: RigidBodySettings | null;
+  colliders: { id: unknown; settings: ColliderSettings }[];
+  /** 节点对应的烘焙高度网格（heightfield 消费；无地形为 null） */
+  terrain: unknown;
+  body: BodyHandle | null;
+  /** 动力学体帧间插值缓存（与 hasPose 同帧赋值） */
+  prevPos?: THREE.Vector3;
+  prevQuat?: THREE.Quaternion;
+  currPos?: THREE.Vector3;
+  currQuat?: THREE.Quaternion;
+  hasPose?: boolean;
+}
 
 /** 固定模拟步长（秒）与每帧最大子步数（与编辑器一致） */
 const FIXED_DT = 1 / 60;
@@ -25,15 +257,15 @@ const MAX_SUBSTEPS = 4;
 // 设置收敛（与 framework/physics/types.ts 同规则）
 // ---------------------------------------------------------------------------
 
-function num(v, fb) {
+function num(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
-function clamp(v, lo, hi) {
+function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function parseRigidBody(v) {
-  const o = v && typeof v === "object" ? v : {};
+function parseRigidBody(v: unknown): RigidBodySettings {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // 组件 JSON 宽松对象，逐字段收敛
   const mode = typeof o.mode === "string" ? o.mode : "dynamic";
   return {
     mode: mode === "static" || mode === "kinematic" || mode === "dynamic" ? mode : "dynamic",
@@ -52,10 +284,10 @@ function parseRigidBody(v) {
 const HF_RESOLUTIONS = [64, 128, 256, 512];
 const HF_DEFAULT_RESOLUTION = 0; // 0 = 自动（对齐地形网格密度）
 
-function snapHeightfieldResolution(v) {
+function snapHeightfieldResolution(v: unknown): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : HF_DEFAULT_RESOLUTION;
   if (n <= 0) return 0;
-  let best = HF_RESOLUTIONS[0];
+  let best: number = HF_RESOLUTIONS[0];
   for (const r of HF_RESOLUTIONS) {
     if (Math.abs(r - n) < Math.abs(best - n)) best = r;
   }
@@ -63,7 +295,7 @@ function snapHeightfieldResolution(v) {
 }
 
 /** 自动档解析：采样数 ≥ 地形网格单元格数的最小可用档（与编辑器同规则） */
-function resolveHeightfieldSamples(resolution, gridN) {
+function resolveHeightfieldSamples(resolution: number, gridN: number): number {
   if (resolution > 0) return resolution;
   const want = Math.max(2, Math.min(HF_RESOLUTIONS[HF_RESOLUTIONS.length - 1], gridN - 1));
   for (const r of HF_RESOLUTIONS) {
@@ -72,13 +304,14 @@ function resolveHeightfieldSamples(resolution, gridN) {
   return HF_RESOLUTIONS[HF_RESOLUTIONS.length - 1];
 }
 
-function parseCollider(v) {
-  const o = v && typeof v === "object" ? v : {};
+function parseCollider(v: unknown): ColliderSettings {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // 组件 JSON 宽松对象，逐字段收敛
   const shape = typeof o.shape === "string" ? o.shape : "box";
-  const sz = o.size && typeof o.size === "object" ? o.size : {};
-  const off = o.offset && typeof o.offset === "object" ? o.offset : {};
+  const sz = (o.size && typeof o.size === "object" ? o.size : {}) as UnknownRec;
+  const off = (o.offset && typeof o.offset === "object" ? o.offset : {}) as UnknownRec;
   return {
-    shape: ["box", "sphere", "capsule", "cylinder", "convex", "heightfield"].includes(shape) ? shape : "box",
+    // 与 ["box","sphere","capsule","cylinder","convex","heightfield"].includes(shape) 同语义（类型面收窄）
+    shape: shape === "box" || shape === "sphere" || shape === "capsule" || shape === "cylinder" || shape === "convex" || shape === "heightfield" ? shape : "box",
     autoSize: o.autoSize !== false,
     size: { x: num(sz.x, 1), y: num(sz.y, 1), z: num(sz.z, 1) },
     offset: { x: num(off.x, 0), y: num(off.y, 0), z: num(off.z, 0) },
@@ -93,21 +326,23 @@ function parseCollider(v) {
 // 碰撞形状推导（对象局部包围盒 + 世界缩放烘入尺寸；与编辑器同规则）
 // ---------------------------------------------------------------------------
 
-function computeLocalBounds(obj) {
+function computeLocalBounds(obj: THREE.Object3D): { center: PhysVec3; half: PhysVec3; points: number[] } | null {
   obj.updateWorldMatrix(true, true);
   const box = new THREE.Box3().makeEmpty();
   const objInv = new THREE.Matrix4().copy(obj.matrixWorld).invert();
   const childMat = new THREE.Matrix4();
-  let firstMesh = null;
-  let sampleAttr = null;
+  let firstMesh: THREE.Mesh | null = null;
+  let sampleAttr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute | null = null;
   obj.traverse((child) => {
-    if (!child.isMesh || !child.geometry) return;
-    childMat.copy(child.matrixWorld).premultiply(objInv);
-    const geo = child.geometry;
+    // 类型库只在 Mesh 声明 isMesh 标志（结构断言；非网格子对象保持原样跳过）
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    childMat.copy(mesh.matrixWorld).premultiply(objInv);
+    const geo = mesh.geometry;
     geo.computeBoundingBox();
     if (geo.boundingBox) box.union(geo.boundingBox.clone().applyMatrix4(childMat));
     if (!firstMesh) {
-      firstMesh = child;
+      firstMesh = mesh;
       sampleAttr = geo.getAttribute("position") ?? null;
     }
   });
@@ -122,13 +357,15 @@ function computeLocalBounds(obj) {
     y: Math.max(0.05, (box.max.y - box.min.y) / 2),
     z: Math.max(0.05, (box.max.z - box.min.z) / 2),
   };
-  const points = [];
-  if (sampleAttr) {
-    const count = sampleAttr.count;
+  const points: number[] = [];
+  // traverse 回调内的赋值不参与外层控制流分析 → 显式收窄（getAttribute 产物）
+  const attr = sampleAttr as THREE.BufferAttribute | THREE.InterleavedBufferAttribute | null;
+  if (attr) {
+    const count = attr.count;
     const step = Math.max(1, Math.floor(count / 64));
     const v = new THREE.Vector3();
     for (let i = 0; i < count && points.length < 64 * 3; i += step) {
-      v.fromBufferAttribute(sampleAttr, i).applyMatrix4(childMat);
+      v.fromBufferAttribute(attr, i).applyMatrix4(childMat);
       points.push(v.x, v.y, v.z);
     }
   }
@@ -139,7 +376,7 @@ function computeLocalBounds(obj) {
  * 高度网格下采样（碰撞 LOD；与编辑器 colliderShape.ts 同规则）：最近邻取点，
  * 输出每个采样都是源网格的真实烘焙高度。src 行主序 [iz*srcN + ix]。
  */
-function downsampleHeightfield(src, srcN, samples, scaleY) {
+function downsampleHeightfield(src: Float32Array, srcN: number, samples: number, scaleY: number): Float32Array {
   const out = new Float32Array(samples * samples);
   const last = srcN - 1;
   for (let iz = 0; iz < samples; iz++) {
@@ -160,14 +397,14 @@ let hfFallbackWarned = false;
  * terrainGrid：该节点的烘焙地形网格（{ heights, gridSize, size }，来自
  * buildSceneTree 的 terrains 收集），heightfield 形状需要；无数据回退盒形。
  */
-function colliderDescFor(col, obj, terrainGrid) {
+function colliderDescFor(col: ColliderSettings, obj: THREE.Object3D, terrainGrid: TerrainGridData | null): ColliderDesc {
   const s = col;
   const ws = obj.getWorldScale(new THREE.Vector3());
   const sx = Math.abs(ws.x) || 1;
   const sy = Math.abs(ws.y) || 1;
   const sz = Math.abs(ws.z) || 1;
   if (s.shape === "heightfield") {
-    const desc = {
+    const desc: ColliderDesc = {
       shape: "heightfield",
       halfExtents: { x: 0.5, y: 0.5, z: 0.5 },
       radius: 0.5,
@@ -208,9 +445,9 @@ function colliderDescFor(col, obj, terrainGrid) {
     desc.maxHeight = max;
     return desc;
   }
-  let half = { x: 0.5, y: 0.5, z: 0.5 };
-  let center = { x: 0, y: 0, z: 0 };
-  let points = [];
+  let half: PhysVec3 = { x: 0.5, y: 0.5, z: 0.5 };
+  let center: PhysVec3 = { x: 0, y: 0, z: 0 };
+  let points: number[] = [];
   if (s.autoSize) {
     const b = computeLocalBounds(obj);
     if (b) {
@@ -226,7 +463,7 @@ function colliderDescFor(col, obj, terrainGrid) {
     }
   }
   const uniform = (sx + sy + sz) / 3;
-  const desc = {
+  const desc: ColliderDesc = {
     shape: s.shape,
     halfExtents: { x: Math.max(0.001, half.x * sx), y: Math.max(0.001, half.y * sy), z: Math.max(0.001, half.z * sz) },
     radius: Math.max(0.001, Math.max(half.x * sx, half.z * sz, s.shape === "sphere" ? half.y * sy : 0.001)),
@@ -261,7 +498,7 @@ function colliderDescFor(col, obj, terrainGrid) {
       break;
     case "convex": {
       if (points.length) {
-        const scaled = new Array(points.length);
+        const scaled: number[] = new Array(points.length);
         for (let i = 0; i + 2 < points.length; i += 3) {
           scaled[i] = points[i] * sx;
           scaled[i + 1] = points[i + 1] * sy;
@@ -281,22 +518,135 @@ function colliderDescFor(col, obj, terrainGrid) {
 // 后端适配器（工厂模式：rapier | jolt | ammo，与编辑器适配器同构）
 // ---------------------------------------------------------------------------
 
-async function loadRapier() {
+// —— rapier wasm 胶水最小消费面（真实类型由动态 import 的 rapier.mjs 提供，
+//    结构接口只声明本文件用到的成员）——
+
+/** rapier 碰撞体描述构造器（链式配置） */
+interface RapierColliderDesc {
+  setTranslation(x: number, y: number, z: number): RapierColliderDesc;
+  setFriction(f: number): RapierColliderDesc;
+  setRestitution(r: number): RapierColliderDesc;
+  setSensor(s: boolean): RapierColliderDesc;
+  setActiveEvents(e: number): RapierColliderDesc;
+}
+
+/** rapier 刚体描述构造器（链式配置） */
+interface RapierBodyDesc {
+  setTranslation(x: number, y: number, z: number): RapierBodyDesc;
+  setRotation(q: PhysQuat): RapierBodyDesc;
+  setLinearDamping(d: number): RapierBodyDesc;
+  setAngularDamping(d: number): RapierBodyDesc;
+  setGravityScale(s: number): RapierBodyDesc;
+  setCcdEnabled(b: boolean): RapierBodyDesc;
+}
+
+interface RapierBody {
+  lockRotations(lock: boolean, wakeUp: boolean): void;
+  restrictRotations(x: boolean, y: boolean, z: boolean, wakeUp: boolean): void;
+  setBodyType(type: number, wakeUp: boolean): void;
+  setNextKinematicTranslation(p: PhysVec3): void;
+  setNextKinematicRotation(q: PhysQuat): void;
+  setTranslation(p: PhysVec3, wakeUp: boolean): void;
+  setRotation(q: PhysQuat, wakeUp: boolean): void;
+  isValid(): boolean;
+  translation(): PhysVec3;
+  rotation(): PhysQuat;
+  numColliders(): number;
+  collider(i: number): RapierCollider | null;
+  setLinearDamping(d: number): void;
+  setAngularDamping(d: number): void;
+  setGravityScale(s: number): void;
+  wakeUp(): void;
+  enableCcd(on: boolean): void;
+  applyImpulse(v: PhysVec3, wakeUp: boolean): void;
+  addForce(v: PhysVec3, wakeUp: boolean): void;
+  setLinvel(v: PhysVec3, wakeUp: boolean): void;
+  setAngvel(v: PhysVec3, wakeUp: boolean): void;
+  linvel(): PhysVec3;
+}
+
+interface RapierCollider {
+  /** 碰撞体句柄（碰撞事件 → 节点 id 映射键） */
+  handle: number;
+  setMass(m: number): void;
+}
+
+interface RapierEventQueue {
+  drainCollisionEvents(handler: (h1: number, h2: number, started: boolean) => void): void;
+}
+
+interface RapierRay {
+  pointAt(t: number): PhysVec3;
+}
+
+interface RapierRayHit {
+  collider: RapierCollider;
+  timeOfImpact: number;
+  normal: PhysVec3;
+}
+
+interface RapierWorld {
+  gravity: PhysVec3;
+  timestep: number;
+  createRigidBody(desc: RapierBodyDesc): RapierBody;
+  removeRigidBody(b: RapierBody): void;
+  createCollider(desc: RapierColliderDesc, body: RapierBody): RapierCollider;
+  step(eventQueue: RapierEventQueue): void;
+  /** 末位谓词过滤（本文件只传谓词，其余过滤参数透传 undefined） */
+  castRayAndGetNormal(
+    ray: RapierRay,
+    maxToi: number,
+    solid: boolean,
+    filterFlags?: undefined,
+    filterGroups?: undefined,
+    filterExcludeCollider?: undefined,
+    filterExcludeRigidBody?: undefined,
+    filterPredicate?: (collider: RapierCollider) => boolean,
+  ): RapierRayHit | null;
+  free(): void;
+}
+
+/** rapier wasm 胶水（./physics-engines/rapier.mjs default 导出）最小消费面 */
+interface RapierAPI {
+  init(): Promise<void>;
+  World: new (gravity: { x: number; y: number; z: number }) => RapierWorld;
+  EventQueue: new (autoDrain: boolean) => RapierEventQueue;
+  ColliderDesc: {
+    ball(radius: number): RapierColliderDesc;
+    capsule(halfHeight: number, radius: number): RapierColliderDesc;
+    cylinder(halfHeight: number, radius: number): RapierColliderDesc;
+    /** 返回 null = 凸包构建失败（点数不足/退化） */
+    convexHull(points: Float32Array): RapierColliderDesc | null;
+    cuboid(hx: number, hy: number, hz: number): RapierColliderDesc;
+    heightfield(nrows: number, ncols: number, heights: Float32Array, scale: PhysVec3): RapierColliderDesc;
+  };
+  RigidBodyDesc: {
+    fixed(): RapierBodyDesc;
+    kinematicPositionBased(): RapierBodyDesc;
+    dynamic(): RapierBodyDesc;
+  };
+  RigidBodyType: { Fixed: number; KinematicPositionBased: number; Dynamic: number };
+  ActiveEvents: { COLLISION_EVENTS: number };
+  Ray: new (origin: PhysVec3, dir: PhysVec3) => RapierRay;
+}
+
+async function loadRapier(): Promise<{ createWorld(gravity: PhysVec3): PhysicsWorld }> {
   // 字面量说明符：单页构建经 build.rs 重写为 import map 裸说明符（勿改成运行时拼 URL）
+  // @ts-expect-error wasm 胶水为 src/runtime/extra 下的无类型 .mjs（构建期并入产物）
   const mod = await import("./physics-engines/rapier.mjs");
-  const R = mod.default;
+  const R = mod.default as RapierAPI; // 胶水 default 导出 = rapier 初始化器
   await R.init();
   return {
-    createWorld(gravity) {
+    createWorld(gravity: PhysVec3): PhysicsWorld {
       const world = new R.World({ x: gravity.x, y: gravity.y, z: gravity.z });
-      const bodies = new Set();
+      const bodies = new Set<RapierBody>();
       // 碰撞事件收集（rapier EventQueue；句柄 → 节点 id 在 createBody 登记）
       const eventQueue = new R.EventQueue(true);
-      const colliderNodes = new Map();
-      const pendingCollisions = [];
+      const colliderNodes = new Map<number, string>();
+      const pendingCollisions: CollisionEvent[] = [];
       // broadphase 是否已随 step 建树（建体后从未 step 时射线查询树为空）
       let steppedOnce = false;
-      const shapeOf = (col) => {
+      const shapeOf = (col: ColliderDesc): RapierColliderDesc => {
         switch (col.shape) {
           case "sphere":
             return R.ColliderDesc.ball(col.radius);
@@ -337,10 +687,10 @@ async function loadRapier() {
         }
       };
       return {
-        setGravity(g) {
+        setGravity(g: PhysVec3): void {
           world.gravity = { x: g.x, y: g.y, z: g.z };
         },
-        createBody(desc) {
+        createBody(desc: BodyDesc): BodyHandle {
           const bd =
             desc.mode === "static"
               ? R.RigidBodyDesc.fixed()
@@ -372,7 +722,7 @@ async function loadRapier() {
           bodies.add(body);
           return {
             nodeId: desc.nodeId,
-            setMode(mode) {
+            setMode(mode: "static" | "kinematic" | "dynamic"): void {
               body.setBodyType(
                 mode === "static"
                   ? R.RigidBodyType.Fixed
@@ -382,72 +732,72 @@ async function loadRapier() {
                 true,
               );
             },
-            setKinematicTarget(p, q) {
+            setKinematicTarget(p: PhysVec3, q: PhysQuat): void {
               body.setNextKinematicTranslation(p);
               body.setNextKinematicRotation(q);
             },
-            setTransform(p, q) {
+            setTransform(p: PhysVec3, q: PhysQuat): void {
               body.setTranslation(p, true);
               body.setRotation(q, true);
             },
-            readTransform() {
+            readTransform(): { position: PhysVec3; quaternion: PhysQuat } | null {
               if (!body.isValid()) return null;
               const t = body.translation();
               const r = body.rotation();
               return { position: t, quaternion: r };
             },
-            setMass(mass) {
+            setMass(mass: number): void {
               const count = Math.max(1, body.numColliders());
               for (let i = 0; i < count; i++) body.collider(i)?.setMass(Math.max(0.001, mass) / count);
             },
-            setDamping(l, a) {
+            setDamping(l: number, a: number): void {
               body.setLinearDamping(l);
               body.setAngularDamping(a);
             },
-            setGravityScale(s) {
+            setGravityScale(s: number): void {
               body.setGravityScale(s);
               // 缩放 0 的静止体会被睡眠：改系数后必须显式唤醒
               //（setGravityScale 的 wake 标志实测唤不醒已睡眠体）
               body.wakeUp();
             },
-            setCcd(on) {
+            setCcd(on: boolean): void {
               body.enableCcd(on);
             },
-            applyImpulse(v) {
+            applyImpulse(v: PhysVec3): void {
               body.applyImpulse(v, true);
             },
-            applyForce(v) {
+            applyForce(v: PhysVec3): void {
               body.addForce(v, true);
             },
-            setLinearVelocity(v) {
+            setLinearVelocity(v: PhysVec3): void {
               body.setLinvel(v, true);
             },
-            setAngularVelocity(v) {
+            setAngularVelocity(v: PhysVec3): void {
               body.setAngvel(v, true);
             },
-            getLinearVelocity() {
+            getLinearVelocity(): PhysVec3 | null {
               return body.isValid() ? body.linvel() : null;
             },
-            wakeUp() {
+            wakeUp(): void {
               body.wakeUp();
             },
             raw: body,
           };
         },
-        destroyBody(b) {
-          const raw = b.raw;
+        destroyBody(b: BodyHandle): void {
+          const raw = b.raw as RapierBody; // createBody 登记进 bodies 的原生刚体
           if (!bodies.has(raw)) return;
           bodies.delete(raw);
           world.removeRigidBody(raw);
         },
-        step(dt) {
+        step(dt: number): void {
           world.timestep = Math.max(0.0001, dt);
           world.step(eventQueue);
           steppedOnce = true;
           // 碰撞开始/结束事件 → 节点 id 对（同一批次内按 a|b|started 去重，
           // 复合形状多对碰撞体同帧只报一次）
-          const seen = new Set();
-          eventQueue.drainCollisionEvents((h1, h2, started) => {
+          const seen = new Set<string>();
+          eventQueue.drainCollisionEvents((h1: number, h2: number, started: boolean): void => {
             const a = colliderNodes.get(h1);
             const b = colliderNodes.get(h2);
             if (a === undefined || b === undefined) return;
@@ -457,10 +807,10 @@ async function loadRapier() {
             pendingCollisions.push({ a, b, started: started === true });
           });
         },
-        takeCollisionEvents() {
+        takeCollisionEvents(): CollisionEvent[] {
           return pendingCollisions.splice(0);
         },
-        castRay(options) {
+        castRay(options: RaycastOptions): RayHit[] {
           const dir = options.direction;
           const dirLen = Math.hypot(dir.x, dir.y, dir.z);
           if (dirLen < 1e-9) return [];
@@ -480,7 +830,7 @@ async function loadRapier() {
             { x: options.origin.x, y: options.origin.y, z: options.origin.z },
             { x: dir.x, y: dir.y, z: dir.z },
           );
-          const filterPredicate = (collider) => {
+          const filterPredicate = (collider: RapierCollider): boolean => {
             const nodeId = colliderNodes.get(collider.handle);
             return nodeId !== undefined && !exclude.has(nodeId);
           };
@@ -496,7 +846,7 @@ async function loadRapier() {
             distance: hit.timeOfImpact * dirLen,
           }];
         },
-        dispose() {
+        dispose(): void {
           world.free();
         },
       };
@@ -504,14 +854,201 @@ async function loadRapier() {
   };
 }
 
-async function loadJolt() {
+// —— jolt wasm 胶水最小消费面（真实类型由动态 import 的 jolt.mjs 提供，
+//    结构接口只声明本文件用到的成员；emscripten 枚举常量按 number 消费）——
+
+interface JoltVec3 {
+  Set(x: number, y: number, z: number): void;
+  GetX(): number;
+  GetY(): number;
+  GetZ(): number;
+}
+
+interface JoltQuat {
+  GetX(): number;
+  GetY(): number;
+  GetZ(): number;
+  GetW(): number;
+}
+
+interface JoltBodyID {
+  GetIndex(): number;
+}
+
+/** wasm 侧不透明形状对象 */
+type JoltShape = unknown;
+
+interface JoltShapeResult {
+  IsValid(): boolean;
+  Get(): JoltShape;
+}
+
+interface JoltArrayFloat {
+  reserve(n: number): void;
+  push_back(v: number): void;
+}
+
+interface JoltMotionProperties {
+  SetInverseMass(m: number): void;
+  SetLinearDamping(d: number): void;
+  SetAngularDamping(d: number): void;
+  SetGravityFactor(f: number): void;
+}
+
+interface JoltTransformedShape {
+  CastRay(ray: JoltRRayCast, result: JoltRayCastResult): void;
+  GetWorldSpaceSurfaceNormal(subShapeID: unknown, point: JoltVec3): JoltVec3;
+}
+
+interface JoltBody {
+  GetID(): JoltBodyID;
+  GetPosition(): JoltVec3;
+  GetRotation(): JoltQuat;
+  SetFriction(f: number): void;
+  SetRestitution(r: number): void;
+  GetMotionProperties(): JoltMotionProperties | null;
+  SetIsSensor(b: boolean): void;
+  AddImpulse(v: JoltVec3): void;
+  AddForce(v: JoltVec3): void;
+  SetLinearVelocity(v: JoltVec3): void;
+  SetAngularVelocity(v: JoltVec3): void;
+  GetLinearVelocity(): JoltVec3;
+  GetTransformedShape(): JoltTransformedShape;
+}
+
+interface JoltBodyInterface {
+  CreateBody(settings: JoltBodyCreationSettings): JoltBody | null;
+  AddBody(id: JoltBodyID, activation: number): void;
+  RemoveBody(id: JoltBodyID): void;
+  DestroyBody(id: JoltBodyID): void;
+  SetMotionType(id: JoltBodyID, motionType: number, activation: number): void;
+  SetPosition(id: JoltBodyID, p: JoltVec3, activation: number): void;
+  SetRotation(id: JoltBodyID, q: JoltQuat, activation: number): void;
+  SetMotionQuality(id: JoltBodyID, quality: number): void;
+  ActivateBody(id: JoltBodyID): void;
+  MoveKinematic(id: JoltBodyID, p: JoltVec3, q: JoltQuat, dt: number): void;
+}
+
+interface JoltPhysicsSystem {
+  GetBodyInterface(): JoltBodyInterface;
+  SetGravity(v: JoltVec3): void;
+  SetContactListener(listener: JoltContactListener): void;
+}
+
+interface JoltJoltInterface {
+  GetPhysicsSystem(): JoltPhysicsSystem;
+  Step(dt: number, substeps: number): void;
+}
+
+interface JoltSettings {
+  mMaxWorkerThreads: number;
+  mObjectLayerPairFilter: unknown;
+  mBroadPhaseLayerInterface: unknown;
+  mObjectVsBroadPhaseLayerFilter: unknown;
+}
+
+interface JoltContactSettings {
+  mCombinedRestitution: number;
+}
+
+interface JoltSubShapeIDPair {
+  GetBody1ID(): JoltBodyID;
+  GetBody2ID(): JoltBodyID;
+}
+
+/** 接触回调入参（本 wasm 构建传裸指针或 JSImplementation 对象 → bodyIdOf 收敛） */
+type JoltContactArg = unknown;
+
+interface JoltContactListener {
+  OnContactValidate: () => number;
+  OnContactAdded: (b1: JoltContactArg, b2: JoltContactArg) => void;
+  OnContactPersisted: (b1: JoltContactArg, b2: JoltContactArg, manifold: JoltContactArg, settings: JoltContactArg) => void;
+  OnContactRemoved: (pair: JoltContactArg) => void;
+}
+
+interface JoltRRayCast {
+  mOrigin: JoltVec3;
+  mDirection: JoltVec3;
+  GetPointOnRay(fraction: number): JoltVec3;
+}
+
+interface JoltRayCastResult {
+  mFraction: number;
+  mSubShapeID2: unknown;
+}
+
+interface JoltBodyCreationSettings {
+  mAllowedDOFs: number;
+}
+
+/** jolt wasm 胶水（./physics-engines/jolt.mjs default 工厂产物）最小消费面 */
+interface JoltAPI {
+  JoltSettings: new () => JoltSettings;
+  ObjectLayerPairFilterTable: new (numLayers: number) => { EnableCollision(a: number, b: number): void };
+  BroadPhaseLayerInterfaceTable: new (numObjectLayers: number, numBpLayers: number) => {
+    MapObjectToBroadPhaseLayer(layer: number, bpLayer: unknown): void;
+  };
+  BroadPhaseLayer: new (index: number) => unknown;
+  ObjectVsBroadPhaseLayerFilterTable: new (bpInterface: unknown, numBpLayers: number, objectFilter: unknown, numLayers: number) => unknown;
+  JoltInterface: new (settings: JoltSettings) => JoltJoltInterface;
+  Vec3: new (x: number, y: number, z: number) => JoltVec3;
+  RVec3: new (x: number, y: number, z: number) => JoltVec3;
+  Quat: new (x: number, y: number, z: number, w: number) => JoltQuat;
+  ContactListenerJS: new () => JoltContactListener;
+  /** wrapPointer 类标记（Body/ContactSettings/SubShapeIDPair 仅作还原目标） */
+  Body: unknown;
+  ContactSettings: unknown;
+  SubShapeIDPair: unknown;
+  wrapPointer(ptr: number, klass: unknown): unknown;
+  SphereShape: new (radius: number) => JoltShape;
+  CapsuleShape: new (halfHeight: number, radius: number) => JoltShape;
+  CylinderShape: new (halfHeight: number, radius: number, tolerance: number) => JoltShape;
+  BoxShape: new (halfExtent: JoltVec3, tolerance: number) => JoltShape;
+  ConvexHullShapeSettings: new () => { mPoints: { push_back(v: JoltVec3): void }; Create(): JoltShapeResult };
+  HeightFieldShapeSettings: new () => {
+    mSampleCount: number;
+    mBitsPerSample: number;
+    mMinHeightValue: number;
+    mMaxHeightValue: number;
+    mHeightSamples: JoltArrayFloat;
+    mOffset: JoltVec3;
+    mScale: JoltVec3;
+    Create(): JoltShapeResult;
+  };
+  MutableCompoundShapeSettings: new () => {
+    AddShapeShape(position: JoltVec3, rotation: JoltQuat, shape: JoltShape, userData: number): void;
+    Create(): JoltShapeResult;
+  };
+  BodyCreationSettings: new (shape: JoltShape, position: JoltVec3, rotation: JoltQuat, motionType: number, objectLayer: number) => JoltBodyCreationSettings;
+  ArrayFloat: new () => JoltArrayFloat;
+  RRayCast: new () => JoltRRayCast;
+  RayCastResult: new () => JoltRayCastResult;
+  EMotionType_Static: number;
+  EMotionType_Kinematic: number;
+  EMotionType_Dynamic: number;
+  EActivation_Activate: number;
+  EActivation_DontActivate: number;
+  EMotionQuality_LinearCast: number;
+  EMotionQuality_Discrete: number;
+  EAllowedDOFs_TranslationX: number;
+  EAllowedDOFs_TranslationY: number;
+  EAllowedDOFs_TranslationZ: number;
+  EAllowedDOFs_RotationY: number;
+  destroy(o: unknown): void;
+}
+
+/** jolt 句柄（BodyHandle + step 时取用的运动学目标缓存） */
+type JoltHandle = BodyHandle & { takeKinematicTarget(): KinematicTarget | null };
+
+async function loadJolt(): Promise<{ createWorld(gravity: PhysVec3): PhysicsWorld }> {
   // 字面量说明符：单页构建经 build.rs 重写为 import map 裸说明符（勿改成运行时拼 URL）
+  // @ts-expect-error wasm 胶水为 src/runtime/extra 下的无类型 .mjs（构建期并入产物）
   const mod = await import("./physics-engines/jolt.mjs");
-  const Jolt = await mod.default();
+  const Jolt = (await mod.default()) as JoltAPI; // 胶水 default 导出 = jolt 初始化工厂
   const LAYER_MOVING = 0;
   const LAYER_NON_MOVING = 1;
   return {
-    createWorld(gravity) {
+    createWorld(gravity: PhysVec3): PhysicsWorld {
       const settings = new Jolt.JoltSettings();
       settings.mMaxWorkerThreads = 1;
       const objectFilter = new Jolt.ObjectLayerPairFilterTable(2);
@@ -533,11 +1070,11 @@ async function loadJolt() {
       const bi = system.GetBodyInterface();
       const gravityScratch = new Jolt.Vec3(gravity.x, gravity.y, gravity.z);
       system.SetGravity(gravityScratch);
-      const bodies = new Map();
+      const bodies = new Map<JoltBody, { shapes: unknown[]; handle: JoltHandle }>();
       // 碰撞事件（ContactListenerJS）：BodyID 索引 → 节点 id 在 createBody 登记
-      const nodeByBodyIndex = new Map();
-      const pendingCollisions = [];
-      const pushCollision = (id1, id2, started) => {
+      const nodeByBodyIndex = new Map<number, string>();
+      const pendingCollisions: CollisionEvent[] = [];
+      const pushCollision = (id1: JoltBodyID, id2: JoltBodyID, started: boolean): void => {
         const a = nodeByBodyIndex.get(id1.GetIndex());
         const b = nodeByBodyIndex.get(id2.GetIndex());
         if (a === undefined || b === undefined) return;
@@ -551,39 +1088,44 @@ async function loadJolt() {
         // Body 指针经 wrapPointer 还原后取 GetID().GetIndex() 映射节点。
         // 持续接触不弹：脚本逐帧把速度压向碰撞体时，存续的接触不能逐帧按
         // 弹性反弹——Added（首次撞击）保留弹性系数，Persisted（持续接触）清零
-        const zeroRestitutionOf = (settings) => {
-          if (settings && typeof settings === "object") settings.mCombinedRestitution = 0;
+        const zeroRestitutionOf = (settings: JoltContactArg): void => {
+          if (settings && typeof settings === "object") (settings as JoltContactSettings).mCombinedRestitution = 0;
           else if (typeof settings === "number" && settings) {
-            Jolt.wrapPointer(settings, Jolt.ContactSettings).mCombinedRestitution = 0;
+            (Jolt.wrapPointer(settings, Jolt.ContactSettings) as JoltContactSettings).mCombinedRestitution = 0;
           }
         };
-        const bodyIdOf = (b) => {
+        const bodyIdOf = (b: JoltContactArg): JoltBodyID => {
           if (b && typeof b === "object") {
-            return typeof b.GetID === "function" ? b.GetID() : b;
+            return typeof (b as { GetID?: unknown }).GetID === "function"
+              ? (b as JoltBody).GetID()
+              : (b as JoltBodyID); // 已还原的 BodyID 对象原样透传
           }
           if (typeof b === "number" && b) {
-            return Jolt.wrapPointer(b, Jolt.Body).GetID();
+            return (Jolt.wrapPointer(b, Jolt.Body) as JoltBody).GetID();
           }
-          return b;
+          return b as JoltBodyID; // 非预期入参透传（map miss → 事件丢弃，与原行为一致）
         };
         const listener = new Jolt.ContactListenerJS();
-        listener.OnContactValidate = () => 1; // 1 = AcceptAllContactsForContact
-        listener.OnContactAdded = (b1, b2) => pushCollision(bodyIdOf(b1), bodyIdOf(b2), true);
-        listener.OnContactPersisted = (b1, b2, manifold, settings) => zeroRestitutionOf(settings);
-        listener.OnContactRemoved = (pair) => {
+        listener.OnContactValidate = (): number => 1; // 1 = AcceptAllContactsForContact
+        listener.OnContactAdded = (b1: JoltContactArg, b2: JoltContactArg): void => pushCollision(bodyIdOf(b1), bodyIdOf(b2), true);
+        listener.OnContactPersisted = (_b1: JoltContactArg, _b2: JoltContactArg, _manifold: JoltContactArg, settings: JoltContactArg): void => zeroRestitutionOf(settings);
+        listener.OnContactRemoved = (pair: JoltContactArg): void => {
           if (pair && typeof pair === "object") {
-            pushCollision(pair.GetBody1ID(), pair.GetBody2ID(), false);
+            const p = pair as JoltSubShapeIDPair; // JSImplementation 对象（已含 GetBody1ID/GetBody2ID）
+            pushCollision(p.GetBody1ID(), p.GetBody2ID(), false);
           } else if (typeof pair === "number" && pair) {
-            const p = Jolt.wrapPointer(pair, Jolt.SubShapeIDPair);
+            const p = Jolt.wrapPointer(pair, Jolt.SubShapeIDPair) as JoltSubShapeIDPair;
             pushCollision(p.GetBody1ID(), p.GetBody2ID(), false);
           }
         };
         system.SetContactListener(listener);
       } catch (e) {
-        postLog("warn", `[物理] jolt 碰撞事件不可用: ${e?.message ?? e}`);
+        // e?.message ?? e：非 Error 抛出值原样透传（断言仅放行属性读取，运行时同原式）
+        const msg = (e as { message?: unknown } | null | undefined)?.message ?? e;
+        postLog("warn", `[物理] jolt 碰撞事件不可用: ${String(msg)}`);
       }
-      const buildShape = (col, out) => {
-        let s;
+      const buildShape = (col: ColliderDesc, out: unknown[]): JoltShape | null => {
+        let s: JoltShape | null;
         switch (col.shape) {
           case "sphere":
             s = new Jolt.SphereShape(Math.max(0.001, col.radius));
@@ -649,12 +1191,12 @@ async function loadJolt() {
         return s;
       };
       return {
-        setGravity(g) {
+        setGravity(g: PhysVec3): void {
           gravityScratch.Set(g.x, g.y, g.z);
           system.SetGravity(gravityScratch);
         },
-        createBody(desc) {
-          const shapes = [];
+        createBody(desc: BodyDesc): JoltHandle | null {
+          const shapes: unknown[] = [];
           // 复合形状经 Settings 构建（MutableCompoundShape 无公开构造），
           // AddShapeShape 直接吃 Shape 子体（偏移即子体位移）
           const compoundSettings = new Jolt.MutableCompoundShapeSettings();
@@ -711,10 +1253,10 @@ async function loadJolt() {
           }
           if (desc.ccd) bi.SetMotionQuality(body.GetID(), Jolt.EMotionQuality_LinearCast);
           if (desc.colliders.length === 1 && desc.colliders[0].isSensor) body.SetIsSensor(true);
-          let kinTarget = null;
-          const handle = {
+          let kinTarget: KinematicTarget | null = null;
+          const handle: JoltHandle = {
             nodeId: desc.nodeId,
-            setMode(mode) {
+            setMode(mode: "static" | "kinematic" | "dynamic"): void {
               bi.SetMotionType(
                 body.GetID(),
                 mode === "static"
@@ -725,58 +1267,58 @@ async function loadJolt() {
                 Jolt.EActivation_Activate,
               );
             },
-            setKinematicTarget(p, q) {
+            setKinematicTarget(p: PhysVec3, q: PhysQuat): void {
               kinTarget = { p, q };
             },
-            setTransform(p, q) {
+            setTransform(p: PhysVec3, q: PhysQuat): void {
               bi.SetPosition(body.GetID(), new Jolt.RVec3(p.x, p.y, p.z), Jolt.EActivation_DontActivate);
               bi.SetRotation(body.GetID(), new Jolt.Quat(q.x, q.y, q.z, q.w), Jolt.EActivation_DontActivate);
             },
-            readTransform() {
+            readTransform(): { position: PhysVec3; quaternion: PhysQuat } {
               const p = body.GetPosition();
               const q = body.GetRotation();
               return { position: { x: p.GetX(), y: p.GetY(), z: p.GetZ() }, quaternion: { x: q.GetX(), y: q.GetY(), z: q.GetZ(), w: q.GetW() } };
             },
-            setMass(mass) {
+            setMass(mass: number): void {
               mp?.SetInverseMass(1 / Math.max(0.001, mass));
             },
-            setDamping(l, a) {
+            setDamping(l: number, a: number): void {
               mp?.SetLinearDamping(l);
               mp?.SetAngularDamping(a);
             },
-            setGravityScale(s) {
+            setGravityScale(s: number): void {
               mp?.SetGravityFactor(s);
               // 缩放 0 的静止体会被休眠：改系数后必须显式激活
               bi.ActivateBody(body.GetID());
             },
-            setCcd(on) {
+            setCcd(on: boolean): void {
               bi.SetMotionQuality(body.GetID(), on ? Jolt.EMotionQuality_LinearCast : Jolt.EMotionQuality_Discrete);
             },
-            applyImpulse(v) {
+            applyImpulse(v: PhysVec3): void {
               bi.ActivateBody(body.GetID()); // 休眠体先唤醒（与 rapier wakeUp=true 同语义）
               body.AddImpulse(new Jolt.Vec3(v.x, v.y, v.z));
             },
-            applyForce(v) {
+            applyForce(v: PhysVec3): void {
               bi.ActivateBody(body.GetID());
               body.AddForce(new Jolt.Vec3(v.x, v.y, v.z));
             },
-            setLinearVelocity(v) {
+            setLinearVelocity(v: PhysVec3): void {
               bi.ActivateBody(body.GetID());
               body.SetLinearVelocity(new Jolt.Vec3(v.x, v.y, v.z));
             },
-            setAngularVelocity(v) {
+            setAngularVelocity(v: PhysVec3): void {
               bi.ActivateBody(body.GetID());
               body.SetAngularVelocity(new Jolt.Vec3(v.x, v.y, v.z));
             },
-            getLinearVelocity() {
+            getLinearVelocity(): PhysVec3 {
               const v = body.GetLinearVelocity();
               return { x: v.GetX(), y: v.GetY(), z: v.GetZ() };
             },
-            wakeUp() {
+            wakeUp(): void {
               bi.ActivateBody(body.GetID());
             },
             raw: body,
-            takeKinematicTarget() {
+            takeKinematicTarget(): KinematicTarget | null {
               const t = kinTarget;
               kinTarget = null;
               return t;
@@ -785,12 +1327,13 @@ async function loadJolt() {
           bodies.set(body, { shapes, handle });
           return handle;
         },
-        destroyBody(b) {
-          const entry = bodies.get(b.raw);
+        destroyBody(b: BodyHandle): void {
+          const raw = b.raw as JoltBody; // createBody 登记进 bodies 的原生刚体
+          const entry = bodies.get(raw);
           if (!entry) return;
-          bodies.delete(b.raw);
-          bi.RemoveBody(b.raw.GetID());
-          bi.DestroyBody(b.raw.GetID());
+          bodies.delete(raw);
+          bi.RemoveBody(raw.GetID());
+          bi.DestroyBody(raw.GetID());
           for (const s of entry.shapes) {
             try {
               Jolt.destroy(s);
@@ -799,12 +1342,12 @@ async function loadJolt() {
             }
           }
         },
-        step(dt) {
+        step(dt: number): void {
           for (const { handle } of bodies.values()) {
             const t = handle.takeKinematicTarget();
             if (!t) continue;
             bi.MoveKinematic(
-              handle.raw.GetID(),
+              (handle.raw as JoltBody).GetID(), // createBody 登记的原生刚体（raw 恒为 JoltBody）
               new Jolt.RVec3(t.p.x, t.p.y, t.p.z),
               new Jolt.Quat(t.q.x, t.q.y, t.q.z, t.q.w),
               dt,
@@ -812,10 +1355,10 @@ async function loadJolt() {
           }
           interface3d.Step(dt, 1);
         },
-        takeCollisionEvents() {
+        takeCollisionEvents(): CollisionEvent[] {
           return pendingCollisions.splice(0);
         },
-        castRay(options) {
+        castRay(options: RaycastOptions): RayHit[] {
           const dir = options.direction;
           const dirLen = Math.hypot(dir.x, dir.y, dir.z);
           if (dirLen < 1e-9) return [];
@@ -829,8 +1372,8 @@ async function loadJolt() {
           const result = new Jolt.RayCastResult();
           // result 为 in/out（初值 fraction = 1）：CastRay 只在更近时覆写，
           // 逐体投完后 result 即最近命中，bestNodeId/bestBody 记录归属
-          let bestNodeId = null;
-          let bestBody = null;
+          let bestNodeId: string | null = null;
+          let bestBody: JoltBody | null = null;
           for (const [body, entry] of bodies) {
             if (exclude.has(entry.handle.nodeId)) continue;
             const ts = body.GetTransformedShape();
@@ -847,13 +1390,14 @@ async function loadJolt() {
             return [];
           }
           const point = ray.GetPointOnRay(result.mFraction);
-          let normal = { x: 0, y: 0, z: 0 };
+          let normal: PhysVec3 = { x: 0, y: 0, z: 0 };
           try {
-            const n = bestBody.GetTransformedShape().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
+            const hitBody = bestBody as JoltBody; // bestNodeId 与 bestBody 同帧赋值，前者非空即后者非空
+            const n = hitBody.GetTransformedShape().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point);
             normal = { x: n.GetX(), y: n.GetY(), z: n.GetZ() };
             Jolt.destroy(n);
           } catch {}
-          const hit = [{
+          const hit: RayHit[] = [{
             nodeId: bestNodeId,
             point: { x: point.GetX(), y: point.GetY(), z: point.GetZ() },
             normal,
@@ -877,13 +1421,150 @@ async function loadJolt() {
   };
 }
 
-async function loadAmmo() {
+// —— ammo wasm 胶水最小消费面（真实类型由动态 import 的 ammo-esm.mjs 提供，
+//    embind 对象经结构接口声明本文件用到的成员；getter 为方法调用形式）——
+
+interface AmmoVec3 {
+  x(): number;
+  y(): number;
+  z(): number;
+}
+
+interface AmmoQuat {
+  x(): number;
+  y(): number;
+  z(): number;
+  w(): number;
+}
+
+interface AmmoTransform {
+  setIdentity(): void;
+  setOrigin(v: AmmoVec3): void;
+  setRotation(q: AmmoQuat): void;
+  getOrigin(): AmmoVec3;
+  getRotation(): AmmoQuat;
+}
+
+interface AmmoMotionState {
+  setWorldTransform(t: AmmoTransform): void;
+  getWorldTransform(t: AmmoTransform): void;
+}
+
+interface AmmoCollisionObject {
+  getRestitution(): number;
+  setRestitution(v: number): void;
+}
+
+interface AmmoBody extends AmmoCollisionObject {
+  setGravity(v: AmmoVec3): void;
+  setCollisionFlags(flags: number): void;
+  getCollisionFlags(): number;
+  setActivationState(state: number): void;
+  activate(activate: boolean): void;
+  setFriction(f: number): void;
+  setDamping(l: number, a: number): void;
+  setAngularFactor(v: AmmoVec3): void;
+  setAngularVelocity(v: AmmoVec3): void;
+  setCcdMotionThreshold(v: number): void;
+  setCcdSweptSphereRadius(v: number): void;
+  setMassProps(mass: number, inertia: AmmoVec3): void;
+  getMotionState(): AmmoMotionState;
+  applyCentralImpulse(v: AmmoVec3): void;
+  applyCentralForce(v: AmmoVec3): void;
+  setLinearVelocity(v: AmmoVec3): void;
+  getLinearVelocity(): AmmoVec3;
+  calculateLocalInertia(mass: number, inertia: AmmoVec3): void;
+}
+
+interface AmmoCompoundShape {
+  addChildShape(transform: AmmoTransform, shape: unknown): void;
+  calculateLocalInertia(mass: number, inertia: AmmoVec3): void;
+}
+
+interface AmmoConvexHullShape {
+  addPoint(v: AmmoVec3, recalcLocalAabb: boolean): void;
+  recalcLocalAabb(): void;
+}
+
+interface AmmoHeightfieldShape {
+  setLocalScaling(v: AmmoVec3): void;
+}
+
+interface AmmoManifold {
+  getNumContacts(): number;
+  getBody0(): AmmoCollisionObject;
+  getBody1(): AmmoCollisionObject;
+}
+
+interface AmmoDispatcher {
+  getNumManifolds(): number;
+  getManifoldByIndexInternal(i: number): AmmoManifold;
+}
+
+interface AmmoWorld {
+  setGravity(v: AmmoVec3): void;
+  addRigidBody(b: AmmoBody): void;
+  removeRigidBody(b: AmmoBody): void;
+  stepSimulation(dt: number, substeps: number, fixedSubstep: number): void;
+  getDispatcher(): AmmoDispatcher;
+  rayTest(from: AmmoVec3, to: AmmoVec3, callback: AmmoAllHitsCallback): void;
+}
+
+interface AmmoAllHitsCallback {
+  hasHit(): boolean;
+  get_m_collisionObjects(): { size(): number; at(i: number): AmmoCollisionObject };
+  get_m_hitPointWorld(): { at(i: number): AmmoVec3 };
+  get_m_hitNormalWorld(): { at(i: number): AmmoVec3 };
+}
+
+/** ammo wasm 胶水（./physics-engines/ammo/ammo-esm.mjs initAmmo 产物）最小消费面 */
+interface AmmoAPI {
+  btDefaultCollisionConfiguration: new () => unknown;
+  btCollisionDispatcher: new (cfg: unknown) => AmmoDispatcher;
+  btDbvtBroadphase: new () => unknown;
+  btSequentialImpulseConstraintSolver: new () => unknown;
+  btDiscreteDynamicsWorld: new (dispatcher: AmmoDispatcher, broadphase: unknown, solver: unknown, cfg: unknown) => AmmoWorld;
+  btVector3: new (x: number, y: number, z: number) => AmmoVec3;
+  btQuaternion: new (x: number, y: number, z: number, w: number) => AmmoQuat;
+  btTransform: new () => AmmoTransform;
+  btDefaultMotionState: new (start: AmmoTransform) => AmmoMotionState;
+  btRigidBodyConstructionInfo: new (mass: number, motionState: AmmoMotionState, shape: AmmoCompoundShape, inertia: AmmoVec3) => unknown;
+  btRigidBody: new (info: unknown) => AmmoBody;
+  btCompoundShape: new () => AmmoCompoundShape;
+  btSphereShape: new (radius: number) => unknown;
+  btCapsuleShape: new (radius: number, height: number) => unknown;
+  btCylinderShape: new (halfExtents: AmmoVec3) => unknown;
+  btConvexHullShape: new () => AmmoConvexHullShape;
+  btBoxShape: new (halfExtents: AmmoVec3) => unknown;
+  btHeightfieldTerrainShape: new (
+    width: number,
+    length: number,
+    dataPtr: number,
+    scale: number,
+    minHeight: number,
+    maxHeight: number,
+    upAxis: number,
+    dataType: number,
+    flipQuadEdges: boolean,
+  ) => AmmoHeightfieldShape;
+  PHY_FLOAT: number;
+  AllHitsRayResultCallback: new (from: AmmoVec3, to: AmmoVec3) => AmmoAllHitsCallback;
+  getPointer(o: unknown): number;
+  destroy(o: unknown): void;
+  /** 高度场裸缓冲分配（embind destroy 不托管，须随世界 dispose 释放） */
+  _malloc(bytes: number): number;
+  _free(ptr: number): void;
+  HEAPF32: Float32Array;
+}
+
+async function loadAmmo(): Promise<{ createWorld(gravity: PhysVec3): PhysicsWorld }> {
   // ESM 初始化器内联 wasmBinary（无外部 .wasm 文件依赖，单页内联可用）；
   // 字面量说明符：单页构建经 build.rs 重写为 import map 裸说明符
+  // @ts-expect-error wasm 胶水为 src/runtime/extra 下的无类型 .mjs（构建期并入产物）
   const { initAmmo } = await import("./physics-engines/ammo/ammo-esm.mjs");
-  const Ammo = await initAmmo();
+  const Ammo = (await initAmmo()) as AmmoAPI; // initAmmo 返回 embind 模块命名空间
   return {
-    createWorld(gravity) {
+    createWorld(gravity: PhysVec3): PhysicsWorld {
       const cfg = new Ammo.btDefaultCollisionConfiguration();
       const dispatcher = new Ammo.btCollisionDispatcher(cfg);
       const broadphase = new Ammo.btDbvtBroadphase();
@@ -893,22 +1574,22 @@ async function loadAmmo() {
       // 逐体重力（重力缩放）：Bullet 的 world.setGravity 会重置所有非静态体的
       // 逐体重力，缩放体登记在册、世界重力变化后统一重铺
       const gravityVec = { x: gravity.x, y: gravity.y, z: gravity.z };
-      const gravityTracked = [];
-      const applyBodyGravity = (e) =>
+      const gravityTracked: { body: AmmoBody; scale: number }[] = [];
+      const applyBodyGravity = (e: { body: AmmoBody; scale: number }): void =>
         e.body.setGravity(
           new Ammo.btVector3(gravityVec.x * e.scale, gravityVec.y * e.scale, gravityVec.z * e.scale),
         );
-      const seenManifolds = new Set();
+      const seenManifolds = new Set<number>();
       // 持续接触中被临时清零弹性的碰撞对象（ptr → { obj, value }），接触结束后恢复
-      const zeroedRestitution = new Map();
-      const bodies = [];
+      const zeroedRestitution = new Map<number, { obj: AmmoCollisionObject; value: number }>();
+      const bodies: BodyHandle[] = [];
       const CF_KINEMATIC_OBJECT = 2;
       const CF_NO_CONTACT_RESPONSE = 4;
       const DISABLE_DEACTIVATION = 4;
       // 高度场 _malloc 缓冲指针（embind destroy 不托管裸指针；随世界 dispose 释放）
-      const heightfieldBuffers = new Set();
-      const buildShape = (col, out) => {
-        let s;
+      const heightfieldBuffers = new Set<number>();
+      const buildShape = (col: ColliderDesc, out: unknown[]): unknown => {
+        let s: unknown;
         switch (col.shape) {
           case "sphere":
             s = new Ammo.btSphereShape(Math.max(0.001, col.radius));
@@ -983,15 +1664,15 @@ async function loadAmmo() {
       };
       // 碰撞事件（流形差分）：刚体指针 → 节点 id 在 createBody 登记；
       // 每步把「当前接触对」与「上一步接触对」diff 出 enter/exit
-      const pointerToNode = new Map();
-      let prevPairs = new Set();
-      const pendingCollisions = [];
-      const nodeOfPointer = (p) => {
+      const pointerToNode = new Map<number, string>();
+      let prevPairs = new Set<string>();
+      const pendingCollisions: CollisionEvent[] = [];
+      const nodeOfPointer = (p: number): string | undefined => {
         const n = pointerToNode.get(p);
         return n === undefined ? undefined : n;
       };
       return {
-        setGravity(g) {
+        setGravity(g: PhysVec3): void {
           gravityVec.x = g.x;
           gravityVec.y = g.y;
           gravityVec.z = g.z;
@@ -999,8 +1680,8 @@ async function loadAmmo() {
           // Bullet 的 setGravity 已重置全部非静态体逐体重力：登记的缩放体重铺
           for (const e of gravityTracked) applyBodyGravity(e);
         },
-        createBody(desc) {
-          const shapes = [];
+        createBody(desc: BodyDesc): BodyHandle {
+          const shapes: unknown[] = [];
           const compound = new Ammo.btCompoundShape();
           shapes.push(compound);
           for (const col of desc.colliders) {
@@ -1030,7 +1711,7 @@ async function loadAmmo() {
           // 动力学体登记逐体重力（缩放 ≠ 1 时显式覆盖；= 1 跟随世界重力）。
           // 注意覆盖必须在下方 world.addRigidBody 之后——addRigidBody 会把
           // 体重力重置为世界重力，先覆盖会被冲掉
-          let gravRecord = null;
+          let gravRecord: { body: AmmoBody; scale: number } | null = null;
           if (desc.mode === "dynamic") {
             gravRecord = { body, scale: desc.gravityScale };
             gravityTracked.push(gravRecord);
@@ -1057,9 +1738,9 @@ async function loadAmmo() {
           // 逐体重力覆盖（缩放 ≠ 1）：见上方登记处注释
           if (gravRecord && gravRecord.scale !== 1) applyBodyGravity(gravRecord);
           pointerToNode.set(Ammo.getPointer(body), desc.nodeId);
-          const handle = {
+          const handle: BodyHandle = {
             nodeId: desc.nodeId,
-            setMode(mode) {
+            setMode(mode: "static" | "kinematic" | "dynamic"): void {
               if (mode === "dynamic") {
                 body.setCollisionFlags(body.getCollisionFlags() & ~CF_KINEMATIC_OBJECT);
                 body.activate(true);
@@ -1072,7 +1753,7 @@ async function loadAmmo() {
                 }
               }
             },
-            setKinematicTarget(p, q) {
+            setKinematicTarget(p: PhysVec3, q: PhysQuat): void {
               const t = new Ammo.btTransform();
               t.setIdentity();
               t.setOrigin(new Ammo.btVector3(p.x, p.y, p.z));
@@ -1080,14 +1761,14 @@ async function loadAmmo() {
               body.getMotionState().setWorldTransform(t);
               body.activate(true);
             },
-            setTransform(p, q) {
+            setTransform(p: PhysVec3, q: PhysQuat): void {
               const t = new Ammo.btTransform();
               t.setIdentity();
               t.setOrigin(new Ammo.btVector3(p.x, p.y, p.z));
               t.setRotation(new Ammo.btQuaternion(q.x, q.y, q.z, q.w));
               body.getMotionState().setWorldTransform(t);
             },
-            readTransform() {
+            readTransform(): { position: PhysVec3; quaternion: PhysQuat } {
               const t = new Ammo.btTransform();
               body.getMotionState().getWorldTransform(t);
               const p = t.getOrigin();
@@ -1098,23 +1779,23 @@ async function loadAmmo() {
               };
               return out;
             },
-            setMass(m) {
+            setMass(m: number): void {
               const inertia = new Ammo.btVector3(0, 0, 0);
               compound.calculateLocalInertia(Math.max(0.001, m), inertia);
               body.setMassProps(Math.max(0.001, m), inertia);
               body.activate(true);
             },
-            setDamping(l, a) {
+            setDamping(l: number, a: number): void {
               body.setDamping(l, a);
             },
-            setGravityScale(s) {
+            setGravityScale(s: number): void {
               // ammo 无逐体系数：显式覆盖逐体重力 = 世界重力 × 缩放
               if (!gravRecord) return;
               gravRecord.scale = Math.max(0, s);
               applyBodyGravity(gravRecord);
               body.activate(true);
             },
-            setCcd(on) {
+            setCcd(on: boolean): void {
               if (on) {
                 body.setCcdMotionThreshold(0.01);
                 body.setCcdSweptSphereRadius(0.02);
@@ -1127,23 +1808,23 @@ async function loadAmmo() {
               body.applyCentralImpulse(new Ammo.btVector3(v.x, v.y, v.z));
               body.activate(true);
             },
-            applyForce(v) {
+            applyForce(v: PhysVec3): void {
               body.applyCentralForce(new Ammo.btVector3(v.x, v.y, v.z));
               body.activate(true);
             },
-            setLinearVelocity(v) {
+            setLinearVelocity(v: PhysVec3): void {
               body.setLinearVelocity(new Ammo.btVector3(v.x, v.y, v.z));
               body.activate(true);
             },
-            setAngularVelocity(v) {
+            setAngularVelocity(v: PhysVec3): void {
               body.setAngularVelocity(new Ammo.btVector3(v.x, v.y, v.z));
               body.activate(true);
             },
-            getLinearVelocity() {
+            getLinearVelocity(): PhysVec3 {
               const v = body.getLinearVelocity();
               return { x: v.x(), y: v.y(), z: v.z() };
             },
-            wakeUp() {
+            wakeUp(): void {
               body.activate(true);
             },
             raw: body,
@@ -1151,19 +1832,19 @@ async function loadAmmo() {
           bodies.push(handle);
           return handle;
         },
-        destroyBody(b) {
+        destroyBody(b: BodyHandle): void {
           const i = bodies.indexOf(b);
           if (i >= 0) bodies.splice(i, 1);
-          world.removeRigidBody(b.raw);
+          world.removeRigidBody(b.raw as AmmoBody); // createBody 产出的原生刚体
         },
-        step(dt) {
+        step(dt: number): void {
           world.stepSimulation(Math.max(0.0001, dt), 1, Math.max(0.0001, dt));
           // 持续接触不弹：存活超过一步的接触流形取消弹性——速度持续压向碰撞体
           // 时不再逐帧反弹（新流形保留弹性，首次撞击仍会弹起）
           const dispatcher = world.getDispatcher();
           const count = dispatcher.getNumManifolds();
-          const current = new Set();
-          const activeBodies = new Set();
+          const current = new Set<number>();
+          const activeBodies = new Set<number>();
           for (let i = 0; i < count; i++) {
             const manifold = dispatcher.getManifoldByIndexInternal(i);
             if (manifold.getNumContacts() <= 0) continue;
@@ -1193,7 +1874,7 @@ async function loadAmmo() {
           }
           // 流形差分：接触对出现 = enter，消失 = exit
           const num = dispatcher.getNumManifolds();
-          const cur = new Set();
+          const cur = new Set<string>();
           for (let i = 0; i < num; i++) {
             const m = dispatcher.getManifoldByIndexInternal(i);
             if (m.getNumContacts() <= 0) continue;
@@ -1217,10 +1898,10 @@ async function loadAmmo() {
           }
           prevPairs = cur;
         },
-        takeCollisionEvents() {
+        takeCollisionEvents(): CollisionEvent[] {
           return pendingCollisions.splice(0);
         },
-        castRay(options) {
+        castRay(options: RaycastOptions): RayHit[] {
           const dir = options.direction;
           const dirLen = Math.hypot(dir.x, dir.y, dir.z);
           if (dirLen < 1e-9) return [];
@@ -1238,7 +1919,7 @@ async function loadAmmo() {
           // （excludeNodeIds）时无法穿透继续找，这里线性取最近的未排除命中
           const cb = new Ammo.AllHitsRayResultCallback(from, to);
           world.rayTest(from, to, cb);
-          let best = null;
+          let best: RayHit | null = null;
           if (cb.hasHit()) {
             const objs = cb.get_m_collisionObjects();
             const points = cb.get_m_hitPointWorld();
@@ -1263,8 +1944,8 @@ async function loadAmmo() {
           try { Ammo.destroy(from); Ammo.destroy(to); Ammo.destroy(cb); } catch {}
           return best ? [best] : [];
         },
-        dispose() {
-          for (const b of [...bodies]) world.removeRigidBody(b.raw);
+        dispose(): void {
+          for (const b of [...bodies]) world.removeRigidBody(b.raw as AmmoBody); // createBody 产出的原生刚体
           bodies.length = 0;
           // 高度场裸缓冲（embind destroy 不托管 _malloc 指针）：随世界销毁统一释放
           for (const ptr of heightfieldBuffers) {
@@ -1282,11 +1963,16 @@ async function loadAmmo() {
 }
 
 /** 后端加载器表（工厂注册；新增后端在此追加） */
-const BACKEND_LOADERS = {
+const BACKEND_LOADERS: Record<PhysicsBackendId, PhysicsBackendLoader> = {
   rapier: loadRapier,
   jolt: loadJolt,
   ammo: loadAmmo,
 };
+
+/** backend 字段收敛（未知/缺省回退 rapier；与 ["ammo","jolt","rapier"].includes 同语义） */
+function backendIdOf(v: unknown): PhysicsBackendId {
+  return v === "ammo" || v === "jolt" || v === "rapier" ? v : "rapier";
+}
 
 // ---------------------------------------------------------------------------
 // 物理系统（创建入口）
@@ -1301,20 +1987,21 @@ const BACKEND_LOADERS = {
  * @param {object} [opts.settings] scene.settings.physics（backend/gravity/physicsEnabled）
  * @returns {Promise<object>} { update(dt), setGravity, applyImpulse, … } 物理控制 API
  */
-export async function createPhysics({ nodes, terrains, settings } = {}) {
-  const cfg = settings && typeof settings === "object" ? settings : {};
+export async function createPhysics({ nodes, terrains, settings }: CreatePhysicsOptions = {} as CreatePhysicsOptions): Promise<PhysicsApi> {
+  // 缺省 {} 仅维持原解构形态（运行时 nodes 必传；断言仅类型面放行占位缺省）
+  const cfg = (settings && typeof settings === "object" ? settings : {}) as ScenePhysicsSettingsJson; // 已过 object 守卫，断言收窄 gravity/backend 字段
   const gravity = {
     x: num(cfg.gravity?.x, 0),
     y: num(cfg.gravity?.y, -9.81),
     z: num(cfg.gravity?.z, 0),
   };
   const enabled = cfg.physicsEnabled === true;
-  const backendId = ["ammo", "jolt", "rapier"].includes(cfg.backend) ? cfg.backend : "rapier";
+  const backendId = backendIdOf(cfg.backend);
 
   /** 脚本宿主/调试用的运行控制面（未启用/未就绪时安全空转；方法集与真实
    *  后端接线完全一致——脚本经 getComponent("rigidBody")/engine.physics 访问
    *  任一方法都不应抛错，否则脚本宿主会把整个脚本实例停用） */
-  const api = {
+  const api: PhysicsApi = {
     /** 运行线程标识（调试面板/回退告警消费：false = 主线程模拟） */
     workerMode: false,
     /** 每帧推进（渲染循环调用） */
@@ -1344,12 +2031,12 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
   };
 
   // 绑定收集（文档序：先父后子）；地形烘焙网格按节点 id 建索引（heightfield 读取）
-  const terrainById = new Map();
+  const terrainById = new Map<string | undefined, unknown>();
   for (const t of Array.isArray(terrains) ? terrains : []) {
     const id = t && typeof t.json?.id === "string" ? t.json.id : "";
     if (id && t.data) terrainById.set(id, t.data);
   }
-  const bindings = [];
+  const bindings: PhysicsBinding[] = [];
   for (const { json, obj } of nodes) {
     const comps = Array.isArray(json.components) ? json.components : [];
     const rbComp = comps.find((c) => c && c.type === "rigidBody" && c.enabled !== false);
@@ -1369,19 +2056,21 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
   if (!bindings.length || !enabled) return api;
 
   const loader = BACKEND_LOADERS[backendId] ?? BACKEND_LOADERS.rapier;
-  let world = null;
+  let world: PhysicsWorld;
   try {
     const backend = await loader();
     world = backend.createWorld(gravity);
   } catch (e) {
-    postLog("error", `物理引擎(${backendId})加载失败: ${e?.message ?? e}`);
+    // e?.message ?? e：非 Error 抛出值原样透传（断言仅放行属性读取，运行时同原式）
+    const msg = (e as { message?: unknown } | null | undefined)?.message ?? e;
+    postLog("error", `物理引擎(${backendId})加载失败: ${String(msg)}`);
     return api;
   }
 
   // 建体（以当前世界位姿为初值）
   const tmpPos = new THREE.Vector3();
   const tmpQuat = new THREE.Quaternion();
-  const snapshots = new Map();
+  const snapshots = new Map<string | undefined, { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 }>();
   for (const b of bindings) {
     const obj = b.obj;
     obj.updateWorldMatrix(true, false);
@@ -1392,13 +2081,15 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
       quaternion: obj.quaternion.clone(),
       scale: obj.scale.clone(),
     });
-    const rb = b.rb ?? { mode: "static", mass: 1, linearDamping: 0, angularDamping: 0, gravityScale: 1, ccd: false, lockRotation: false, upright: false };
+    const rb: RigidBodySettings = b.rb ?? { mode: "static", mass: 1, linearDamping: 0, angularDamping: 0, gravityScale: 1, ccd: false, lockRotation: false, upright: false };
     b.body = world.createBody({
-      nodeId: b.nodeId,
+      // 绑定节点 json.id 类型面收窄（物理体句柄以节点 id 寻址）
+      nodeId: b.nodeId as string,
       mode: rb.mode,
       position: { x: tmpPos.x, y: tmpPos.y, z: tmpPos.z },
       quaternion: { x: tmpQuat.x, y: tmpQuat.y, z: tmpQuat.z, w: tmpQuat.w },
-      colliders: b.colliders.map((c) => colliderDescFor(c.settings, obj, b.terrain)),
+      // SceneTerrainEntry.data 声明为 unknown → 断言收窄（createTerrain 产出的高度网格）
+      colliders: b.colliders.map((c) => colliderDescFor(c.settings, obj, b.terrain as TerrainGridData | null)),
       mass: rb.mass,
       linearDamping: rb.linearDamping,
       angularDamping: rb.angularDamping,
@@ -1452,30 +2143,39 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
     // 父级世界矩阵的逆变换按父级缓存：同一父级下多个动态体（常见：同一容器内
     // 的一批刚体）只做一次 updateWorldMatrix + 求逆；帧内共享父级的世界矩阵不会
     // 变（回写只改子级局部变换），与逐体重算结果一致
-    let lastParent = null;
+    let lastParent: THREE.Object3D | null = null;
     for (const b of bindings) {
       if (!b.body || !b.rb || b.rb.mode !== "dynamic") continue;
       if (stepped) {
         const t = b.body.readTransform();
         if (t) {
+          // hasPose 蕴含四个位姿向量已同帧初始化 → 非空断言
+          const prevPos = b.prevPos as THREE.Vector3;
+          const prevQuat = b.prevQuat as THREE.Quaternion;
+          const currPos = b.currPos as THREE.Vector3;
+          const currQuat = b.currQuat as THREE.Quaternion;
           if (!b.hasPose) {
             // 首次读到位姿：prev = curr，插值恒定（不外推）
-            b.currPos.set(t.position.x, t.position.y, t.position.z);
-            b.currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
-            b.prevPos.copy(b.currPos);
-            b.prevQuat.copy(b.currQuat);
+            currPos.set(t.position.x, t.position.y, t.position.z);
+            currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+            prevPos.copy(currPos);
+            prevQuat.copy(currQuat);
             b.hasPose = true;
           } else {
-            b.prevPos.copy(b.currPos);
-            b.prevQuat.copy(b.currQuat);
-            b.currPos.set(t.position.x, t.position.y, t.position.z);
-            b.currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
+            prevPos.copy(currPos);
+            prevQuat.copy(currQuat);
+            currPos.set(t.position.x, t.position.y, t.position.z);
+            currQuat.set(t.quaternion.x, t.quaternion.y, t.quaternion.z, t.quaternion.w);
           }
         }
       }
       if (!b.hasPose) continue;
-      writePos.lerpVectors(b.prevPos, b.currPos, alpha);
-      writeQuat.copy(b.prevQuat).slerp(b.currQuat, alpha);
+      const prevPos = b.prevPos as THREE.Vector3; // hasPose=true 蕴含已初始化
+      const prevQuat = b.prevQuat as THREE.Quaternion;
+      const currPos = b.currPos as THREE.Vector3;
+      const currQuat = b.currQuat as THREE.Quaternion;
+      writePos.lerpVectors(prevPos, currPos, alpha);
+      writeQuat.copy(prevQuat).slerp(currQuat, alpha);
       const parent = b.obj.parent;
       if (parent !== lastParent) {
         lastParent = parent;
@@ -1498,7 +2198,7 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
   api.drainCollisions = () => world.takeCollisionEvents();
   api.castRay = (options) => world.castRay(options);
 
-  const bodyOf = (nodeId) => bindings.find((b) => b.nodeId === nodeId)?.body ?? null;
+  const bodyOf = (nodeId: string): BodyHandle | null => bindings.find((b) => b.nodeId === nodeId)?.body ?? null;
   api.applyImpulse = (nodeId, x, y, z) => bodyOf(nodeId)?.applyImpulse({ x, y, z });
   api.applyForce = (nodeId, x, y, z) => bodyOf(nodeId)?.applyForce({ x, y, z });
   api.setLinearVelocity = (nodeId, x, y, z) => bodyOf(nodeId)?.setLinearVelocity({ x, y, z });
@@ -1527,16 +2227,46 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
 // 单页导出（Blob URL import.meta.url）无法解析 Worker 模块路径，回退主线程。
 // ---------------------------------------------------------------------------
 
+/** Worker 传输的序列化物理节点（对齐 physics-worker.ts SerializedPhysNode） */
+interface SerializedPhysNode {
+  nodeId: string | undefined;
+  json: NodeJson | Record<string, unknown>;
+  position: number[];
+  quaternion: number[];
+  scale: number[];
+  parentId: string | null;
+  isMesh: boolean;
+  vertices: Float32Array | null;
+}
+
+/** Worker init 应答（ready 携带动态体清单与 bodyInfo 缓存） */
+interface WorkerReadyMsg {
+  type: "ready";
+  dynamicIds: string[];
+  bodyInfos: Record<string, BodyInfo>;
+}
+
+/** Worker → 主线程消息（对齐 physics-worker.ts PhysicsWorkerOut） */
+type WorkerOutMsg =
+  | WorkerReadyMsg
+  | { type: "recycleInput"; buffer: ArrayBuffer }
+  | { type: "stepped"; transforms: Float32Array; velocities?: Float32Array; collisions?: CollisionEvent[] }
+  | { type: "result"; method: string; value: unknown }
+  | { type: "raycastResult"; id: number; hits?: RayHit[] }
+  | { type: "error" };
+
 /** 序列化节点为 Worker 可传输的纯数据（obj → position/quaternion/scale/parent/geometry） */
-function serializeNodes(nodes) {
-  const idSet = new Set(nodes.map((n) => n.json?.id));
-  return nodes.map((n) => {
+function serializeNodes(nodes: ReadonlyArray<PhysNodeInput>): SerializedPhysNode[] {
+  const idSet = new Set<string | undefined>(nodes.map((n) => n.json?.id));
+  return nodes.map((n): SerializedPhysNode => {
     const obj = n.obj;
     const parentId = obj.parent && idSet.has(obj.parent.userData?.__tveNodeId) ? obj.parent.userData.__tveNodeId : null;
-    const isMesh = !!obj.isMesh;
-    let vertices = null;
-    if (isMesh && obj.geometry?.attributes?.position) {
-      vertices = obj.geometry.attributes.position.array.slice();
+    // 类型库只在 Mesh 声明 isMesh 标志（结构断言）
+    const isMesh = !!(obj as { isMesh?: boolean }).isMesh;
+    let vertices: Float32Array | null = null;
+    if (isMesh && (obj as THREE.Mesh).geometry?.attributes?.position) {
+      // position 属性分量恒为浮点数组（断言收窄 TypedArray 联合）
+      vertices = (obj as THREE.Mesh).geometry.attributes.position.array.slice() as Float32Array;
     }
     return {
       nodeId: n.json.id,
@@ -1555,7 +2285,7 @@ function serializeNodes(nodes) {
  * 创建物理 Worker 代理（与 createPhysics 同接口）。
  * 在多文件导出模式下使用 Worker 线程；单页模式回退到 createPhysics。
  */
-export async function createPhysicsWorker(opts) {
+export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerUrl?: string }): Promise<PhysicsApi> {
   const { nodes, terrains, settings, workerUrl } = opts || {};
   const enabled = settings?.physicsEnabled === true;
   if (!enabled || !workerUrl) return createPhysics(opts);
@@ -1570,15 +2300,20 @@ export async function createPhysicsWorker(opts) {
   // 只提取 createPhysics 需要的纯数据字段（json.id + data.heights/gridSize/size）
   const serializedTerrains = (Array.isArray(terrains) ? terrains : [])
     .filter((t) => t?.json?.id && t?.data)
-    .map((t) => ({
-      json: { id: t.json.id },
-      data: {
-        heights: t.data.heights,
-        gridSize: t.data.gridSize,
-        size: t.data.size,
-      },
-    }));
-  let worker;
+    .map((t) => {
+      // filter 谓词已确保 json.id 与 data（createTerrain 产出的高度场纯数据）
+      const d = t.data as TerrainGridData;
+      const id = t.json?.id as string;
+      return {
+        json: { id },
+        data: {
+          heights: d.heights,
+          gridSize: d.gridSize,
+          size: d.size,
+        },
+      };
+    });
+  let worker: Worker;
   try {
     worker = new Worker(workerUrl, { type: "module" });
     worker.postMessage({ type: "init", nodes: serialized, terrains: serializedTerrains, settings });
@@ -1587,39 +2322,40 @@ export async function createPhysicsWorker(opts) {
   }
 
   // 等待 Worker ready
-  const ready = await new Promise((resolve) => {
-    worker.onmessage = (e) => {
-      if (e.data.type === "ready") resolve(e.data);
-      else if (e.data.type === "error") resolve(null);
+  const ready = await new Promise<WorkerReadyMsg | null>((resolve) => {
+    worker.onmessage = (e: MessageEvent): void => {
+      const msg = e.data as Partial<WorkerReadyMsg> | null; // Worker 协议（见 physics-worker.ts）
+      if (msg?.type === "ready") resolve(msg as WorkerReadyMsg);
+      else if (msg?.type === "error") resolve(null);
     };
-    worker.onerror = () => resolve(null);
+    worker.onerror = (): void => resolve(null);
   });
   if (!ready) {
     worker.terminate();
     return createPhysics(opts);
   }
 
-  const dynamicIds = ready.dynamicIds || [];
-  const dynamicMap = new Map();
-  const dynamicIndex = new Map();
+  const dynamicIds: string[] = ready.dynamicIds || [];
+  const dynamicMap = new Map<string, THREE.Object3D>();
+  const dynamicIndex = new Map<string, number>();
   for (let i = 0; i < dynamicIds.length; i++) {
     const id = dynamicIds[i];
     dynamicIndex.set(id, i);
     const node = nodes.find((n) => n.json?.id === id);
     if (node) dynamicMap.set(id, node.obj);
   }
-  const cachedBodyInfos = ready.bodyInfos || {};
+  const cachedBodyInfos: Record<string, BodyInfo> = ready.bodyInfos || {};
 
   // 双缓冲：pending = Worker 上一帧返回的动力学体变换
-  let pending = null;
+  let pending: Extract<WorkerOutMsg, { type: "stepped" }> | null = null;
   let workerBusy = false;
-  let cachedCollisions = [];
+  let cachedCollisions: CollisionEvent[] = [];
   let cachedVelocities = new Float32Array(dynamicIds.length * 3);
   let raycastId = 0;
-  const raycastPending = new Map();
+  const raycastPending = new Map<number, (hits: RayHit[]) => void>();
 
-  worker.onmessage = (e) => {
-    const msg = e.data;
+  worker.onmessage = (e: MessageEvent): void => {
+    const msg = e.data as WorkerOutMsg; // Worker 协议（见 physics-worker.ts）
     if (msg.type === "stepped") {
       pending = msg;
       if (msg.velocities) cachedVelocities = msg.velocities;
@@ -1628,7 +2364,8 @@ export async function createPhysicsWorker(opts) {
       // Worker 消费完 step 输入缓冲后原样送回（零拷贝复用；池空时兜底新建）
       if (msg.buffer) stepBufPool.push(new Float32Array(msg.buffer));
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
-      cachedCollisions = msg.value;
+      // 协议约定 value = 碰撞事件数组（节点 id 对）
+      cachedCollisions = msg.value as CollisionEvent[];
     } else if (msg.type === "raycastResult") {
       const resolve = raycastPending.get(msg.id);
       if (resolve) {
@@ -1642,10 +2379,10 @@ export async function createPhysicsWorker(opts) {
   // Worker 消费后经 recycleInput 归还，池空兜底新建）
   const stepBufPool: Float32Array[] = [];
 
-  const api = {
+  const api: PhysicsApi = {
     /** 运行线程标识（调试面板/回退告警消费：true = 独立线程模拟） */
     workerMode: true,
-    update(dt) {
+    update(dt: number): void {
       // 1) 应用上一帧 Worker 返回的动力学体变换
       if (pending) {
         const t = pending.transforms;
@@ -1686,22 +2423,22 @@ export async function createPhysicsWorker(opts) {
         }
       }
     },
-    setGravity(x, y, z) { try { worker.postMessage({ type: "command", method: "setGravity", args: [x, y, z] }); } catch {} },
-    applyImpulse(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] }); } catch {} },
-    applyForce(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
-    setLinearVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
-    setAngularVelocity(nodeId, x, y, z) { try { worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
-    getLinearVelocity(nodeId) {
+    setGravity(x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setGravity", args: [x, y, z] }); } catch {} },
+    applyImpulse(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] }); } catch {} },
+    applyForce(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
+    setLinearVelocity(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    setAngularVelocity(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    getLinearVelocity(nodeId: string): PhysVec3 | null {
       const idx = dynamicIndex.get(nodeId);
       if (idx === undefined) return null;
       const k = idx * 3;
       return { x: cachedVelocities[k], y: cachedVelocities[k + 1], z: cachedVelocities[k + 2] };
     },
-    bodyInfo(nodeId) { return cachedBodyInfos[nodeId] || null; },
-    setGravityScale(nodeId, scale) { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
-    wakeUp(nodeId) { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
-    castRay(options) {
-      return new Promise((resolve) => {
+    bodyInfo(nodeId: string): BodyInfo | null { return cachedBodyInfos[nodeId] || null; },
+    setGravityScale(nodeId: string, scale: number): void { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
+    wakeUp(nodeId: string): void { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
+    castRay(options: RaycastOptions): Promise<RayHit[]> {
+      return new Promise<RayHit[]>((resolve) => {
         const id = ++raycastId;
         raycastPending.set(id, resolve);
         try {
@@ -1712,12 +2449,12 @@ export async function createPhysicsWorker(opts) {
         }
       });
     },
-    drainCollisions() {
+    drainCollisions(): CollisionEvent[] {
       const c = cachedCollisions;
       cachedCollisions = [];
       return c;
     },
-    dispose() {
+    dispose(): void {
       for (const resolve of raycastPending.values()) resolve([]);
       raycastPending.clear();
       worker.postMessage({ type: "dispose" });

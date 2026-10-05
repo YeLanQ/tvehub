@@ -2,9 +2,10 @@
 // （ResourceLoader + ImageBitmap → Texture，带缓存），就地表到材质通道上。
 import * as THREE from "../core/three.module.min.js";
 import { resourceLoader } from "./resource";
+import type { NodeJson } from "./node-json";
 
-// 贴图通道 → 是否 sRGB（颜色贴图 sRGB，数据贴图线性）
-const TEXTURE_CHANNELS = [
+/** 贴图通道 → 是否 sRGB（颜色贴图 sRGB，数据贴图线性） */
+const TEXTURE_CHANNELS: [field: string, srgb: boolean][] = [
   ["map", true],
   ["metalnessMap", false],
   ["roughnessMap", false],
@@ -12,13 +13,36 @@ const TEXTURE_CHANNELS = [
   ["emissiveMap", true],
 ];
 
+/** 场景网格条目（buildSceneTree 产出） */
+interface TextureMeshEntry {
+  json: NodeJson;
+  obj: THREE.Mesh;
+}
+
+/** .mat 材质参数回填写面（shaderData/通道路径/发射开关） */
+interface MatParam {
+  shaderData?: { properties?: { kind?: string; key?: string }[] };
+  props?: Record<string, unknown>;
+  emissionEnabled?: boolean;
+  /** 贴图通道相对路径（map/metalnessMap/…，随 field 动态读写） */
+  [key: string]: unknown;
+}
+
+/** 材质 userData 上的 hook uniform 表（shaderHooks 维护，同一批对象） */
+type HookUniformTable = Record<string, { value: unknown } | undefined>;
+
 /** 加载相对路径贴图（同路径同色彩空间共享缓存；失败返回 null）。
  * imageOrientation: "flipY" 必须显式指定——WebGL 对 ImageBitmap 上传忽略
  * UNPACK_FLIP_Y_WEBGL，不预翻转贴图会上下颠倒（与编辑器 TextureLoader 不一致）。
  * 导出供其它回放系统复用（粒子贴图等），texCache 由调用方持有。 */
-export function loadImageTex(texCache, rel, srgb) {
+export function loadImageTex(
+  texCache: Map<string, Promise<THREE.Texture | null>>,
+  rel: string,
+  srgb: boolean,
+): Promise<THREE.Texture | null> {
   const key = `${srgb ? "c" : "n"}|${rel}`;
-  if (texCache.has(key)) return texCache.get(key);
+  const hit = texCache.get(key);
+  if (hit) return hit;
   const p = resourceLoader
     .loadImageBitmap(rel)
     .then((bmp) => {
@@ -37,22 +61,34 @@ export function loadImageTex(texCache, rel, srgb) {
  * unlit 只支持基础色贴图 map；toon 无金属/粗糙通道；
  * 着色器 Properties 的贴图参数（props 值）：按属性表加载后写入该材质的钩子
  * uniform 表（shaderHooks.mjs 在 userData 上维护同一批对象）。 */
-export async function applyMeshTextures(meshes, materialParams) {
-  const texCache = new Map();
+export async function applyMeshTextures(
+  meshes: TextureMeshEntry[],
+  materialParams: Map<string, MatParam>,
+): Promise<void> {
+  const texCache = new Map<string, Promise<THREE.Texture | null>>();
   await Promise.all(
     meshes.map(async (entry) => {
-      const mat = entry.obj.material;
+      // 多材质数组在运行时走动态属性访问的降级路径，断言为单材质类型保行为
+      const mat = entry.obj.material as THREE.Material;
       if (!mat) return;
-      const m = materialParams.get(entry.json.material);
+      const matRel = entry.json.material;
+      const m = typeof matRel === "string" ? materialParams.get(matRel) : undefined;
       if (!m) return;
       if (m.shaderData) {
-        const table = mat.userData?.__tveHookUniforms ?? (mat.userData?.__tveNodeHooks ? mat.userData.__tveNodeHooks.uniforms : undefined);
+        const ud = mat.userData as {
+          __tveHookUniforms?: HookUniformTable;
+          __tveNodeHooks?: { uniforms?: HookUniformTable };
+        };
+        const table = ud.__tveHookUniforms ?? (ud.__tveNodeHooks ? ud.__tveNodeHooks.uniforms : undefined);
         const props = m.props || {};
         for (const prop of m.shaderData.properties || []) {
           if (prop.kind !== "texture") continue;
-          const uniform = table ? table[prop.key] : null;
+          const key = prop.key;
+          if (typeof key !== "string") continue;
+          const uniform = table ? table[key] : null;
           if (!uniform) continue;
-          const rel = typeof props[prop.key] === "string" ? props[prop.key] : "";
+          const raw = props[key];
+          const rel = typeof raw === "string" ? raw : "";
           if (!rel) {
             uniform.value = null;
             continue;
@@ -68,13 +104,13 @@ export async function applyMeshTextures(meshes, materialParams) {
         if (isToon && field === "emissiveMap" && !m.emissionEnabled) continue;
         const rel = m[field];
         if (!rel) continue;
-        const tex = await loadImageTex(texCache, rel, srgb);
+        const tex = await loadImageTex(texCache, String(rel), srgb);
         if (!tex) continue;
-        mat[field] = tex;
-        if (field === "normalMap") mat.normalScale.set(1, 1);
+        // 通道字段按材质子类存在（map/normalMap/…），动态写入走索引断言
+        (mat as unknown as Record<string, unknown>)[field] = tex;
+        if (field === "normalMap") (mat as THREE.MeshStandardMaterial).normalScale.set(1, 1);
         mat.needsUpdate = true;
       }
     }),
   );
 }
-

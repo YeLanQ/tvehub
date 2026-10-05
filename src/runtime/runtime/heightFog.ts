@@ -18,7 +18,7 @@ const HEIGHT_FOG_UNIFORM = { value: { x: 0, y: 20, z: 0 } };
 let chunkPatched = false;
 
 /** 幂等安装 fog chunk patch + ShaderLib uFogHeight 注入（先于一切 program 编译） */
-export function ensureHeightFogChunk() {
+export function ensureHeightFogChunk(): void {
   if (chunkPatched) return;
   chunkPatched = true;
 
@@ -102,27 +102,89 @@ export function ensureHeightFogChunk() {
 }
 
 /** 写入高度雾参数（幂等）：所有含雾材质共享同一参数对象 */
-export function setHeightFogParams(heightY, heightFalloff, strength) {
+export function setHeightFogParams(heightY: number, heightFalloff: number, strength: number): void {
   HEIGHT_FOG_UNIFORM.value.x = heightY;
   HEIGHT_FOG_UNIFORM.value.y = Math.max(1e-4, heightFalloff);
   HEIGHT_FOG_UNIFORM.value.z = Math.min(1, Math.max(0, strength));
 }
 
-let tslNodeState = null;
+// —— TSL 结构视图（three WebGPU 构建无随包类型，只声明雾节点构建用到的面） ——
+
+/** TSL 节点最小链式面（动态成员经索引签名放行，消费点按需断言） */
+interface TslNode {
+  add(other: unknown): TslNode;
+  sub(other: unknown): TslNode;
+  mul(other: unknown): TslNode;
+  div(other: unknown): TslNode;
+  max(other: unknown): TslNode;
+  negate(): TslNode;
+  exp(): TslNode;
+  oneMinus(): TslNode;
+  [key: string]: unknown;
+}
+
+/** TSL vec3 内置节点（positionWorld/positionView/cameraPosition） */
+interface TslVec3 {
+  x: TslNode;
+  y: TslNode;
+  z: TslNode;
+}
+
+/** uniform 节点：本身是节点，携带可写 value */
+type TslUniform<T> = TslNode & { value: T };
+
+/** THREE.TSL 命名空间的最小消费面（雾节点构建） */
+interface TslNamespace {
+  Fn(body: () => TslNode): () => TslNode;
+  uniform<T>(value: T): TslUniform<T>;
+  positionWorld: TslVec3;
+  positionView: TslVec3;
+  cameraPosition: TslVec3;
+  fog(color: unknown, factor: TslNode): unknown;
+}
+
+/** WebGPU 高度雾节点缓存（uniform 句柄留档供逐帧写参） */
+interface TslFogState {
+  node: unknown;
+  uColor: TslUniform<THREE.Color>;
+  uDensity: TslUniform<number>;
+  uBaseY: TslUniform<number>;
+  uFalloff: TslUniform<number>;
+}
+
+/** scene.fogNode 为 WebGPU 构建的属性（Scene 类型未声明，结构断言写面） */
+function setSceneFogNode(scene: THREE.Scene, node: unknown): void {
+  (scene as { fogNode?: unknown }).fogNode = node;
+}
+
+let tslNodeState: TslFogState | null = null;
+
+/** 高度雾设置读面（fog.ts parseFogSettings 输出的子集） */
+interface HeightFogSettings {
+  color: number;
+  density: number;
+  heightY: number;
+  heightFalloff: number;
+}
 
 /**
  * WebGPU 路径：scene.fogNode（TSL 雾节点，优先于 scene.fog）。
  * @param tsl THREE.TSL 命名空间（来自 three 的 WebGPU 构建；缺失时告警并保持
  *            scene.fog 普通指数雾兜底）
  */
-export function applyHeightFogNodeWebGPU(scene, settings, tsl) {
+export function applyHeightFogNodeWebGPU(
+  scene: THREE.Scene,
+  settings: HeightFogSettings,
+  tsl: unknown,
+): void {
   if (!tsl) {
     console.warn("[fog] WebGPU 高度雾需要 TSL 命名空间，回退普通指数雾");
     return;
   }
   try {
     if (!tslNodeState) {
-      const { Fn, uniform, positionWorld, positionView, cameraPosition, fog } = tsl;
+      const { Fn, uniform, positionWorld, positionView, cameraPosition, fog } =
+        tsl as TslNamespace;
       const uColor = uniform(new THREE.Color(0xffffff));
       const uDensity = uniform(0.02);
       const uBaseY = uniform(0);
@@ -148,13 +210,13 @@ export function applyHeightFogNodeWebGPU(scene, settings, tsl) {
     tslNodeState.uDensity.value = settings.density;
     tslNodeState.uBaseY.value = settings.heightY;
     tslNodeState.uFalloff.value = Math.max(1e-4, settings.heightFalloff);
-    scene.fogNode = tslNodeState.node;
+    setSceneFogNode(scene, tslNodeState.node);
   } catch (e) {
-    console.warn(`[fog] WebGPU 高度雾不可用（${e?.message ?? e}），回退普通指数雾`);
+    console.warn(`[fog] WebGPU 高度雾不可用（${e instanceof Error ? e.message : String(e)}），回退普通指数雾`);
   }
 }
 
 /** 关闭 WebGPU 高度雾（恢复 scene.fog 原生处理；幂等） */
-export function clearHeightFogWebGPU(scene) {
-  scene.fogNode = null;
+export function clearHeightFogWebGPU(scene: THREE.Scene): void {
+  setSceneFogNode(scene, null);
 }

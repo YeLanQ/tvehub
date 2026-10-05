@@ -19,6 +19,7 @@ import { postLog } from "../core/log";
 import { resourceLoader } from "./resource";
 import type { NodeJson } from "./node-json";
 import { FsmRunner } from "../../framework/fsm/fsmRuntime";
+import type { BTNode, BTStatus } from "../../framework/behavior/behaviorTypes";
 import { parseFsmGraph } from "../../framework/fsm/fsmTypes";
 import { BTRunner } from "../../framework/behavior/behaviorRuntime";
 import { parseBehaviorTree } from "../../framework/behavior/behaviorTypes";
@@ -214,7 +215,7 @@ export async function createLogic({
 
   // —— 动作叶子（注册处理器 + 会话代际）——
 
-  function runAction(binding: Binding, node: { id: string; action?: string }): string {
+  function runAction(binding: Binding, node: BTNode): BTStatus {
     const name = node.action ?? "";
     binding.tickActions.set(node.id, "");
     const handler = binding.actionHandlers.get(name);
@@ -230,7 +231,8 @@ export async function createLogic({
     const leaf: BTActionLeaf = { id: node.id, action: name, node };
     try {
       const st = handler(leaf, session);
-      const status = st ?? "success";
+      // 状态契约 success/running/failure（与编辑器一致；handler 返回值透传）
+      const status = (st ?? "success") as BTStatus;
       binding.tickActions.set(node.id, status);
       return status;
     } catch (e) {

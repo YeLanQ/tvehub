@@ -8,6 +8,12 @@
 import * as THREE from "./three.module.min.js";
 import { num, D2R } from "./utils";
 
+/** 灯光阴影设置（JSON 来源，字段可缺省；数值合法性经 num 兜底） */
+type LightShadowInput = Record<string, unknown>;
+
+/** 可投影灯型（Light 基类类型未暴露 shadow/对象标志） */
+type ShadowableLight = THREE.DirectionalLight | THREE.PointLight | THREE.SpotLight;
+
 /**
  * 灯光阴影参数置位：
  * 贴图分辨率（点光 1024 / 其余 4096；three 只在首次渲染前按 mapSize 分配贴图）、
@@ -15,7 +21,7 @@ import { num, D2R } from "./utils";
  * 相对化）；近裁剪面对点光/聚光灯直接生效（平行光的阴影相机由运行时按场景包围盒
  * 后推后合成 near，这里不写）。配置留档在 light.userData.shadowCfg 供贴合读取。
  */
-export function applyLightShadow(light, s) {
+export function applyLightShadow(light: ShadowableLight, s: LightShadowInput): void {
   const cfg = {
     strength: Math.min(1, Math.max(0, num(s.shadowStrength, 1))),
     bias: Math.min(0, Math.max(-0.05, num(s.shadowBias, -0.0005))),
@@ -31,7 +37,8 @@ export function applyLightShadow(light, s) {
   // layers.mask 之后调用本函数，这里镜像即可。
   light.shadow.camera.layers.mask = light.layers.mask;
   if (light.castShadow !== true) return;
-  const isPoint = light.isPointLight === true;
+  // 对象类型标志为 three 运行时属性（类型库只标在具体灯型上），结构断言读取
+  const isPoint = (light as { isPointLight?: boolean }).isPointLight === true;
   // 显式分辨率档位优先；0 = 自动（平面 4096 / 点光 1024，立方体贴图 ×6 开销降档）
   const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 4096;
   light.shadow.mapSize.set(size, size);
@@ -39,7 +46,7 @@ export function applyLightShadow(light, s) {
   light.shadow.bias = cfg.bias;
   light.shadow.radius = cfg.radius;
   if (cfg.normalBias > 0) light.shadow.normalBias = cfg.normalBias;
-  if (light.isDirectionalLight !== true) {
+  if ((light as { isDirectionalLight?: boolean }).isDirectionalLight !== true) {
     // 点光/聚光灯的阴影相机就在灯光位置上，near = 用户近裁剪面
     // （平行光的相机由运行时按场景包围盒后推后合成 near，这里不写）
     light.shadow.camera.near = cfg.near;
@@ -49,7 +56,7 @@ export function applyLightShadow(light, s) {
 
 /** 灯光组件设置 → 节点对象下的真实灯光子对象（__compLight 组；导出供 SDK
  *  门面动态创建/切换灯光类型复用，与组件模式同一光照语义） */
-export function buildComponentLight(s, obj) {
+export function buildComponentLight(s: Record<string, unknown>, obj: THREE.Object3D): void {
   const kind = typeof s.kind === "string" ? s.kind : "point";
   const color = num(s.lightColor, 0xffffff) & 0xffffff;
   const intensity = num(s.intensity, 1);
@@ -59,7 +66,7 @@ export function buildComponentLight(s, obj) {
     : -1;
   const group = new THREE.Group();
   group.name = "__compLight";
-  let light;
+  let light: THREE.Light;
   if (kind === "ambient") {
     light = new THREE.AmbientLight(color, intensity);
     light.layers.mask = lightMask;
@@ -100,7 +107,8 @@ export function buildComponentLight(s, obj) {
     const target = new THREE.Object3D();
     target.position.set(0, 0, -1);
     group.add(target);
-    light.target = target;
+    // 上方分支已保证此时 light 必为平行光/聚光灯（二者才有 target 属性）
+    (light as THREE.DirectionalLight | THREE.SpotLight).target = target;
   }
   obj.add(group);
 }

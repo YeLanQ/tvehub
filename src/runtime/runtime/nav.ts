@@ -13,10 +13,10 @@
 // ---------------------------------------------------------------------------
 import * as THREE from "three";
 import { NavSystem } from "../../framework/navigation/NavSystem";
-import { sampleHeightField, type NavHeightField, type NavObstacle } from "../../framework/navigation/bake";
+import type { NavAreaNode, NavAgentNode } from "../../framework/prototype/nodes";
+import { type NavHeightField, type NavObstacle } from "../../framework/navigation/bake";
 import { mergeHeightFields, rasterizeMeshesToHeightField } from "../../framework/navigation/meshField";
 import {
-  navAreaSettingsSig,
   parseNavAgentSettings,
   parseNavAreaSettings,
   type NavAreaSettings,
@@ -108,7 +108,7 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
   }
 
   /** 区域覆盖范围：单源走快速路径；多源取并集后扩展为正方形 */
-  function boundsFor(entry: NavRuntimeNode, settings: NavAreaSettings): XZBounds | null {
+  function boundsFor(_entry: NavRuntimeNode, settings: NavAreaSettings): XZBounds | null {
     const src = sourcesOf(settings);
     if (!src.length) return null;
     const bounds = src.map((s) => (s.json.type === "terrainNode" ? terrainFieldOf(s)?.bounds ?? meshBoundsOf(s) : meshBoundsOf(s)));
@@ -153,7 +153,7 @@ export function createNavRuntime(ctx: NavRuntimeCtx) {
   }
 
   /** 静态障碍：启用碰撞体且非动态刚体的节点 AABB（排除采样源） */
-  function obstaclesFor(entry: NavRuntimeNode, settings: NavAreaSettings): NavObstacle[] {
+  function obstaclesFor(_entry: NavRuntimeNode, settings: NavAreaSettings): NavObstacle[] {
     const exclude = new Set(settings.sourceIds.length > 0 ? settings.sourceIds : []);
     for (const s of sourcesOf(settings)) exclude.add(s.json.id as string);
     const out: NavObstacle[] = [];

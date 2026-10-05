@@ -7,7 +7,7 @@
 //   （多文件/单页、gzip/非 gzip 统一按相对路径 fetch）。
 
 /** base64 → 字节（单页内联数据用；大字符串分块解码避免参数长度限制） */
-export function base64ToBytes(b64) {
+export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -15,18 +15,21 @@ export function base64ToBytes(b64) {
 }
 
 /** gzip 解压（浏览器原生 DecompressionStream；不支持时抛错） */
-export async function gunzip(bytes) {
+export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+/** 归档内容表（相对路径 → 字节） */
+export type AssetArchiveMap = Map<string, Uint8Array>;
+
 /** 解析归档帧格式（输入为已解压字节） */
-export function parseArchive(bytes) {
+export function parseArchive(bytes: Uint8Array): AssetArchiveMap {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let off = 0;
   const count = view.getUint32(off, true);
   off += 4;
-  const map = new Map();
+  const map: AssetArchiveMap = new Map();
   const dec = new TextDecoder();
   for (let i = 0; i < count; i++) {
     const pathLen = view.getUint32(off, true);
@@ -41,17 +44,31 @@ export function parseArchive(bytes) {
   return map;
 }
 
+/** fetch 拦截识别的窗口形状（防重复安装标记） */
+interface AssetShimWindow {
+  __tveAssetShimInstalled?: boolean;
+}
+
 /** 安装 fetch 拦截：同源相对路径命中内存资产 → Response；其余透传原生 fetch。
  *  命中项每次返回数据副本（Response 消费后不可复用）。
  *  key 匹配两次尝试：整段 pathname（服务器根部署）与入口页目录的相对路径
  *  （子路径部署 / file:// 双击打开——此时 pathname 是完整磁盘路径）。 */
-export function installAssetShim(map) {
-  if (window.__tveAssetShimInstalled) return;
-  window.__tveAssetShimInstalled = true;
+export function installAssetShim(map: AssetArchiveMap): void {
+  const w = window as Window & AssetShimWindow;
+  if (w.__tveAssetShimInstalled) return;
+  w.__tveAssetShimInstalled = true;
   const nativeFetch = window.fetch.bind(window);
-  window.fetch = function (input, init) {
+  window.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     try {
-      const url = typeof input === "string" ? input : input && input.url;
+      // 入参三种形态都识别：字符串 / URL 对象（.href）/ Request（.url）
+      const url =
+        typeof input === "string"
+          ? input
+          : typeof URL !== "undefined" && input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : undefined;
       if (typeof url === "string" && !init?.body) {
         const u = new URL(url, location.href);
         if (u.origin === location.origin || u.protocol === "file:") {

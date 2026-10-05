@@ -17,19 +17,23 @@ import * as THREE from "../core/three.module.min.js";
 import { num, vec, D2R } from "../core/utils";
 import { buildComponentLight } from "../core/lights";
 import { createParticleEmitter } from "../core/particles";
+import type { ParticleEmitter, ParticleMaterialFactory } from "../core/particles";
 import { createMesh } from "./mesh";
 import { createTerrain } from "./terrain";
 import { wrapLOD } from "./lod";
 import { buildUICanvas, buildUIImage, buildUIText, buildUIButton, buildUILayout } from "./ui";
+import type { NodeJson } from "./node-json";
+import type { MaterialParam } from "./material";
+import type { ModelEntryMap } from "./model";
 
 /** 节点层索引收敛（与编辑器 clampLayerIndex 同语义：0~31，越界/非法回退 0） */
-function parseLayerIndex(v) {
+function parseLayerIndex(v: unknown): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0;
   return n >= 0 && n < 32 ? n : 0;
 }
 
 /** culling mask 收敛（与编辑器 parseCullingMask 同语义：int32 位掩码，缺省全部层） */
-export function parseCullingMask(v) {
+export function parseCullingMask(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v | 0 : -1;
 }
 
@@ -39,6 +43,59 @@ const LIGHT_NODE_TYPES = new Set([
   "spotLightNode",
   "ambientLightNode",
 ]);
+
+/** 场景构建上下文（player 装配后传入） */
+export interface BuildSceneCtx {
+  /** .mat 材质参数表（key = 材质资产 rel；loadMaterialParams 产出） */
+  materialParams: Map<string, MaterialParam>;
+  /** 模型实例化缓存（key = 模型资产 rel；loadModels 产出，失败项 null） */
+  models: ModelEntryMap;
+  /** 粒子材质工厂（按渲染后端注入：WebGPU 传 TSL 工厂，缺省 GLSL 时为 null） */
+  particleMaterial: ParticleMaterialFactory | null | undefined;
+}
+
+/** 场景收集条目（json 与重建的三维对象成对） */
+export interface SceneNodeEntry {
+  json: NodeJson;
+  obj: THREE.Object3D;
+}
+
+/** 音源条目（音源节点或音源组件；组件模式附 nodeId 宿主别名供按实体寻址） */
+export interface SceneAudioEntry {
+  json: Record<string, unknown>;
+  obj: THREE.Object3D;
+  nodeId?: string;
+}
+
+/** 动画剪辑组件绑定条目 */
+export interface SceneClipEntry {
+  key: string;
+  nodeId: string | undefined;
+  clip: string;
+  obj: THREE.Object3D;
+  autoplay: boolean;
+  loop: boolean;
+  speed: number;
+}
+
+/** 地形条目（data 为烘焙高度场，供贴地采样） */
+export interface SceneTerrainEntry {
+  json: NodeJson;
+  obj: THREE.Object3D;
+  data: unknown;
+  settings: unknown;
+}
+
+/** buildSceneTree 收集结果 */
+export interface SceneTreeResult {
+  cameras: SceneNodeEntry[];
+  meshes: SceneNodeEntry[];
+  audios: SceneAudioEntry[];
+  clips: SceneClipEntry[];
+  particles: { json: NodeJson; obj: THREE.Object3D; emitter: ParticleEmitter }[];
+  terrains: SceneTerrainEntry[];
+  nodes: SceneNodeEntry[];
+}
 
 /**
  * 递归构建场景树（含自身/子级的变换与可见性），返回收集结果：
@@ -54,16 +111,21 @@ const LIGHT_NODE_TYPES = new Set([
  * ctx = { materialParams, models, particleMaterial }：.mat 参数表 + 模型实例化缓存 +
  * 粒子材质工厂（按渲染后端注入：WebGPU 传 TSL 工厂，缺省 GLSL）。
  */
-export function buildSceneTree(rootJson, scene, ctx) {
-  const cameras = [];
-  const meshes = [];
-  const audios = [];
-  const clips = [];
-  const particles = [];
-  const terrains = [];
-  const nodes = [];
+export function buildSceneTree(
+  rootJson: NodeJson,
+  scene: THREE.Scene,
+  ctx: BuildSceneCtx,
+): SceneTreeResult {
+  const cameras: SceneNodeEntry[] = [];
+  const meshes: SceneNodeEntry[] = [];
+  const audios: SceneAudioEntry[] = [];
+  const clips: SceneClipEntry[] = [];
+  const particles: SceneTreeResult["particles"] = [];
+  const terrains: SceneTerrainEntry[] = [];
+  const nodes: SceneNodeEntry[] = [];
 
-  function buildOwn(type, json) {
+  // type 缺省（无 type 字段的节点）走 default 分支 → Group
+  function buildOwn(type: string | undefined, json: NodeJson): THREE.Object3D {
     switch (type) {
       case "meshNode":
         return createMesh(json, ctx);
@@ -80,7 +142,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
       case "terrainNode":
         return wrapTerrain(json);
       case "navAgentNode":
-        return wrapNavAgent(json);
+        return wrapNavAgent();
       case "uiCanvasNode":
         return buildUICanvas();
       case "uiImageNode":
@@ -97,7 +159,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
   }
 
   /** 粒子系统节点：Group 承载节点变换，粒子实例网格挂其下（与编辑器同结构） */
-  function wrapParticles(json) {
+  function wrapParticles(json: NodeJson): THREE.Object3D {
     const group = new THREE.Group();
     // 材质工厂按渲染后端注入（WebGPU → TSL；缺省 GLSL）
     const emitter = createParticleEmitter(json.particles, ctx.particleMaterial);
@@ -108,13 +170,13 @@ export function buildSceneTree(rootJson, scene, ctx) {
 
   /** 导航代理节点：自身无渲染体（不可见锚点）；位姿由导航运行时驱动，
    *  可见角色经「导航移动」操作贴合代理位姿，或把网格作为子节点挂入 */
-  function wrapNavAgent(json) {
+  function wrapNavAgent(): THREE.Object3D {
     return new THREE.Group();
   }
 
   /** 地形节点：Group 承载节点变换，烘焙高度场网格挂 __terrainMesh（与编辑器同结构）；
    *  data 供 createTerrains 的贴地采样（sampleHeight/sampleSlope）使用 */
-  function wrapTerrain(json) {
+  function wrapTerrain(json: NodeJson): THREE.Object3D {
     const group = new THREE.Group();
     const { obj: mesh, data, settings } = createTerrain(json);
     group.add(mesh);
@@ -122,12 +184,13 @@ export function buildSceneTree(rootJson, scene, ctx) {
     return group;
   }
 
-  function buildNode(json, parent) {
+  function buildNode(json: NodeJson, parent: THREE.Object3D | null): THREE.Object3D {
     const type = json.type;
     const tr = json.transform || {};
     let obj = buildOwn(type, json);
     if (type === "meshNode") obj = wrapLOD(json, obj, ctx);
-    obj.name = json.name ?? type;
+    // name/type 皆缺省时运行时写入 undefined（three 按名字读取，行为不变；类型面收敛为 string）
+    obj.name = (json.name ?? type) as string;
     // 节点身份标记（tve SDK 实体寻址用；内部子对象不带）
     obj.userData.nodeId = typeof json.id === "string" ? json.id : "";
     obj.userData.nodeKind = typeof type === "string" ? type : "";
@@ -141,8 +204,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
     const layer = parseLayerIndex(json.layer);
     obj.layers.set(layer);
     obj.userData.nodeLayer = layer;
-    if (!LIGHT_NODE_TYPES.has(type)) {
-      obj.traverse((o) => {
+    if (!LIGHT_NODE_TYPES.has(typeof type === "string" ? type : "")) {
+      obj.traverse((o: THREE.Object3D) => {
         o.layers.set(layer);
       });
     }
@@ -160,11 +223,12 @@ export function buildSceneTree(rootJson, scene, ctx) {
     for (const c of comps) {
       if (!c || typeof c !== "object" || c.enabled === false) continue;
       if (c.type === "light") {
-        buildComponentLight(c.light || {}, obj);
+        buildComponentLight((c.light || {}) as Record<string, unknown>, obj);
       } else if (c.type === "audioSource") {
         audios.push({ json: { id: c.id, audio: c.audio }, obj, nodeId: json.id });
       } else if (c.type === "animationClip") {
-        const binding = c.clip && typeof c.clip === "object" ? c.clip : {};
+        const binding: Record<string, unknown> =
+          c.clip && typeof c.clip === "object" ? (c.clip as Record<string, unknown>) : {};
         clips.push({
           key: typeof c.id === "string" ? c.id : "",
           nodeId: json.id,
@@ -183,7 +247,7 @@ export function buildSceneTree(rootJson, scene, ctx) {
     // 文档序（先父后子）登记全节点注册表
     nodes.push({ json, obj });
 
-    const children = Array.isArray(json.children) ? json.children : [];
+    const children: NodeJson[] = Array.isArray(json.children) ? (json.children as NodeJson[]) : [];
     for (const c of children) buildNode(c, obj);
 
     if (type === "cameraNode") cameras.push({ json, obj });
@@ -199,47 +263,53 @@ export function buildSceneTree(rootJson, scene, ctx) {
    * 近裁剪面（平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）。
    * 配置留档在 light.userData.shadowCfg 供 player 贴合时读取。
    */
-  function applyLightShadow(light, json) {
-    const raw = json && typeof json.shadow === "object" ? json.shadow : {};
-    const n = (v, fb) => (typeof v === "number" && Number.isFinite(v) ? v : fb);
+  function applyLightShadow(light: THREE.Light, json: NodeJson): void {
+    const shadowable = light as THREE.DirectionalLight | THREE.PointLight | THREE.SpotLight;
+    const raw: Record<string, unknown> =
+      json.shadow && typeof json.shadow === "object"
+        ? (json.shadow as Record<string, unknown>)
+        : {};
+    const n = (v: unknown, fb: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? v : fb;
     const cfg = {
-      strength: Math.min(1, Math.max(0, num(raw.strength, 1))),
-      bias: Math.min(0, Math.max(-0.05, num(raw.bias, -0.0005))),
-      normalBias: Math.max(0, num(raw.normalBias, 0)),
-      near: Math.max(0.01, num(raw.near, 0.1)),
-      radius: Math.min(5, Math.max(1, num(raw.radius, 4))),
-      resolution: [512, 1024, 2048, 4096].includes(num(raw.resolution, 0)) ? num(raw.resolution, 0) : 0,
+      strength: Math.min(1, Math.max(0, n(raw.strength, 1))),
+      bias: Math.min(0, Math.max(-0.05, n(raw.bias, -0.0005))),
+      normalBias: Math.max(0, n(raw.normalBias, 0)),
+      near: Math.max(0.01, n(raw.near, 0.1)),
+      radius: Math.min(5, Math.max(1, n(raw.radius, 4))),
+      resolution: [512, 1024, 2048, 4096].includes(n(raw.resolution, 0)) ? n(raw.resolution, 0) : 0,
     };
     light.userData.shadowCfg = cfg;
     // 阴影相机层随灯光层掩码同步（灯的 Culling Mask 同时决定哪些层
     // 的对象投影进它的阴影贴图）。three 阴影通道按 shadowCamera.layers 过滤物体，
     // 默认只收层 0 —— 不同步会让非 0 层的对象"有光无影"。
-    light.shadow.camera.layers.mask = light.layers.mask;
+    shadowable.shadow.camera.layers.mask = light.layers.mask;
     if (light.castShadow !== true) return;
-    const isPoint = light.isPointLight === true;
+    // 对象类型标志为 three 运行时属性（类型库只标在具体灯型上），结构断言读取
+    const isPoint = (light as { isPointLight?: boolean }).isPointLight === true;
     // 显式分辨率档位优先；0 = 自动（平面 4096 / 点光 1024，立方体贴图 ×6 开销降档）
     const size = cfg.resolution > 0 ? cfg.resolution : isPoint ? 1024 : 4096;
-    light.shadow.mapSize.set(size, size);
-    light.shadow.intensity = cfg.strength;
-    light.shadow.bias = cfg.bias;
-    light.shadow.radius = cfg.radius;
-    if (cfg.normalBias > 0) light.shadow.normalBias = cfg.normalBias;
-    if (light.isDirectionalLight !== true) {
+    shadowable.shadow.mapSize.set(size, size);
+    shadowable.shadow.intensity = cfg.strength;
+    shadowable.shadow.bias = cfg.bias;
+    shadowable.shadow.radius = cfg.radius;
+    if (cfg.normalBias > 0) shadowable.shadow.normalBias = cfg.normalBias;
+    if ((light as { isDirectionalLight?: boolean }).isDirectionalLight !== true) {
       // 点光/聚光灯的阴影相机就在灯光位置上，near = 用户近裁剪面
       // （平行光的相机要按场景包围盒后推，near 由 player 合成，这里不写）
-      light.shadow.camera.near = cfg.near;
-      light.shadow.camera.updateProjectionMatrix();
+      shadowable.shadow.camera.near = cfg.near;
+      shadowable.shadow.camera.updateProjectionMatrix();
     }
   }
 
-  function wrapLight(json, kind) {
+  function wrapLight(json: NodeJson, kind: string): THREE.Object3D {
     const group = new THREE.Group();
     const color = num(json.lightColor, 0xffffff) & 0xffffff;
     const intensity = num(json.intensity, 1);
     // 灯光 Culling Mask：真实灯光对象的 layers = 掩码，
     // 渲染按"灯层 vs 相机层"收集判定 + player 分层多 pass 实现"只照亮所选层"
     const lightMask = parseCullingMask(json.cullingMask);
-    let light;
+    let light: THREE.Light;
     if (kind === "ambient") {
       light = new THREE.AmbientLight(color, intensity);
       light.layers.mask = lightMask;
@@ -285,7 +355,8 @@ export function buildSceneTree(rootJson, scene, ctx) {
       const target = new THREE.Object3D();
       target.position.set(0, 0, -1);
       group.add(target);
-      light.target = target;
+      // 上方分支已保证此时 light 必为平行光/聚光灯（二者才有 target 属性）
+      (light as THREE.DirectionalLight | THREE.SpotLight).target = target;
     }
     return group;
   }

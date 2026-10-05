@@ -29,7 +29,7 @@ interface LodLevelJson {
 }
 
 /** 检查节点是否有 LOD 组件，有则用 THREE.LOD 包装原始网格 */
-export function wrapLOD(json: NodeJson, obj: THREE.Object3D, ctx: unknown): THREE.Object3D {
+export function wrapLOD(json: NodeJson, obj: THREE.Object3D, _ctx: unknown): THREE.Object3D {
   if (json.source !== "primitive") return obj;
   if (!(obj as THREE.Mesh).isMesh) return obj;
 
@@ -60,7 +60,8 @@ export function wrapLOD(json: NodeJson, obj: THREE.Object3D, ctx: unknown): THRE
   lod.position.copy(mesh.position);
   lod.rotation.copy(mesh.rotation);
   lod.scale.copy(mesh.scale);
-  lod.layers.copy(mesh.layers);
+  // Layers.copy 未入类型库，等价直拷掩码
+  lod.layers.mask = mesh.layers.mask;
   lod.userData = { ...mesh.userData };
   lod.name = mesh.name;
 
@@ -74,7 +75,8 @@ export function wrapLOD(json: NodeJson, obj: THREE.Object3D, ctx: unknown): THRE
     const levelMesh = new THREE.Mesh(geom, mat);
     levelMesh.castShadow = mesh.castShadow;
     levelMesh.receiveShadow = mesh.receiveShadow;
-    levelMesh.layers.copy(mesh.layers);
+    // Layers.copy 未入类型库，等价直拷掩码
+    levelMesh.layers.mask = mesh.layers.mask;
     levelMesh.name = "__lodLevel";
     lod.addLevel(levelMesh, num(level.distance, 0));
   }

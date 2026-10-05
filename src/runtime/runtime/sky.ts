@@ -7,21 +7,37 @@ import { resourceLoader } from "./resource";
 /** 天空盒节点默认配色（与编辑器 SkyboxNode.DEFAULT_SKYBOX_COLORS 一致） */
 export const SKY_DEFAULTS = { top: 0x2f6fbb, horizon: 0xcfe4f7, ground: 0x8fa2b5 };
 
-function skyHex(c) {
+/** 太阳绘制参数（天空节点 sun 组，JSON 来源） */
+interface SkySunParams {
+  disk?: unknown;
+  size?: unknown;
+  azimuth?: unknown;
+  elevation?: unknown;
+  color?: unknown;
+  glow?: unknown;
+  [key: string]: unknown;
+}
+
+function skyHex(c: number): string {
   return "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 }
 
-function skyRgb(c) {
+function skyRgb(c: number): string {
   const n = c & 0xffffff;
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
-function skyRgba(c, alpha) {
+function skyRgba(c: number, alpha: number): string {
   return `rgba(${skyRgb(c)}, ${alpha})`;
 }
 
 /** 程序化天空：等距柱状垂直渐变（顶=天顶 → 中=地平线 → 底=下方）+ 可选太阳，与编辑器一致 */
-export function makeSkyEquirectTexture(top, horizon, ground, sun) {
+export function makeSkyEquirectTexture(
+  top: number,
+  horizon: number,
+  ground: number,
+  sun: SkySunParams,
+): THREE.CanvasTexture {
   const w = 256;
   const h = 512;
   const canvas = document.createElement("canvas");
@@ -49,7 +65,7 @@ export function makeSkyEquirectTexture(top, horizon, ground, sun) {
 }
 
 /** 在等距柱状画布上绘制太阳（等角椭圆绘制，天空里保持正圆；与编辑器一致） */
-function drawSkySun(ctx, w, h, sun) {
+function drawSkySun(ctx: CanvasRenderingContext2D, w: number, h: number, sun: SkySunParams): void {
   const disk = sun.disk === "simple" || sun.disk === "none" ? sun.disk : "high";
   if (disk === "none") return;
   const sizeDeg = num(sun.size, 3);
@@ -112,7 +128,7 @@ function drawSkySun(ctx, w, h, sun) {
  * 相机取景范围远大于盒子（天空盒只剩中间一小块）；正交时由 player.mjs 的
  * 全屏天空背景面按光线方向采样渲染，需要 2D 等距柱状纹理。
  */
-export function makeSkyBandTexture(top, horizon, ground) {
+export function makeSkyBandTexture(top: number, horizon: number, ground: number): THREE.CanvasTexture {
   const w = 4;
   const h = 64;
   const canvas = document.createElement("canvas");
@@ -142,12 +158,22 @@ export function makeSkyBandTexture(top, horizon, ground) {
   return tex;
 }
 
+/** 场景节点 JSON（递归 children 的最小读面） */
+interface SkyNodeJson {
+  type?: unknown;
+  active?: unknown;
+  visible?: unknown;
+  children?: unknown;
+  [key: string]: unknown;
+}
+
 /** 深度优先查找首个 type=skyboxNode 且 启用且可见 的节点（与编辑器 findSkyboxNode 一致） */
-export function findSkyNode(json) {
+export function findSkyNode(json: unknown): SkyNodeJson | null {
   if (!json || typeof json !== "object") return null;
-  if (json.type === "skyboxNode" && json.active !== false && json.visible !== false) return json;
-  if (Array.isArray(json.children)) {
-    for (const c of json.children) {
+  const o = json as SkyNodeJson;
+  if (o.type === "skyboxNode" && o.active !== false && o.visible !== false) return o;
+  if (Array.isArray(o.children)) {
+    for (const c of o.children) {
       const r = findSkyNode(c);
       if (r) return r;
     }
@@ -164,17 +190,20 @@ export function findSkyNode(json) {
  * - WebGL：预翻转（ImageBitmap 上传忽略 UNPACK_FLIP_Y_WEBGL，必须自己翻）→ "flipY"
  * - WebGPU：不翻转（该约定下的自然朝向才是正的）→ "none"
  */
-let imageOrientation = "flipY";
+let imageOrientation: "flipY" | "none" = "flipY";
 
 /** 按渲染后端设置纹理翻转（player 在 createRenderer 之后调用） */
-export function configureSkyOrientation(backend) {
+export function configureSkyOrientation(backend: unknown): void {
   imageOrientation = backend === "webgpu" ? "none" : "flipY";
 }
 
 /** fetch 相对路径 → ImageBitmap（失败返回 null；归档/磁盘资产统一走 fetch 拦截）。
  * 是否预翻转由 configureSkyOrientation 按后端决定（见上）；
  * orientation 可显式覆盖（equirect 全景 2D 纹理不分后端统一预翻转，见 loadSkyTexCube）。 */
-async function fetchImageBitmap(rel, orientation = imageOrientation) {
+async function fetchImageBitmap(
+  rel: string,
+  orientation: "flipY" | "none" = imageOrientation,
+): Promise<ImageBitmap | null> {
   try {
     const blob = await resourceLoader.loadBlob(rel);
     return await createImageBitmap(blob, { imageOrientation: orientation });
@@ -188,7 +217,7 @@ async function fetchImageBitmap(rel, orientation = imageOrientation) {
  * 新格式按**文件名**精确匹配天空着色器资产（SkyProcedural.shader / SkyBox.shader），
  * 旧格式为魔法串；不能用「是不是 .shader 引用」之类的宽松条件，否则任何挂 .shader
  * 的普通材质（PBR/自定义…）都会被误判成天空材质。 */
-function skyKindOfShaderRef(shader) {
+function skyKindOfShaderRef(shader: unknown): "procedural" | "cube" | null {
   const ref = String(shader ?? "").trim();
   if (!ref) return null;
   if (ref === "SkyProcedural" || ref === "SkyBox") {
@@ -200,37 +229,59 @@ function skyKindOfShaderRef(shader) {
   return null;
 }
 
+/** 天空材质参数（.mat 收敛结果） */
+export interface SkyMatParams {
+  kind: "procedural" | "cube" | null;
+  cubeMap: string;
+  rotation: number;
+  strength: number;
+  worldOpacity: number;
+  blur: number;
+  sunDisc: boolean;
+  sunSize: number;
+  sunStrength: number;
+  sunElevation: number;
+  sunRotation: number;
+  altitude: number;
+  air: number;
+  dust: number;
+  ozone: number;
+  ms: boolean;
+}
+
 /** 拉取并解析天空盒材质参数（.mat；仅识别天空材质，其它返回 null） */
-export async function loadSkyMatParams(rel) {
+export async function loadSkyMatParams(rel: string): Promise<SkyMatParams | null> {
   try {
     const doc = await resourceLoader.loadJSON(rel);
-    if (!doc || typeof doc !== "object" || doc.$type !== "material") return null;
-    const kind = typeof doc.kind === "string" ? doc.kind : "";
-    const shader = typeof doc.shader === "string" ? doc.shader : "";
+    const d = doc && typeof doc === "object" ? (doc as Record<string, unknown>) : null;
+    if (!d || d.$type !== "material") return null;
+    const kind = typeof d.kind === "string" ? d.kind : "";
+    const shader = typeof d.shader === "string" ? d.shader : "";
     // 天空材质判别：kind 字段优先，否则要求 shader 引用天空着色器（旧格式为魔法串）
     const refKind = skyKindOfShaderRef(shader);
     const declaredKind = kind === "procedural" ? "procedural" : kind === "cube" ? "cube" : null;
     if (!declaredKind && !refKind) return null;
-    const num = (v, f) => (typeof v === "number" && Number.isFinite(v) ? v : f);
-    const bool = (v, f) => (typeof v === "boolean" ? v : f);
-    const str = (v, f) => (typeof v === "string" ? v : f);
+    const num = (v: unknown, f: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? v : f;
+    const bool = (v: unknown, f: boolean): boolean => (typeof v === "boolean" ? v : f);
+    const str = (v: unknown, f: string): string => (typeof v === "string" ? v : f);
     return {
       kind: declaredKind ?? refKind,
-      cubeMap: str(doc.cubeMap, ""),
-      rotation: num(doc.rotation, 0),
-      strength: num(doc.strength, 1),
-      worldOpacity: num(doc.worldOpacity, 0),
-      blur: num(doc.blur, 0),
-      sunDisc: bool(doc.sunDisc, true),
-      sunSize: num(doc.sunSize, 1),
-      sunStrength: num(doc.sunStrength, 1),
-      sunElevation: num(doc.sunElevation, 25),
-      sunRotation: num(doc.sunRotation, 0),
-      altitude: num(doc.altitude, 0),
-      air: num(doc.air, 1),
-      dust: num(doc.dust, 1),
-      ozone: num(doc.ozone, 1),
-      ms: bool(doc.ms, true),
+      cubeMap: str(d.cubeMap, ""),
+      rotation: num(d.rotation, 0),
+      strength: num(d.strength, 1),
+      worldOpacity: num(d.worldOpacity, 0),
+      blur: num(d.blur, 0),
+      sunDisc: bool(d.sunDisc, true),
+      sunSize: num(d.sunSize, 1),
+      sunStrength: num(d.sunStrength, 1),
+      sunElevation: num(d.sunElevation, 25),
+      sunRotation: num(d.sunRotation, 0),
+      altitude: num(d.altitude, 0),
+      air: num(d.air, 1),
+      dust: num(d.dust, 1),
+      ozone: num(d.ozone, 1),
+      ms: bool(d.ms, true),
     };
   } catch {
     return null;
@@ -517,9 +568,20 @@ const LUT_H = 64;
 const SKY_W = 512;
 const SKY_H = 256;
 
-let nishitaRes = null;
+/** Nishita 两 pass 渲染资源（惰性构建一次） */
+interface NishitaRes {
+  cam: THREE.Camera;
+  transmittanceMaterial: THREE.ShaderMaterial;
+  transmittanceScene: THREE.Scene;
+  transmittanceRT: THREE.WebGLRenderTarget;
+  skyMaterial: THREE.ShaderMaterial;
+  skyScene: THREE.Scene;
+  skyRT: THREE.WebGLRenderTarget;
+}
 
-function ensureNishita() {
+let nishitaRes: NishitaRes | null = null;
+
+function ensureNishita(): NishitaRes {
   if (nishitaRes) return nishitaRes;
   const cam = new THREE.Camera();
   cam.projectionMatrix.identity();
@@ -597,8 +659,25 @@ function ensureNishita() {
   return nishitaRes;
 }
 
+/** Nishita 天空参数消费面（.mat 收敛结果 SkyMatParams 满足此形状） */
+interface NishitaParams {
+  sunElevation: number;
+  sunRotation: number;
+  sunSize: number;
+  sunStrength: number;
+  sunDisc: boolean;
+  altitude: number;
+  air: number;
+  dust: number;
+  ozone: number;
+  ms: boolean;
+}
+
 /** 按 Nishita 参数渲染等距柱状天空纹理（线性 HDR；参数结构与编辑器一致） */
-export function makeNishitaSkyEquirect(renderer, params) {
+export function makeNishitaSkyEquirect(
+  renderer: THREE.WebGLRenderer,
+  params: NishitaParams,
+): THREE.Texture {
   const res = ensureNishita();
   const el = (params.sunElevation * Math.PI) / 180;
   const az = (params.sunRotation * Math.PI) / 180;
@@ -650,22 +729,28 @@ export function makeNishitaSkyEquirect(renderer, params) {
  * - source=faces：六面贴图 → CubeTexture（透视背景直用，正交全屏面按光线方向采样）；
  * - .hdr 网页运行时不解码（RGBE），返回 null 由调用方回退三段色带。
  */
-export async function loadSkyTexCube(rel) {
+export async function loadSkyTexCube(rel: string): Promise<THREE.Texture | null> {
   try {
     const doc = await resourceLoader.loadJSON(rel);
-    if (!doc || typeof doc !== "object" || doc.$type !== "texcube") return null;
-    if (doc.source === "faces") {
+    const d = doc && typeof doc === "object" ? (doc as Record<string, unknown>) : null;
+    if (!d || d.$type !== "texcube") return null;
+    if (d.source === "faces") {
       const keys = ["px", "nx", "py", "ny", "pz", "nz"];
-      const rels = keys.map((k) => doc.faces?.[k] ?? "");
+      const faces = d.faces as Record<string, unknown> | undefined;
+      const rels = keys.map((k) => {
+        const v = faces?.[k];
+        return typeof v === "string" ? v : "";
+      });
       if (rels.some((v) => !v)) return null;
-      const imgs = await Promise.all(rels.map(fetchImageBitmap));
+      // 显式单参回调：map 直接传函数引用会把数组 index 泄漏进 orientation 形参
+      const imgs = await Promise.all(rels.map((r) => fetchImageBitmap(r)));
       if (imgs.some((i) => !i)) return null;
-      const cube = new THREE.CubeTexture(imgs);
+      const cube = new THREE.CubeTexture(imgs as ImageBitmap[]);
       cube.colorSpace = THREE.SRGBColorSpace;
       cube.needsUpdate = true;
       return cube;
     }
-    const mapRel = doc.map ?? "";
+    const mapRel = typeof d.map === "string" ? d.map : "";
     if (!mapRel || /\.hdr$/i.test(mapRel)) return null;
     // equirect 全景是普通 2D 纹理：不分后端统一按 GL 朝向预翻转位图。
     // （此前 WebGPU 取"none"位图 + flipY=false，全景天地颠倒——俯视看到的是天）

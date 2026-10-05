@@ -2,7 +2,34 @@
 // 发射器语义在 ../core/particles.mjs（与编辑器 ParticleEmitter 镜像）；本模块只做
 // 节点绑定、贴图异步加载与热替换、按节点 id 寻址的运行时控制（供脚本宿主
 // engine.particles / SDK ParticleSystemNode 转发）。
+import * as THREE from "../core/three.module.min.js";
 import { createParticleEmitter } from "../core/particles";
+import type { ParticleEmitter, ParticleMaterialFactory } from "../core/particles";
+
+/** 贴图加载器（player 注入 textures 的 fetch + ImageBitmap 链路；缺省则一律内置软圆点） */
+type ParticleTexLoader = (rel: string) => Promise<THREE.Texture | null> | THREE.Texture | null;
+
+/** 单个粒子节点的绑定（发射器 + 宿主对象 + 贴图异步态） */
+interface ParticleBinding {
+  emitter: ParticleEmitter;
+  host: THREE.Object3D;
+  textureRel: string;
+  textureSeq: number;
+}
+
+/** 粒子运行时 API（player 帧循环与脚本宿主 engine.particles 消费） */
+export interface ParticlesApi {
+  update(dt: number): void;
+  play(nodeId: string): boolean;
+  pause(nodeId: string): boolean;
+  stop(nodeId: string): boolean;
+  restart(nodeId: string): boolean;
+  clear(nodeId: string): boolean;
+  infoOf(nodeId: string): ParticleEmitter["state"] | null;
+  settingsOf(nodeId: string): ParticleEmitter["settings"] | null;
+  updateSettings(nodeId: string, patch: unknown): boolean;
+  add(json: Record<string, unknown>, obj: THREE.Object3D): ParticleEmitter | null;
+}
 
 /**
  * particles 为 buildSceneTree 收集的粒子节点列表（{ json, obj, emitter }）；
@@ -13,16 +40,20 @@ import { createParticleEmitter } from "../core/particles";
  * 返回 { update(dt), play/pause/stop/restart/clear(nodeId), infoOf(nodeId),
  * settingsOf(nodeId), updateSettings(nodeId, patch), add(json, obj) }。
  */
-export function createParticles(particles, loadTexture, materialFactory) {
-  const byId = new Map();
-  const loader = typeof loadTexture === "function" ? loadTexture : null;
+export function createParticles(
+  particles: { json: Record<string, unknown>; obj: THREE.Object3D; emitter?: ParticleEmitter }[],
+  loadTexture: unknown,
+  materialFactory?: ParticleMaterialFactory,
+): ParticlesApi {
+  const byId = new Map<string, ParticleBinding>();
+  const loader = typeof loadTexture === "function" ? (loadTexture as ParticleTexLoader) : null;
   const factory = typeof materialFactory === "function" ? materialFactory : undefined;
 
   /**
    * 贴图同步（与编辑器 ParticleSystem.syncTexture 同语义）：引用未变不动；空串立即回
    * 内置软圆点；否则异步取得后热替换，过期结果（序号不符）丢弃。
    */
-  function syncTexture(b, rel) {
+  function syncTexture(b: ParticleBinding, rel: string): void {
     if (b.textureRel === rel) return;
     b.textureRel = rel;
     const seq = ++b.textureSeq;
@@ -31,7 +62,7 @@ export function createParticles(particles, loadTexture, materialFactory) {
       return;
     }
     // 与编辑器同步请求语义：同步发起加载（同步抛错视作失败），异步结果按序号落地
-    let task;
+    let task: Promise<THREE.Texture | null>;
     try {
       task = Promise.resolve(loader(rel));
     } catch {
@@ -45,8 +76,8 @@ export function createParticles(particles, loadTexture, materialFactory) {
       });
   }
 
-  function bind(id, emitter, host) {
-    const b = { emitter, host, textureRel: "", textureSeq: 0 };
+  function bind(id: string, emitter: ParticleEmitter, host: THREE.Object3D): ParticleBinding {
+    const b: ParticleBinding = { emitter, host, textureRel: "", textureSeq: 0 };
     byId.set(id, b);
     syncTexture(b, emitter.settings.texture);
     return b;
@@ -59,8 +90,8 @@ export function createParticles(particles, loadTexture, materialFactory) {
   }
 
   /** 节点对象可见性链（含自身）：不可见时不推进（与渲染一致，省 CPU） */
-  function hostVisible(obj) {
-    let cur = obj;
+  function hostVisible(obj: THREE.Object3D): boolean {
+    let cur: THREE.Object3D | null = obj;
     while (cur) {
       if (!cur.visible) return false;
       cur = cur.parent;
@@ -70,7 +101,7 @@ export function createParticles(particles, loadTexture, materialFactory) {
 
   return {
     /** 每帧推进全部发射器（渲染前调用） */
-    update(dt) {
+    update(dt: number) {
       byId.forEach((b) => {
         if (hostVisible(b.host)) b.emitter.update(dt, b.host);
       });
@@ -122,7 +153,10 @@ export function createParticles(particles, loadTexture, materialFactory) {
     updateSettings(nodeId, patch) {
       const b = byId.get(nodeId);
       if (!b) return false;
-      const merged = { ...b.emitter.settings, ...(patch && typeof patch === "object" ? patch : {}) };
+      const merged = {
+        ...b.emitter.settings,
+        ...(patch && typeof patch === "object" ? (patch as Record<string, unknown>) : {}),
+      };
       if (!b.emitter.needsRebuild(merged)) {
         b.emitter.setSettings(merged);
         syncTexture(b, b.emitter.settings.texture);

@@ -5,13 +5,32 @@
 // ---------------------------------------------------------------------------
 import { postLog } from "../log";
 
-class Pool {
+/** Pool 构造选项（全部可选；与 tve.d.ts Pool 契约镜像） */
+interface PoolOptions<T> {
+  /** 归还时的清理回调（put 时调用；抛错被捕获忽略） */
+  reset?: (item: T) => void;
+  /** 预热数量（创建即备好空闲对象） */
+  initial?: number;
+  /** 空闲上限（超出后归还的对象被丢弃交给 GC） */
+  max?: number;
+}
+
+class Pool<T> {
+  /** 对象工厂（无参；新建对象时调用） */
+  __factory: () => T;
+  /** 归还时清理回调（未配置为 null） */
+  __reset: ((item: T) => void) | null;
+  /** 空闲上限（Infinity = 不限） */
+  __max: number;
+  __free: T[];
+  __live: Set<T>;
+  __created: number;
+
   /**
-   * @param {Function} factory 对象工厂（无参；新建对象时调用）
-   * @param {{reset?: Function, initial?: number, max?: number}} [options]
-   *        reset = 归还时清理回调；initial = 预热数量；max = 空闲上限（缺省无限）
+   * @param factory 对象工厂（无参；新建对象时调用）
+   * @param options reset = 归还时清理回调；initial = 预热数量；max = 空闲上限（缺省无限）
    */
-  constructor(factory, options) {
+  constructor(factory: () => T, options?: PoolOptions<T> | null) {
     if (typeof factory !== "function") {
       throw new Error("[tve] Pool 需要一个 factory 工厂函数");
     }
@@ -20,37 +39,37 @@ class Pool {
     this.__reset = typeof o.reset === "function" ? o.reset : null;
     this.__max = typeof o.max === "number" && Number.isFinite(o.max) ? Math.max(0, Math.floor(o.max)) : Infinity;
     this.__free = [];
-    this.__live = new Set();
+    this.__live = new Set<T>();
     this.__created = 0;
     const initial = typeof o.initial === "number" && Number.isFinite(o.initial) ? Math.max(0, Math.floor(o.initial)) : 0;
     if (initial > 0) this.prewarm(initial);
   }
 
   /** 空闲对象数量 */
-  get count() {
+  get count(): number {
     return this.__free.length;
   }
 
   /** 累计创建的对象总数（评估池命中率用） */
-  get totalCreated() {
+  get totalCreated(): number {
     return this.__created;
   }
 
   /** 预热：提前创建 n 个空闲对象（受 max 上限约束） */
-  prewarm(n) {
+  prewarm(n: unknown): void {
     const total = typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
     while (this.__free.length < Math.min(total, this.__max)) {
       this.__free.push(this.__create());
     }
   }
 
-  __create() {
+  __create(): T {
     this.__created += 1;
     return this.__factory();
   }
 
   /** 取一个对象：优先复用空闲对象，池空则新建 */
-  get() {
+  get(): T {
     const item = this.__free.pop() ?? this.__create();
     this.__live.add(item);
     return item;
@@ -60,13 +79,13 @@ class Pool {
    * 归还对象：先调用 reset 清理（若配置），再入空闲池（达 max 上限则丢弃交给 GC）。
    * 非本池发出的对象或重复归还返回 false。
    */
-  put(item) {
+  put(item: T): boolean {
     if (!this.__live.delete(item)) return false;
     if (this.__reset) {
       try {
         this.__reset(item);
       } catch (e) {
-        postLog("warn", "[tve] 对象池 reset 异常: " + (e && e.message ? e.message : String(e)));
+        postLog("warn", "[tve] 对象池 reset 异常: " + (e instanceof Error ? e.message : String(e)));
       }
     }
     if (this.__free.length < this.__max) this.__free.push(item);
@@ -74,7 +93,7 @@ class Pool {
   }
 
   /** 清空空闲列表（释放引用交给 GC；不影响已借出的对象） */
-  clear() {
+  clear(): void {
     this.__free.length = 0;
   }
 }

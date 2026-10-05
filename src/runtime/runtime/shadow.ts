@@ -34,17 +34,26 @@ const _toCenter = new THREE.Vector3();
 const _corner = new THREE.Vector3();
 const _tmpBox = new THREE.Box3();
 
-function num(v, fallback) {
+/** 数值兜底（同 core/utils.num 语义，本文件自包含） */
+function num(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
+/** 灯光阴影配置留档（lights.ts applyLightShadow 写入 userData 的形状） */
+interface ShadowCfg {
+  near?: unknown;
+  normalBias?: unknown;
+  radius?: unknown;
+}
+
 /** 场景投影包围盒：全部可见网格的世界包围盒并集（隐藏对象与其子树不参与） */
-function sceneBounds(scene) {
+function sceneBounds(scene: THREE.Scene): THREE.Box3 | null {
   _box.makeEmpty();
-  scene.traverse((o) => {
+  scene.traverse((o: THREE.Object3D) => {
     if (!o.visible) return;
-    if (o.isMesh !== true || !o.geometry) return;
-    const geom = o.geometry;
+    const m = o as THREE.Mesh;
+    if (m.isMesh !== true || !m.geometry) return;
+    const geom = m.geometry;
     if (!geom.boundingBox) geom.computeBoundingBox();
     if (!geom.boundingBox) return;
     _tmpBox.copy(geom.boundingBox).applyMatrix4(o.matrixWorld);
@@ -54,24 +63,28 @@ function sceneBounds(scene) {
 }
 
 /** 单灯贴合：按灯型设置阴影相机 near/far/正交范围，并兑现自动 normalBias */
-function fitShadowCamera(light, bounds) {
-  const cfg = light.userData && typeof light.userData.shadowCfg === "object" ? light.userData.shadowCfg : {};
+function fitShadowCamera(light: THREE.Light, bounds: THREE.Box3): void {
+  // shadow/对象标志/distance 只在具体灯型上（Light 基类类型未暴露），结构断言消费
+  const shadowable = light as THREE.DirectionalLight | THREE.PointLight | THREE.SpotLight;
+  const rawCfg = (light.userData as { shadowCfg?: unknown }).shadowCfg;
+  const cfg = rawCfg && typeof rawCfg === "object" ? (rawCfg as ShadowCfg) : {};
   const near = Math.max(0.01, num(cfg.near, 0.1));
   const normalBias = Math.max(0, num(cfg.normalBias, 0));
   const radius = Math.min(5, Math.max(1, num(cfg.radius, 4)));
   const center = bounds.getCenter(_center);
   const reachRadius = Math.max(bounds.getSize(_size).length() / 2, 0.05);
-  const shadow = light.shadow;
-  const isDir = light.isDirectionalLight === true;
-  const isPoint = light.isPointLight === true;
-  let autoBiasExtent;
+  const shadow = shadowable.shadow;
+  const isDir = (light as { isDirectionalLight?: boolean }).isDirectionalLight === true;
+  const isPoint = (light as { isPointLight?: boolean }).isPointLight === true;
+  const lightDist = (light as { distance?: number }).distance ?? 0;
+  let autoBiasExtent: number;
 
   if (isPoint) {
     // 点光：立方体阴影相机挂在灯光位置，far 取「灯光到场景包围盒最远角落」
     // （distance>0 时光照在该距离截止，直接用）
     _origin.setFromMatrixPosition(light.matrixWorld);
-    let far = light.distance > 0 ? light.distance : 1;
-    if (light.distance <= 0) {
+    let far = lightDist > 0 ? lightDist : 1;
+    if (lightDist <= 0) {
       for (let sx = -1; sx <= 1; sx += 2) {
         for (let sy = -1; sy <= 1; sy += 2) {
           for (let sz = -1; sz <= 1; sz += 2) {
@@ -92,7 +105,8 @@ function fitShadowCamera(light, bounds) {
   } else if (!isDir) {
     // 聚光灯：视锥由 angle 决定，near = 用户近裁剪面，far 推到覆盖场景
     _origin.setFromMatrixPosition(light.matrixWorld);
-    _target.setFromMatrixPosition(light.target.matrixWorld);
+    // 运行时标志已判定为 SpotLight，target/angle 断言安全
+    _target.setFromMatrixPosition((light as THREE.SpotLight).target.matrixWorld);
     _axis.copy(_target).sub(_origin);
     if (_axis.lengthSq() < 1e-8) _axis.set(0, -1, 0);
     _axis.normalize();
@@ -101,10 +115,10 @@ function fitShadowCamera(light, bounds) {
     const reach = reachRadius + Math.sqrt(perpSq);
     const fitFar = Math.max(along + reach, 1);
     shadow.camera.near = near;
-    shadow.camera.far = light.distance > 0 ? Math.min(light.distance, fitFar) : fitFar;
+    shadow.camera.far = lightDist > 0 ? Math.min(lightDist, fitFar) : fitFar;
     shadow.camera.updateProjectionMatrix();
     // 视锥在远平面处的世界宽度决定纹素粗细
-    const halfAngle = Math.max(light.angle, 0.01);
+    const halfAngle = Math.max((light as THREE.SpotLight).angle, 0.01);
     autoBiasExtent = 2 * Math.tan(halfAngle) * shadow.camera.far;
   } else {
     // 平行光：阴影相机沿视轴后推，保证整个场景在相机前方。three 把阴影相机放在
@@ -112,7 +126,8 @@ function fitShadowCamera(light, bounds) {
     // （灯"站"在场景里时，近平面会把近侧物体的阴影整片裁掉）。缺口只补不退：
     // 重复 refit 不来回挪灯。
     _origin.setFromMatrixPosition(light.matrixWorld);
-    _target.setFromMatrixPosition(light.target.matrixWorld);
+    // 平行光分支：运行时标志已判定为 DirectionalLight，target 断言安全
+    _target.setFromMatrixPosition((light as THREE.DirectionalLight).target.matrixWorld);
     _axis.copy(_target).sub(_origin);
     if (_axis.lengthSq() < 1e-8) _axis.set(0, -1, 0);
     _axis.normalize();
@@ -125,7 +140,8 @@ function fitShadowCamera(light, bounds) {
       light.updateWorldMatrix(true, false);
     }
     const alongFinal = deficit > 1e-4 ? reach + 0.05 : along;
-    const cam = shadow.camera;
+    // 平行光阴影相机为正交相机（联合成员收窄）
+    const cam = shadow.camera as THREE.OrthographicCamera;
     cam.near = Math.max(alongFinal - reach + near, 0.01);
     cam.far = Math.max(alongFinal + reach, cam.near + 0.1);
     // 正交范围沿灯光右/上轴做紧凑投影（8 个包围盒角落 → 灯光轴），比包围球
@@ -181,20 +197,27 @@ function fitShadowCamera(light, bounds) {
  * 帧循环调用：把启用阴影的灯光阴影相机贴合到场景包围盒（含自动 normalBias）。
  * @param force 忽略帧节拍立即重算
  */
-export function refitShadowCameras(scene, force = false) {
+export function refitShadowCameras(scene: THREE.Scene, force = false): void {
   if (!started) {
     started = true;
     force = true;
   }
   if (!force && ++frameCount < REFIT_INTERVAL) return;
   frameCount = 0;
-  const lights = [];
-  scene.traverse((o) => {
+  const lights: THREE.Light[] = [];
+  scene.traverse((o: THREE.Object3D) => {
+    const l = o as unknown as {
+      castShadow?: boolean;
+      isDirectionalLight?: boolean;
+      isSpotLight?: boolean;
+      isPointLight?: boolean;
+    };
     if (
-      o.castShadow === true &&
-      (o.isDirectionalLight === true || o.isSpotLight === true || o.isPointLight === true)
+      l.castShadow === true &&
+      (l.isDirectionalLight === true || l.isSpotLight === true || l.isPointLight === true)
     ) {
-      lights.push(o);
+      // 灯型标志已判定，断言为 Light 子类
+      lights.push(o as THREE.Light);
     }
   });
   if (!lights.length) return;
