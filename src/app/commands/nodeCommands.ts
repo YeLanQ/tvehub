@@ -8,9 +8,10 @@ import { getScriptsStore } from "../stores/scripts";
 import { prompt } from "../lib/prompt";
 import { api } from "../../lib/api";
 import { registerCommand } from "./registry";
+import { asRecord, asStrings } from "./args";
 import { isEditingText } from "./context";
 import { currentTransform, mergeTransformSnapshot, parseNodeSetArgs } from "./nodeSet";
-import type { MoveTarget } from "../../framework/scene/SceneClient";
+import type { MoveTarget, TransformSnapshot } from "../../framework/scene/SceneClient";
 import type { JsonRecord, Vec3 } from "../../framework/prototype/types";
 
 import type { GeometryKind } from "../../framework/mesh/geometry";
@@ -60,6 +61,49 @@ function asPosition(v: unknown): Vec3 | undefined {
   return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? { x, y, z } : undefined;
 }
 
+/** id / id 数组两种形态 → 字符串列表（空串剔除） */
+function asIdList(v: unknown): string[] {
+  const list: unknown[] = Array.isArray(v) ? v : [v];
+  return list.map((x) => String(x)).filter(Boolean);
+}
+
+/** 任意 JSON → MoveTarget 列表（剔除缺 id / 父级非法的残缺项——原 engine 端
+ *  对未知父级一律 no-op，这里前置剔除；index 缺省 0，与 splice(undefined) 同义） */
+function asMoveTargets(v: unknown): MoveTarget[] {
+  if (!Array.isArray(v)) return [];
+  const out: MoveTarget[] = [];
+  for (const item of v) {
+    const m = asRecord(item);
+    if (!m || typeof m.id !== "string" || !m.id) continue;
+    const newParentId =
+      m.newParentId === null ? null : typeof m.newParentId === "string" ? m.newParentId : undefined;
+    if (newParentId === undefined) continue;
+    out.push({
+      id: m.id,
+      newParentId,
+      newIndex: typeof m.newIndex === "number" ? m.newIndex : 0,
+    });
+  }
+  return out;
+}
+
+/** 任意 JSON → TransformSnapshot（position/rotation/scale 各轴须为有限数字） */
+function asTransformSnapshot(v: unknown): TransformSnapshot | undefined {
+  const r = asRecord(v);
+  if (!r) return undefined;
+  const part = (o: unknown): { x: number; y: number; z: number } | null => {
+    const p = asRecord(o);
+    if (!p) return null;
+    const axes = [p.x, p.y, p.z];
+    if (axes.some((a) => typeof a !== "number" || !Number.isFinite(a))) return null;
+    return { x: axes[0] as number, y: axes[1] as number, z: axes[2] as number };
+  };
+  const position = part(r.position);
+  const rotation = part(r.rotation);
+  const scale = part(r.scale);
+  return position && rotation && scale ? { position, rotation, scale } : undefined;
+}
+
 registerCommand({
   id: "node.add",
   label: "添加节点",
@@ -67,7 +111,7 @@ registerCommand({
   expose: true,
   description:
     "在指定父节点下新增节点（kind: group/mesh/light/camera/skybox/fog/audio/particle/terrain/nav/logic/script/model；mesh 可带 subtype 几何与 position 出生落位，light 可带 subtype 灯光，skybox 可带 subtype 天空，fog 可带 subtype 雾类型，nav 可带 subtype 导航节点（area/agent），script 用 rel/path=脚本 .ts 相对路径，model/audio/terrain 用 path 或 rel 资产路径；parentId 或 parent 指定父节点，缺省挂根——仅当选中的是容器型节点（空组/UI 画布/布局）时才挂到其下，实体选中不隐式收子）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法添加节点");
     // parent 别名：模型常写 parent（值可为节点 id 或 "root"），与 parentId 等价
@@ -257,7 +301,7 @@ registerCommand({
   description:
     "给节点添加组件（属性面板组件卡同源，一次撤销）。脚本组件：不传 type，给 script=脚本 .ts 相对路径（如 src/Player.ts）；" +
     "内置组件：type=rigidBody/collider/light/audioSource/animationClip（light 可带 lightKind）。重复挂载的脚本与单实例组件幂等/报错",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const id = String(args?.id ?? "");
     const node = graph().get(id);
     if (!node) throw new Error(`未找到节点: ${id}（先用 scene.tree 或层级面板查节点 id）`);
@@ -285,7 +329,9 @@ registerCommand({
       if (!canAddComponent({ components: comps as unknown as NodeComponentRef[] }, t)) {
         throw new Error(`「${componentMetaOf(t).label}」是单实例组件，该节点已挂载`);
       }
-      comp = createComponentRef(t, { lightKind: args?.lightKind });
+      // lightKind 可选且须为合法灯型（组件描述符按灯型初始化默认参数）
+      const lightKind = LIGHT_KINDS.find((k) => k === args?.lightKind);
+      comp = createComponentRef(t, lightKind ? { lightKind } : {});
     } else {
       throw new Error(
         `未知组件类型: ${args?.type}（脚本组件不传 type 只给 script；内置组件 type=rigidBody/collider/light/audioSource/animationClip）`,
@@ -303,7 +349,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description: "重命名节点（id 缺省时重命名当前选中节点）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const name = String(args?.name ?? "").trim();
     if (!name) return { renamed: false };
     if (args?.id) {
@@ -321,11 +367,8 @@ registerCommand({
   group: "节点",
   expose: true,
   description: "删除节点（id/ids：节点 id 或 id 数组；根场景节点不可删除）",
-  run: (_ctx, args: any) => {
-    const raw = args?.ids ?? (args?.id ? [args.id] : []);
-    const ids = (Array.isArray(raw) ? raw : [raw])
-      .map((v: unknown) => String(v))
-      .filter(Boolean);
+  run: (_ctx, args: Record<string, unknown>) => {
+    const ids = asIdList(args?.ids ?? (args?.id ? [args.id] : []));
     const root = graph().root;
     let targets = ids.filter((id) => {
       const n = graph().get(id);
@@ -358,11 +401,8 @@ registerCommand({
     if (!s.state.mounted) return false;
     return !!s.state.selectedId;
   },
-  run: (_ctx, args: any) => {
-    const raw = args?.ids ?? (args?.id ? [args.id] : []);
-    let ids = (Array.isArray(raw) ? raw : [raw])
-      .map((v: unknown) => String(v))
-      .filter(Boolean);
+  run: (_ctx, args: Record<string, unknown>) => {
+    let ids = asIdList(args?.ids ?? (args?.id ? [args.id] : []));
     // 缺省：复制当前选中节点（Ctrl+D 快捷键路径）
     if (!ids.length) {
       ids = [...engine().selectionIds];
@@ -397,8 +437,8 @@ registerCommand({
   label: "移动节点",
   group: "节点",
   description: "移动节点到新父级/新位置（moves：MoveTarget[]；selectIds 移动后选中）",
-  run: (_ctx, args: any) => {
-    const moves: MoveTarget[] = Array.isArray(args?.moves) ? args.moves : [];
+  run: (_ctx, args: Record<string, unknown>) => {
+    const moves = asMoveTargets(args?.moves);
     const valid: MoveTarget[] = [];
     for (const m of moves) {
       const n = graph().get(m.id);
@@ -412,8 +452,8 @@ registerCommand({
     }
     if (valid.length) {
       engine().reparentNodes(valid);
-      const sel = Array.isArray(args?.selectIds) ? args.selectIds : [];
-      if (sel.length) engine().setSelection(sel.map(String));
+      const sel = asStrings(args?.selectIds);
+      if (sel.length) engine().setSelection(sel);
     }
     return { reparented: valid.map((m) => m.id) };
   },
@@ -424,10 +464,15 @@ registerCommand({
   label: "更新节点",
   group: "节点",
   description: "整节点属性补丁（before/after 快照，一次撤销）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const id = String(args?.id ?? "");
     if (!id || !graph().has(id)) return { patched: false };
-    engine().patchNode(id, args.before as JsonRecord, args.after as JsonRecord, args.label);
+    engine().patchNode(
+      id,
+      args.before as JsonRecord,
+      args.after as JsonRecord,
+      typeof args.label === "string" ? args.label : undefined,
+    );
     return { patched: true };
   },
 });
@@ -437,9 +482,15 @@ registerCommand({
   label: "设置变换",
   group: "节点",
   description: "写入节点变换快照（position/rotation/scale，一次撤销）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const id = String(args?.id ?? "");
-    if (id) engine().setTransform(id, args.snapshot);
+    if (id) {
+      const snapshot = asTransformSnapshot(args?.snapshot);
+      if (!snapshot) {
+        throw new Error("缺少有效 snapshot（position/rotation/scale 各 {x,y,z} 有限数字）");
+      }
+      engine().setTransform(id, snapshot);
+    }
     return { ok: true };
   },
 });
@@ -453,7 +504,7 @@ registerCommand({
     "设置节点属性（写入节点 JSON 并走撤销历史）。两种形式：{id, prop, value} 单属性，" +
     "或 {id, ...字段} 字段包（name/visible/active/tag/transform/position/rotation/scale 等" +
     "任意混写；transform 与分量支持部分字段逐轴合并，未给的分量保持原值）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const id = String(args?.id ?? "");
     const node = graph().get(id);
     if (!node) throw new Error(`未找到节点: ${id}`);
@@ -492,7 +543,7 @@ registerCommand({
   label: "相机对齐当前视口",
   group: "节点",
   description: "把相机节点位姿与取景参数对齐到当前编辑器视口相机（id 缺省 = 当前选中节点；一次撤销）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const st = editor();
     if (!st.state.mounted) throw new Error("编辑器未就绪，无法对齐相机");
     const id = args?.id ? String(args.id) : st.state.selectedId;
@@ -509,7 +560,7 @@ registerCommand({
   group: "节点",
   expose: true,
   description: "选中场景节点（id 传空 = 取消选中）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     engine().select(args?.id ? String(args.id) : null);
     return { ok: true };
   },

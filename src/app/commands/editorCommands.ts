@@ -52,7 +52,7 @@ registerCommand({
   group: "编辑器",
   canRun: (ctx) => ctx.view === "editor",
   description: "切换视口变换工具（mode: translate/rotate/scale；场景/布局视图且非拖拽期间生效，快捷键 W/E/R）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const mode = String(args?.mode ?? "");
     if (mode !== "translate" && mode !== "rotate" && mode !== "scale") return { set: false };
     const store = getEditorStore();
@@ -78,7 +78,7 @@ registerCommand({
   canRun: (ctx) => ctx.view === "editor",
   description:
     "视口相机快速聚焦对象（取世界包围球完整取景，沿当前视线退到全览距离；id 缺省 = 当前选中节点。层级双击 / 快捷键 F）",
-  run: (_ctx, args: any) => {
+  run: (_ctx, args: Record<string, unknown>) => {
     const store = getEditorStore();
     // 静默守卫：脚本/预览工作台不劫持键位（与 editor.gizmoMode 同口径）
     if (

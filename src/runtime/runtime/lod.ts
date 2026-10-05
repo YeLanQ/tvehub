@@ -7,23 +7,53 @@
 
 import * as THREE from "../core/three.module.min.js";
 import { num, vec } from "../core/utils";
+import type { NodeComponentJson, NodeJson } from "./node-json";
+
+/** LOD 层级 JSON 原始形态（distance 缺失/非正数的层级被忽略） */
+interface LodLevelJsonRaw {
+  distance?: unknown;
+  geometry?: unknown;
+  size?: unknown;
+}
+
+/** LOD 组件 JSON（components 中 type=lod 的私有形状） */
+interface LodComponentJson extends NodeComponentJson {
+  lod?: { levels?: LodLevelJsonRaw[] };
+}
+
+/** 收窄后的层级（distance 已验证为正数） */
+interface LodLevelJson {
+  distance: number;
+  geometry?: string;
+  size?: Record<string, unknown>;
+}
 
 /** 检查节点是否有 LOD 组件，有则用 THREE.LOD 包装原始网格 */
-export function wrapLOD(json: any, obj: THREE.Object3D, ctx: any): THREE.Object3D {
+export function wrapLOD(json: NodeJson, obj: THREE.Object3D, ctx: unknown): THREE.Object3D {
   if (json.source !== "primitive") return obj;
-  if (!(obj as any).isMesh) return obj;
+  if (!(obj as THREE.Mesh).isMesh) return obj;
 
   const comps = Array.isArray(json.components) ? json.components : [];
-  const lodComp = comps.find(
-    (c: any) => c && c.type === "lod" && c.enabled !== false && c.lod && Array.isArray(c.lod.levels) && c.lod.levels.length > 0,
-  );
+  const lodComp = comps.find((c): c is LodComponentJson => {
+    if (!c || c.type !== "lod" || c.enabled === false) return false;
+    const levels = (c.lod as LodComponentJson["lod"] | undefined)?.levels;
+    return Array.isArray(levels) && levels.length > 0;
+  });
   if (!lodComp) return obj;
 
   const mesh = obj as THREE.Mesh;
   const mat = mesh.material;
-  const levels = lodComp.lod.levels
-    .filter((l: any) => l && typeof l.distance === "number" && l.distance > 0)
-    .sort((a: any, b: any) => a.distance - b.distance);
+  const levels: LodLevelJson[] = [];
+  for (const l of lodComp.lod?.levels ?? []) {
+    if (l && typeof l.distance === "number" && l.distance > 0) {
+      levels.push({
+        distance: l.distance,
+        geometry: typeof l.geometry === "string" ? l.geometry : undefined,
+        size: typeof l.size === "object" && l.size !== null ? (l.size as Record<string, unknown>) : undefined,
+      });
+    }
+  }
+  levels.sort((a, b) => a.distance - b.distance);
   if (levels.length === 0) return obj;
 
   const lod = new THREE.LOD();
@@ -53,7 +83,10 @@ export function wrapLOD(json: any, obj: THREE.Object3D, ctx: any): THREE.Object3
 }
 
 /** 按种类+尺寸创建基元几何（与 mesh.ts getPrimitiveGeometry 同规则，但不缓存） */
-function createLODGeometry(kind: string, size: any): THREE.BufferGeometry {
+function createLODGeometry(
+  kind: string,
+  size: Record<string, unknown> | undefined,
+): THREE.BufferGeometry {
   const sz = vec(size, { x: 1, y: 1, z: 1 });
   const x = Math.max(0.01, num(sz.x, 1));
   const y = Math.max(0.01, num(sz.y, 1));

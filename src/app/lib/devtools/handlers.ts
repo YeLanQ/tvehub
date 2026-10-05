@@ -3,17 +3,19 @@
 // mcp.listTools（协议自省）保留本地处理；参数/返回值形状与历史 devtools API 保持兼容。
 
 import { runCommand, hasCommand } from "../../commands";
+import { asRecord } from "../../commands/args";
 import { enabledMcpTools, METHOD_TO_COMMAND } from "./state";
 
 /** 远程参数 → 命令参数规整（字段名差异集中在节点删除/命名） */
-function normalizeParams(method: string, params: any): any {
+function normalizeParams(method: string, params: unknown): unknown {
+  const p = asRecord(params) ?? {};
   switch (method) {
     case "node.remove":
-      return { ids: params?.id ? [String(params.id)] : [] };
+      return { ids: p.id ? [String(p.id)] : [] };
     case "node.rename":
       return {
-        id: params?.id ? String(params.id) : undefined,
-        name: params?.name,
+        id: p.id ? String(p.id) : undefined,
+        name: p.name,
       };
     default:
       // node.add 等命令读取端兼容原 devtools 字段（type/geometry/lightKind/skyKind/parentId/name）
@@ -42,7 +44,7 @@ function sanitizeMcpName(method: string): string {
 }
 
 /** 方法分派：method -> 命令执行。保留 mcp.listTools 与未知方法错误语义。 */
-export async function handleMethod(method: string, params: any): Promise<unknown> {
+export async function handleMethod(method: string, params: unknown): Promise<unknown> {
   if (method === "mcp.listTools") {
     // 与历史一致：只暴露「工具权限」中已启用工具（name 用 MCP 合法名，method 保留真实方法名）
     return enabledMcpTools().map((t) => ({

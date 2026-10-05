@@ -9,9 +9,10 @@
 
 import * as THREE from "../core/three.module.min.js";
 import { postLog } from "../core/log";
+import type { NodeJson } from "./node-json";
 
 interface MeshEntry {
-  json: any;
+  json: NodeJson;
   obj: THREE.Object3D;
 }
 
@@ -63,7 +64,7 @@ export function optimizeScene(
   // 父链可动检测的输入：图/动画引用 id 集合 + 全量节点表（查祖先组件用）
   const movingIds = new Set<string>(excludeNodeIds ?? []);
   for (const c of clips) if (c.nodeId) movingIds.add(c.nodeId);
-  const jsonById = new Map<string, any>();
+  const jsonById = new Map<string, NodeJson>();
   for (const { json } of options?.nodes ?? []) {
     if (json && typeof json.id === "string") jsonById.set(json.id, json);
   }
@@ -114,14 +115,14 @@ export function optimizeScene(
 
 /** 判断是否为可批处理的静态网格 */
 function isStaticMesh(
-  json: any,
+  json: NodeJson,
   obj: THREE.Object3D,
   animatedNodeIds: Set<string>,
   excludeNodeIds?: Set<string>,
 ): boolean {
   // 基元与数据化网格都是纯静态几何（模型/动画/脚本/物理路径不走批处理）
   if (json.source !== "primitive" && json.source !== "data") return false;
-  if (!(obj as any).isMesh) return false;
+  if (!(obj as THREE.Mesh).isMesh) return false;
   const nodeId = obj.userData.nodeId;
   if (nodeId && animatedNodeIds.has(nodeId)) return false;
   // 场景图引用实体：运行期位姿由脚本图驱动，不可烘焙（烘焙=原对象隐藏）
@@ -134,7 +135,8 @@ function isStaticMesh(
   }
   const mat = (obj as THREE.Mesh).material as THREE.Material;
   if (mat && mat.transparent) return false;
-  if (mat && (mat as any).wireframe) return false;
+  // wireframe 只有基元材质有（结构断言；描边/线框网格不走合并）
+  if (mat && (mat as { wireframe?: boolean }).wireframe) return false;
   return true;
 }
 

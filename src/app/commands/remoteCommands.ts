@@ -21,6 +21,7 @@ import {
   runBuild,
 } from "../lib/build-export";
 import { registerCommand } from "./registry";
+import { asStrings } from "./args";
 
 /** 当前项目根；未打开项目时抛错（各域命令共用） */
 function requireRoot(): string {
@@ -87,7 +88,7 @@ registerCommand({
   group: "编辑器",
   expose: true,
   description: "打开指定路径的项目",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const path = String(args?.path ?? "");
     if (!path) throw new Error("缺少 path（项目根目录）");
     const project = getProjectStore();
@@ -138,7 +139,7 @@ registerCommand({
   group: "场景",
   expose: true,
   description: "打开指定场景",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const rel = String(args?.rel ?? "");
     const ok = await getProjectStore().openScene(rel);
     if (!ok) throw new Error(`打开场景失败: ${rel}`);
@@ -179,7 +180,7 @@ registerCommand({
   group: "状态",
   expose: true,
   description: "恢复场景快照（传入 scene.doc 返回的 doc）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const project = getProjectStore();
     const doc = args?.doc;
     if (!doc || typeof doc !== "object") throw new Error("缺少 doc（state.snapshot 返回的场景文档）");
@@ -323,7 +324,7 @@ registerCommand({
   group: "资源",
   expose: true,
   description: "新建资源文件或目录（type: scene/script/material/shader/texcube/skybox/prefab/anim/terrain/folder；dir 目标目录；name 名称；shader 可带 shaderKind: physical/unlit/toon/skyprocedural/skycube；skybox 可带 skyKind: procedural/cube）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const root = requireRoot();
     const type = String(args?.type ?? "").toLowerCase();
     const dir = typeof args?.dir === "string" ? args.dir.replace(/\/+$/, "") : "";
@@ -433,7 +434,7 @@ registerCommand({
   group: "资源",
   expose: true,
   description: "选中资产（path：项目相对路径；属性面板切换到资产预览/属性）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const rel = String(args?.path ?? "");
     if (!rel) throw new Error("缺少 path（资产相对路径）");
     const store = getAssetsStore();
@@ -452,7 +453,7 @@ registerCommand({
   group: "资源",
   expose: true,
   description: "删除资源文件或目录（path：项目相对路径）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const root = requireRoot();
     const rel = String(args?.path ?? "");
     if (!rel) throw new Error("缺少 path（项目相对路径）");
@@ -471,7 +472,7 @@ registerCommand({
   group: "资源",
   expose: true,
   description: "重命名资源文件或目录（path + newName）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const root = requireRoot();
     const rel = args?.path;
     const newName = args?.newName;
@@ -500,7 +501,7 @@ registerCommand({
   expose: true,
   description:
     "构建导出当前项目（与构建面板同一链路；singlePage/gzip/release/cdn/outDir/title 可选，缺省取 build.config.json 与默认模板）",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const root = requireRoot();
     const project = getProjectStore();
     const prefs = await loadBuildPrefs(root);
@@ -512,11 +513,12 @@ registerCommand({
         ? args.template
         : (templates.find((t) => t.mode === (singlePage ? "single" : "multi"))?.id ??
           defaultExportTemplateId());
+    const sceneList = asStrings(args?.scenes);
     const result = await runBuild({
       root,
       channel: "web",
-      scenes: Array.isArray(args?.scenes) && args.scenes.length
-        ? args.scenes.map(String)
+      scenes: sceneList.length
+        ? sceneList
         : prefs?.scenes.length
           ? prefs.scenes
           : [project.sceneRel || DEFAULT_SCENE_REL],

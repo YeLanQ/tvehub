@@ -62,8 +62,8 @@ export async function startDevTools(): Promise<DevToolsInfo> {
       void emit("devtools:enabled", { port: info.port });
     }
     return info;
-  } catch (e: any) {
-    devtools.error = String(e?.message ?? e);
+  } catch (e) {
+    devtools.error = e instanceof Error ? e.message : String(e);
     debugLog("devtools", `开发者服务启动失败: ${devtools.error}`);
     throw e;
   }
@@ -74,8 +74,8 @@ export async function startDevTools(): Promise<DevToolsInfo> {
 export async function stopDevTools(): Promise<void> {
   try {
     await api.devtoolsStop();
-  } catch (e: any) {
-    debugLog("devtools", `停止失败: ${e}`);
+  } catch (e) {
+    debugLog("devtools", `停止失败: ${e instanceof Error ? e.message : String(e)}`);
   }
   devtools.enabled = false;
   devtools.info = null;
@@ -148,8 +148,8 @@ async function execute(cmd: CmdPayload): Promise<void> {
     const { handleMethod } = await import("./handlers");
     const result = await handleMethod(cmd.method, cmd.params);
     await api.devtoolsReply(cmd.replyToken, result, null);
-  } catch (err: any) {
-    await api.devtoolsReply(cmd.replyToken, null, String(err?.message ?? err));
+  } catch (err) {
+    await api.devtoolsReply(cmd.replyToken, null, err instanceof Error ? err.message : String(err));
   }
 }
 

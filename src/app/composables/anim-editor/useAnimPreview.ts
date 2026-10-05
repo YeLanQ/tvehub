@@ -81,12 +81,17 @@ export function useAnimPreview(ctx: AnimEditorCtx): PreviewApi {
   /** 按点路径写属性值（"color.r" → target.color.r） */
   function setPath(target: unknown, path: string, v: number): void {
     const segs = path.split(".");
-    let cur: any = target;
+    let cur: unknown = target;
     for (let i = 0; i < segs.length - 1; i++) {
-      cur = cur ? cur[segs[i]] : undefined;
+      cur =
+        cur !== null && typeof cur === "object"
+          ? (cur as Record<string, unknown>)[segs[i]]
+          : undefined;
       if (cur == null) return;
     }
-    if (cur != null) cur[segs[segs.length - 1]] = v;
+    if (cur !== null && typeof cur === "object") {
+      (cur as Record<string, unknown>)[segs[segs.length - 1]] = v;
+    }
   }
 
   /**

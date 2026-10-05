@@ -2,22 +2,133 @@
 // postMessage 同步骨骼变换。与物理 Worker 同一设计模式（双缓冲、单页回退主线程）。
 // Worker 中使用 THREE.Bone / THREE.SkinnedMesh 代理（仅需数学运算，无 WebGL 依赖）。
 //
-// 消息协议：
-// → { type: "init", meshEntries: SerializedMeshEntry[], modelMap: SerializedModel[] }
-// ← { type: "ready", bindingLayouts: BindingLayout[] }
-// → { type: "step", dt: number }
-// ← { type: "stepped", transforms: Float32Array, morphs: Float32Array, state: object, events: array }
-// → { type: "command", method: string, args: any[] }
-// ← { type: "result", method: string, value: any }
-// → { type: "dispose" }
+// 消息协议（类型单源；主线程适配在 animation.ts createAnimationsWorker）：
+// → AnimationWorkerIn
+// ← AnimationWorkerOut
 
 import * as THREE from "../core/three.module.min.js";
 import { createAnimations } from "./animation";
 
-let api: any = null;
+// ---------------------------------------------------------------------------
+// 消息协议
+// ---------------------------------------------------------------------------
+
+/** 序列化网格条目（主线程 init 下发；与 animation.ts createBinding 消费形状对齐） */
+interface SerializedMeshEntry {
+  json: { id?: string; [key: string]: unknown };
+  modelRoot?: {
+    bones?: {
+      name: string;
+      position: number[];
+      quaternion: number[];
+      scale: number[];
+      parentIndex: number;
+    }[];
+    morphMeshes?: { name: string; dictionary: Record<string, number>; influenceCount: number }[];
+  } | null;
+}
+
+/** 序列化模型（clip 纯数据，worker 侧重建 THREE.AnimationClip） */
+interface SerializedModel {
+  name: string;
+  clips?: SerializedClip[];
+}
+
+interface SerializedClip {
+  name?: string;
+  duration?: number;
+  blendMode?: number;
+  tracks?: SerializedTrack[];
+}
+
+interface SerializedTrack {
+  name: string;
+  times: number[] | Float32Array;
+  values: number[] | Float32Array;
+  interpolation?: number;
+  valueSize?: number;
+}
+
+/** 单节点动画状态快照（主线程同步 API 读取；一帧延迟可接受） */
+export interface AnimNodeState {
+  weights: Record<string, number>;
+  iks: { id: string; name: string; effector: string; enabled: boolean }[];
+  ikTargets: Record<string, { x: number; y: number; z: number }>;
+}
+
+/** 动画事件（mixer finished/loop 转发） */
+interface AnimWorkerEvent {
+  type: "finished" | "loop";
+  nodeId: string;
+  clip: string;
+}
+
+/** 绑定布局（worker 就绪时下发，主线程据此分配回读缓冲） */
+interface BindingLayout {
+  nodeId: string;
+  boneCount: number;
+  boneNames: string[];
+  morphMeshes: { name: string; influenceCount: number }[];
+}
+
+/** 主线程 → Worker */
+export type AnimationWorkerIn =
+  | { type: "recycleResult"; transforms?: Float32Array; morphs?: Float32Array }
+  | { type: "init"; meshEntries: SerializedMeshEntry[]; modelMap: SerializedModel[] }
+  | { type: "step"; dt: number }
+  | { type: "command"; method: string; args: unknown[] }
+  | { type: "dispose" };
+
+/** Worker → 主线程（TypedArray 随消息转移所有权） */
+export type AnimationWorkerOut =
+  | { type: "ready"; bindingLayouts: BindingLayout[] }
+  | {
+      type: "stepped";
+      transforms: Float32Array;
+      morphs: Float32Array;
+      state: Record<string, AnimNodeState>;
+      events: AnimWorkerEvent[];
+    }
+  | { type: "result"; method: string; value: unknown }
+  | { type: "error"; message: string };
+
+/** 专用 Worker 作用域（TS DOM lib 下 self 是 Window；收敛 Worker 专有 API 的类型面） */
+interface WorkerScope {
+  postMessage(message: AnimationWorkerOut, transfer?: Transferable[]): void;
+  close(): void;
+}
+const scope = self as unknown as WorkerScope;
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+// ---------------------------------------------------------------------------
+// 动画 API 视图（createAnimations 返回值的 worker 消费面；形状对齐 animation.ts）
+// ---------------------------------------------------------------------------
+
+interface AnimBindingView {
+  root: THREE.Object3D;
+  bones: THREE.Bone[];
+  boneNames: string[];
+  morphTable: { name: string; mesh: THREE.Mesh }[];
+  /** clip 名 → 动作（读有效权重） */
+  actions?: Map<string, { getEffectiveWeight(): number }>;
+  /** IK 链记录（addIK 追加） */
+  iks?: { id: string; name: string; effector: string; enabled: boolean; targetBone: THREE.Bone }[];
+}
+
+interface AnimationsApiView {
+  update(dt: number): void;
+  bindingOf(nodeId: string): AnimBindingView | null;
+  onFinished(nodeId: string, cb: (p: { clip: string }) => void): void;
+  onLoop(nodeId: string, cb: (p: { clip: string }) => void): void;
+}
+
+let api: AnimationsApiView | null = null;
 let proxyBindings: ProxyBinding[] = [];
-let bindingLayouts: any[] = [];
-let pendingEvents: any[] = [];
+let bindingLayouts: BindingLayout[] = [];
+let pendingEvents: AnimWorkerEvent[] = [];
 
 interface ProxyBinding {
   nodeId: string;
@@ -28,7 +139,7 @@ interface ProxyBinding {
 }
 
 self.onmessage = async (e: MessageEvent) => {
-  const msg = e.data;
+  const msg = e.data as AnimationWorkerIn;
   switch (msg.type) {
     case "recycleResult": {
       // 主线程消费完的回读缓冲归还复用（transform/morph 各一池）
@@ -41,7 +152,8 @@ self.onmessage = async (e: MessageEvent) => {
         const { meshEntries, modelMap } = msg;
         const proxyMeshes = buildProxyMeshes(meshEntries);
         const proxyModels = reconstructModels(modelMap);
-        api = createAnimations(proxyMeshes, proxyModels);
+        const animationsApi = createAnimations(proxyMeshes, proxyModels) as AnimationsApiView;
+        api = animationsApi;
         proxyBindings = collectProxyBindings(meshEntries);
         bindingLayouts = proxyBindings.map((b) => ({
           nodeId: b.nodeId,
@@ -55,16 +167,16 @@ self.onmessage = async (e: MessageEvent) => {
         // 注册事件转发：mixer finished/loop → 主线程回调
         for (const b of proxyBindings) {
           if (!b.nodeId) continue;
-          api.onFinished(b.nodeId, (p: any) =>
+          animationsApi.onFinished(b.nodeId, (p) =>
             pendingEvents.push({ type: "finished", nodeId: b.nodeId, clip: p.clip }),
           );
-          api.onLoop(b.nodeId, (p: any) =>
+          animationsApi.onLoop(b.nodeId, (p) =>
             pendingEvents.push({ type: "loop", nodeId: b.nodeId, clip: p.clip }),
           );
         }
-        (self as any).postMessage({ type: "ready", bindingLayouts });
+        scope.postMessage({ type: "ready", bindingLayouts });
       } catch (err) {
-        (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
+        scope.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
@@ -74,31 +186,36 @@ self.onmessage = async (e: MessageEvent) => {
         api.update(msg.dt);
         const { transforms, morphs, state } = readbackState();
         const events = pendingEvents.splice(0);
-        const transferList: ArrayBuffer[] = [transforms.buffer, morphs.buffer];
-        (self as any).postMessage(
-          { type: "stepped", transforms, morphs, state, events },
-          transferList,
-        );
+        // 池内缓冲均为本 worker 新建，buffer 必为可转移的 ArrayBuffer
+        const transferList: Transferable[] = [
+          transforms.buffer as ArrayBuffer,
+          morphs.buffer as ArrayBuffer,
+        ];
+        scope.postMessage({ type: "stepped", transforms, morphs, state, events }, transferList);
       } catch (err) {
-        (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
+        scope.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
     case "command": {
       const { method, args } = msg;
-      if (api && typeof api[method] === "function") {
-        try {
-          const value = api[method](...args);
-          if (value !== undefined)
-            (self as any).postMessage({ type: "result", method, value });
-        } catch (err) {
-          (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
+      if (api) {
+        // 动态分发：createAnimations 的方法面远宽于 worker 消费视图，经记录视图调用
+        const methods = api as unknown as Record<string, (...a: unknown[]) => unknown>;
+        const fn = methods[method];
+        if (typeof fn === "function") {
+          try {
+            const value = fn.apply(api, args);
+            if (value !== undefined) scope.postMessage({ type: "result", method, value });
+          } catch (err) {
+            scope.postMessage({ type: "error", message: errText(err) });
+          }
         }
       }
       break;
     }
     case "dispose": {
-      (self as any).close();
+      scope.close();
       break;
     }
   }
@@ -108,8 +225,10 @@ self.onmessage = async (e: MessageEvent) => {
 // 代理场景树构建：从序列化数据重建 THREE.Object3D 树（含 Bone/Skeleton/SkinnedMesh）
 // ---------------------------------------------------------------------------
 
-function buildProxyMeshes(entries: any[]): { json: any; obj: THREE.Object3D }[] {
-  return entries.map((entry: any) => {
+function buildProxyMeshes(
+  entries: SerializedMeshEntry[],
+): { json: SerializedMeshEntry["json"]; obj: THREE.Object3D }[] {
+  return entries.map((entry) => {
     const obj = new THREE.Object3D();
     obj.name = entry.json?.id || "";
     const root = new THREE.Object3D();
@@ -149,7 +268,7 @@ function buildProxyMeshes(entries: any[]): { json: any; obj: THREE.Object3D }[] 
       for (const mm of entry.modelRoot.morphMeshes) {
         let meshObj: THREE.Mesh | null = null;
         root.traverse((o) => {
-          if (!meshObj && o.isMesh && o.name === mm.name) meshObj = o as THREE.Mesh;
+          if (!meshObj && (o as THREE.Mesh).isMesh && o.name === mm.name) meshObj = o as THREE.Mesh;
         });
         if (!meshObj) {
           meshObj = new THREE.Mesh(
@@ -173,7 +292,7 @@ function buildProxyMeshes(entries: any[]): { json: any; obj: THREE.Object3D }[] 
 // ---------------------------------------------------------------------------
 
 function reconstructModels(
-  modelList: any[],
+  modelList: SerializedModel[],
 ): Map<string, { clips: THREE.AnimationClip[] }> {
   const map = new Map<string, { clips: THREE.AnimationClip[] }>();
   for (const m of modelList) {
@@ -182,14 +301,14 @@ function reconstructModels(
   return map;
 }
 
-function reconstructClip(data: any): THREE.AnimationClip {
+function reconstructClip(data: SerializedClip): THREE.AnimationClip {
   const tracks = (data.tracks || []).map(reconstructTrack);
   const clip = new THREE.AnimationClip(data.name, data.duration, tracks);
   clip.blendMode = data.blendMode;
   return clip;
 }
 
-function reconstructTrack(data: any): THREE.KeyframeTrack {
+function reconstructTrack(data: SerializedTrack): THREE.KeyframeTrack {
   const { name, times, values, interpolation } = data;
   const timesArr = times instanceof Float32Array ? times : new Float32Array(times);
   const valuesArr = values instanceof Float32Array ? values : new Float32Array(values);
@@ -206,7 +325,7 @@ function reconstructTrack(data: any): THREE.KeyframeTrack {
 // 代理绑定收集：从 createAnimations 返回的 API 提取每个绑定的骨骼/形态键信息
 // ---------------------------------------------------------------------------
 
-function collectProxyBindings(meshEntries: any[]): ProxyBinding[] {
+function collectProxyBindings(meshEntries: SerializedMeshEntry[]): ProxyBinding[] {
   const result: ProxyBinding[] = [];
   for (const entry of meshEntries) {
     const nodeId = entry.json?.id;
@@ -218,7 +337,7 @@ function collectProxyBindings(meshEntries: any[]): ProxyBinding[] {
       root: b.root,
       bones: b.bones,
       boneNames: b.boneNames,
-      morphMeshes: (b.morphTable || []).map((m: any) => ({
+      morphMeshes: (b.morphTable || []).map((m) => ({
         name: m.name,
         mesh: m.mesh,
         influenceCount: m.mesh.morphTargetInfluences?.length ?? 0,
@@ -247,7 +366,7 @@ function takeBuf(pool: Float32Array[], len: number): Float32Array {
 function readbackState(): {
   transforms: Float32Array;
   morphs: Float32Array;
-  state: any;
+  state: Record<string, AnimNodeState>;
 } {
   let totalBones = 0;
   let totalMorphs = 0;
@@ -258,7 +377,7 @@ function readbackState(): {
 
   const transforms = takeBuf(transformPool, totalBones * 7);
   const morphs = takeBuf(morphPool, totalMorphs);
-  const state: any = {};
+  const state: Record<string, AnimNodeState> = {};
 
   let tOff = 0;
   let mOff = 0;
@@ -278,21 +397,21 @@ function readbackState(): {
     }
 
     // 状态快照（供主线程同步 API 读取；一帧延迟可接受）
-    const binding = api.bindingOf(b.nodeId);
+    const binding = api?.bindingOf(b.nodeId);
     if (binding) {
-      const weights: any = {};
+      const weights: Record<string, number> = {};
       if (binding.actions) {
         for (const [clipName, action] of binding.actions) {
           weights[clipName] = action.getEffectiveWeight();
         }
       }
-      const iks = (binding.iks || []).map((r: any) => ({
+      const iks = (binding.iks || []).map((r) => ({
         id: r.id,
         name: r.name,
         effector: r.effector,
         enabled: r.enabled,
       }));
-      const ikTargets: any = {};
+      const ikTargets: Record<string, { x: number; y: number; z: number }> = {};
       for (const r of binding.iks || []) {
         ikTargets[r.id] = {
           x: r.targetBone.position.x,
