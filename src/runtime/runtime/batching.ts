@@ -159,7 +159,6 @@ function buildInstancedMeshes(
 
   const remaining: THREE.Mesh[] = [];
   let instancedCount = 0;
-  const matrix = new THREE.Matrix4();
 
   for (const [, group] of groups) {
     if (group.length < 2) {
@@ -168,7 +167,8 @@ function buildInstancedMeshes(
     }
     const template = group[0];
     const geom = template.geometry;
-    const mat = template.material;
+    // 实例化按单材质分组（getInstancingKey 含 material.id），此处必为单材质
+    const mat = template.material as THREE.Material;
     const layer = template.userData.nodeLayer || 0;
 
     const inst = new THREE.InstancedMesh(geom, mat, group.length);
@@ -192,24 +192,25 @@ function buildInstancedMeshes(
   return { remaining, instancedCount };
 }
 
-/** 实例化分组 key：geometry+material+layer 对象身份 */
+/** 实例化分组 key：geometry+material+layer 对象身份（材质取 uuid——类型库未暴露
+ *  Material.id，uuid 同为对象身份） */
 function getInstancingKey(mesh: THREE.Mesh): string | null {
   const geom = mesh.geometry;
-  const mat = mesh.material;
+  const mat = mesh.material as THREE.Material;
   if (!geom || !mat) return null;
   const layer = mesh.userData.nodeLayer || 0;
-  return `${geom.id}|${mat.id}|${layer}`;
+  return `${geom.id}|${mat.uuid}|${layer}`;
 }
 
 /** 按材质分组合并几何体 */
 function mergeStaticGeometries(scene: THREE.Scene, meshes: THREE.Mesh[]): number {
-  const byMaterial = new Map<number, THREE.Mesh[]>();
+  const byMaterial = new Map<string, THREE.Mesh[]>();
   for (const mesh of meshes) {
     const mat = mesh.material as THREE.Material;
-    let group = byMaterial.get(mat.id);
+    let group = byMaterial.get(mat.uuid);
     if (!group) {
       group = [];
-      byMaterial.set(mat.id, group);
+      byMaterial.set(mat.uuid, group);
     }
     group.push(mesh);
   }

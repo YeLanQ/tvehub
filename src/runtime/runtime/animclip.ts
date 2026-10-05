@@ -21,6 +21,9 @@
 // - 每帧采样：仅覆盖剪辑中存在的通道，其余属性保持不变。
 // ---------------------------------------------------------------------------
 
+import * as THREE from "../core/three.module.min.js";
+import { resourceLoader } from "./resource";
+
 const D2R = Math.PI / 180;
 const INTERPS = ["linear", "step", "smooth"];
 const TANGENT_CLAMP = 1000000;
@@ -28,30 +31,55 @@ const DEFAULT_TANGENT_WEIGHT = 1 / 3;
 const TANGENT_WEIGHT_MIN = 0.01;
 const TANGENT_WEIGHT_MAX = 1.5;
 
-import { resourceLoader } from "./resource";
-
-function num(v, fb) {
+function num(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
-function clamp(v, lo, hi) {
+function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function parseClip(v) {
-  const o = v && typeof v === "object" ? v : {};
-  const curves = [];
-  const seen = new Set();
-  for (const c of Array.isArray(o.curves) ? o.curves : []) {
+/** 关键帧（解析后；t/v 必为有限数，切线/权重仅 smooth 段消费） */
+interface AnimKey {
+  t: number;
+  v: number;
+  i: string;
+  ti?: number;
+  to?: number;
+  tm?: boolean;
+  wi?: number;
+  wo?: number;
+}
+
+/** 单条曲线（通道键 + 关键帧序列，按 t 升序） */
+interface AnimCurve {
+  prop: string;
+  keys: AnimKey[];
+}
+
+/** 解析后的剪辑（.anim 资产收敛结果） */
+interface AnimClipDoc {
+  duration: number;
+  loops: boolean;
+  curves: AnimCurve[];
+}
+
+function parseClip(v: unknown): AnimClipDoc {
+  const o: Record<string, unknown> =
+    v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  const curves: AnimCurve[] = [];
+  const seen = new Set<string>();
+  for (const c of Array.isArray(o.curves) ? (o.curves as Record<string, unknown>[]) : []) {
     if (!c || typeof c !== "object") continue;
     const prop = c.prop;
     if (typeof prop !== "string" || !prop || seen.has(prop)) continue;
     seen.add(prop);
-    const keys = (Array.isArray(c.keys) ? c.keys : [])
-      .map((k) => {
-        const key = {
+    const keys = (Array.isArray(c.keys) ? (c.keys as Record<string, unknown>[]) : [])
+      .map((k): AnimKey => {
+        const key: AnimKey = {
           t: num(k && k.t, NaN),
           v: num(k && k.v, NaN),
-          i: INTERPS.includes(k && k.i) ? k.i : "linear",
+          i:
+            k && typeof k.i === "string" && INTERPS.includes(k.i) ? k.i : "linear",
         };
         // 手动贝塞尔切线斜率（dv/dt；与 framework clip.ts 同步语义）
         const ti = num(k && k.ti, NaN);
@@ -77,7 +105,7 @@ function parseClip(v) {
   };
 }
 
-function tangentAt(keys, i) {
+function tangentAt(keys: AnimKey[], i: number): number {
   const prev = keys[i - 1];
   const cur = keys[i];
   const next = keys[i + 1];
@@ -88,26 +116,26 @@ function tangentAt(keys, i) {
 }
 
 /** 关键帧某侧生效切线：手动 ti/to 优先，否则自动 Catmull-Rom */
-function keySlope(keys, i, side) {
+function keySlope(keys: AnimKey[], i: number, side: "ti" | "to"): number {
   const manual = side === "ti" ? keys[i] && keys[i].ti : keys[i] && keys[i].to;
   return manual === undefined ? tangentAt(keys, i) : manual;
 }
 
 /** 关键帧某侧生效手柄权重（钳 [MIN, MAX]；缺省 = 1/3） */
-function keyWeight(keys, i, side) {
+function keyWeight(keys: AnimKey[], i: number, side: "ti" | "to"): number {
   const w = side === "ti" ? keys[i] && keys[i].wi : keys[i] && keys[i].wo;
   return w === undefined || !Number.isFinite(w)
     ? DEFAULT_TANGENT_WEIGHT
     : clamp(w, TANGENT_WEIGHT_MIN, TANGENT_WEIGHT_MAX);
 }
 
-function cubicBezier(p0, c1, c2, p3, u) {
+function cubicBezier(p0: number, c1: number, c2: number, p3: number, u: number): number {
   const m = 1 - u;
   return m * m * m * p0 + 3 * m * m * u * c1 + 3 * m * u * u * c2 + u * u * u * p3;
 }
 
 /** smooth 段求值（权重形变的参数化三次 Bézier；与 framework clip.ts 逐行同构） */
-function sampleSmoothSegment(keys, i, time) {
+function sampleSmoothSegment(keys: AnimKey[], i: number, time: number): number {
   const k1 = keys[i];
   const k2 = keys[i + 1];
   if (!k1) return 0;
@@ -134,13 +162,14 @@ function sampleSmoothSegment(keys, i, time) {
   const A = 3 * w1 + 3 * w2 - 2;
   const B = 3 - 6 * w1 - 3 * w2;
   const C = 3 * w1;
-  const yAt = (u) => cubicBezier(k1.v, k1.v + s1 * w1 * span, k2.v - s2 * w2 * span, k2.v, u);
+  const yAt = (u: number): number =>
+    cubicBezier(k1.v, k1.v + s1 * w1 * span, k2.v - s2 * w2 * span, k2.v, u);
   if (A === 0) {
     if (B === 0) return C === 0 ? k1.v : yAt(clamp(u0 / C, 0, 1));
     const disc = Math.max(0, C * C + 4 * B * u0);
     return yAt(clamp((-C + Math.sqrt(disc)) / (2 * B), 0, 1));
   }
-  const f = (uu) => ((A * uu + B) * uu + C) * uu - u0;
+  const f = (uu: number): number => ((A * uu + B) * uu + C) * uu - u0;
   let lo = 0;
   let hi = -1;
   let prev = f(0);
@@ -163,7 +192,7 @@ function sampleSmoothSegment(keys, i, time) {
   return yAt((lo + hi) / 2);
 }
 
-function indexBefore(keys, t) {
+function indexBefore(keys: AnimKey[], t: number): number {
   let lo = 0;
   let hi = keys.length - 1;
   let idx = -1;
@@ -179,7 +208,7 @@ function indexBefore(keys, t) {
   return idx;
 }
 
-function evalCurve(curve, t) {
+function evalCurve(curve: AnimCurve, t: number): number | null {
   const keys = curve.keys;
   if (!keys.length) return null;
   if (t <= keys[0].t) return keys[0].v;
@@ -198,7 +227,10 @@ function evalCurve(curve, t) {
   return k1.v + (k2.v - k1.v) * u;
 }
 
-function sampleClip(clip, time, out) {
+/** 采样结果表（通道键 → 值） */
+type SampleOut = Map<string, number>;
+
+function sampleClip(clip: AnimClipDoc, time: number, out: SampleOut): SampleOut {
   out.clear();
   let t = time;
   if (clip.loops && clip.duration > 0) t = ((time % clip.duration) + clip.duration) % clip.duration;
@@ -211,42 +243,90 @@ function sampleClip(clip, time, out) {
 }
 
 /** 按预解析路径段写属性值（"color.r" → target.color.r；段数组剪辑加载时拆好） */
-function setSegs(target, segs, v) {
-  let cur = target;
+function setSegs(target: unknown, segs: string[], v: number): void {
+  let cur: unknown = target;
   for (let i = 0; i < segs.length - 1; i++) {
-    cur = cur ? cur[segs[i]] : undefined;
+    cur =
+      cur !== null && typeof cur === "object"
+        ? (cur as Record<string, unknown>)[segs[i]]
+        : undefined;
     if (cur == null) return;
   }
-  if (cur != null) cur[segs[segs.length - 1]] = v;
+  if (cur !== null && typeof cur === "object") {
+    (cur as Record<string, unknown>)[segs[segs.length - 1]] = v;
+  }
 }
 
 /** 按路径段写入并自动创建中间对象（攒 UI 设置补丁用：patch.anchoredPosition.x = v） */
-function setSegsCreate(target, segs, v) {
+function setSegsCreate(target: Record<string, unknown>, segs: string[], v: number): void {
   let cur = target;
   for (let i = 0; i < segs.length - 1; i++) {
-    if (cur[segs[i]] == null || typeof cur[segs[i]] !== "object") cur[segs[i]] = {};
-    cur = cur[segs[i]];
+    const next = cur[segs[i]];
+    if (next == null || typeof next !== "object") cur[segs[i]] = {};
+    cur = cur[segs[i]] as Record<string, unknown>;
   }
   cur[segs[segs.length - 1]] = v;
 }
 
 /** 对象子树内首个灯光（灯光缓存未命中时逐帧重试，命中后固定） */
-function findFirstLight(obj) {
-  let light = null;
-  obj.traverse((o) => {
-    if (!light && o.isLight) light = o;
+function findFirstLight(obj: THREE.Object3D): THREE.Light | null {
+  let light: THREE.Light | null = null;
+  obj.traverse((o: THREE.Object3D) => {
+    if (!light && (o as THREE.Light).isLight) light = o as THREE.Light;
   });
   return light;
 }
 
-/**
- * 预编译通道应用项：分组判断/路径拆分/目标定位只在剪辑加载时做一次。
- * 旧实现每帧对每条通道 split(".") + 前缀切片 + 灯光子树全遍历；
- * 编译后采样循环只做曲线求值 + 属性直写（语义与逐帧解析完全一致）。
- */
-function compileBinding(b) {
-  const items = [];
-  for (const c of b.clip.curves) {
+/** 预编译通道应用项（分组判断/路径拆分/目标定位只在剪辑加载时做一次） */
+interface CompiledItem {
+  curve: AnimCurve;
+  group: string;
+  /** transform 组：分量名（x/y/z） */
+  prop?: string;
+  /** material/light/camera/ui 组：拆好的路径段 */
+  segs?: string[];
+  /** light 组：灯光目标惰性解析缓存 */
+  light?: THREE.Light | null;
+  /** light 组：angle 通道度→弧度 */
+  degrees?: boolean;
+}
+
+/** 单个绑定（组件）：播放进度 + 剪辑数据 + 预编译应用项。
+ *  播放态模型：playing = 正在推进；paused = 经 pause() 暂停（resume 续播）；
+ *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）；
+ *  camTarget = 渲染相机（仅当绑定节点是渲染相机节点时非空，camera.* 组写入目标）；
+ *  uiApi = UI 系统（ui.* 组经 updateSettings 生效；播放器注入，编辑器预览不用）。 */
+interface ClipBinding {
+  key: string;
+  nodeId: string;
+  obj: THREE.Object3D;
+  camTarget: THREE.Camera | null;
+  uiApi: { updateSettings(nodeId: string, patch: Record<string, unknown>): void } | null;
+  speed: number;
+  loop: boolean;
+  autoplay: boolean;
+  time: number;
+  playing: boolean;
+  paused: boolean;
+  clipPath: string;
+  clip: AnimClipDoc | null;
+  compiled: CompiledItem[];
+}
+
+/** 绑定条目入参（nodes.mjs 收集的 animationClip 组件 / SDK addComponent） */
+interface ClipEntry {
+  key?: unknown;
+  nodeId?: unknown;
+  clip?: unknown;
+  obj: THREE.Object3D;
+  autoplay?: unknown;
+  loop?: unknown;
+  speed?: unknown;
+}
+
+function compileBinding(b: ClipBinding): void {
+  const items: CompiledItem[] = [];
+  for (const c of b.clip!.curves) {
     const dot = c.prop.indexOf(".");
     if (dot < 0) continue;
     const group = c.prop.slice(0, dot);
@@ -276,44 +356,48 @@ function compileBinding(b) {
   b.compiled = items;
 }
 
-function applyItem(b, item, v) {
-  const obj = b.obj;
+function applyItem(b: ClipBinding, item: CompiledItem, v: number): void {
+  const obj = b.obj as THREE.Mesh;
   if (item.group === "position") {
-    obj.position[item.prop] = v;
+    obj.position[item.prop as "x"] = v;
   } else if (item.group === "rotation") {
-    obj.rotation[item.prop] = v * D2R;
+    obj.rotation[item.prop as "x"] = v * D2R;
   } else if (item.group === "scale") {
-    obj.scale[item.prop] = Math.max(0.001, v);
+    obj.scale[item.prop as "x"] = Math.max(0.001, v);
   } else if (item.group === "material") {
     const m = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-    setSegs(m, item.segs, v);
+    setSegs(m, item.segs as string[], v);
   } else if (item.group === "light") {
     // 灯光目标惰性解析（组件灯光可能在剪辑加载后才挂上）；命中后固定复用
-    if (item.light === null) {
+    if (item.light === null || item.light === undefined) {
       item.light = findFirstLight(obj);
       if (item.light === null) return;
     }
-    setSegs(item.light, item.segs, item.degrees ? v * D2R : v);
+    setSegs(item.light, item.segs as string[], item.degrees ? v * D2R : v);
   } else if (item.group === "camera") {
     // 相机投影参数：仅渲染相机节点的绑定有 camTarget；fov 对正交相机无意义
     const t = b.camTarget;
     if (!t) return;
-    const key = item.segs.length === 1 ? item.segs[0] : "";
-    if (key === "fov" && t.isOrthographicCamera) return;
+    const segs = item.segs as string[];
+    const key = segs.length === 1 ? segs[0] : "";
+    if (key === "fov" && (t as THREE.OrthographicCamera).isOrthographicCamera) return;
+    const cam = t as THREE.PerspectiveCamera;
     if (key === "near") v = Math.max(0.01, v);
-    else if (key === "far") v = Math.max(t.near + 0.001, v);
-    setSegs(t, item.segs, v);
-    t.updateProjectionMatrix();
+    else if (key === "far") v = Math.max(cam.near + 0.001, v);
+    setSegs(t, segs, v);
+    // near/far/updateProjectionMatrix 只在透视/正交相机上（Camera 基类类型未暴露 near 写面），结构断言
+    (t as THREE.PerspectiveCamera).updateProjectionMatrix();
   }
 }
 
 /** 采样剪辑并把通道值直写节点（时间包裹规则与 sampleClip 一致） */
-function applyClipAt(b, time) {
+function applyClipAt(b: ClipBinding, time: number): void {
   const clip = b.clip;
+  if (!clip) return;
   let t = time;
   if (clip.loops && clip.duration > 0) t = ((time % clip.duration) + clip.duration) % clip.duration;
   else t = clamp(time, 0, clip.duration);
-  let uiPatch = null;
+  let uiPatch: Record<string, unknown> | null = null;
   for (const item of b.compiled) {
     const v = evalCurve(item.curve, t);
     if (v === null) continue;
@@ -322,31 +406,26 @@ function applyClipAt(b, time) {
       // （逐通道写同一 Vec2 的不同分量；缺省分量由 updateSettings 保留当前值）
       if (!b.uiApi) continue;
       uiPatch = uiPatch || {};
-      setSegsCreate(uiPatch, item.segs, v);
+      setSegsCreate(uiPatch, item.segs as string[], v);
       continue;
     }
     applyItem(b, item, v);
   }
-  if (uiPatch) b.uiApi.updateSettings(b.nodeId, uiPatch);
+  if (uiPatch) b.uiApi!.updateSettings(b.nodeId, uiPatch);
 }
 
 /** 加载单个剪辑文本（fetch 相对路径，归档/内联产物经 assets shim 命中） */
-async function loadClip(rel) {
+async function loadClip(rel: string): Promise<AnimClipDoc> {
   return parseClip(await resourceLoader.loadJSON(rel));
 }
 
-/** 单个绑定（组件）：播放进度 + 剪辑数据 + 预编译应用项。
- *  播放态模型：playing = 正在推进；paused = 经 pause() 暂停（resume 续播）；
- *  clip 为解析后的剪辑数据（异步加载完成前为 null，update/控件调用静默跳过）；
- *  camTarget = 渲染相机（仅当绑定节点是渲染相机节点时非空，camera.* 组写入目标）；
- *  uiApi = UI 系统（ui.* 组经 updateSettings 生效；播放器注入，编辑器预览不用）。 */
-function createBinding(entry, camEnv, uiApi) {
+function createBinding(entry: ClipEntry, camEnv: { nodeId: string; cam: THREE.Camera } | null, uiApi: ClipBinding["uiApi"]): ClipBinding {
   const nodeId = typeof entry.nodeId === "string" ? entry.nodeId : "";
   return {
     key: typeof entry.key === "string" && entry.key ? entry.key : "",
     nodeId,
     obj: entry.obj,
-    camTarget: camEnv && camEnv.nodeId && camEnv.nodeId === nodeId ? camEnv.cam : null,
+    camTarget: camEnv && camEnv.nodeId === nodeId ? camEnv.cam : null,
     uiApi,
     speed: Math.max(0.05, Number(entry.speed) || 1),
     loop: entry.loop !== false,
@@ -361,42 +440,64 @@ function createBinding(entry, camEnv, uiApi) {
 }
 
 /** 加载绑定当前 clipPath 指向的剪辑（写入 b.clip 并预编译；失败告警并保持 null） */
-async function loadInto(b) {
+async function loadInto(b: ClipBinding): Promise<boolean> {
   if (!b.clipPath) return false;
   try {
     b.clip = await loadClip(b.clipPath);
     compileBinding(b);
     return true;
   } catch (e) {
-    console.error("[anim] 剪辑加载失败 " + b.clipPath + ": " + (e && e.message ? e.message : e));
+    console.error(
+      "[anim] 剪辑加载失败 " + b.clipPath + ": " + (e instanceof Error ? e.message : String(e)),
+    );
     return false;
   }
 }
 
 /** 立即采样并应用某时刻的值（seek/停止回初始姿势用） */
-function sampleAt(b, time) {
+function sampleAt(b: ClipBinding, time: number): void {
   if (!b.clip) return;
   applyClipAt(b, time);
 }
 
+/** 播放器环境（渲染相机 + UI 系统；均可缺省） */
+interface ClipAnimEnv {
+  renderCamera?: { nodeId: string; cam: THREE.Camera };
+  ui?: { updateSettings(nodeId: string, patch: Record<string, unknown>): void };
+}
+
+/** 剪辑播放运行时 API（SDK AnimationClip 门面消费面） */
+export interface ClipAnimApi {
+  bindingOf(key: unknown): ClipBinding | null;
+  play(b: ClipBinding | null): boolean;
+  pause(b: ClipBinding | null): boolean;
+  resume(b: ClipBinding | null): boolean;
+  stop(b: ClipBinding | null): boolean;
+  setTime(b: ClipBinding | null, t: unknown): boolean;
+  setSpeed(b: ClipBinding | null, s: unknown): boolean;
+  setLoop(b: ClipBinding | null, v: unknown): boolean;
+  setAutoplay(b: ClipBinding | null, v: unknown): boolean;
+  changeClip(b: ClipBinding | null, rel: string): Promise<boolean>;
+  add(entry: ClipEntry): ClipBinding;
+}
+
 /**
  * 创建关键帧动画剪辑播放器。
- * @param {Array<{key?: string, nodeId?: string, clip: string, obj: object,
- *                autoplay: boolean, loop: boolean, speed: number}>} entries
- *        nodes.mjs 收集的 animationClip 组件绑定（clip 为 .anim 资产相对路径；
+ * @param entries nodes.mjs 收集的 animationClip 组件绑定（clip 为 .anim 资产相对路径；
  *        key = 组件 id，缺省回退节点 id，SDK 门面按 key 寻址）
- * @param {{renderCamera?: {nodeId: string, cam: object}, ui?: {updateSettings: Function}}} [env]
- *        播放器环境：renderCamera = 渲染相机与其节点 id（camera.* 通道的写入
+ * @param env 播放器环境：renderCamera = 渲染相机与其节点 id（camera.* 通道的写入
  *        目标；节点 id 匹配的绑定才生效，其余绑定的 camera.* 通道跳过）；
  *        ui = UI 系统（ui.* 通道经其 updateSettings 落地，缺省时 ui.* 跳过）
- * @returns {Promise<{update(dt: number): void} & ClipAnimApi>} 渲染循环每帧驱动
- *          + 运行时控件 API（SDK AnimationClip 门面 / 动态创建组件用）
+ * @returns 渲染循环每帧驱动 + 运行时控件 API（SDK AnimationClip 门面 / 动态创建组件用）
  */
-export async function createClipAnimations(entries, env) {
-  const api = {
+export async function createClipAnimations(
+  entries: ClipEntry[],
+  env?: ClipAnimEnv,
+): Promise<{ update(dt: number): void } & ClipAnimApi> {
+  const api: { update(dt: number): void } & Partial<ClipAnimApi> = {
     update() {},
   };
-  if (!entries || !entries.length) return api;
+  if (!entries || !entries.length) return api as { update(dt: number): void } & ClipAnimApi;
 
   const renderCamera = env && env.renderCamera ? env.renderCamera : null;
   const camEnv =
@@ -406,9 +507,9 @@ export async function createClipAnimations(entries, env) {
   const uiApi =
     env && env.ui && typeof env.ui.updateSettings === "function" ? env.ui : null;
 
-  const bindings = [];
-  const byKey = new Map();
-  function register(b) {
+  const bindings: ClipBinding[] = [];
+  const byKey = new Map<string, ClipBinding>();
+  function register(b: ClipBinding): void {
     bindings.push(b);
     if (b.key && !byKey.has(b.key)) byKey.set(b.key, b);
   }
@@ -422,7 +523,7 @@ export async function createClipAnimations(entries, env) {
     }),
   );
 
-  api.update = function (dt) {
+  api.update = function (dt: number) {
     for (const b of bindings) {
       if (!b.playing || !b.clip) continue;
       b.time += Math.max(0, dt) * b.speed;
@@ -503,7 +604,7 @@ export async function createClipAnimations(entries, env) {
     });
     return b;
   };
-  return api;
+  return api as { update(dt: number): void } & ClipAnimApi;
 }
 
 // smoke 对照钩子（scripts/smoke/tracker/smoke-components.ts 校验与 framework clip.ts 同语义；

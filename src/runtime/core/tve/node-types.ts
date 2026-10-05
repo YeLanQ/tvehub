@@ -4,8 +4,11 @@
 // 层级：Transform 承载通用节点能力，具体类型继续派生，保证
 //   meshNode 实例 instanceof Transform / Entity 均成立。
 // ---------------------------------------------------------------------------
+import type * as THREE from "../three.module.min.js";
 import { state } from "./state";
+import type { ParticleSettings } from "./state";
 import { Entity, setKindClasses } from "./entity";
+import type { EntityKlass } from "./entity";
 
 class Transform extends Entity {}
 class MeshNode extends Transform {}
@@ -17,7 +20,7 @@ class CameraNode extends Transform {
    * 返回 { origin, direction }（origin = 相机世界位置，direction = 归一化世界方向）；
    * 相机未就绪/坐标越界返回 null。
    */
-  screenToRay(screenX, screenY) {
+  screenToRay(screenX: number, screenY: number): { origin: object; direction: object } | null {
     return state.host?.camera?.screenToRay?.(screenX, screenY) ?? null;
   }
 }
@@ -25,17 +28,17 @@ class SkyboxNode extends Transform {}
 class FogNode extends Transform {}
 
 class ParticleSystemNode extends Transform {
-  play() { state.host?.particles?.play(this.id); }
-  pause() { state.host?.particles?.pause(this.id); }
-  stop() { state.host?.particles?.stop(this.id); }
-  restart() { state.host?.particles?.restart(this.id); }
-  clear() { state.host?.particles?.clear(this.id); }
-  get playing() { return state.host?.particles?.infoOf(this.id)?.playing ?? false; }
-  get paused() { return state.host?.particles?.infoOf(this.id)?.paused ?? false; }
-  get finished() { return state.host?.particles?.infoOf(this.id)?.finished ?? false; }
-  get aliveCount() { return state.host?.particles?.infoOf(this.id)?.alive ?? 0; }
-  get settings() { return state.host?.particles?.settingsOf(this.id) ?? null; }
-  setSettings(patch) { state.host?.particles?.updateSettings(this.id, patch); }
+  play(): void { state.host?.particles?.play(this.id); }
+  pause(): void { state.host?.particles?.pause(this.id); }
+  stop(): void { state.host?.particles?.stop(this.id); }
+  restart(): void { state.host?.particles?.restart(this.id); }
+  clear(): void { state.host?.particles?.clear(this.id); }
+  get playing(): boolean { return state.host?.particles?.infoOf(this.id)?.playing ?? false; }
+  get paused(): boolean { return state.host?.particles?.infoOf(this.id)?.paused ?? false; }
+  get finished(): boolean { return state.host?.particles?.infoOf(this.id)?.finished ?? false; }
+  get aliveCount(): number { return state.host?.particles?.infoOf(this.id)?.alive ?? 0; }
+  get settings(): ParticleSettings | null { return state.host?.particles?.settingsOf(this.id) ?? null; }
+  setSettings(patch: unknown): void { state.host?.particles?.updateSettings(this.id, patch); }
 }
 
 for (const key of [
@@ -47,8 +50,8 @@ for (const key of [
   Object.defineProperty(ParticleSystemNode.prototype, key, {
     configurable: true,
     enumerable: false,
-    get() { const s = state.host?.particles?.settingsOf(this.id); return s ? s[key] : undefined; },
-    set(v) { state.host?.particles?.updateSettings(this.id, { [key]: v }); },
+    get(this: ParticleSystemNode) { const s = state.host?.particles?.settingsOf(this.id); return s ? s[key] : undefined; },
+    set(this: ParticleSystemNode, v: unknown) { state.host?.particles?.updateSettings(this.id, { [key]: v }); },
   });
 }
 
@@ -61,9 +64,9 @@ class UILayoutNode extends Transform {}
 /** 地形节点：贴地采样（脚本把物体摆到地表/按坡度撒放用） */
 class TerrainNode extends Transform {
   /** 世界高度采样（节点本地 x/z；节点仅平移时即世界坐标） */
-  sampleHeight(x, z) { return state.host?.terrains?.sampleHeight(this.id, x, z) ?? 0; }
+  sampleHeight(x: number, z: number): number { return state.host?.terrains?.sampleHeight(this.id, x, z) ?? 0; }
   /** 地表平坦度（1 = 平地 → 0 = 崖壁） */
-  sampleSlope(x, z) { return state.host?.terrains?.sampleSlope(this.id, x, z) ?? 1; }
+  sampleSlope(x: number, z: number): number { return state.host?.terrains?.sampleSlope(this.id, x, z) ?? 1; }
   get settings() { return state.host?.terrains?.settingsOf(this.id); }
 }
 
@@ -74,24 +77,27 @@ class BtRunnerNode extends Transform {}
 
 const UI_ANCHOR_KEYS = ["anchorMin", "anchorMax", "pivot", "anchoredPosition", "offsetMin", "offsetMax"];
 
-for (const [Cls, keys] of [
+/** UI 设置访问器挂载表（节点类 + 该类暴露的设置键） */
+const UI_SETTINGS_CLASSES: Array<[new (obj: THREE.Object3D) => Transform, string[]]> = [
   [UICanvasNode, ["sortOrder", "designWidth", "designHeight", "scaleMode"]],
   [UIImageNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "opacity"]],
   [UITextNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "text", "fontSize", "color", "bold", "italic", "fontFamily", "align", "opacity"]],
   [UIButtonNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "image", "color", "label", "labelColor", "fontSize", "labelBold", "interactable", "opacity"]],
   [UILayoutNode, ["sortOrder", "size", ...UI_ANCHOR_KEYS, "layoutMode", "padding", "spacing", "gridColumns"]],
-]) {
+];
+
+for (const [Cls, keys] of UI_SETTINGS_CLASSES) {
   for (const key of keys) {
     Object.defineProperty(Cls.prototype, key, {
       configurable: true,
       enumerable: false,
-      get() { const s = state.host?.ui?.settingsOf(this.id); return s ? s[key] : undefined; },
-      set(v) { state.host?.ui?.updateSettings(this.id, { [key]: v }); },
+      get(this: Transform) { const s = state.host?.ui?.settingsOf(this.id); return s ? s[key] : undefined; },
+      set(this: Transform, v: unknown) { state.host?.ui?.updateSettings(this.id, { [key]: v }); },
     });
   }
 }
 
-const KIND_CLASSES = {
+const KIND_CLASSES: Record<string, EntityKlass> = {
   node: Transform,
   meshNode: MeshNode,
   cameraNode: CameraNode,
@@ -136,7 +142,7 @@ UIButtonNode.__nodeKinds = ["uiButtonNode"];
 UILayoutNode.__nodeKinds = ["uiLayoutNode"];
 
 /** @property({ type: 节点类 }) 是否节点引用选项（运行时标识） */
-export function isNodeRefType(v) {
+export function isNodeRefType(v: unknown): boolean {
   return typeof v === "function" && v !== Entity && Object.prototype.hasOwnProperty.call(v, "__nodeKinds");
 }
 

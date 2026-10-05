@@ -12,7 +12,6 @@
 //   构造时接管子 tween 的播放态；
 // - 回调错误隔离上报（postLog → 编辑器控制台），单个 tween 异常不影响其他。
 // ---------------------------------------------------------------------------
-
 import { postLog } from "./log";
 
 // ---------------------------------------------------------------------------
@@ -28,15 +27,18 @@ const c5 = (2 * Math.PI) / 4.5;
 const n1 = 7.5625;
 const d1 = 2.75;
 
-function bounceOut(t) {
+function bounceOut(t: number): number {
   if (t < 1 / d1) return n1 * t * t;
   if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
   if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
   return n1 * (t -= 2.625 / d1) * t + 0.984375;
 }
 
-/** 缓动函数表：名称 → (t 0..1) => eased（结果可超 0..1：back/elastic） */
-export const EASING = {
+/** 缓动函数（t 0..1 → eased；结果可超 0..1：back/elastic） */
+export type EasingFn = (t: number) => number;
+
+/** 缓动函数表：名称 → eased（按名索引消费，Record 形状） */
+export const EASING: Record<string, EasingFn> = {
   linear: (t) => t,
 
   quadIn: (t) => t * t,
@@ -106,25 +108,38 @@ export const EASING = {
 const EASE_LINEAR = EASING.linear;
 
 /** 按名解析缓动函数（未知名称回退 linear 并告警；函数原样返回） */
-function resolveEase(nameOrFn) {
+function resolveEase(nameOrFn: string | EasingFn): EasingFn {
   if (typeof nameOrFn === "function") return nameOrFn;
   if (typeof nameOrFn === "string" && EASING[nameOrFn]) return EASING[nameOrFn];
   postLog("warn", `[tve] 未知缓动名: ${String(nameOrFn)}（回退 linear）`);
   return EASE_LINEAR;
 }
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** 回调错误隔离上报（参照 Delegate：捕获、上报、继续） */
-function fireCb(fn, ...args) {
+function fireCb(fn: unknown, ...args: unknown[]): void {
   if (typeof fn !== "function") return;
   try {
     fn(...args);
   } catch (e) {
-    postLog("error", "[tve] tween 回调异常: " + (e && e.message ? e.message : String(e)));
+    postLog("error", "[tve] tween 回调异常: " + (e instanceof Error ? e.message : String(e)));
     console.error(e);
   }
 }
+
+/** 补间回调（onStart/onComplete 无参；onUpdate 追加 value/k） */
+export type TweenCallback = (...args: unknown[]) => void;
+
+/** 插值驱动（makeTween 统一收敛 duration；prepare 采集起点；apply 按系数写值） */
+export interface TweenDriver {
+  duration: number;
+  prepare?(): void;
+  apply(k: number): unknown;
+}
+
+/** Tween 运行态 */
+type TweenState = "idle" | "playing" | "paused" | "completed" | "stopped";
 
 // ---------------------------------------------------------------------------
 // Tween：补间句柄（工厂创建；链式配置 + 播放控制）
@@ -136,6 +151,27 @@ function fireCb(fn, ...args) {
 // ---------------------------------------------------------------------------
 
 class Tween {
+  // ---- 链式配置 ----
+  __easeFn: EasingFn;
+  __delay: number;
+  __loops: number; // -1 = 无限
+  __yoyo: boolean;
+  __cbStart: TweenCallback | null;
+  __cbUpdate: TweenCallback | null;
+  __cbDone: TweenCallback | null;
+  __next: Tween | null; // then 链：本 tween 完成后自动启动
+  // ---- 驱动（工厂注入；null = 纯延时/回调占位） ----
+  __driver: TweenDriver | null;
+  // ---- 运行态 ----
+  __state: TweenState;
+  __begun: boolean; // attach（配置快照）是否已执行
+  __delayLeft: number;
+  __clock: number; // 当前循环已播时长（秒）
+  __loopsDone: number;
+  __dir: number; // 1 正放 / -1 yoyo 反向
+  __firedStart: boolean;
+  __elapsed: number; // 累计活跃播放时长（不含 delay）
+
   constructor() {
     // ---- 链式配置 ----
     this.__easeFn = EASE_LINEAR;
@@ -162,20 +198,20 @@ class Tween {
   // ---- 链式配置 ----
 
   /** 缓动：名称（"quadOut" 等，见 easing 表）或自定义函数 (t 0..1) => eased */
-  easing(nameOrFn) {
+  easing(nameOrFn: string | EasingFn): this {
     this.__easeFn = resolveEase(nameOrFn);
     return this;
   }
 
   /** 开始前延时（秒；多次调用取最后一次） */
-  delay(seconds) {
+  delay(seconds: number): this {
     this.__delay =
       typeof seconds === "number" && Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
     return this;
   }
 
   /** 循环次数：1 = 单次（缺省）；n = n 次；-1 = 无限循环 */
-  loop(count) {
+  loop(count: number): this {
     this.__loops =
       typeof count === "number" && Number.isFinite(count)
         ? count < 0
@@ -186,13 +222,13 @@ class Tween {
   }
 
   /** 往返：偶数次循环反向插值（终点 → 起点） */
-  yoyo(on) {
+  yoyo(on?: boolean): this {
     this.__yoyo = on !== false;
     return this;
   }
 
   /** 开始回调（delay 结束、首轮插值前触发一次；属性插值在此采集起点） */
-  onStart(cb) {
+  onStart(cb: TweenCallback): this {
     this.__cbStart = cb;
     return this;
   }
@@ -201,13 +237,13 @@ class Tween {
    * 每帧回调：value = 插值输出（value/color tween 为插值结果；其余为系数），
    * t = easing 后的插值系数 0..1。
    */
-  onUpdate(cb) {
+  onUpdate(cb: TweenCallback): this {
     this.__cbUpdate = cb;
     return this;
   }
 
   /** 完成回调（循环计满触发一次；stop(true) 快进完成同样触发） */
-  onComplete(cb) {
+  onComplete(cb: TweenCallback): this {
     this.__cbDone = cb;
     return this;
   }
@@ -217,7 +253,7 @@ class Tween {
    * 返回 next 以便继续链式配置。next 由本链接管（与组同语义：移出全局
    * 活动列表并重置播放态——工厂的自动开始随之失效）。
    */
-  then(next) {
+  then(next: Tween): Tween {
     if (next instanceof Tween && next !== this) {
       this.__next = next;
       next.__detach();
@@ -233,7 +269,7 @@ class Tween {
    * 停止：tween 移出活动列表不再推进（组内子 tween 被组跳过）。
    * complete = true 时先快进到最终落点并触发 onComplete（不启动 then 链）。
    */
-  stop(complete) {
+  stop(complete?: boolean): this {
     if (this.__state === "completed" || this.__state === "stopped") return this;
     if (complete === true) {
       this.__completeNow(true);
@@ -245,13 +281,13 @@ class Tween {
   }
 
   /** 暂停（保留进度；组内子 tween 暂停会阻塞组的完成判定） */
-  pause() {
+  pause(): this {
     if (this.__state === "playing") this.__state = "paused";
     return this;
   }
 
   /** 从暂停处继续 */
-  resume() {
+  resume(): this {
     if (this.__state === "paused") this.__state = "playing";
     return this;
   }
@@ -259,45 +295,45 @@ class Tween {
   // ---- 只读状态 ----
 
   /** 是否正在推进（不含暂停） */
-  get playing() {
+  get playing(): boolean {
     return this.__state === "playing";
   }
   /** 是否处于暂停态 */
-  get paused() {
+  get paused(): boolean {
     return this.__state === "paused";
   }
   /** 是否已完成（自然播完或 stop(true)；stop(false) 后为 false） */
-  get completed() {
+  get completed(): boolean {
     return this.__state === "completed";
   }
   /** 配置的时长（秒；组容器为 0） */
-  get duration() {
+  get duration(): number {
     return this.__driver ? this.__driver.duration : 0;
   }
   /** 累计活跃播放时长（秒；不含 delay） */
-  get elapsed() {
+  get elapsed(): number {
     return this.__elapsed;
   }
   /** 当前循环进度 0..1（easing 前；组容器无意义） */
-  get progress() {
+  get progress(): number {
     const d = this.duration;
     return d > 0 ? clamp01(this.__clock / d) : this.__state === "completed" ? 1 : 0;
   }
   /** 已完成的循环数 */
-  get loopsDone() {
+  get loopsDone(): number {
     return this.__loopsDone;
   }
 
   // ---- 内部：启动（工厂调用 / then 链 / 组接管；managed = 组内子 tween，不进全局列表） ----
 
-  __begin(managed) {
+  __begin(managed?: boolean): void {
     if (this.__state !== "idle") return;
     this.__state = "playing";
     this.__begun = false; // attach 推迟到首个 tick（保留链式配置窗口）
     if (managed !== true) ACTIVE.add(this);
   }
 
-  __attach() {
+  __attach(): void {
     this.__delayLeft = this.__delay;
     this.__clock = 0;
     this.__loopsDone = 0;
@@ -306,7 +342,7 @@ class Tween {
     this.__elapsed = 0;
   }
 
-  __detach() {
+  __detach(): void {
     ACTIVE.delete(this);
   }
 
@@ -314,7 +350,7 @@ class Tween {
    * 帧前导：attach → delay 扣除 → onStart（含 driver.prepare 采集起点）。
    * @returns 剩余可推进的 dt；仍在 delay 中返回 null
    */
-  __preamble(dt) {
+  __preamble(dt: number): number | null {
     if (this.__state !== "playing") return null;
     if (!this.__begun) {
       this.__attach();
@@ -335,7 +371,7 @@ class Tween {
   }
 
   /** 每帧推进（全局 tick 驱动顶层 tween；组覆写本方法驱动子 tween） */
-  __tick(dt) {
+  __tick(dt: number): void {
     const rest = this.__preamble(dt);
     if (rest === null) return;
     const duration = this.duration;
@@ -366,7 +402,7 @@ class Tween {
   }
 
   /** 按循环内进度（easing 前）写入目标并触发 onUpdate */
-  __applyAt(rawT) {
+  __applyAt(rawT: number): void {
     if (!this.__driver) return;
     const t = this.__dir > 0 ? rawT : 1 - rawT;
     const k = clamp01(this.__easeFn(t));
@@ -375,12 +411,12 @@ class Tween {
   }
 
   /** yoyo 反向轮的最终落点（正向 1 / 反向 0） */
-  __finalT() {
+  __finalT(): number {
     return this.__dir > 0 ? 1 : 0;
   }
 
   /** 完成收尾：落点写入 → 完成态 → onComplete → then 链 */
-  __setCompleted() {
+  __setCompleted(): void {
     this.__state = "completed";
     this.__detach();
     if (this.__driver) {
@@ -394,7 +430,7 @@ class Tween {
   }
 
   /** stop(true)：快进完成（从未启动过也补 onStart/prepare 保证回调对称） */
-  __completeNow() {
+  __completeNow(_complete?: boolean): void {
     if (this.__state === "playing" && !this.__begun) {
       this.__attach();
       this.__begun = true;
@@ -423,18 +459,22 @@ class Tween {
 // ---------------------------------------------------------------------------
 
 class TweenGroup extends Tween {
-  constructor(children) {
+  __children: Tween[];
+
+  constructor(children: Tween[]) {
     super();
-    this.__children = (Array.isArray(children) ? children : []).filter((c) => c instanceof Tween);
+    this.__children = (Array.isArray(children) ? children : []).filter(
+      (c): c is Tween => c instanceof Tween,
+    );
   }
 
   /** yoyo 对组无效（no-op） */
-  yoyo() {
+  override yoyo(): this {
     return this;
   }
 
   /** 接管子 tween：移出全局活动列表并重置为 idle（播放态由组管理） */
-  __adoptAll() {
+  __adoptAll(): void {
     for (const c of this.__children) {
       c.__detach();
       c.__state = "idle";
@@ -444,7 +484,9 @@ class TweenGroup extends Tween {
 }
 
 class SequenceTween extends TweenGroup {
-  __begin(managed) {
+  declare __cursor: number;
+
+  override __begin(managed?: boolean): void {
     if (this.__state !== "idle") return;
     this.__adoptAll();
     this.__cursor = 0;
@@ -452,7 +494,7 @@ class SequenceTween extends TweenGroup {
     if (!this.__children.length) this.__setCompleted(); // 空组立即完成
   }
 
-  __tick(dt) {
+  override __tick(dt: number): void {
     const rest = this.__preamble(dt);
     if (rest === null) return;
     this.__elapsed += rest;
@@ -485,14 +527,14 @@ class SequenceTween extends TweenGroup {
 }
 
 class ParallelTween extends TweenGroup {
-  __begin(managed) {
+  override __begin(managed?: boolean): void {
     if (this.__state !== "idle") return;
     this.__adoptAll();
     super.__begin(managed);
     if (!this.__children.length) this.__setCompleted();
   }
 
-  __tick(dt) {
+  override __tick(dt: number): void {
     const rest = this.__preamble(dt);
     if (rest === null) return;
     this.__elapsed += rest;
@@ -521,44 +563,58 @@ class ParallelTween extends TweenGroup {
 // 采集，向量写入合并完整快照（普通对象目标不丢未插值分量）。
 // ---------------------------------------------------------------------------
 
+/** 插值条目：数值字段（from/to 标量）或对象字段（keys/base + 分量表） */
+interface PropSpec {
+  key: string;
+  keys?: string[];
+  base?: Record<string, number>;
+  from: number | Record<string, number>;
+  to: number | Record<string, number>;
+}
+
 /** 创建属性插值 driver：props = { 键: 数字 | 数值字段对象（部分字段） }；useFrom = props 为起点。
  *  对象值逐字段插值（{x,y,z} 向量 / {x,y} / {left,right,top,bottom} 内边距等任意数值字段），
  *  目标值缺分量保持不动；向量写入合并完整快照（普通对象目标不丢未插值分量）。 */
-function makePropsDriver(target, props, useFrom) {
-  const spec = []; // [{ key, keys, base, from, to }]
+function makePropsDriver(
+  target: unknown,
+  props: Record<string, unknown>,
+  useFrom: boolean,
+): TweenDriver {
+  const spec: PropSpec[] = []; // [{ key, keys?, base?, from, to }]
   return {
     duration: 0, // makeTween 统一收敛写入
     prepare() {
       spec.length = 0;
       if (!target || typeof target !== "object") return;
+      const tObj = target as Record<string, unknown>;
       for (const key of Object.keys(props)) {
         const p = props[key];
-        let cur;
+        let cur: unknown;
         try {
-          cur = target[key];
+          cur = tObj[key];
         } catch {
           continue;
         }
         if (typeof cur === "number" && typeof p === "number" && Number.isFinite(p)) {
           spec.push({ key, from: useFrom ? p : cur, to: useFrom ? cur : p });
         } else if (cur && p && typeof cur === "object" && typeof p === "object") {
-          const startV = useFrom ? p : cur;
-          const endV = useFrom ? cur : p;
+          const startV = (useFrom ? p : cur) as Record<string, unknown>;
+          const endV = (useFrom ? cur : p) as Record<string, unknown>;
           // 两侧都是有限数值的字段参与插值（交集；终值缺分量 = 保持不动）
-          const keys = Object.keys(startV).filter(
-            (kk) =>
-              Number.isFinite(startV[kk]) &&
-              endV &&
-              typeof endV === "object" &&
-              Number.isFinite(endV[kk]),
-          );
+          const keys = Object.keys(startV).filter((kk) => {
+            if (!endV) return false;
+            return (
+              Number.isFinite(startV[kk] as number) && Number.isFinite(endV[kk] as number)
+            );
+          });
           if (!keys.length) continue;
+          const curRec = cur as Record<string, number>;
           spec.push({
             key,
             keys,
-            base: { ...cur }, // 完整快照：写入时保留未插值分量
-            from: Object.fromEntries(keys.map((kk) => [kk, startV[kk]])),
-            to: Object.fromEntries(keys.map((kk) => [kk, endV[kk]])),
+            base: { ...curRec }, // 完整快照：写入时保留未插值分量
+            from: Object.fromEntries(keys.map((kk) => [kk, startV[kk]])) as Record<string, number>,
+            to: Object.fromEntries(keys.map((kk) => [kk, endV[kk]])) as Record<string, number>,
           });
         }
       }
@@ -568,7 +624,7 @@ function makePropsDriver(target, props, useFrom) {
     },
     apply(k) {
       for (const s of spec) {
-        if (s.base) {
+        if (s.base && s.keys && typeof s.from === "object" && typeof s.to === "object") {
           // base 即输出对象（in-place 写插值分量；非插值分量保持快照原值）：
           // 免去每属性每帧的 {...base} 拷贝分配——插值分量按 k 幂等重算
           const outv = s.base;
@@ -576,7 +632,7 @@ function makePropsDriver(target, props, useFrom) {
             outv[kk] = s.from[kk] + (s.to[kk] - s.from[kk]) * k;
           }
           writeProp(target, s.key, outv);
-        } else {
+        } else if (typeof s.from === "number" && typeof s.to === "number") {
           writeProp(target, s.key, s.from + (s.to - s.from) * k);
         }
       }
@@ -585,13 +641,13 @@ function makePropsDriver(target, props, useFrom) {
   };
 }
 
-function writeProp(target, key, value) {
+function writeProp(target: unknown, key: string, value: unknown): void {
   try {
-    target[key] = value;
+    (target as Record<string, unknown>)[key] = value;
   } catch (e) {
     postLog(
       "warn",
-      "[tve] tween 写入属性失败: " + key + " — " + (e && e.message ? e.message : String(e)),
+      "[tve] tween 写入属性失败: " + key + " — " + (e instanceof Error ? e.message : String(e)),
     );
   }
 }
@@ -600,7 +656,7 @@ function writeProp(target, key, value) {
 // 数值 / 颜色插值驱动（tween.value / tween.color）
 // ---------------------------------------------------------------------------
 
-function makeValueDriver(from, to) {
+function makeValueDriver(from: unknown, to: unknown): TweenDriver {
   const f = typeof from === "number" && Number.isFinite(from) ? from : 0;
   const t = typeof to === "number" && Number.isFinite(to) ? to : f;
   return {
@@ -612,12 +668,12 @@ function makeValueDriver(from, to) {
   };
 }
 
-function clampHex(v) {
+function clampHex(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) & 0xffffff : 0;
 }
 
 /** 0xRRGGBB 颜色插值（RGB 通道各自线性，避免数值直插跨通道失真） */
-function lerpColor(a, b, k) {
+function lerpColor(a: number, b: number, k: number): number {
   const ar = (a >> 16) & 0xff;
   const ag = (a >> 8) & 0xff;
   const ab = a & 0xff;
@@ -630,7 +686,7 @@ function lerpColor(a, b, k) {
   return (r << 16) | (g << 8) | bl;
 }
 
-function makeColorDriver(from, to) {
+function makeColorDriver(from: unknown, to: unknown): TweenDriver {
   const f = clampHex(from);
   const t = clampHex(to);
   return {
@@ -646,13 +702,13 @@ function makeColorDriver(from, to) {
 // 系统实例：全局活动列表 + 每帧 tick + 工厂 API
 // ---------------------------------------------------------------------------
 
-const ACTIVE = new Set();
+const ACTIVE = new Set<Tween>();
 let timeScale = 1;
 // 快照迭代缓冲（复用模块级数组，避免每帧展开 Set 的分配；回调内创建/停止 tween 均安全）
-const ACTIVE_SNAPSHOT = [];
+const ACTIVE_SNAPSHOT: Array<Tween | undefined> = [];
 
 /** 每帧推进（tve.mjs tickTime 驱动；dt 为收敛后的帧增量秒数） */
-export function tickTweens(dt) {
+export function tickTweens(dt: number): void {
   if (!ACTIVE.size || dt <= 0) return;
   const scaled = dt * timeScale;
   if (scaled <= 0) return;
@@ -667,13 +723,13 @@ export function tickTweens(dt) {
 }
 
 /** 重置（installRuntime 重入：清空上一轮预览的残留 tween 与全局时标） */
-export function resetTweens() {
+export function resetTweens(): void {
   for (const t of ACTIVE) t.__state = "stopped";
   ACTIVE.clear();
   timeScale = 1;
 }
 
-function makeTween(driver, duration) {
+function makeTween(driver: TweenDriver, duration: number): Tween {
   const t = new Tween();
   t.__driver = driver;
   driver.duration =
@@ -682,7 +738,7 @@ function makeTween(driver, duration) {
   return t;
 }
 
-function makeGroup(tweens, Cls) {
+function makeGroup(tweens: Tween[], Cls: new (children: Tween[]) => TweenGroup): TweenGroup {
   const group = new Cls(tweens);
   group.__begin();
   return group;
@@ -691,76 +747,76 @@ function makeGroup(tweens, Cls) {
 /** 全局 tween API 单例（tve.mjs re-export 为 "tween"；与 dataCenter 同为全局单例模式） */
 const tween = {
   /** 数值/向量属性插值：Entity 变换（position/rotation/scale）、UI 字段、任意对象 */
-  to(target, props, duration) {
+  to(target: unknown, props: Record<string, unknown>, duration: number): Tween {
     return makeTween(makePropsDriver(target, props, false), duration);
   },
   /** 反向插值：props 为起点，渐变回开始时的当前值 */
-  from(target, props, duration) {
+  from(target: unknown, props: Record<string, unknown>, duration: number): Tween {
     return makeTween(makePropsDriver(target, props, true), duration);
   },
   /** 数值插值（onUpdate 收插值结果） */
-  value(from, to, duration) {
+  value(from: unknown, to: unknown, duration: number): Tween {
     return makeTween(makeValueDriver(from, to), duration);
   },
   /** 0xRRGGBB 颜色插值（通道正确；onUpdate 收 0xRRGGBB） */
-  color(from, to, duration) {
+  color(from: unknown, to: unknown, duration: number): Tween {
     return makeTween(makeColorDriver(from, to), duration);
   },
   /** 实体本地位置补间（= to(entity, { position }, duration)） */
-  position(entity, to, duration) {
+  position(entity: unknown, to: Record<string, unknown>, duration: number): Tween {
     return makeTween(makePropsDriver(entity, { position: to }, false), duration);
   },
   /** 实体本地旋转补间（度制欧拉角） */
-  rotation(entity, toDeg, duration) {
+  rotation(entity: unknown, toDeg: Record<string, unknown>, duration: number): Tween {
     return makeTween(makePropsDriver(entity, { rotation: toDeg }, false), duration);
   },
   /** 实体本地缩放补间 */
-  scale(entity, to, duration) {
+  scale(entity: unknown, to: Record<string, unknown>, duration: number): Tween {
     return makeTween(makePropsDriver(entity, { scale: to }, false), duration);
   },
   /** 串行组：依次播放（空数组立即完成） */
-  sequence(tweens) {
+  sequence(tweens: Tween[]): Tween {
     return makeGroup(tweens, SequenceTween);
   },
   /** 并行组：同时播放（空数组立即完成） */
-  parallel(tweens) {
+  parallel(tweens: Tween[]): Tween {
     return makeGroup(tweens, ParallelTween);
   },
   /** 纯延时占位（序列/then 链用） */
-  delay(seconds) {
+  delay(seconds: number): Tween {
     const t = new Tween();
     t.delay(seconds);
     t.__begin();
     return t;
   },
   /** 立即回调占位（下一帧 tick 触发；序列/then 链用） */
-  call(cb) {
+  call(cb: TweenCallback): Tween {
     const t = new Tween();
     if (typeof cb === "function") t.onComplete(cb);
     t.__begin();
     return t;
   },
   /** 停止全部活动 tween（complete = true 先快进终点并触发 onComplete） */
-  killAll(complete) {
+  killAll(complete?: boolean): void {
     for (const t of [...ACTIVE]) t.stop(complete === true);
   },
   /** 暂停全部活动 tween */
-  pauseAll() {
+  pauseAll(): void {
     for (const t of ACTIVE) t.pause();
   },
   /** 恢复全部暂停中的 tween */
-  resumeAll() {
+  resumeAll(): void {
     for (const t of ACTIVE) t.resume();
   },
   /** 活动 tween 数（含暂停中的） */
-  get activeCount() {
+  get activeCount(): number {
     return ACTIVE.size;
   },
   /** 全局时间缩放（0 = 冻结全部 tween；负数按 0，非数忽略） */
-  get timeScale() {
+  get timeScale(): number {
     return timeScale;
   },
-  set timeScale(v) {
+  set timeScale(v: number) {
     if (typeof v === "number" && Number.isFinite(v)) {
       timeScale = Math.min(1000, Math.max(0, v));
     }

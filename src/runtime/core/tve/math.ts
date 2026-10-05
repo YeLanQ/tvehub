@@ -3,21 +3,25 @@
 // 与编辑器数据模型同一语义：Vec3 普通对象；非法入参按 0 收敛（numOr）。
 // ---------------------------------------------------------------------------
 import { numOr, EPS } from "./state";
+import type { Vec3, Vec3Input } from "./state";
 
-function numv(v) {
+/** 矩阵类入参（列主序长度 16 数组；非法入参经 numm4 按 0 收敛） */
+type Mat4Input = ArrayLike<unknown> | null | undefined;
+
+function numv(v: Vec3Input | null | undefined): Vec3 {
   return { x: numOr(v && v.x, 0), y: numOr(v && v.y, 0), z: numOr(v && v.z, 0) };
 }
 
 /** 收敛为长度 16 的有限数值数组（非法入参按 0 填充） */
-function numm4(v) {
-  const o = new Array(16);
+function numm4(v: Mat4Input): number[] {
+  const o = new Array<number>(16);
   for (let i = 0; i < 16; i++) o[i] = numOr(v && v[i], 0);
   return o;
 }
 
 const math = {
   /** 创建向量 {x,y,z}（缺省 0） */
-  v3(x = 0, y = 0, z = 0) {
+  v3(x = 0, y = 0, z = 0): Vec3 {
     return { x: numOr(x, 0), y: numOr(y, 0), z: numOr(z, 0) };
   },
   /** 常量：零向量 / 单位向量 / 各轴正方向（冻结，勿改写） */
@@ -30,52 +34,52 @@ const math = {
   left: Object.freeze({ x: -1, y: 0, z: 0 }),
   right: Object.freeze({ x: 1, y: 0, z: 0 }),
   /** 克隆（快照副本，写入不影响原向量） */
-  clone(v) {
+  clone(v: Vec3Input): Vec3 {
     const c = numv(v);
     return { x: c.x, y: c.y, z: c.z };
   },
   /** 加法 a + b */
-  add(a, b) {
+  add(a: Vec3Input, b: Vec3Input): Vec3 {
     const x = numv(a), y = numv(b);
     return { x: x.x + y.x, y: x.y + y.y, z: x.z + y.z };
   },
   /** 减法 a - b（结果方向 = a 指向 b 的反方向） */
-  sub(a, b) {
+  sub(a: Vec3Input, b: Vec3Input): Vec3 {
     const x = numv(a), y = numv(b);
     return { x: x.x - y.x, y: x.y - y.y, z: x.z - y.z };
   },
   /** 数乘 v * s */
-  scale(v, s) {
+  scale(v: Vec3Input, s: unknown): Vec3 {
     const c = numv(v);
     const k = numOr(s, 0);
     return { x: c.x * k, y: c.y * k, z: c.z * k };
   },
   /** 逐分量取反 */
-  negate(v) {
+  negate(v: Vec3Input): Vec3 {
     const c = numv(v);
     return { x: -c.x, y: -c.y, z: -c.z };
   },
   /** 逐分量取绝对值 */
-  abs(v) {
+  abs(v: Vec3Input): Vec3 {
     const c = numv(v);
     return { x: Math.abs(c.x), y: Math.abs(c.y), z: Math.abs(c.z) };
   },
   /** 逐分量取最小 / 最大 */
-  min(a, b) {
+  min(a: Vec3Input, b: Vec3Input): Vec3 {
     const x = numv(a), y = numv(b);
     return { x: Math.min(x.x, y.x), y: Math.min(x.y, y.y), z: Math.min(x.z, y.z) };
   },
-  max(a, b) {
+  max(a: Vec3Input, b: Vec3Input): Vec3 {
     const x = numv(a), y = numv(b);
     return { x: Math.max(x.x, y.x), y: Math.max(x.y, y.y), z: Math.max(x.z, y.z) };
   },
   /** 点积（结果 = |a||b|cosθ） */
-  dot(a, b) {
+  dot(a: Vec3Input, b: Vec3Input): number {
     const x = numv(a), y = numv(b);
     return x.x * y.x + x.y * y.y + x.z * y.z;
   },
   /** 叉积（结果同时垂直于 a、b，方向满足右手定则） */
-  cross(a, b) {
+  cross(a: Vec3Input, b: Vec3Input): Vec3 {
     const x = numv(a), y = numv(b);
     return {
       x: x.y * y.z - x.z * y.y,
@@ -84,31 +88,31 @@ const math = {
     };
   },
   /** 模长平方（避免开方，比较距离时更快） */
-  lengthSq(v) {
+  lengthSq(v: Vec3Input): number {
     const c = numv(v);
     return c.x * c.x + c.y * c.y + c.z * c.z;
   },
   /** 模长（直线距离原点） */
-  length(v) {
+  length(v: Vec3Input): number {
     return Math.sqrt(this.lengthSq(v));
   },
   /** 两点直线距离 */
-  distance(a, b) {
+  distance(a: Vec3Input, b: Vec3Input): number {
     return this.length(this.sub(a, b));
   },
   /** 距离平方 */
-  distanceSq(a, b) {
+  distanceSq(a: Vec3Input, b: Vec3Input): number {
     return this.lengthSq(this.sub(a, b));
   },
   /** 归一化（模长归 1；零向量返回零向量，不产生 NaN） */
-  normalize(v) {
+  normalize(v: Vec3Input): Vec3 {
     const c = numv(v);
     const len = Math.sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
     if (len < EPS) return { x: 0, y: 0, z: 0 };
     return { x: c.x / len, y: c.y / len, z: c.z / len };
   },
   /** 线性插值 t∈[0,1]（t=0 返回 a 克隆，t=1 返回 b 克隆；越界按方向外插） */
-  lerp(a, b, t) {
+  lerp(a: Vec3Input, b: Vec3Input, t: unknown): Vec3 {
     const x = numv(a), y = numv(b);
     const k = numOr(t, 0);
     return {
@@ -118,7 +122,7 @@ const math = {
     };
   },
   /** 由 a 向 b 移动最多 maxDelta（不超过直线距离；匀速移动用） */
-  moveTowards(a, b, maxDelta) {
+  moveTowards(a: Vec3Input, b: Vec3Input, maxDelta: unknown): Vec3 {
     const x = numv(a), y = numv(b);
     const d = numOr(maxDelta, 0);
     const dx = y.x - x.x, dy = y.y - x.y, dz = y.z - x.z;
@@ -128,26 +132,26 @@ const math = {
     return { x: x.x + dx * k, y: x.y + dy * k, z: x.z + dz * k };
   },
   /** 近似相等（逐分量误差 ≤ eps，缺省 1e-6） */
-  equals(a, b, eps) {
+  equals(a: Vec3Input, b: Vec3Input, eps: unknown): boolean {
     const x = numv(a), y = numv(b);
     const e = numOr(eps, EPS);
     return Math.abs(x.x - y.x) <= e && Math.abs(x.y - y.y) <= e && Math.abs(x.z - y.z) <= e;
   },
 
   /** 标量钳制（结果落在 [min, max]） */
-  clamp(v, min, max) {
+  clamp(v: unknown, min: unknown, max: unknown): number {
     const x = numOr(v, 0);
     return Math.min(numOr(max, x), Math.max(numOr(min, x), x));
   },
 
   /** XZ 平面投影（返回 y = 0 的副本；把方向约束到水平面） */
-  projectXZ(v) {
+  projectXZ(v: Vec3Input): Vec3 {
     const c = numv(v);
     return { x: c.x, y: 0, z: c.z };
   },
 
   /** 角度差（度）= target − current 的最短有符号差（结果 ∈ [-180, 180]） */
-  deltaAngle(current, target) {
+  deltaAngle(current: unknown, target: unknown): number {
     let d = (numOr(target, 0) - numOr(current, 0)) % 360;
     if (d < -180) d += 360;
     else if (d >= 180) d -= 360;
@@ -155,7 +159,7 @@ const math = {
   },
 
   /** 角度移近（度）：从 current 沿最短路径向 target 移动最多 maxDelta（Infinity = 立即到达） */
-  moveTowardsAngle(current, target, maxDelta) {
+  moveTowardsAngle(current: unknown, target: unknown, maxDelta: unknown): number {
     const t = numOr(target, 0);
     if (maxDelta === Infinity) return t;
     const d = this.deltaAngle(current, t);
@@ -165,7 +169,7 @@ const math = {
   },
 
   /** 模拟输入死区（线性重映射）：|v| ≤ deadZone 归零，其余按符号缩放回 0..1 满量程 */
-  deadZone(v, deadZone) {
+  deadZone(v: unknown, deadZone: unknown): number {
     const x = numOr(v, 0);
     const dz = Math.max(0, numOr(deadZone, 0));
     const mag = Math.abs(x);
@@ -175,12 +179,12 @@ const math = {
   },
 
   /** 度 → 弧度 */
-  degToRad(deg) {
+  degToRad(deg: unknown): number {
     return numOr(deg, 0) * (Math.PI / 180);
   },
 
   /** 弧度 → 度 */
-  radToDeg(rad) {
+  radToDeg(rad: unknown): number {
     return numOr(rad, 0) * (180 / Math.PI);
   },
 
@@ -188,13 +192,13 @@ const math = {
   // 纯函数：全部返回新数组，不改写入参；非法入参按 0 收敛。
 
   /** 创建 4×4 单位矩阵（列主序长度 16） */
-  mat4() {
+  mat4(): number[] {
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   },
   /** 矩阵乘法 a × b（列主序；结果 = 先 b 变换再 a 变换） */
-  mat4Multiply(a, b) {
+  mat4Multiply(a: Mat4Input, b: Mat4Input): number[] {
     const x = numm4(a), y = numm4(b);
-    const o = new Array(16);
+    const o = new Array<number>(16);
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 4; j++) {
         o[i * 4 + j] = x[i * 4 + 0] * y[0 * 4 + j] + x[i * 4 + 1] * y[1 * 4 + j] + x[i * 4 + 2] * y[2 * 4 + j] + x[i * 4 + 3] * y[3 * 4 + j];
@@ -203,7 +207,7 @@ const math = {
     return o;
   },
   /** 矩阵求逆（列主序；不可逆返回单位矩阵，不产生 NaN） */
-  mat4Invert(m) {
+  mat4Invert(m: Mat4Input): number[] {
     const x = numm4(m);
     const a00 = x[0], a01 = x[1], a02 = x[2], a03 = x[3];
     const a10 = x[4], a11 = x[5], a12 = x[6], a13 = x[7];
@@ -249,7 +253,7 @@ const math = {
    * invVP = (projection × view)^-1（列主序 16 数组，可用 mat4Invert 求逆）。
    * 返回世界空间 Vec3。
    */
-  unproject(ndcX, ndcY, ndcZ, invVP) {
+  unproject(ndcX: unknown, ndcY: unknown, ndcZ: unknown, invVP: Mat4Input): Vec3 {
     const m = numm4(invVP);
     const x = numOr(ndcX, 0), y = numOr(ndcY, 0), z = numOr(ndcZ, 0);
     const px = m[0] * x + m[4] * y + m[8] * z + m[12];

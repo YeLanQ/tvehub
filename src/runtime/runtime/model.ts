@@ -6,6 +6,7 @@
 // - 解析失败的引用记为 null（节点回退空组，postLog 告警）。
 import * as THREE from "../core/three.module.min.js";
 import { GLTFLoader } from "./loaders/GLTFLoader.js";
+import type { GLTF } from "./loaders/GLTFLoader.js";
 import { FBXLoader } from "./loaders/FBXLoader.js";
 import { OBJLoader } from "./loaders/OBJLoader.js";
 import { clone as skeletonClone } from "./loaders/SkeletonUtils.js";
@@ -13,21 +14,37 @@ import { withCompressedGltf } from "./loaders/compressed";
 import { postLog } from "../core/log";
 import { resourceLoader } from "./resource";
 
+/** 已解析模型条目（模板不入场景，仅作克隆源） */
+export interface ModelEntry {
+  template: THREE.Object3D;
+  clips: THREE.AnimationClip[];
+}
+
+/** 模型缓存表（rel → 条目；加载失败项为 null） */
+export type ModelEntryMap = Map<string, ModelEntry | null>;
+
 /** 收集场景树里 meshNode(source=model) 的模型引用（去重） */
-export function collectModelRefs(rootJson) {
-  const refs = [];
-  (function walk(o) {
+export function collectModelRefs(rootJson: unknown): string[] {
+  const refs: string[] = [];
+  (function walk(o: unknown): void {
     if (!o || typeof o !== "object") return;
-    if (o.type === "meshNode" && o.source === "model" && typeof o.model === "string" && o.model && !refs.includes(o.model)) {
-      refs.push(o.model);
+    const node = o as Record<string, unknown>;
+    if (
+      node.type === "meshNode" &&
+      node.source === "model" &&
+      typeof node.model === "string" &&
+      node.model &&
+      !refs.includes(node.model)
+    ) {
+      refs.push(node.model);
     }
-    if (Array.isArray(o.children)) o.children.forEach(walk);
+    if (Array.isArray(node.children)) (node.children as unknown[]).forEach(walk);
   })(rootJson);
   return refs;
 }
 
 /** 模型目录（"a/b/m.glb" → "a/b"；根目录为 ""） */
-function modelDirOf(rel) {
+function modelDirOf(rel: string): string {
   const i = rel.lastIndexOf("/");
   return i >= 0 ? rel.slice(0, i) : "";
 }
@@ -37,7 +54,7 @@ function modelDirOf(rel) {
  * 绝对地址（http/data/blob 等）与无法归一化的地址返回 null（调用方放行原地址）；
  * 加载器可能已把 resourcePath（模型目录）拼进地址，先剥掉该前缀再按同目录归一化。
  */
-function resolveSiblingUrl(modelDir, url) {
+function resolveSiblingUrl(modelDir: string, url: string): string | null {
   const raw = url.split("?")[0];
   if (!raw || /^(https?:|data:|blob:|file:)/i.test(raw)) return null;
   let rel = decodeURIComponent(raw).replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
@@ -55,13 +72,18 @@ function resolveSiblingUrl(modelDir, url) {
   return `./${parts.join("/")}`;
 }
 
+/** .bin 模型解包结果（kind=1 为 GLB 字节；kind=0 为重建网格模板） */
+type ParsedBinModel =
+  | { kind: 1; glb: Uint8Array }
+  | { kind: 0; template: THREE.Mesh };
+
 /**
  * 发布模式 .bin 模型（LQENBIN1 容器：8 字节魔数 + u32 kind + u32 len + payload）解包：
  * - kind=1：payload 为原始 GLB 字节（含内嵌材质/动画）→ 交 GLTFLoader；
  * - kind=0：payload 为 OBJ 顶点网格（u32 verts/norms/uvs/faces + f32 数组 + u32 索引）
  *   → 重建 BufferGeometry（无法线时 computeVertexNormals，默认材质）。
  */
-function parseBinModel(buffer) {
+function parseBinModel(buffer: ArrayBuffer): ParsedBinModel {
   const u8 = new Uint8Array(buffer);
   if (u8.length < 28) throw new Error(".bin 模型数据不完整");
   const magic = String.fromCharCode(u8[0], u8[1], u8[2], u8[3], u8[4], u8[5], u8[6], u8[7]);
@@ -102,11 +124,15 @@ function parseBinModel(buffer) {
 
 /** 按扩展名解析模型二进制 → { template, clips }（与编辑器 loaders.ts 同一套规则）；
  *  发布模式的 .bin先解包：kind=1 走 GLTFLoader，kind=0 直接重建网格 */
-async function parseModel(rel, buffer) {
-  const ext = rel.includes(".") ? rel.split(".").pop().toLowerCase() : "";
+async function parseModel(
+  rel: string,
+  buffer: ArrayBuffer,
+): Promise<ModelEntry> {
+  // split 在含 "." 时至少产出两段，pop() 必有值（类型面收窄）
+  const ext = rel.includes(".") ? rel.split(".").pop()!.toLowerCase() : "";
   const dir = modelDirOf(rel);
   const manager = new THREE.LoadingManager();
-  manager.setURLModifier((url) => {
+  manager.setURLModifier((url: string) => {
     const resolved = resolveSiblingUrl(dir, url);
     return resolved ?? url;
   });
@@ -116,10 +142,11 @@ async function parseModel(rel, buffer) {
     if (parsed.kind === 0) {
       return { template: parsed.template, clips: [] };
     }
-    const gltf = await new Promise((resolve, reject) => {
-      // GLTFLoader.parse 的二进制分支要求 ArrayBuffer（Uint8Array 会被当作已解析 JSON）
+    const gltf = await new Promise<GLTF>((resolve, reject) => {
+      // GLTFLoader.parse 的二进制分支要求 ArrayBuffer（Uint8Array 会被当作已解析 JSON）；
+      // glb 为 slice 出的独立 ArrayBuffer，断言收窄
       withCompressedGltf(new GLTFLoader(manager)).parse(
-        parsed.glb.buffer,
+        parsed.glb.buffer as ArrayBuffer,
         resourcePath,
         (gltf) => resolve(gltf),
         (err) => reject(new Error(`glTF 解析失败: ${String(err ?? "未知错误")}`)),
@@ -128,7 +155,7 @@ async function parseModel(rel, buffer) {
     return { template: gltf.scene, clips: gltf.animations ?? [] };
   }
   if (ext === "glb" || ext === "gltf") {
-    const gltf = await new Promise((resolve, reject) => {
+    const gltf = await new Promise<GLTF>((resolve, reject) => {
       withCompressedGltf(new GLTFLoader(manager)).parse(
         buffer,
         resourcePath,
@@ -139,7 +166,10 @@ async function parseModel(rel, buffer) {
     return { template: gltf.scene, clips: gltf.animations ?? [] };
   }
   if (ext === "fbx") {
-    const object = new FBXLoader(manager).parse(buffer, resourcePath);
+    // FBX 动画挂在返回的组上（类型库未暴露），结构断言
+    const object = new FBXLoader(manager).parse(buffer, resourcePath) as THREE.Group & {
+      animations?: THREE.AnimationClip[];
+    };
     return { template: object, clips: object.animations ?? [] };
   }
   if (ext === "obj") {
@@ -153,16 +183,16 @@ async function parseModel(rel, buffer) {
  * 预取解析场景引用的全部模型 → 缓存表（rel → { template, clips }；失败项为 null）。
  * 模板设置投影/受影（与编辑器一致；克隆副本继承）。模板本身不入场景，仅作克隆源。
  */
-export async function loadModels(rootJson) {
-  const models = new Map();
+export async function loadModels(rootJson: unknown): Promise<ModelEntryMap> {
+  const models: ModelEntryMap = new Map();
   const refs = collectModelRefs(rootJson);
   await Promise.all(
     refs.map(async (rel) => {
       try {
         const buffer = await resourceLoader.loadArrayBuffer(rel);
         const { template, clips } = await parseModel(rel, buffer);
-        template.traverse((o) => {
-          if (o.isMesh) {
+        template.traverse((o: THREE.Object3D) => {
+          if ((o as THREE.Mesh).isMesh) {
             o.castShadow = true;
             o.receiveShadow = true;
           }
@@ -178,13 +208,13 @@ export async function loadModels(rootJson) {
 }
 
 /** 实例化模型（同步）：未就绪/加载失败返回 null（调用方渲染空组占位） */
-export function instantiateModel(models, rel) {
+export function instantiateModel(models: ModelEntryMap, rel: string): THREE.Object3D | null {
   const m = models.get(rel);
   return m ? skeletonClone(m.template) : null;
 }
 
 /** 模型内嵌动画剪辑（未就绪返回空） */
-export function modelClips(models, rel) {
+export function modelClips(models: ModelEntryMap, rel: string): THREE.AnimationClip[] {
   const m = models.get(rel);
   return m ? m.clips : [];
 }

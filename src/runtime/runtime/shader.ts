@@ -25,8 +25,36 @@ const FREE_MAX = 10000;
 /** 全部合法钩子名 */
 const ALL_HOOKS = ["Vertex", "Normal", "Diffuse", "Emissive", "Fragment"];
 
+/** 渲染分支 key（Base 声明收敛结果） */
+type ShaderBaseKind = "physical" | "unlit" | "toon";
+
+/** 效果钩子片段（Hook 块提取结果） */
+export interface ShaderHook {
+  name: string;
+  code: string;
+}
+
+/** Properties 属性声明（面板参数；default 形状随 kind：hex/number[]/number/""） */
+export interface ShaderProp {
+  key: string;
+  label: string;
+  kind: string;
+  min: number | null;
+  max: number | null;
+  default: number | number[] | string;
+}
+
+/** 着色器解析结果（parseShader 输出） */
+export interface ShaderDoc {
+  properties: ShaderProp[];
+  base: string;
+  include: string;
+  hooks: ShaderHook[];
+  error: string | null;
+}
+
 /** 去行尾注释（// ...；不处理块注释，与后端 strip_comment 同规则） */
-function stripComment(line) {
+function stripComment(line: string): string {
   let out = "";
   let inStr = false;
   for (let i = 0; i < line.length; i++) {
@@ -43,7 +71,7 @@ function stripComment(line) {
 // ---------------------------------------------------------------------------
 
 /** 首个引号起的引号内文案 */
-function quotedText(s) {
+function quotedText(s: string): string | null {
   const start = s.indexOf('"');
   if (start < 0) return null;
   const end = s.indexOf('"', start + 1);
@@ -51,7 +79,7 @@ function quotedText(s) {
 }
 
 /** 类型声明结束括号（深度 0 上遇到的 ')' 即类型终点） */
-function typeSpecEnd(s) {
+function typeSpecEnd(s: string): number {
   let depth = 0;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
@@ -64,9 +92,9 @@ function typeSpecEnd(s) {
   return -1;
 }
 
-function numberList(s) {
+function numberList(s: string): number[] | null {
   const inner = s.trim().replace(/^\(/, "").replace(/\)$/, "");
-  const out = [];
+  const out: number[] = [];
   for (const part of inner.split(",")) {
     const v = parseFloat(part.trim());
     if (!Number.isFinite(v)) return null;
@@ -75,16 +103,16 @@ function numberList(s) {
   return out;
 }
 
-function unitByte(v) {
+function unitByte(v: number): number {
   return Math.round(Math.max(0, Math.min(1, v)) * 255);
 }
 
 /** Properties 行的默认值 → 按类型收敛的默认值 */
-function parsePropertyDefault(kind, raw) {
+function parsePropertyDefault(kind: string, raw: unknown): number | number[] | string {
   const text = String(raw ?? "").trim();
   if (kind === PROP_COLOR) {
     const list = numberList(text) ?? [1, 1, 1, 1];
-    const at = (i) => unitByte(list[i] ?? 1);
+    const at = (i: number): number => unitByte(list[i] ?? 1);
     return (at(0) << 16) | (at(1) << 8) | at(2);
   }
   if (kind === PROP_VECTOR) {
@@ -98,7 +126,7 @@ function parsePropertyDefault(kind, raw) {
 }
 
 /** 单行属性声明：`_Name ("Label", Type) = Default` */
-function parsePropertyLine(line) {
+function parsePropertyLine(line: string): ShaderProp | null {
   const t = line.trim();
   if (!t.startsWith("_")) return null;
   const open = t.indexOf("(");
@@ -117,9 +145,9 @@ function parsePropertyLine(line) {
   const close = typeSpecEnd(rest);
   if (close < 0) return null;
   const ty = rest.slice(0, close).trim();
-  let min = null;
-  let max = null;
-  let kind;
+  let min: number | null = null;
+  let max: number | null = null;
+  let kind: string;
   const lower = ty.toLowerCase();
   if (lower === "color") kind = PROP_COLOR;
   else if (lower === "vector") kind = PROP_VECTOR;
@@ -150,8 +178,8 @@ function parsePropertyLine(line) {
  * 取 Properties 块（花括号配平；可与关键字同行或换行）→ 属性表。
  * 只取第一个 Properties 块；同名属性只保留首个。
  */
-export function extractProperties(text) {
-  const props = [];
+export function extractProperties(text: unknown): ShaderProp[] {
+  const props: ShaderProp[] = [];
   const lines = String(text ?? "").split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const t = stripComment(lines[i]).trim();
@@ -192,7 +220,7 @@ export function extractProperties(text) {
 // ---------------------------------------------------------------------------
 
 /** Base 声明 → 渲染分支 key（physical/unlit/toon）；未知/缺失返回 null */
-export function baseKind(base) {
+export function baseKind(base: unknown): ShaderBaseKind | null {
   switch (String(base ?? "").trim().toLowerCase()) {
     case "pbr":
     case "physical":
@@ -209,7 +237,7 @@ export function baseKind(base) {
 }
 
 /** 渲染分支 key/Base 写法 → Base 声明值（提示文案用） */
-export function kindBase(kind) {
+export function kindBase(kind: unknown): string {
   const resolved = baseKind(kind);
   if (resolved === "unlit") return "Unlit";
   if (resolved === "toon") return "Toon";
@@ -217,27 +245,27 @@ export function kindBase(kind) {
 }
 
 /** 分支支持的钩子（three 内置着色器的注入点差异；与后端 hook_support 一致） */
-export function hookSupport(base) {
+export function hookSupport(base: unknown): string[] {
   return baseKind(base) === "unlit" ? ["Vertex", "Diffuse", "Fragment"] : ALL_HOOKS;
 }
 
 /** 该（分支, 钩子）下不可用的约定变量（Unlit 片元阶段没有 vViewPosition/法线） */
-function forbiddenVars(base, hook) {
+function forbiddenVars(base: string, hook: string): string[] {
   return baseKind(base) === "unlit" && hook !== "Vertex" ? ["viewDir", "normal"] : [];
 }
 
 /** 按空白与常见标点切词（标识符词法） */
-function words(s) {
+function words(s: string): string[] {
   return String(s).split(/[^0-9A-Za-z_]+/).filter((w) => w.length > 0);
 }
 
 /** 标识符是否在代码中以独立单词出现 */
-function mentions(text, key) {
+function mentions(text: string, key: string): boolean {
   return words(text).includes(key);
 }
 
 /** 从引号中取文本：`Base "PBR"` → "PBR" */
-function quotedValue(line, keyword) {
+function quotedValue(line: unknown, keyword: string): string | null {
   const t = String(line).trim();
   if (!t.startsWith(keyword)) return null;
   let rest = t.slice(keyword.length).trimStart();
@@ -247,7 +275,7 @@ function quotedValue(line, keyword) {
 }
 
 /** 提取 Base 声明（未声明返回空串） */
-function extractBase(text) {
+function extractBase(text: unknown): string {
   const lines = String(text ?? "").split("\n");
   for (const rawLine of lines) {
     const v = quotedValue(stripComment(rawLine.replace(/\r$/, "")).trim(), "Base");
@@ -257,7 +285,7 @@ function extractBase(text) {
 }
 
 /** 提取 CGINCLUDE 块内容（ENDCG 结束） */
-function extractInclude(text) {
+function extractInclude(text: unknown): string {
   let include = "";
   let inInclude = false;
   for (const line of String(text ?? "").split(/\r?\n/)) {
@@ -276,8 +304,8 @@ function extractInclude(text) {
 }
 
 /** 提取所有 Hook 块（未知钩子名/分支不支持的钩子/不可用变量 → 错误） */
-function extractHooks(base, text) {
-  const hooks = [];
+function extractHooks(base: string, text: unknown): { hooks: ShaderHook[]; error: string | null } {
+  const hooks: ShaderHook[] = [];
   const lines = String(text ?? "").split(/\r?\n/);
   let i = 0;
   while (i < lines.length) {
@@ -346,7 +374,7 @@ function extractHooks(base, text) {
  * 旧版着色器（重构前：按 pragma 判别的渲染分支程序，无 Base）→ 建议补的 Base。
  * 只用于「缺 Base」时的迁移提示，不参与正常解析。
  */
-export function legacyBase(text) {
+export function legacyBase(text: unknown): string {
   const lines = String(text ?? "").split("\n");
   for (const rawLine of lines) {
     const t = stripComment(rawLine.replace(/\r$/, "")).trim();
@@ -363,7 +391,7 @@ export function legacyBase(text) {
 }
 
 /** 是否为天空程序（天空盒惯例 PreviewType=Skybox 标签） */
-export function isSkyProgram(text) {
+export function isSkyProgram(text: unknown): boolean {
   return String(text ?? "").includes('"PreviewType"="Skybox"');
 }
 
@@ -371,7 +399,7 @@ export function isSkyProgram(text) {
  * 解析着色器源码 → { properties, base, include, hooks, error }。
  * 天空程序：不参与效果着色器解析（属性/钩子为空）；其他：按 Base 校验钩子。
  */
-export function parseShader(text) {
+export function parseShader(text: unknown): ShaderDoc {
   if (isSkyProgram(text)) {
     return { properties: [], base: "", include: "", hooks: [], error: null };
   }
@@ -395,13 +423,13 @@ export function parseShader(text) {
 }
 
 /** 着色器源码 → 渲染分支 key（physical/unlit/toon/skyprocedural/skycube） */
-export function shaderKind(text) {
+export function shaderKind(text: unknown): string | null {
   if (!isSkyProgram(text)) return baseKind(extractBase(text));
   return String(text).includes("samplerCUBE") ? "skycube" : "skyprocedural";
 }
 
 /** 着色器源码 → Shader 指令名（去组前缀）；无指令行返回 null */
-export function shaderName(text) {
+export function shaderName(text: unknown): string | null {
   for (const line of String(text ?? "").split(/\r?\n/)) {
     const t = line.trim();
     if (!t.startsWith("Shader ") && !t.startsWith("shader ")) continue;

@@ -6,12 +6,12 @@
 let forwardingEnabled = true;
 
 /** 开/关预览页 → 编辑器控制台的日志转发 */
-export function setLogForwarding(on) {
+export function setLogForwarding(on: unknown): void {
   forwardingEnabled = !!on;
 }
 
 /** 预览页 → 编辑器控制台转发（编辑器 WebPreviewPanel 监听 message） */
-export function postLog(level, text) {
+export function postLog(level: string, text: unknown): void {
   if (!forwardingEnabled) return;
   try {
     window.parent?.postMessage(
@@ -24,7 +24,7 @@ export function postLog(level, text) {
 }
 
 /** 启动/运行失败：错误层展示并转发编辑器 */
-export function fail(msg) {
+export function fail(msg: unknown): void {
   const text = String(msg);
   const errorEl = document.getElementById("error");
   if (errorEl) {

@@ -22,11 +22,23 @@ export const FOG_DEFAULTS = {
   heightFalloff: 20,
 };
 
+/** 收敛后的雾设置（parseFogSettings 输出形状） */
+export interface FogSettings {
+  color: number;
+  near: number;
+  far: number;
+  density: number;
+  heightY: number;
+  heightFalloff: number;
+}
+
 /** 雾设置收敛（与编辑器 parseFogSettings 同规则） */
-export function parseFogSettings(raw) {
-  const o = raw && typeof raw === "object" ? raw : {};
+export function parseFogSettings(raw: unknown): FogSettings {
+  const o: Record<string, unknown> =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const d = FOG_DEFAULTS;
-  const clamp = (v, lo, hi, fb) => Math.min(hi, Math.max(lo, num(v, fb)));
+  const clamp = (v: unknown, lo: number, hi: number, fb: number): number =>
+    Math.min(hi, Math.max(lo, num(v, fb)));
   return {
     color: matColor(o.color, d.color),
     near: clamp(o.near, 0, 100000, d.near),
@@ -37,12 +49,22 @@ export function parseFogSettings(raw) {
   };
 }
 
+/** 场景节点 JSON（递归 children 的最小读面） */
+interface FogNodeJson {
+  type?: unknown;
+  active?: unknown;
+  visible?: unknown;
+  children?: unknown;
+  [key: string]: unknown;
+}
+
 /** 深度优先查找首个 type=fogNode 且 启用且可见 的节点（与编辑器 findFogNode 一致） */
-export function findFogNode(json) {
+export function findFogNode(json: unknown): FogNodeJson | null {
   if (!json || typeof json !== "object") return null;
-  if (json.type === "fogNode" && json.active !== false && json.visible !== false) return json;
-  if (Array.isArray(json.children)) {
-    for (const c of json.children) {
+  const o = json as FogNodeJson;
+  if (o.type === "fogNode" && o.active !== false && o.visible !== false) return o;
+  if (Array.isArray(o.children)) {
+    for (const c of o.children) {
       const r = findFogNode(c);
       if (r) return r;
     }
@@ -50,12 +72,17 @@ export function findFogNode(json) {
   return null;
 }
 
+/** applyFogFromNode 可选项（WebGPU 后端注入 TSL 命名空间） */
+interface FogApplyOpts {
+  webgpuTsl?: unknown;
+}
+
 /**
  * 按雾节点 JSON 构建 scene.fog。
  * @param opts.webgpuTsl WebGPU 后端下传入 THREE.TSL 命名空间（高度雾走
  *        scene.fogNode；WebGL 后端不传，海拔衰减走 chunk patch 共享 uniform）
  */
-export function applyFogFromNode(scene, json, opts) {
+export function applyFogFromNode(scene: THREE.Scene, json: FogNodeJson, opts?: FogApplyOpts): void {
   const kind = json.fogKind === "exp2" || json.fogKind === "height" ? json.fogKind : "linear";
   const s = parseFogSettings(json.fog);
   if (kind === "height") {

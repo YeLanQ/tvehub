@@ -7,30 +7,51 @@
 import * as THREE from "../core/three.module.min.js";
 import { num, vec } from "../core/utils";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material";
+import type { MaterialParam } from "./material";
 import { instantiateModel } from "./model";
 import { applyShaderHooks as applyHooks, tickAllHookTime } from "./shaderHooks";
+import type { ShaderData } from "./material";
+import type { NodeJson } from "./node-json";
+import type { BuildSceneCtx } from "./nodes";
+
+/** 节点材质后端（WebGPU TSL 实现；player 注入，null = 经典 three 材质 + GLSL 注入） */
+interface NodeMaterialBackend {
+  /** 渲染分支 key → 节点材质构造器（toon/unlit/physical） */
+  classFor(kind: string): new (parameters?: Record<string, unknown>) => THREE.Material;
+  /** TSL 端口 Hook 注入；返回逐项告警文案 */
+  applyHooks(
+    kind: string,
+    mat: THREE.Material,
+    shaderData: ShaderData,
+    props: Record<string, unknown>,
+  ): string[];
+  tickTime(seconds: number): void;
+}
 
 /** 渲染循环的着色器时间推进（钩子的 _Time uniform；秒） */
-export function tickShaderTime(seconds) {
+export function tickShaderTime(seconds: number): void {
   tickAllHookTime(seconds);
   if (nodeBackend) nodeBackend.tickTime(seconds);
 }
 
-/** 节点材质后端（WebGPU 时由 player 注入；null = 经典 three 材质 + GLSL 注入） */
-let nodeBackend = null;
+let nodeBackend: NodeMaterialBackend | null = null;
 
 /** 注入节点材质后端（WebGPU）；null 恢复经典材质路径 */
-export function setNodeMaterialBackend(backend) {
+export function setNodeMaterialBackend(backend: NodeMaterialBackend | null): void {
   nodeBackend = backend ?? null;
 }
 
 /** 按分支创建材质：节点后端激活时用节点材质（WebGPU），否则用经典 three 材质 */
-function createBranchMaterial(kind, Ctor, options) {
+function createBranchMaterial(
+  kind: string,
+  Ctor: new (options: Record<string, unknown>) => THREE.Material,
+  options: Record<string, unknown>,
+): THREE.Material {
   return nodeBackend ? new (nodeBackend.classFor(kind))(options) : new Ctor(options);
 }
 
 /** 应用着色器 Hook：节点后端走 TSL 端口（未生效项显式告警），否则注入 GLSL */
-function applyBranchHooks(kind, mat, m) {
+function applyBranchHooks(kind: string, mat: THREE.Material, m: MaterialParam): void {
   if (!m.shaderData) return;
   if (nodeBackend) {
     const errors = nodeBackend.applyHooks(kind, mat, m.shaderData, m.props || {});
@@ -41,13 +62,13 @@ function applyBranchHooks(kind, mat, m) {
 }
 
 /** 材质解析失败的告警去重（同一引用只报一次，避免逐网格刷屏） */
-const warnedMissingMaterials = new Set();
+const warnedMissingMaterials = new Set<string>();
 
 /**
  * 引用了未随产物的材质（.mat 缺失/解析失败）→ 回退默认材质，但必须**可见地**告警：
  * 否则表现为"材质变成一块纯灰"，容易误判成渲染后端或着色器的问题。
  */
-function warnMissingMaterial(rel, nodeName) {
+function warnMissingMaterial(rel: string, nodeName: unknown): void {
   if (warnedMissingMaterials.has(rel)) return;
   warnedMissingMaterials.add(rel);
   console.warn("[tve] 材质未解析，已回退默认材质: " + rel + "（首个引用它的网格: " + (nodeName || "?") + "）");
@@ -58,12 +79,12 @@ function warnMissingMaterial(rel, nodeName) {
 // WebGPU 管线数按"参数种数"而非网格数增长（模型实例经 SkeletonUtils.clone 本就
 // 共享几何/材质，基元对齐同一策略）。运行时无销毁/改写这些资源的路径（节点移除
 // 不 dispose），脚本 API 也不暴露几何/材质改写。
-const primitiveGeometryCache = new Map();
-const branchMaterialCache = new WeakMap();
-const outlineMaterialCache = new WeakMap();
+const primitiveGeometryCache = new Map<string, THREE.BufferGeometry>();
+const branchMaterialCache = new WeakMap<object, THREE.Material>();
+const outlineMaterialCache = new WeakMap<object, THREE.MeshBasicMaterial>();
 
 /** 按种类+尺寸取基元几何（相同参数共享一份 BufferGeometry） */
-function getPrimitiveGeometry(kind, x, y, z) {
+function getPrimitiveGeometry(kind: string, x: number, y: number, z: number): THREE.BufferGeometry {
   const key = `${kind}|${x}|${y}|${z}`;
   let geom = primitiveGeometryCache.get(key);
   if (geom === undefined) {
@@ -82,7 +103,7 @@ function getPrimitiveGeometry(kind, x, y, z) {
 
 // —— 数据化网格（编辑器 framework/mesh/dataGeometry.ts 的解码镜像：只解码内嵌
 //    载荷构建 BufferGeometry，不解析 JSON/XYZ 源文件；两边算法需同步）——
-function _decodeMeshData(data, Ctor) {
+function _decodeMeshData(data: string, Ctor: typeof Float32Array | typeof Uint32Array): Float32Array | Uint32Array | null {
   try {
     const bin = atob(data);
     const bytes = new Uint8Array(bin.length);
@@ -94,27 +115,39 @@ function _decodeMeshData(data, Ctor) {
   }
 }
 
+/** 数据化网格载荷（节点 dataMesh 字段的解码读面） */
+interface DataMeshPayload {
+  vertexCount?: unknown;
+  positions?: unknown;
+  indices?: unknown;
+  indexCount?: unknown;
+  normals?: unknown;
+  uvs?: unknown;
+}
+
 /** 载荷 → BufferGeometry（按载荷长度签名共享；损坏回退占位方块） */
-function getDataGeometry(d) {
-  const vc = d.vertexCount | 0;
+function getDataGeometry(d: DataMeshPayload): THREE.BufferGeometry | null {
+  const vc = Number(d.vertexCount) | 0;
   if (vc < 3 || typeof d.positions !== "string") return null;
-  const key = `data|${d.positions.length}|${d.indices?.length ?? 0}|${vc}|${d.indexCount | 0}`;
+  // 与原逻辑同语义：indices 任意类型读 length（无则 0）
+  const indsLen = (d.indices as { length?: number } | undefined)?.length ?? 0;
+  const key = `data|${d.positions.length}|${indsLen}|${vc}|${Number(d.indexCount) | 0}`;
   let geom = primitiveGeometryCache.get(key);
   if (geom !== undefined) return geom;
   const pos = _decodeMeshData(d.positions, Float32Array);
   if (!pos || pos.length !== vc * 3) return null;
   geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  if ((d.indexCount | 0) > 0 && d.indices) {
-    const idx = _decodeMeshData(d.indices, Uint32Array);
-    if (idx && idx.length === (d.indexCount | 0)) geom.setIndex(new THREE.BufferAttribute(idx, 1));
+  if ((Number(d.indexCount) | 0) > 0 && d.indices) {
+    const idx = _decodeMeshData(d.indices as string, Uint32Array);
+    if (idx && idx.length === (Number(d.indexCount) | 0)) geom.setIndex(new THREE.BufferAttribute(idx, 1));
   }
   if (d.normals) {
-    const nrm = _decodeMeshData(d.normals, Float32Array);
+    const nrm = _decodeMeshData(d.normals as string, Float32Array);
     if (nrm && nrm.length === vc * 3) geom.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
   }
   if (d.uvs) {
-    const uv = _decodeMeshData(d.uvs, Float32Array);
+    const uv = _decodeMeshData(d.uvs as string, Float32Array);
     if (uv && uv.length === vc * 2) geom.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
   }
   if (!geom.getAttribute("normal")) geom.computeVertexNormals();
@@ -124,7 +157,7 @@ function getDataGeometry(d) {
 
 /** 按解析后的 .mat 参数对象取共享材质（同引用网格共用一个材质实例；
  * 贴图回填/Hook 注入按参数幂等，共享后各网格渲染结果不变） */
-function sharedBranchMaterial(m, build) {
+function sharedBranchMaterial(m: object, build: () => THREE.Material): THREE.Material {
   let mat = branchMaterialCache.get(m);
   if (mat === undefined) {
     mat = build();
@@ -134,7 +167,7 @@ function sharedBranchMaterial(m, build) {
 }
 
 /** 描边壳材质只取 outlineColor：同参数网格共享一份 */
-function sharedOutlineMaterial(m) {
+function sharedOutlineMaterial(m: MaterialParam): THREE.MeshBasicMaterial {
   let mat = outlineMaterialCache.get(m);
   if (mat === undefined) {
     mat = new THREE.MeshBasicMaterial({
@@ -146,13 +179,13 @@ function sharedOutlineMaterial(m) {
   return mat;
 }
 
-export function createMesh(json, ctx) {
+export function createMesh(json: NodeJson, ctx: BuildSceneCtx): THREE.Object3D {
   const obj = buildMeshNode(json, ctx);
   // 阴影参与：网格默认**投射 + 接收**（与编辑器 SceneSynchronizer 同一策略，
   // 否则平行光/聚光灯开了阴影也看不到影子）。材质轮廓体（__matOutline）例外：
   // 它是沿法线外扩的背面壳，投影会把轮廓糊进阴影里。
-  obj.traverse((o) => {
-    if (o.isMesh !== true || o.name === "__matOutline") return;
+  obj.traverse((o: THREE.Object3D) => {
+    if ((o as THREE.Mesh).isMesh !== true || o.name === "__matOutline") return;
     o.castShadow = true;
     o.receiveShadow = true;
   });
@@ -168,7 +201,7 @@ export function createMesh(json, ctx) {
  * - 材质按 .mat 资产引用解析（缺失回退默认参数）；类型缺省回退 PBR。
  *   透明/裁剪规则与编辑器一致：opacity<1 半透明；贴图阈值>0 走 alphaTest 裁剪。
  */
-function buildMeshNode(json, ctx) {
+function buildMeshNode(json: NodeJson, ctx: BuildSceneCtx): THREE.Object3D {
   if (json.source === "model") {
     const container = new THREE.Group();
     const rel = typeof json.model === "string" ? json.model : "";
@@ -187,13 +220,17 @@ function buildMeshNode(json, ctx) {
   const y = Math.max(0.01, num(sz.y, 1));
   const z = Math.max(0.01, num(sz.z, 1));
   // 数据化网格（source=data）：载荷解码（同载荷共享）；无载荷/损坏回退基元占位
-  const dataGeom = json.source === "data" && json.dataMesh ? getDataGeometry(json.dataMesh) : null;
-  const geom = dataGeom || getPrimitiveGeometry(kind, x, y, z);
+  const dataGeom =
+    json.source === "data" && json.dataMesh
+      ? getDataGeometry(json.dataMesh as DataMeshPayload)
+      : null;
+  const geom = dataGeom || getPrimitiveGeometry(kind as string, x, y, z);
 
   // 材质解析：引用缺失（.mat 未随产物/解析失败）时回退默认材质 —— 但必须**可见地**告警，
   // 否则表现为"材质变成一块纯灰"，让人误以为是渲染后端或着色器的问题
-  const resolved = ctx.materialParams.get(json.material);
-  if (!resolved && json.material) warnMissingMaterial(json.material, json.name);
+  const matRel = json.material;
+  const resolved = typeof matRel === "string" ? ctx.materialParams.get(matRel) : undefined;
+  if (!resolved && matRel) warnMissingMaterial(String(matRel), json.name);
   const m = resolved || MAT_DEFAULTS;
   const f = {
     transparent: m.opacity < 0.999 || (!!m.map && !(m.alphaClipThreshold > 0.0001)),

@@ -279,7 +279,9 @@ function buildProxyMeshes(
           root.add(meshObj);
         }
         meshObj.morphTargetDictionary = { ...mm.dictionary };
-        meshObj.morphTargetInfluences = new Float32Array(mm.influenceCount);
+        // three 运行时用 Float32Array 存形态键权重（类型库声明为 number[]），断言写入
+        (meshObj as { morphTargetInfluences?: unknown }).morphTargetInfluences =
+          new Float32Array(mm.influenceCount);
       }
     }
 
@@ -304,7 +306,8 @@ function reconstructModels(
 function reconstructClip(data: SerializedClip): THREE.AnimationClip {
   const tracks = (data.tracks || []).map(reconstructTrack);
   const clip = new THREE.AnimationClip(data.name, data.duration, tracks);
-  clip.blendMode = data.blendMode;
+  // 序列化的是数值枚举（JSON 来源），断言回 three 枚举
+  clip.blendMode = data.blendMode as THREE.AnimationBlendMode;
   return clip;
 }
 
@@ -312,13 +315,15 @@ function reconstructTrack(data: SerializedTrack): THREE.KeyframeTrack {
   const { name, times, values, interpolation } = data;
   const timesArr = times instanceof Float32Array ? times : new Float32Array(times);
   const valuesArr = values instanceof Float32Array ? values : new Float32Array(values);
+  // 插值模式为序列化数值枚举，断言回 three 枚举
+  const mode = interpolation as THREE.InterpolationModes | undefined;
   if (name.endsWith(".quaternion")) {
-    return new THREE.QuaternionKeyframeTrack(name, timesArr, valuesArr, interpolation);
+    return new THREE.QuaternionKeyframeTrack(name, timesArr, valuesArr, mode);
   }
   if (name.endsWith(".morphTargetInfluences") || data.valueSize === 1) {
-    return new THREE.NumberKeyframeTrack(name, timesArr, valuesArr, interpolation);
+    return new THREE.NumberKeyframeTrack(name, timesArr, valuesArr, mode);
   }
-  return new THREE.VectorKeyframeTrack(name, timesArr, valuesArr, interpolation);
+  return new THREE.VectorKeyframeTrack(name, timesArr, valuesArr, mode);
 }
 
 // ---------------------------------------------------------------------------

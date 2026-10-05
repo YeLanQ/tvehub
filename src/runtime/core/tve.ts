@@ -76,15 +76,15 @@ const engine = {
   ui: uiApi,
   logic: logicApi,
   tween,
-  log(...args) {
+  log(...args: unknown[]) {
     postLog("info", formatArgs(args));
     console.log(...args);
   },
-  warn(...args) {
+  warn(...args: unknown[]) {
     postLog("warn", formatArgs(args));
     console.warn(...args);
   },
-  error(...args) {
+  error(...args: unknown[]) {
     postLog("error", formatArgs(args));
     console.error(...args);
   },

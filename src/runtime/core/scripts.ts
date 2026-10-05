@@ -14,6 +14,7 @@
 // 错误隔离：单个脚本加载/实例化/生命周期出错只停用该实例并上报
 // （postLog → 编辑器控制台），不影响渲染与其他脚本。
 // ---------------------------------------------------------------------------
+import type { Object3D } from "../core/three.module.min.js";
 import { postLog } from "./log";
 import {
   Component,
@@ -29,12 +30,12 @@ import {
 } from "./tve";
 
 /** 源路径（src/**.ts）→ 编译产物路径（src/**.js） */
-function jsPathOf(srcRel) {
+function jsPathOf(srcRel: string): string {
   return srcRel.replace(/\.tsx?$/, ".js");
 }
 
-function errText(e) {
-  return e && e.message ? e.message : String(e);
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 // 固定步长与掉帧补偿上限：与 runtime/physics.mjs 的物理步进同参数（同频推进，
@@ -43,9 +44,41 @@ const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 4;
 
 /** 属性默认值深拷贝（vec3 等对象默认值不与 schema 共享引用） */
-function cloneDefault(v) {
+function cloneDefault(v: unknown): unknown {
   if (v && typeof v === "object") return Array.isArray(v) ? [...v] : { ...v };
   return v;
+}
+
+/** 脚本类静态形状（装饰器元数据挂在构造器上；legacy 模式用静态 props 表） */
+interface ScriptKlass {
+  new (entity: unknown): Record<string, unknown>;
+  prototype: object;
+  name: string;
+  /** @property 字段名集（装饰器模式非空） */
+  __tvePropKeys?: string[];
+  /** 节点引用字段（@property({type: 节点类})；字段名集） */
+  __tveEntityKeys?: string[];
+  /** 组件引用字段（[字段名, 组件类型键]） */
+  __tveComponentKeys?: [string, string][];
+  /** legacy 静态属性表（字段名 → { default }） */
+  props?: Record<string, { default?: unknown }>;
+}
+
+/** 脚本实例运行记录（生命周期驱动/错误停用/图输入缓存） */
+interface ScriptRecord {
+  inst: Record<string, unknown>;
+  script: string;
+  dead: boolean;
+  order: number;
+  graphInput?: unknown;
+}
+
+/** 组件挂载绑定（场景 script 组件收集结果） */
+interface ScriptBinding {
+  obj: Object3D;
+  script: string;
+  props: unknown;
+  order: number;
 }
 
 /**
@@ -55,11 +88,11 @@ function cloneDefault(v) {
  * - legacy 静态 props（klass.props）：默认值取声明 default，节点配置覆盖；
  *   两者都挂只读视图 this.props（默认 + 配置覆盖的字典快照）。
  */
-function buildInstance(klass, entity, configured) {
+function buildInstance(klass: ScriptKlass, entity: unknown, configured: unknown): Record<string, unknown> {
   const inst = new klass(entity);
   const keys = Array.isArray(klass.__tvePropKeys) ? klass.__tvePropKeys : [];
   const fieldMode = keys.length > 0;
-  const merged = {};
+  const merged: Record<string, unknown> = {};
   if (fieldMode) {
     for (const k of keys) merged[k] = inst[k];
   } else {
@@ -73,10 +106,11 @@ function buildInstance(klass, entity, configured) {
     }
   }
   if (configured && typeof configured === "object") {
-    Object.assign(merged, configured);
+    const cfg = configured as Record<string, unknown>;
+    Object.assign(merged, cfg);
     if (fieldMode) {
       for (const k of keys) {
-        if (Object.prototype.hasOwnProperty.call(configured, k)) inst[k] = merged[k];
+        if (Object.prototype.hasOwnProperty.call(cfg, k)) inst[k] = merged[k];
       }
     }
   }
@@ -84,7 +118,7 @@ function buildInstance(klass, entity, configured) {
   // 解析为 Entity；未配置/空 id → null
   const entityKeys = Array.isArray(klass.__tveEntityKeys) ? klass.__tveEntityKeys : [];
   if (entityKeys.length) {
-    const raw = (configured && typeof configured === "object" ? configured : {});
+    const raw = (configured && typeof configured === "object" ? configured : {}) as Record<string, unknown>;
     for (const k of entityKeys) {
       const id = raw[k];
       const ent = typeof id === "string" && id ? resolveNodeEntity(id) : null;
@@ -105,11 +139,11 @@ function buildInstance(klass, entity, configured) {
 }
 
 /** 生命周期调用（出错 → 停用该实例并上报，不再驱动） */
-function callLifecycle(record, method, ...args) {
+function callLifecycle(record: ScriptRecord, method: string, ...args: unknown[]): void {
   const fn = record.inst[method];
   if (typeof fn !== "function") return;
   try {
-    record.inst[method](...args);
+    (fn as (...a: unknown[]) => void)(...args);
   } catch (e) {
     record.dead = true;
     postLog("error", `[脚本] ${record.script} ${method}() 出错（已停用）: ${errText(e)}`);
@@ -117,30 +151,85 @@ function callLifecycle(record, method, ...args) {
   }
 }
 
+/** createScripts 装配选项（player 传入；各子系统控制面允许缺省） */
+export interface ScriptsOptions {
+  /** buildSceneTree 的全节点注册表（json + obj） */
+  nodes: { json: Record<string, unknown>; obj: Object3D }[];
+  /** 项目配置（entryScript = 入口脚本源路径） */
+  cfg: Record<string, unknown>;
+  /** 动画控制（engine.animation 转发） */
+  animations?: object | null;
+  /** 音频控制（engine.audio 转发） */
+  audios?: object | null;
+  /** 物理控制（engine.physics 转发；碰撞回调分发读 drainCollisions） */
+  physics?: { drainCollisions?(): unknown[] } | null;
+  /** 关键帧动画剪辑控制（组件字段/门面用） */
+  clipAnims?: object | null;
+  /** 粒子系统控制（engine.particles / ParticleSystemNode 转发） */
+  particles?: object | null;
+  /** 地形系统（TerrainNode 贴地采样转发） */
+  terrains?: object | null;
+  /** UI 运行时控制（engine.ui / UI 节点门面转发） */
+  ui?: object | null;
+  /** 逻辑运行器控制（状态机/行为树；engine.logic 转发） */
+  logic?: object | null;
+  /** 预览画布（指针输入；DOM 结构由桥接层按平台注入，此处不直引 DOM 类型） */
+  canvas?: unknown;
+  /** 渲染相机控制（CameraNode.screenToRay 转发） */
+  camera?: {
+    screenToRay(screenX: number, screenY: number): { origin: object; direction: object } | null;
+  } | null;
+}
+
 /**
  * 创建脚本运行时。
- * @param {object} opts
- * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
- * @param {object} opts.cfg 项目配置（entryScript = 入口脚本源路径）
- * @param {{play,stop,pause,resume,bindingOf,...}|null} opts.animations 动画控制（engine.animation 转发）
- * @param {{play,stop,pause,resume,setVolume,...}|null} opts.audios 音频控制（engine.audio 转发）
- * @param {object|null} opts.physics 物理控制（engine.physics 转发）
- * @param {object|null} opts.clipAnims 关键帧动画剪辑控制（组件字段/门面用）
- * @param {{play,pause,stop,restart,clear,infoOf,settingsOf,updateSettings}|null} opts.particles 粒子系统控制（engine.particles / ParticleSystemNode 转发）
- * @param {{sampleHeight,sampleSlope,settingsOf}|null} opts.terrains 地形系统（TerrainNode 贴地采样转发）
- * @param {{update,applyTextures,settingsOf,updateSettings,onClick,offClick}|null} opts.ui UI 运行时控制（engine.ui / UI 节点门面转发）
- * @param {{update,fire,setFsmParam,onFsmEnter,onAction,...}|null} opts.logic 逻辑运行器控制（状态机/行为树；engine.logic 转发）
- * @param {HTMLCanvasElement|null} opts.canvas 预览画布（指针输入）
- * @param {{screenToRay(screenX:number, screenY:number): {origin:Vec3, direction:Vec3} | null}|null} opts.camera 渲染相机控制（CameraNode.screenToRay 转发）
- * @returns {Promise<{update(dt: number): void}>}
  */
-export async function createScripts({ nodes, cfg, animations, audios, physics, clipAnims, particles, terrains, ui, logic, canvas, camera }) {
-  const noop = { fixedUpdate() {}, update() {}, lateUpdate() {}, dispose() {} };
+export async function createScripts({
+  nodes,
+  cfg,
+  animations,
+  audios,
+  physics,
+  clipAnims,
+  particles,
+  terrains,
+  ui,
+  logic,
+  canvas,
+  camera,
+}: ScriptsOptions): Promise<{
+  fixedUpdate(dt: number): void;
+  update(dt: number): void;
+  lateUpdate(dt: number): void;
+  scriptProp(nodeId: string, scriptRel: string | null, key: string): unknown;
+  setScriptProp(nodeId: string, scriptRel: string | null, key: string, value: unknown): boolean;
+  setScriptGraphInput(nodeId: string, scriptRel: string | null, value: unknown): boolean;
+  dispose(): void;
+}> {
+  type ScriptsHandle = {
+    fixedUpdate(dt: number): void;
+    update(dt: number): void;
+    lateUpdate(dt: number): void;
+    scriptProp(nodeId: string, scriptRel: string | null, key: string): unknown;
+    setScriptProp(nodeId: string, scriptRel: string | null, key: string, value: unknown): boolean;
+    setScriptGraphInput(nodeId: string, scriptRel: string | null, value: unknown): boolean;
+    dispose(): void;
+  };
+  const noop = {
+    fixedUpdate() {},
+    update() {},
+    lateUpdate() {},
+    scriptProp: () => null,
+    setScriptProp: () => false,
+    setScriptGraphInput: () => false,
+    dispose() {},
+  } as ScriptsHandle;
   const rootEntry = nodes.length ? nodes[0] : null;
   installRuntime({
     registry: nodes,
     rootObj: rootEntry ? rootEntry.obj : null,
-    canvas: canvas ?? null,
+    // ScriptsOptions.canvas 为 unknown 透传；装配边界在 installRuntime 内统一断言
+    canvas: canvas as unknown as import("./tve/state").PointerCanvas | null,
     animations: animations ?? null,
     audios: audios ?? null,
     physics: physics ?? null,
@@ -155,9 +244,9 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
 
   // 组件引用收集（注册表为文档序：先父后子）；executionOrder 为执行顺序
   // （小者先跑，同序按挂载顺序）
-  const bindings = [];
+  const bindings: ScriptBinding[] = [];
   for (const { json, obj } of nodes) {
-    const comps = Array.isArray(json.components) ? json.components : [];
+    const comps = Array.isArray(json.components) ? (json.components as Record<string, unknown>[]) : [];
     for (const c of comps) {
       if (!c || typeof c !== "object" || c.type !== "script" || c.enabled === false) continue;
       if (typeof c.script !== "string" || !c.script) continue;
@@ -175,32 +264,32 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   if (!bindings.length && !entryRel) return noop;
 
   // 模块缓存（源路径 → Promise<module>；失败缓存避免重复报错）
-  const modules = new Map();
-  function loadModule(srcRel) {
+  const modules = new Map<string, Promise<Record<string, unknown>>>();
+  function loadModule(srcRel: string): Promise<Record<string, unknown>> {
     let p = modules.get(srcRel);
     if (!p) {
+      // 锚点「return await import(spec);」被 wechat 构建改写（勿加注释/改形）
       p = (async () => {
         const jsRel = jsPathOf(srcRel);
-        const spec = window.__TVE_BUILD_DATA
+        const spec = (window as { __TVE_BUILD_DATA?: unknown }).__TVE_BUILD_DATA
           ? "tve:" + jsRel
           : new URL(jsRel, document.baseURI).href;
         return await import(spec);
-      })();
+      })() as Promise<Record<string, unknown>>;
       p.catch(() => {});
       modules.set(srcRel, p);
     }
     return p;
   }
 
-  /** @type {Array<{inst: object, script: string, dead: boolean, order: number}>} */
-  const instances = [];
+  const instances: ScriptRecord[] = [];
   /** 节点 id → 挂载的脚本实例记录（碰撞回调按节点寻址分发） */
-  const instancesByNode = new Map();
-  const failedScripts = new Set();
+  const instancesByNode = new Map<string, ScriptRecord[]>();
+  const failedScripts = new Set<string>();
 
-  async function instantiate(items) {
+  async function instantiate(items: ScriptBinding[]): Promise<void> {
     for (const item of items) {
-      let mod;
+      let mod: Record<string, unknown>;
       try {
         mod = await loadModule(item.script);
       } catch (e) {
@@ -211,26 +300,27 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         continue;
       }
       const Klass = mod && mod.default;
-      if (typeof Klass !== "function" || !(Klass.prototype instanceof Component)) {
+      if (typeof Klass !== "function" || !((Klass as ScriptKlass).prototype instanceof Component)) {
         if (!failedScripts.has(item.script)) {
           failedScripts.add(item.script);
           postLog("error", `[脚本] ${item.script} 缺少默认导出的 Component 子类`);
         }
         continue;
       }
+      const klass = Klass as ScriptKlass;
       const entity = getEntity(item.obj);
       if (!entity) continue;
-      let inst;
+      let inst: Record<string, unknown>;
       try {
-        inst = buildInstance(Klass, entity, item.props);
+        inst = buildInstance(klass, entity, item.props);
       } catch (e) {
         postLog("error", `[脚本] 实例化失败 ${item.script}: ${errText(e)}`);
         continue;
       }
       // 注册表登记（脚本类全局可见 + 实例挂节点），随后绑定组件引用字段
-      registerScriptClass(item.script, Klass);
+      registerScriptClass(item.script, klass);
       registerComponent(entity.id, inst, item.script);
-      const record = { inst, script: item.script, dead: false, order: item.order ?? 0 };
+      const record: ScriptRecord = { inst, script: item.script, dead: false, order: item.order ?? 0 };
       instances.push(record);
       let list = instancesByNode.get(entity.id);
       if (!list) {
@@ -238,7 +328,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
         instancesByNode.set(entity.id, list);
       }
       list.push(record);
-      bindComponentFields(inst, Klass, entity);
+      bindComponentFields(inst, klass, entity);
     }
   }
 
@@ -248,8 +338,8 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
    * - 脚本组件键（"script:类名"）→ 实体已有该脚本组件则绑定，没有则动态创建
    *   （按需自动挂载依赖组件；创建的实例立即进入生命周期）。
    */
-  function bindComponentFields(inst, Klass, entity) {
-    const compKeys = Array.isArray(Klass.__tveComponentKeys) ? Klass.__tveComponentKeys : [];
+  function bindComponentFields(inst: Record<string, unknown>, klass: ScriptKlass, entity: { id: string }): void {
+    const compKeys = Array.isArray(klass.__tveComponentKeys) ? klass.__tveComponentKeys : [];
     for (const entry of compKeys) {
       if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "string") {
         continue;
@@ -262,7 +352,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   }
 
   /** 脚本组件字段解析：实体已有该脚本组件 → 绑定；没有 → 动态创建 */
-  function resolveScriptField(entity, name) {
+  function resolveScriptField(entity: { id: string }, name: string): unknown {
     return resolveScriptInstance(entity.id, name) ?? spawn(entity, name);
   }
 
@@ -272,7 +362,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
    * props 为属性配置。创建的实例立即走 onEnable → onStart（统一批次已过）
    * 并进入每帧更新队列（onFixedUpdate/onUpdate/onLateUpdate；执行顺序排末尾）。
    */
-  function spawn(entity, tokenOrClass, props) {
+  function spawn(entity: { id: string }, tokenOrClass: unknown, props?: unknown): Record<string, unknown> | null {
     const found = resolveScriptClass(tokenOrClass);
     if (!found) {
       const label = typeof tokenOrClass === "function" ? tokenOrClass.name : String(tokenOrClass);
@@ -281,7 +371,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     }
     const { klass, srcRel } = found;
     if (!entity || typeof entity.id !== "string" || !entity.id) return null;
-    let inst;
+    let inst: Record<string, unknown>;
     try {
       inst = buildInstance(klass, entity, props);
     } catch (e) {
@@ -290,7 +380,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
     }
     // 先注册再绑字段：被引用脚本（含自引用）的字段解析能命中本实例
     registerComponent(entity.id, inst, srcRel);
-    const record = { inst, script: srcRel || klass.name || "(动态创建)", dead: false, order: 1e9 };
+    const record: ScriptRecord = { inst, script: srcRel || klass.name || "(动态创建)", dead: false, order: 1e9 };
     instances.push(record);
     let list = instancesByNode.get(entity.id);
     if (!list) {
@@ -324,7 +414,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   /** onFixedUpdate 固定步长累积器（帧间隔凑满 1/60s 才触发，见 fixedUpdate） */
   let fixedAccumulator = 0;
   /** 页面卸载/宿主停机：onDisable → onDestroy（各一次；错误实例已停用则跳过） */
-  function dispose() {
+  function dispose(): void {
     if (disposed) return;
     disposed = true;
     for (const record of instances) {
@@ -340,26 +430,28 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
    * 事件为节点 id 对（physics.mjs 后端收集）；双方实体各自收到一次回调，
    * 参数为对方实体。同一帧内按 self|other|started 去重（复合形状多碰撞体）。
    */
-  function dispatchCollisions() {
+  function dispatchCollisions(): void {
     const events = physics?.drainCollisions?.() ?? [];
     if (!events.length) return;
-    const seen = new Set();
-    for (const ev of events) {
+    const seen = new Set<string>();
+    for (const raw of events) {
+      const ev = raw as { a?: unknown; b?: unknown; started?: unknown } | null;
       if (!ev || typeof ev.a !== "string" || typeof ev.b !== "string") continue;
-      const forward = `${ev.a}|${ev.b}|${ev.started ? 1 : 0}`;
-      const backward = `${ev.b}|${ev.a}|${ev.started ? 1 : 0}`;
+      const started = ev.started === true;
+      const forward = `${ev.a}|${ev.b}|${started ? 1 : 0}`;
+      const backward = `${ev.b}|${ev.a}|${started ? 1 : 0}`;
       if (!seen.has(forward)) {
         seen.add(forward);
-        dispatchCollision(ev.a, ev.b, ev.started);
+        dispatchCollision(ev.a, ev.b, started);
       }
       if (ev.a !== ev.b && !seen.has(backward)) {
         seen.add(backward);
-        dispatchCollision(ev.b, ev.a, ev.started);
+        dispatchCollision(ev.b, ev.a, started);
       }
     }
   }
 
-  function dispatchCollision(selfId, otherId, started) {
+  function dispatchCollision(selfId: string, otherId: string, started: boolean): void {
     const list = instancesByNode.get(selfId);
     if (!list || !list.length) return;
     const other = resolveNodeEntity(otherId);
@@ -372,7 +464,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   // ----- 脚本属性访问（场景图 script:<路径>:<属性> 寻址；图运行时 scriptApi 消费） -----
 
   /** 节点上的脚本实例记录定位（relPath 精确匹配 → 缺省首个存活实例） */
-  function findScriptRecord(nodeId, scriptRel) {
+  function findScriptRecord(nodeId: string, scriptRel: string | null): ScriptRecord | null {
     const list = instancesByNode.get(nodeId);
     if (!list || !list.length) return null;
     if (scriptRel) {
@@ -383,24 +475,23 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   }
 
   /** 读 @property 实时值（字段模式读 inst 字段；legacy 读 props 快照；非标量回 null） */
-  function scriptProp(nodeId, scriptRel, key) {
+  function scriptProp(nodeId: string, scriptRel: string | null, key: string): unknown {
     const record = findScriptRecord(nodeId, scriptRel);
     if (!record) return null;
     let v = record.inst[key];
-    if (v === undefined && record.inst.props) v = record.inst.props[key];
+    if (v === undefined && record.inst.props) v = (record.inst.props as Record<string, unknown>)[key];
     const t = typeof v;
-    if (t === "number") return Number.isFinite(v) ? v : null;
+    if (t === "number") return Number.isFinite(v as number) ? v : null;
     if (t === "boolean" || t === "string") return v;
     return null;
   }
 
   /** 写 @property（仅字段模式可写；legacy props 是冻结视图，回 false） */
-  function setScriptProp(nodeId, scriptRel, key, value) {
+  function setScriptProp(nodeId: string, scriptRel: string | null, key: string, value: unknown): boolean {
     const record = findScriptRecord(nodeId, scriptRel);
     if (!record) return false;
-    const keys = Array.isArray(record.inst.constructor?.__tvePropKeys)
-      ? record.inst.constructor.__tvePropKeys
-      : [];
+    const ctor = record.inst.constructor as ScriptKlass | undefined;
+    const keys = Array.isArray(ctor?.__tvePropKeys) ? (ctor!.__tvePropKeys as string[]) : [];
     if (!keys.includes(key)) return false;
     try {
       record.inst[key] = value;
@@ -413,41 +504,41 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
   // ----- 图接入口交付（原型卡「接入」→ 实体上脚本实例；graph-kernel 消费） -----
 
   /** 图输入值收敛：NodeObj（带 id 标记）→ Entity，三分量对象 → 普通向量，标量透传 */
-  function convertGraphInputValue(v) {
+  function convertGraphInputValue(v: unknown): unknown {
     if (v === null || v === undefined) return null;
     if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return v;
     if (typeof v === "object") {
-      if (typeof v.id === "string" && v.id) return resolveNodeEntity(v.id);
-      const x = typeof v.x === "number" ? v.x : null;
-      const y = typeof v.y === "number" ? v.y : null;
-      const z = typeof v.z === "number" ? v.z : null;
+      const o = v as Record<string, unknown>;
+      if (typeof o.id === "string" && o.id) return resolveNodeEntity(o.id);
+      const x = typeof o.x === "number" ? o.x : null;
+      const y = typeof o.y === "number" ? o.y : null;
+      const z = typeof o.z === "number" ? o.z : null;
       if (x !== null && y !== null && z !== null) return { x, y, z };
     }
     return null;
   }
 
   /** onGraphInput 出错不拖垮脚本实例（每脚本只报一次） */
-  const graphInputWarned = new Set();
+  const graphInputWarned = new Set<string>();
 
   /**
    * 接入口值交付：写入该节点上全部存活脚本实例的 this.graphInput（可轮询的
    * 最新值）并回调 onGraphInput(value)（实现了才触发）。scriptRel 为空 = 全部
    * 脚本；节点上没有存活脚本实例回 false（kernel 据此给可定位告警）。
    */
-  function setScriptGraphInput(nodeId, scriptRel, value) {
+  function setScriptGraphInput(nodeId: string, scriptRel: string | null, value: unknown): boolean {
     const list = instancesByNode.get(nodeId);
     if (!list || !list.length) return false;
     const targets = list.filter((r) => !r.dead && (!scriptRel || r.script === scriptRel));
     if (!targets.length) return false;
-    const converted = Array.isArray(value)
-      ? value.map(convertGraphInputValue).filter((v) => v !== null)
+    const converted: unknown = Array.isArray(value)
+      ? (value as unknown[]).map(convertGraphInputValue).filter((v) => v !== null)
       : convertGraphInputValue(value);
     for (const record of targets) {
       record.graphInput = converted;
       // 字段模式脚本若恰好声明了同名 @property，字段归属脚本本身，不注入
-      const keys = Array.isArray(record.inst.constructor?.__tvePropKeys)
-        ? record.inst.constructor.__tvePropKeys
-        : [];
+      const ctor = record.inst.constructor as ScriptKlass | undefined;
+      const keys = Array.isArray(ctor?.__tvePropKeys) ? (ctor!.__tvePropKeys as string[]) : [];
       if (!keys.includes("graphInput")) {
         try {
           record.inst.graphInput = converted;
@@ -457,7 +548,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
       }
       if (typeof record.inst.onGraphInput === "function") {
         try {
-          record.inst.onGraphInput(converted);
+          (record.inst.onGraphInput as (v: unknown) => void)(converted);
         } catch (e) {
           if (!graphInputWarned.has(record.script)) {
             graphInputWarned.add(record.script);
@@ -477,7 +568,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
      * 脚本可在 onFixedUpdate 里做与物理同步的确定性逻辑）才触发，一次渲染帧
      * 可能不调用或连续调用多次（掉帧补偿上限与物理一致，避免死亡螺旋）。
      */
-    fixedUpdate(dt) {
+    fixedUpdate(dt: number) {
       fixedAccumulator += Math.min(Math.max(dt, 0), FIXED_DT * MAX_SUBSTEPS);
       while (fixedAccumulator >= FIXED_DT) {
         fixedAccumulator -= FIXED_DT;
@@ -488,7 +579,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
       }
     },
     /** 每帧驱动：碰撞回调 → 时间推进 + onUpdate（错误实例自动停用） */
-    update(dt) {
+    update(dt: number) {
       dispatchCollisions();
       tickTime(dt);
       for (const record of instances) {
@@ -500,7 +591,7 @@ export async function createScripts({ nodes, cfg, animations, audios, physics, c
      * 晚更新驱动（播放器在全部脚本/动画/物理/粒子更新后、相机回填与渲染前
      * 调用）：相机跟随等「要覆盖本帧一切位姿写入」的逻辑放 onLateUpdate。
      */
-    lateUpdate(dt) {
+    lateUpdate(dt: number) {
       for (const record of instances) {
         if (record.dead) continue;
         callLifecycle(record, "onLateUpdate", dt);

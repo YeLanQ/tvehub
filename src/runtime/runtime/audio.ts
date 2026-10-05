@@ -17,11 +17,66 @@ const DEFAULTS = {
   rolloff: 1,
 };
 
+/** 收敛后的音源设置（parseAudioSettings 输出形状） */
+interface AudioSettings {
+  source: string;
+  autoplay: boolean;
+  loop: boolean;
+  volume: number;
+  speed: number;
+  spatial: "2d" | "3d";
+  refDistance: number;
+  maxDistance: number;
+  rolloff: number;
+}
+
+/** 单个音源节点的绑定（音源对象 + 设置 + 运行态） */
+interface AudioBinding {
+  nodeJson: Record<string, unknown>;
+  obj: THREE.Object3D;
+  settings: AudioSettings;
+  /** THREE.PositionalAudio 是 THREE.Audio<AudioNode> 子类；3D 音源挂 obj 下 */
+  emitter: THREE.Audio<AudioNode> | null;
+  ready: boolean;
+  playing: boolean;
+  paused: boolean;
+  offset: number;
+  started: boolean;
+  userStopped: boolean;
+  autoPaused: boolean;
+}
+
+/** buildSceneTree 收集的音源条目（组件模式附 nodeId 宿主别名） */
+interface AudioEntry {
+  json: Record<string, unknown>;
+  obj: THREE.Object3D;
+  nodeId?: string;
+}
+
+/** 音频运行时 API（player 帧循环与脚本宿主 engine.audio 消费） */
+export interface AudioApi {
+  update(): void;
+  play(nodeId: string): boolean;
+  stop(nodeId: string): boolean;
+  pause(nodeId: string): boolean;
+  resume(nodeId: string): boolean;
+  setVolume(nodeId: string, volume: number): boolean;
+  addSource(json: Record<string, unknown>, obj: THREE.Object3D, nodeId?: string): boolean;
+  updateSettings(key: string, patch: unknown): boolean;
+  infoOf(key: string): { playing: boolean; paused: boolean; ready: boolean } | null;
+}
+
+/** three AudioContext.getContext 的返回按 DOM AudioContext 消费（three 类型声明过窄） */
+function getContext(): AudioContext {
+  return THREE.AudioContext.getContext() as unknown as AudioContext;
+}
+
 /** 音源设置收敛（缺失/非法字段回退默认；移植 parseAudioSettings 关键分支） */
-function parseAudioSettings(v) {
-  const o = v && typeof v === "object" ? v : {};
-  const num = (x, fb) => (typeof x === "number" && Number.isFinite(x) ? x : fb);
-  const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+function parseAudioSettings(v: unknown): AudioSettings {
+  const o: Record<string, unknown> = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  const num = (x: unknown, fb: number): number =>
+    typeof x === "number" && Number.isFinite(x) ? x : fb;
+  const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
   return {
     source: typeof o.source === "string" ? o.source : "",
     autoplay: typeof o.autoplay === "boolean" ? o.autoplay : DEFAULTS.autoplay,
@@ -36,9 +91,9 @@ function parseAudioSettings(v) {
 }
 
 /** 单个音源节点的绑定（音源对象 + 设置 + 运行态） */
-function createBinding(nodeJson, obj) {
+function createBinding(nodeJson: Record<string, unknown>, obj: THREE.Object3D): AudioBinding {
   const settings = parseAudioSettings(nodeJson.audio);
-  const b = {
+  const b: AudioBinding = {
     nodeJson,
     obj,
     settings,
@@ -57,7 +112,7 @@ function createBinding(nodeJson, obj) {
 
 /** 按 settings.source 拉取缓冲并挂发射器（异步；就绪后 autoplay 起播）。
  *  换源重建时调用方先清空旧发射态。 */
-function attachSource(b) {
+function attachSource(b: AudioBinding): void {
   if (!b.settings.source) return;
   loadBuffer(b.settings.source)
     .then((buf) => {
@@ -72,7 +127,7 @@ function attachSource(b) {
 }
 
 /** 卸下发射器（换源/重建用）：停止播放并从节点摘除 3D 音源对象 */
-function detachEmitter(b) {
+function detachEmitter(b: AudioBinding): void {
   if (!b.emitter) return;
   if (b.emitter.isPlaying) b.emitter.stop();
   if (b.emitter instanceof THREE.PositionalAudio) b.obj.remove(b.emitter);
@@ -81,17 +136,17 @@ function detachEmitter(b) {
 }
 
 /** 音源对象（3D 挂节点对象下随变换；2D 全局不挂树） */
-function createEmitter(b, buffer) {
-  let emitter;
+function createEmitter(b: AudioBinding, buffer: AudioBuffer): void {
+  let emitter: THREE.Audio<AudioNode>;
   if (b.settings.spatial === "3d") {
-    const pa = new THREE.PositionalAudio(listener);
+    const pa = new THREE.PositionalAudio(listener as THREE.AudioListener);
     pa.setRefDistance(b.settings.refDistance);
     pa.setMaxDistance(b.settings.maxDistance);
     pa.setRolloffFactor(b.settings.rolloff);
     b.obj.add(pa);
     emitter = pa;
   } else {
-    emitter = new THREE.Audio(listener);
+    emitter = new THREE.Audio(listener as THREE.AudioListener);
   }
   emitter.setBuffer(buffer);
   b.emitter = emitter;
@@ -99,7 +154,7 @@ function createEmitter(b, buffer) {
 }
 
 /** 数据参数 → 音源对象（音量/循环/倍速/3D 衰减） */
-function applyParams(b) {
+function applyParams(b: AudioBinding): void {
   const e = b.emitter;
   if (!e) return;
   e.setVolume(b.settings.volume);
@@ -113,7 +168,7 @@ function applyParams(b) {
 }
 
 /** 起播（fromStart=true 从头播；false = 暂停处续播）。成功返回 true */
-function tryStart(b, fromStart) {
+function tryStart(b: AudioBinding, fromStart: boolean): boolean {
   const e = b.emitter;
   if (!e || !b.ready) return false;
   resumeContext();
@@ -130,26 +185,23 @@ function tryStart(b, fromStart) {
 
 // —— 缓冲缓存与共享监听器（全场景一份 AudioContext） ——
 
-const bufferCache = new Map();
-let listener = null;
+const bufferCache = new Map<string, Promise<AudioBuffer>>();
+/** 共享监听器（createAudios 装配时创建；绑定创建均在其后，消费点断言） */
+let listener: THREE.AudioListener | null = null;
 
-function getContext() {
-  return THREE.AudioContext.getContext();
-}
-
-function resumeContext() {
+function resumeContext(): void {
   const ctx = getContext();
   if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 }
 
 /** 解码音频资产（相对路径 fetch，归档/内联产物经 assets shim 命中；失败 reject） */
-function loadBuffer(rel) {
+function loadBuffer(rel: string): Promise<AudioBuffer> {
   const cached = bufferCache.get(rel);
   if (cached) return cached;
   const task = (async () => {
     const arr = await resourceLoader.loadArrayBuffer(rel);
     const ctx = getContext();
-    return await new Promise((resolve, reject) => {
+    return await new Promise<AudioBuffer>((resolve, reject) => {
       void ctx.decodeAudioData(arr, resolve, reject);
     });
   })();
@@ -159,8 +211,8 @@ function loadBuffer(rel) {
 }
 
 /** 节点对象可见性链（含自身；active/visible 已合并进 obj.visible） */
-function hostVisible(obj) {
-  let cur = obj;
+function hostVisible(obj: THREE.Object3D): boolean {
+  let cur: THREE.Object3D | null = obj;
   while (cur) {
     if (!cur.visible) return false;
     cur = cur.parent;
@@ -175,11 +227,11 @@ function hostVisible(obj) {
  * 驱动（可见性自动暂停 + 上下文解锁后 autoplay 起播），另附 play/stop/pause/
  * resume/setVolume（按节点 id 寻址，供脚本宿主 engine.audio 转发）。
  */
-export function createAudios(audios, cam) {
+export function createAudios(audios: AudioEntry[], cam: THREE.Camera): AudioApi {
   listener = new THREE.AudioListener();
   cam.add(listener);
   // 浏览器自动播放策略：首次用户交互解锁 AudioContext（ctx resume 后 autoplay 生效）
-  const unlock = () => {
+  const unlock = (): void => {
     resumeContext();
     window.removeEventListener("pointerdown", unlock, true);
     window.removeEventListener("keydown", unlock, true);
@@ -187,8 +239,8 @@ export function createAudios(audios, cam) {
   window.addEventListener("pointerdown", unlock, true);
   window.addEventListener("keydown", unlock, true);
 
-  const bindings = [];
-  const byId = new Map();
+  const bindings: AudioBinding[] = [];
+  const byId = new Map<string, AudioBinding>();
   for (const entry of audios) {
     const b = createBinding(entry.json, entry.obj);
     bindings.push(b);
@@ -199,7 +251,8 @@ export function createAudios(audios, cam) {
   for (const entry of audios) {
     const nodeId = entry.nodeId;
     if (typeof nodeId !== "string" || !nodeId || byId.has(nodeId)) continue;
-    const b = byId.get(entry.json.id);
+    const id = entry.json.id;
+    const b = typeof id === "string" ? byId.get(id) : undefined;
     if (b) byId.set(nodeId, b);
   }
 
@@ -286,7 +339,7 @@ export function createAudios(audios, cam) {
       if (!b) return false;
       const merged = parseAudioSettings({
         ...b.settings,
-        ...(patch && typeof patch === "object" ? patch : {}),
+        ...(patch && typeof patch === "object" ? (patch as Record<string, unknown>) : {}),
       });
       const rebuild =
         merged.source !== b.settings.source || merged.spatial !== b.settings.spatial;

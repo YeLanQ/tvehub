@@ -4,71 +4,73 @@
 // engine.scene 调用；按实体寻址，转发到宿主后端。
 // ---------------------------------------------------------------------------
 import { state, numOr, registry } from "./state";
+import type { BuiltinFacade } from "./state";
 import { getEntity, deepFind } from "./entity";
+import type { Entity } from "./entity";
 import { resolveScriptInstance, resolveNodeEntity } from "./runtime";
 import { builtinTypeKeyOf, builtinFacadeOf } from "./component-registry";
 
 const animationApi = {
-  play(entity, clip) { state.host?.animations?.play(entity?.id, clip); },
-  stop(entity) { state.host?.animations?.stop(entity?.id); },
-  pause(entity) { state.host?.animations?.pause(entity?.id); },
-  resume(entity) { state.host?.animations?.resume(entity?.id); },
+  play(entity: Entity, clip: string | undefined): void { state.host?.animations?.play(entity?.id, clip); },
+  stop(entity: Entity): void { state.host?.animations?.stop(entity?.id); },
+  pause(entity: Entity): void { state.host?.animations?.pause(entity?.id); },
+  resume(entity: Entity): void { state.host?.animations?.resume(entity?.id); },
 };
 
 const audioApi = {
-  play(entity) { state.host?.audios?.play(entity?.id); },
-  stop(entity) { state.host?.audios?.stop(entity?.id); },
-  pause(entity) { state.host?.audios?.pause(entity?.id); },
-  resume(entity) { state.host?.audios?.resume(entity?.id); },
-  setVolume(entity, volume) { state.host?.audios?.setVolume(entity?.id, volume); },
+  play(entity: Entity): void { state.host?.audios?.play(entity?.id); },
+  stop(entity: Entity): void { state.host?.audios?.stop(entity?.id); },
+  pause(entity: Entity): void { state.host?.audios?.pause(entity?.id); },
+  resume(entity: Entity): void { state.host?.audios?.resume(entity?.id); },
+  setVolume(entity: Entity, volume: number): void { state.host?.audios?.setVolume(entity?.id, volume); },
 };
 
 const particlesApi = {
-  play(entity) { state.host?.particles?.play(entity?.id); },
-  pause(entity) { state.host?.particles?.pause(entity?.id); },
-  stop(entity) { state.host?.particles?.stop(entity?.id); },
-  restart(entity) { state.host?.particles?.restart(entity?.id); },
-  clear(entity) { state.host?.particles?.clear(entity?.id); },
-  stateOf(entity) { return state.host?.particles?.infoOf(entity?.id) ?? null; },
-  setSettings(entity, patch) { state.host?.particles?.updateSettings(entity?.id, patch); },
+  play(entity: Entity): void { state.host?.particles?.play(entity?.id); },
+  pause(entity: Entity): void { state.host?.particles?.pause(entity?.id); },
+  stop(entity: Entity): void { state.host?.particles?.stop(entity?.id); },
+  restart(entity: Entity): void { state.host?.particles?.restart(entity?.id); },
+  clear(entity: Entity): void { state.host?.particles?.clear(entity?.id); },
+  stateOf(entity: Entity) { return state.host?.particles?.infoOf(entity?.id) ?? null; },
+  setSettings(entity: Entity, patch: unknown): void { state.host?.particles?.updateSettings(entity?.id, patch); },
 };
 
 const physicsApi = {
-  applyImpulse(entity, x, y, z) {
+  applyImpulse(entity: Entity, x: unknown, y: unknown, z: unknown): void {
     state.host?.physics?.applyImpulse(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
   },
-  applyForce(entity, x, y, z) {
+  applyForce(entity: Entity, x: unknown, y: unknown, z: unknown): void {
     state.host?.physics?.applyForce(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
   },
-  setLinearVelocity(entity, x, y, z) {
+  setLinearVelocity(entity: Entity, x: unknown, y: unknown, z: unknown): void {
     state.host?.physics?.setLinearVelocity(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
   },
-  setAngularVelocity(entity, x, y, z) {
+  setAngularVelocity(entity: Entity, x: unknown, y: unknown, z: unknown): void {
     state.host?.physics?.setAngularVelocity(entity?.id, numOr(x, 0), numOr(y, 0), numOr(z, 0));
   },
-  getLinearVelocity(entity) {
+  getLinearVelocity(entity: Entity) {
     return state.host?.physics?.getLinearVelocity(entity?.id) ?? null;
   },
-  bodyInfo(entity) {
+  bodyInfo(entity: Entity) {
     return state.host?.physics?.bodyInfo(entity?.id) ?? null;
   },
-  setGravityScale(entity, scale) {
+  setGravityScale(entity: Entity, scale: unknown): void {
     state.host?.physics?.setGravityScale(entity?.id, numOr(scale, 1));
   },
-  wakeUp(entity) {
+  wakeUp(entity: Entity): void {
     state.host?.physics?.wakeUp(entity?.id);
   },
-  setGravity(x, y, z) {
+  setGravity(x: unknown, y: unknown, z: unknown): void {
     state.host?.physics?.setGravity(numOr(x, 0), numOr(y, -9.81), numOr(z, 0));
   },
   /** 射线投射（世界级查询，不按实体寻址；Worker 模式返回 Promise） */
-  castRay(options) {
+  castRay(options: unknown) {
     return state.host?.physics?.castRay(options) ?? [];
   },
 };
 
 /** 单实体按 token 找组件：脚本类 / 脚本路径 / 类名 / 内置组件门面类 / 类型键 */
-function findOnEntity(entity, token) {
+function findOnEntity(entity: Entity, token: unknown): BuiltinFacade | object | null {
   const typeKey = builtinTypeKeyOf(token);
   if (typeKey) return builtinFacadeOf(entity, typeKey);
   if (typeof token === "function") {
@@ -84,7 +86,7 @@ const sceneApi = {
     const rootObj = state.host && state.host.rootObj;
     return rootObj ? getEntity(rootObj) : null;
   },
-  find(nameOrPath) {
+  find(nameOrPath: string) {
     const rootObj = state.host && state.host.rootObj;
     if (!rootObj) return null;
     if (rootObj.name === nameOrPath) return getEntity(rootObj);
@@ -94,21 +96,23 @@ const sceneApi = {
     return resolveNodeEntity(nameOrPath);
   },
   findAll() {
-    return registry().map((e) => getEntity(e.obj)).filter(Boolean);
+    return registry()
+      .map((e) => getEntity(e.obj))
+      .filter((e): e is Entity => Boolean(e));
   },
-  findByTag(tag) {
+  findByTag(tag: string) {
     for (const e of registry()) {
       if (e.obj?.userData?.nodeTag === tag) return getEntity(e.obj);
     }
     return null;
   },
-  findAllByTag(tag) {
+  findAllByTag(tag: string) {
     return registry()
       .filter((e) => e.obj?.userData?.nodeTag === tag)
       .map((e) => getEntity(e.obj))
-      .filter(Boolean);
+      .filter((e): e is Entity => Boolean(e));
   },
-  findComponent(token) {
+  findComponent(token: unknown) {
     for (const e of registry()) {
       const ent = getEntity(e.obj);
       if (!ent) continue;
@@ -117,8 +121,8 @@ const sceneApi = {
     }
     return null;
   },
-  findComponents(token) {
-    const out = [];
+  findComponents(token: unknown) {
+    const out: Array<BuiltinFacade | object | null> = [];
     for (const e of registry()) {
       const ent = getEntity(e.obj);
       if (!ent) continue;

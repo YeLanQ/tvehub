@@ -277,7 +277,7 @@ const CHASE_PATH_ARRIVE = 0.35;
  * 与导航代理同一约定（+Z 前向、atan2(dx,dz)、只写 rotation.y 不清 x/z，
  * 避免破坏与其它驱动器组合的姿态）；位移没有水平分量（垂直移动/未动）不改朝向。
  */
-function faceMoveDir(face: boolean, obj: NodeObj, dx: number, dz: number): void {
+function faceMoveDir(face: boolean, obj: THREE.Object3D, dx: number, dz: number): void {
   if (!face) return;
   if (Math.hypot(dx, dz) > 1e-6) obj.rotation.y = Math.atan2(dx, dz);
 }
@@ -1065,7 +1065,7 @@ export function createCoreContainersModule(): GraphRuntimeModule {
       const conds = k.graph.edges
         .filter((e) => e.dstNode === node.id && e.dstPort === "condition")
         .map((e) => k.nodeOf(e.srcNode))
-        .filter((s) => s && !s.unresolved)
+        .filter((s): s is NonNullable<ReturnType<typeof k.nodeOf>> => !!s && !s.unresolved)
         .sort((a, b) => a.y - b.y || a.x - b.x);
       let picked = -1;
       for (let i = 0; i < conds.length && i < children.length; i++) {

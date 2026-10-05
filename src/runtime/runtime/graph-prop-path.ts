@@ -67,15 +67,6 @@ function isEulerish(v: { x: number; y: number; z: number } & Record<string, unkn
   return typeof v.order === "string";
 }
 
-/** 标量收敛（只暴露可进数据引脚的值；对象/函数/Entity 一律 null） */
-function scalar(v: unknown): number | boolean | string | null {
-  const t = typeof v;
-  if (t === "number" && Number.isFinite(v as number)) return v as number;
-  if (t === "boolean") return v as boolean;
-  if (t === "string") return v as string;
-  return null;
-}
-
 /** 读取 script:<路径>:<属性> 的拆段（rel 允许含 "/"，不允许含 ":"） */
 function parseScriptPath(path: string): { rel: string; key: string } | null {
   if (!path.startsWith("script:")) return null;

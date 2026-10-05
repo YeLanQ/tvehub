@@ -173,7 +173,7 @@ function collectInputs() {
       if (e.isDirectory()) {
         if (!rel && e.name === "extra") continue;
         walk(abs, relName);
-      } else if (e.name.endsWith(".ts")) {
+      } else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) {
         input[relName.replace(/\.ts$/, "")] = abs;
       }
     }

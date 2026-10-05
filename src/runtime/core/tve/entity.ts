@@ -4,23 +4,27 @@
 // ---------------------------------------------------------------------------
 import * as THREE from "../three.module.min.js";
 import { postLog } from "../log";
-import { state, registry, isNodeObj, numOr, D2R, R2D, scriptComponentsOf } from "./state";
+import { state, isNodeObj, numOr, D2R, R2D, scriptComponentsOf } from "./state";
+import type { Vec3, Vec3Input } from "./state";
 
-function toVec3(v) {
+/** 节点类型类构造器（getEntity 按 userData.nodeKind 构建实例；node-types.ts 注入） */
+export type EntityKlass = new (obj: THREE.Object3D) => Entity;
+
+function toVec3(v: THREE.Vector3): Vec3 {
   return { x: v.x, y: v.y, z: v.z };
 }
 
 /** 写入部分字段（仅接受有限数值，其余保持原值） */
-function applyVec3(target, src) {
+function applyVec3(target: THREE.Vector3, src: Vec3Input | null | undefined): void {
   if (!src || typeof src !== "object") return;
-  for (const k of ["x", "y", "z"]) {
+  for (const k of ["x", "y", "z"] as const) {
     const v = src[k];
     if (typeof v === "number" && Number.isFinite(v)) target[k] = v;
   }
 }
 
 /** 子树内按名称深度优先查找（只匹配节点对象，跳过灯光实例等内部子对象） */
-export function deepFind(obj, name) {
+export function deepFind(obj: THREE.Object3D, name: string): THREE.Object3D | null {
   for (const child of obj.children) {
     if (isNodeObj(child) && child.name === name) return child;
     const hit = deepFind(child, name);
@@ -30,7 +34,7 @@ export function deepFind(obj, name) {
 }
 
 /** three 对象 → Entity 子类实例（按 userData.nodeKind 映射节点类型类；非节点对象返回 null） */
-export function getEntity(obj) {
+export function getEntity(obj: THREE.Object3D): Entity | null {
   if (!isNodeObj(obj) || !state.host) return null;
   let e = state.entityByObj.get(obj);
   if (!e) {
@@ -43,66 +47,72 @@ export function getEntity(obj) {
 }
 
 class Entity {
-  /** @param {THREE.Object3D} obj（不在场景树内的对象由宿主保证不传入） */
-  constructor(obj) {
+  /** 节点类型类静态标记（node-types.ts 按 kind 写入；TS 需静态声明供子类赋值） */
+  static declare __nodeKinds: string[] | null;
+
+  /** three 节点对象（不在场景树内的对象由宿主保证不传入） */
+  __obj: THREE.Object3D;
+
+  constructor(obj: THREE.Object3D) {
     this.__obj = obj;
   }
 
-  get id() {
+  get id(): string {
     return String(this.__obj.userData.nodeId ?? "");
   }
 
-  get kind() {
+  get kind(): string {
     const k = this.__obj.userData?.nodeKind;
     return typeof k === "string" ? k : "";
   }
 
-  get name() {
+  get name(): string {
     return this.__obj.name ?? "";
   }
-  set name(value) {
+  set name(value: string) {
     if (typeof value === "string" && value) this.__obj.name = value;
   }
 
-  get tag() {
+  get tag(): string {
     const t = this.__obj.userData?.nodeTag;
     return typeof t === "string" ? t : "";
   }
 
-  get layer() {
+  get layer(): number {
     const l = this.__obj.userData?.nodeLayer;
     return typeof l === "number" && Number.isFinite(l) ? Math.round(l) : 0;
   }
-  set layer(value) {
+  set layer(value: number) {
     const n = Number(value);
     if (!Number.isFinite(n)) return;
     const i = Math.min(31, Math.max(0, Math.round(n)));
     this.__obj.layers.set(i);
     this.__obj.traverse((o) => {
-      if (o.isLight !== true) o.layers.set(i);
+      // three 类型库仅在实际灯型上声明 isLight；对象标志按结构视图读取
+      if ((o as { isLight?: boolean }).isLight !== true) o.layers.set(i);
     });
     this.__obj.userData.nodeLayer = i;
   }
 
-  get visible() {
+  get visible(): boolean {
     return this.__obj.visible === true;
   }
-  set visible(value) {
+  set visible(value: boolean) {
     this.__obj.visible = value === true;
   }
 
-  get position() {
+  get position(): Vec3 {
     return toVec3(this.__obj.position);
   }
-  set position(value) {
+  set position(value: Vec3Input | null | undefined) {
     applyVec3(this.__obj.position, value);
   }
 
-  get rotation() {
+  get rotation(): Vec3 {
     const r = this.__obj.rotation;
     return { x: r.x * R2D, y: r.y * R2D, z: r.z * R2D };
   }
-  set rotation(value) {
+  set rotation(value: Vec3Input | null | undefined) {
     const r = this.__obj.rotation;
     if (!value || typeof value !== "object") return;
     r.order = "XYZ";
@@ -111,48 +121,52 @@ class Entity {
     if (typeof value.z === "number" && Number.isFinite(value.z)) r.z = value.z * D2R;
   }
 
-  get scale() {
+  get scale(): Vec3 {
     return toVec3(this.__obj.scale);
   }
-  set scale(value) {
+  set scale(value: Vec3Input | null | undefined) {
     applyVec3(this.__obj.scale, value);
   }
 
-  get worldPosition() {
+  get worldPosition(): Vec3 {
     const v = new THREE.Vector3();
     this.__obj.getWorldPosition(v);
     return toVec3(v);
   }
 
-  get parent() {
+  get parent(): Entity | null {
     const p = this.__obj.parent;
     return isNodeObj(p) ? getEntity(p) : null;
   }
 
-  get children() {
-    return this.__obj.children.filter(isNodeObj).map((c) => getEntity(c)).filter(Boolean);
+  get children(): Entity[] {
+    return this.__obj.children
+      .filter(isNodeObj)
+      .map((c) => getEntity(c))
+      .filter((e): e is Entity => Boolean(e));
   }
 
-  translate(x, y, z) {
+  translate(x: unknown, y: unknown, z: unknown): void {
     this.__obj.position.x += numOr(x, 0);
     this.__obj.position.y += numOr(y, 0);
     this.__obj.position.z += numOr(z, 0);
   }
 
-  rotate(xDeg, yDeg, zDeg) {
+  rotate(xDeg: unknown, yDeg: unknown, zDeg: unknown): void {
     const r = this.__obj.rotation;
     r.x += numOr(xDeg, 0) * D2R;
     r.y += numOr(yDeg, 0) * D2R;
     r.z += numOr(zDeg, 0) * D2R;
   }
 
-  lookAt(target) {
+  lookAt(target: Vec3Input | null | undefined): void {
     if (!target || typeof target !== "object") return;
     this.__obj.lookAt(numOr(target.x, 0), numOr(target.y, 0), numOr(target.z, 0));
-    if (!this.__obj.isCamera) this.__obj.rotateY(Math.PI);
+    // three 类型库仅 Camera 类声明 isCamera；按结构视图读取
+    if (!(this.__obj as { isCamera?: boolean }).isCamera) this.__obj.rotateY(Math.PI);
   }
 
-  find(nameOrPath) {
+  find(nameOrPath: string): Entity | null {
     if (typeof nameOrPath !== "string" || !nameOrPath.trim()) return null;
     const parts = nameOrPath.split("/").map((s) => s.trim()).filter(Boolean);
     if (!parts.length) return null;
@@ -169,7 +183,7 @@ class Entity {
     return getEntity(cur);
   }
 
-  getComponent(componentClass) {
+  getComponent(componentClass: unknown): unknown {
     const typeKey = state.builtinTypeKeyOf?.(componentClass);
     if (typeKey) return state.builtinFacadeOf?.(this, typeKey);
     if (typeof componentClass === "function") {
@@ -183,7 +197,7 @@ class Entity {
     return null;
   }
 
-  addComponent(componentClass, settings) {
+  addComponent(componentClass: unknown, settings: unknown): unknown {
     const typeKey = state.builtinTypeKeyOf?.(componentClass);
     if (!typeKey) {
       if (typeof componentClass === "function" || typeof componentClass === "string") {
@@ -201,8 +215,8 @@ class Entity {
 }
 
 // KIND_CLASSES 由 node-types.mjs 注入（避免 entity → node-types 循环依赖）
-let KIND_CLASSES = {};
-export function setKindClasses(map) {
+let KIND_CLASSES: Record<string, EntityKlass> = {};
+export function setKindClasses(map: Record<string, EntityKlass>): void {
   KIND_CLASSES = map;
 }
 

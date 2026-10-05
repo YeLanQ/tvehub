@@ -26,6 +26,8 @@ export interface NodeJson {
   model?: string;
   active?: boolean;
   visible?: boolean;
+  /** 节点变换（position/rotation/scale 各 {x,y,z}，rotation 度制） */
+  transform?: Record<string, unknown>;
   /** 节点设置（逻辑运行器/粒子等按需读取） */
   settings?: Record<string, unknown>;
   components?: NodeComponentJson[];

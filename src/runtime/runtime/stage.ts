@@ -4,13 +4,24 @@
 // 窗口尺寸渲染并铺满（场景不受缩放模式影响）；缩放模式（scaleMode）仅由
 // UI 系统消费，用于 UI 画布在相机空间的适配策略。
 import { createRHIDevice } from "../../engine/rhi";
+import type { RHIDevice, RHIDeviceOptions, RHIActiveBackend } from "../../engine/rhi";
 import { registerThreeRHIBackends } from "../../engine/rhi/backends/three";
 import { createRPIPipeline } from "../../engine/rpi";
+import type { RPIPipeline } from "../../engine/rpi";
+
+/** 运行时舞台配置（项目设置 renderer 子集；JSON 来源） */
+interface StageConfig {
+  renderer?: unknown;
+  antiAliasing?: unknown;
+  hdrMode?: unknown;
+  performance?: { powerPreference?: unknown } | null;
+  [key: string]: unknown;
+}
 
 /** GPU 偏好（功耗）：performance.powerPreference 可配 "high-performance" / "low-power"，
  *  缺省 "default"（浏览器均衡选择，双显卡笔记本不再强制独显——原 high-performance
  *  会使混合 GPU 设备整页功耗数倍提升、持续发热）。 */
-function powerPref(cfg) {
+function powerPref(cfg: StageConfig): "high-performance" | "low-power" | "default" {
   const v = cfg && cfg.performance && cfg.performance.powerPreference;
   return v === "high-performance" || v === "low-power" ? v : "default";
 }
@@ -18,23 +29,24 @@ function powerPref(cfg) {
 /** 设备创建参数：preserveDrawingBuffer 仅在清除标志需要跨帧保留
  *  颜色/深度缓冲时开启（默认呈现后缓冲失效，关掉可省一整块画布带宽，
  *  对移动端 tiled GPU 影响尤其明显）。 */
-function deviceOptions(cfg, preserveDrawingBuffer) {
+function deviceOptions(cfg: StageConfig, preserveDrawingBuffer: boolean): RHIDeviceOptions {
   const aa = cfg.antiAliasing !== 0;
+  const samples = typeof cfg.antiAliasing === "number" ? cfg.antiAliasing : 0;
   return {
     antialias: aa,
-    msaaSamples: aa ? cfg.antiAliasing : 0,
+    msaaSamples: aa ? samples : 0,
     // powerPreference 仅在 macOS/Linux 被采纳；Windows 上 requestAdapter 忽略
     // 该参数（Chromium crbug.com/369219127，适配器跟随浏览器/系统首选 GPU）。
     // 仍传递以求在支持的平台上生效；Windows 双显卡无页面侧手段，导出产物
     // 只能靠用户的浏览器/系统 GPU 首选项，编辑器自身窗口则由 tauri.conf 的
     // additionalBrowserArgs 在浏览器进程级强制（该级别 Windows 生效）。
     powerPreference: powerPref(cfg),
-    preserveDrawingBuffer: preserveDrawingBuffer === true,
+    preserveDrawingBuffer,
   };
 }
 
 /** 双后端通用显示配置（像素比/色调映射/阴影） */
-function applyCommon(cfg, device) {
+function applyCommon(cfg: StageConfig, device: RHIDevice): RHIDevice {
   // 设备仿真：URL ?dpr= 覆盖设备像素比（限 1~4），使预览按设备像素密度渲染；
   // 缺省沿用浏览器 devicePixelRatio（上限 2，避免高 DPR 屏幕过度采样）
   const dprParam = new URLSearchParams(location.search).get("dpr");
@@ -63,10 +75,14 @@ function applyCommon(cfg, device) {
  * 经它渲染/预热/统计），pipeline 为 RPI 管线（主渲染/清除/分层多 pass）；
  * backend 为 "webgl" | "webgpu"，供粒子等"后端相关材质"选择实现与告警。
  */
-export async function createRenderer(cfg) {
+export async function createRenderer(cfg: StageConfig): Promise<{
+  renderer: RHIDevice;
+  pipeline: RPIPipeline;
+  backend: RHIActiveBackend;
+}> {
   const want = typeof cfg.renderer === "string" ? cfg.renderer : "webgl";
   registerThreeRHIBackends();
-  const device = await createRHIDevice(want, deviceOptions(cfg, false));
+  const device = await createRHIDevice(want as Parameters<typeof createRHIDevice>[0], deviceOptions(cfg, false));
   const pipeline = createRPIPipeline(device);
   applyCommon(cfg, device);
   return { renderer: device, pipeline, backend: device.kind };
@@ -77,7 +93,10 @@ export async function createRenderer(cfg) {
  * 数据在设备创建之后才可读，player 在首个渲染前、挂载舞台前调用本函数换出
  * 设备，此时 GPU 资源尚未上传，重建零成本）。管线随新设备重建返回。
  */
-export async function recreateWebGLRendererPreserveBuffer(cfg, renderer) {
+export async function recreateWebGLRendererPreserveBuffer(
+  cfg: StageConfig,
+  renderer: RHIDevice,
+): Promise<{ renderer: RHIDevice; pipeline: RPIPipeline }> {
   renderer.dispose();
   const device = await createRHIDevice("webgl", deviceOptions(cfg, true));
   applyCommon(cfg, device);
@@ -91,7 +110,12 @@ export async function recreateWebGLRendererPreserveBuffer(cfg, renderer) {
  * applyProjection(aspect) 由调用方提供（相机模块），随每次尺寸变化同步
  * 取景比例。返回 renderer（canvas = renderer.domElement）。
  */
-export function createStage(app, cfg, applyProjection, renderer) {
+export function createStage(
+  app: HTMLElement,
+  _cfg: StageConfig,
+  applyProjection: (aspect: number) => void,
+  renderer: RHIDevice,
+): RHIDevice {
   app.appendChild(renderer.domElement);
   const canvas = renderer.domElement;
 

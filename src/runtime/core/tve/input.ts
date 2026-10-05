@@ -5,10 +5,11 @@
 // 兼容旧单指脚本。
 // ---------------------------------------------------------------------------
 import { state } from "./state";
+import type { PointerState } from "./state";
 import { tickTweens } from "../tween";
 
 /** 每帧推进（scripts.mjs 在调用 onUpdate 前驱动） */
-export function tickTime(dt) {
+export function tickTime(dt: number): void {
   state.timeState.delta = dt > 0 && Number.isFinite(dt) ? dt : 0;
   state.timeState.elapsed += state.timeState.delta;
   state.timeState.frame += 1;
@@ -16,7 +17,7 @@ export function tickTime(dt) {
 }
 
 /** 键盘/指针监听（随 installRuntime 一次性安装；页面级生命周期无需卸载） */
-export function installInputListeners() {
+export function installInputListeners(): void {
   if (state.inputInstalled) return;
   state.inputInstalled = true;
 
@@ -50,7 +51,7 @@ export function installInputListeners() {
   // 事件坐标 → 画布局部 CSS 像素（与 engine.ui.screenToUi 入参同一空间）。
   // 不用 offsetX/offsetY：up/cancel 可能落在画布外（鼠标拖出画布释放），
   // 那时 offsetX 是其他目标元素的空间，clientX - rect.left 恒为画布局部。
-  const pointFromEvent = (e) => {
+  const pointFromEvent = (e: PointerEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
     return {
       x: typeof e.clientX === "number" ? e.clientX - rect.left : state.pointerState.x,
@@ -59,14 +60,14 @@ export function installInputListeners() {
   };
 
   /** 主指针跟随最后活跃触点；down = 存在按下中的触点 */
-  const syncPrimary = (pointerId, x, y) => {
+  const syncPrimary = (pointerId: number, x: number, y: number): void => {
     const st = state.pointerState;
     st.pointerId = pointerId;
     st.x = x;
     st.y = y;
   };
 
-  const onPointerDown = (e) => {
+  const onPointerDown = (e: PointerEvent): void => {
     const pointerId = e.pointerId ?? 0;
     const { x, y } = pointFromEvent(e);
     const pointer = { pointerId, x, y, down: true };
@@ -76,8 +77,9 @@ export function installInputListeners() {
     state.pointerDownHandlers.forEach((fn) => fn({ ...pointer }));
   };
 
-  /** up/cancel 共用：只处理画布上按下过的触点；canvas/window 双路监听按 id 去重 */
-  const onPointerGone = (e, canceled) => {
+  /** up/cancel 共用：只处理画布上按下过的触点；canvas/window 双路监听按 id 去重。
+   *  canceled 可选：up 路监听只传事件（与原运行调用形状一致）。 */
+  const onPointerGone = (e: PointerEvent, canceled?: boolean): void => {
     const pointerId = e.pointerId ?? 0;
     const pointer = state.pointersById.get(pointerId);
     if (!pointer) return;
@@ -92,7 +94,7 @@ export function installInputListeners() {
     else state.pointerUpHandlers.forEach((fn) => fn(payload));
   };
 
-  const onPointerMove = (e) => {
+  const onPointerMove = (e: PointerEvent): void => {
     const pointerId = e.pointerId ?? 0;
     const { x, y } = pointFromEvent(e);
     const pointer = state.pointersById.get(pointerId);
@@ -114,16 +116,16 @@ export function installInputListeners() {
 }
 
 export const inputApi = {
-  isKeyDown(key) {
+  isKeyDown(key: string): boolean {
     return state.heldKeys.has(key);
   },
   /** 当前按下的全部按键（实时集合，勿直接修改） */
   keys: state.heldKeys,
-  onKeyDown(handler) {
+  onKeyDown(handler: (key: string) => void): () => boolean {
     state.keyDownHandlers.add(handler);
     return () => state.keyDownHandlers.delete(handler);
   },
-  onKeyUp(handler) {
+  onKeyUp(handler: (key: string) => void): () => boolean {
     state.keyUpHandlers.add(handler);
     return () => state.keyUpHandlers.delete(handler);
   },
@@ -131,22 +133,22 @@ export const inputApi = {
   /** 按下中的全部触点（pointerId → 状态，实时映射，勿直接修改） */
   pointers: state.pointersById,
   /** 按 pointerId 查触点（未按下返回 null） */
-  getPointer(pointerId) {
+  getPointer(pointerId: number): PointerState | null {
     return state.pointersById.get(pointerId) ?? null;
   },
-  onPointerDown(handler) {
+  onPointerDown(handler: (pointer: PointerState) => void): () => boolean {
     state.pointerDownHandlers.add(handler);
     return () => state.pointerDownHandlers.delete(handler);
   },
-  onPointerUp(handler) {
+  onPointerUp(handler: (pointer: PointerState) => void): () => boolean {
     state.pointerUpHandlers.add(handler);
     return () => state.pointerUpHandlers.delete(handler);
   },
-  onPointerCancel(handler) {
+  onPointerCancel(handler: (pointer: PointerState) => void): () => boolean {
     state.pointerCancelHandlers.add(handler);
     return () => state.pointerCancelHandlers.delete(handler);
   },
-  onPointerMove(handler) {
+  onPointerMove(handler: (pointer: PointerState) => void): () => boolean {
     state.pointerMoveHandlers.add(handler);
     return () => state.pointerMoveHandlers.delete(handler);
   },

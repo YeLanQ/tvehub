@@ -11,20 +11,153 @@
 const MULTI_OPS = ["+=", "-=", "*=", "/=", "==", "!=", "<=", ">=", "&&", "||"];
 const SINGLE_OPS = "+-*/=<>!(){}[].,;?:";
 
-function isDigit(ch) {
+// ---------------------------------------------------------------------------
+// 类型定义（与编辑器 framework/material/tsl/{ast,glslToTsl}.ts 保持镜像）
+// ---------------------------------------------------------------------------
+
+/** 词法 token（num/ident/op 三类；pos 为源偏移） */
+interface Token {
+  type: "num" | "ident" | "op";
+  value: number | string;
+  pos: number;
+}
+
+/** 表达式节点（判别联合） */
+export type Expr =
+  | { kind: "number"; value: number }
+  | { kind: "bool"; value: boolean }
+  | { kind: "ident"; name: string }
+  | { kind: "swizzle"; base: Expr; fields: string }
+  | { kind: "call"; name: string; args: Expr[] }
+  | { kind: "unary"; op: string; operand: Expr }
+  | { kind: "binary"; op: string; left: Expr; right: Expr };
+
+/** 语句节点（判别联合） */
+export type Stmt =
+  | { kind: "var"; type: string; name: string; init: Expr | null }
+  | { kind: "assign"; target: Expr; value: Expr }
+  | { kind: "return"; value: Expr | null }
+  | { kind: "discard" }
+  | { kind: "block"; stmts: Stmt[] }
+  | { kind: "if"; cond: Expr; then: Stmt; else: Stmt | null };
+
+/** 函数签名（受控子集支持工具函数带参，入口函数无参） */
+export interface GlslFunction {
+  returnType: string;
+  name: string;
+  /** 形参表 [type, name][]（工具函数如 hash(vec2 p)；入口函数为空） */
+  params: [string, string][];
+  body: Stmt;
+  /** main 包装器内被调用的入口函数名（仅 name==="main" 时有意义） */
+  entryName?: string | null;
+}
+
+/** 顶点/片元分阶段解析结果（入口函数体 + 全局 varying 声明 + 工具函数表） */
+export interface StageParse {
+  entry: GlslFunction | null;
+  varyings: [string, string][];
+  tools: GlslFunction[];
+  error: string | null;
+}
+
+/** TSL 节点（运行时为 three/tsl 节点对象；不透明结构传递，动态成员经索引签名放行） */
+export interface TslNode {
+  /** uniform 节点载荷 */
+  value?: unknown;
+  /** 变量化包装（Hook 端口等声明后再赋值的节点必须可 assign） */
+  toVar(): TslNode;
+  /** 节点赋值（GLSL assign 语句编译） */
+  assign(value: TslNode): TslNode;
+  /** swizzle / 动态属性访问（.rgb / .xyz 等；three/tsl 运行时提供） */
+  [field: string]: unknown;
+}
+
+/** 注入的 TSL 函数库（three WebGPU 构建 THREE.TSL 命名空间的最小消费面） */
+export interface TslFnLib {
+  uniform(value: unknown): TslNode;
+  float(x?: unknown): TslNode;
+  int(x?: unknown): TslNode;
+  uint(x?: unknown): TslNode;
+  bool(x?: unknown): TslNode;
+  vec2(...a: unknown[]): TslNode;
+  vec3(...a: unknown[]): TslNode;
+  vec4(...a: unknown[]): TslNode;
+  mat3(...a: unknown[]): TslNode;
+  mat4(...a: unknown[]): TslNode;
+  add(a: unknown, b: unknown): TslNode;
+  sub(a: unknown, b: unknown): TslNode;
+  mul(a: unknown, b: unknown): TslNode;
+  div(a: unknown, b: unknown): TslNode;
+  negate(a: unknown): TslNode;
+  and(a: unknown, b: unknown): TslNode;
+  or(a: unknown, b: unknown): TslNode;
+  not(a: unknown): TslNode;
+  equal(a: unknown, b: unknown): TslNode;
+  notEqual(a: unknown, b: unknown): TslNode;
+  lessThan(a: unknown, b: unknown): TslNode;
+  lessThanEqual(a: unknown, b: unknown): TslNode;
+  greaterThan(a: unknown, b: unknown): TslNode;
+  greaterThanEqual(a: unknown, b: unknown): TslNode;
+  mix(a: unknown, b: unknown, t: unknown): TslNode;
+  clamp(x: unknown, lo: unknown, hi: unknown): TslNode;
+  texture(tex: unknown, uv: unknown): TslNode;
+  varying(node: TslNode, name?: string): TslNode;
+  If(cond: TslNode, then: () => void, els?: () => void): TslNode;
+  /** 返回可调用体（惯例 Fn(body)() 立即执行挂到节点槽位）；body 返回 null = 无显式返回 */
+  Fn(body: (...args: unknown[]) => TslNode | null): () => TslNode;
+  Discard(): TslNode;
+  /** 内置节点（constant / 访问器；swizzle 经 TslNode 索引签名访问） */
+  positionLocal: TslNode;
+  positionView: TslNode;
+  materialColor: TslNode;
+  materialOpacity: TslNode;
+  materialEmissive: TslNode;
+  normalView: TslNode;
+  normalLocal: TslNode;
+  positionWorld: TslNode;
+  normalWorld: TslNode;
+  modelWorldMatrix: TslNode;
+  modelViewMatrix: TslNode;
+  cameraViewMatrix: TslNode;
+  cameraProjectionMatrix: TslNode;
+  cameraPosition: TslNode;
+  modelNormalMatrix: TslNode;
+  uv(): TslNode;
+}
+
+/** 转译阶段上下文（本地变量 / varying / uniform / 内置 / 工具函数 的解析命名空间） */
+interface GenContext {
+  tsl: TslFnLib;
+  locals: Map<string, TslNode>;
+  varyings: Map<string, TslNode>;
+  uniforms: Record<string, TslNode>;
+  timeNode: TslNode;
+  /** 工具函数表（name → 声明），genCall 遇自定义函数时 inline 展开 */
+  tools: Map<string, GlslFunction>;
+  /** 额外标识符 → 节点（Hook 端口语义里的 normal/viewDir 在此注入） */
+  idents?: Record<string, TslNode>;
+}
+
+/** 语句生成过程中的控制流状态（return 提前终止 + 返回值） */
+interface GenState {
+  earlyReturn: boolean;
+  returnValue: TslNode | null;
+}
+
+function isDigit(ch: string): boolean {
   return ch >= "0" && ch <= "9";
 }
-function isIdentStart(ch) {
+function isIdentStart(ch: string): boolean {
   return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || ch === "_";
 }
-function isIdentPart(ch) {
+function isIdentPart(ch: string): boolean {
   return isIdentStart(ch) || isDigit(ch);
 }
 
 /** 把 GLSL 源码切分为 token 流；非法字符跳过并记入 errors */
-export function tokenize(src) {
-  const tokens = [];
-  const errors = [];
+export function tokenize(src: string): { tokens: Token[]; errors: string[] } {
+  const tokens: Token[] = [];
+  const errors: string[] = [];
   let i = 0;
   const n = src.length;
 
@@ -100,7 +233,7 @@ export function tokenize(src) {
 
 /** 翻译期错误（parser/codegen 抛出，translate 捕获后回退） */
 export class TranslateError extends Error {
-  constructor(message) {
+  constructor(message: string) {
     super(message);
     this.name = "TranslateError";
   }
@@ -122,33 +255,36 @@ const SWIZZLE_CHARS = new Set("xyzwrgbastpq".split(""));
 const HOOK_ENTRY_NAME = "__tve_hook__";
 
 class Parser {
-  constructor(src) {
+  tokens: Token[];
+  pos: number;
+
+  constructor(src: string) {
     this.tokens = tokenize(src).tokens;
     this.pos = 0;
   }
 
-  peek(offset = 0) {
+  peek(offset = 0): Token | undefined {
     return this.tokens[this.pos + offset];
   }
-  next() {
+  next(): Token | undefined {
     const t = this.tokens[this.pos];
     this.pos++;
     return t;
   }
-  atEnd() {
+  atEnd(): boolean {
     return this.pos >= this.tokens.length;
   }
 
-  isOp(value) {
+  isOp(value: string): boolean {
     const t = this.peek();
     return t !== undefined && t.type === "op" && t.value === value;
   }
-  isIdent(value) {
+  isIdent(value?: string): boolean {
     const t = this.peek();
     if (!t || t.type !== "ident") return false;
     return value === undefined || t.value === value;
   }
-  expectOp(value) {
+  expectOp(value: string): void {
     if (!this.isOp(value)) {
       const t = this.peek();
       throw new TranslateError(
@@ -157,7 +293,7 @@ class Parser {
     }
     this.next();
   }
-  expectIdent() {
+  expectIdent(): string {
     const t = this.peek();
     if (!t || t.type !== "ident") {
       throw new TranslateError(`期望标识符（偏移 ${t ? t.pos : "?"}）`);
@@ -166,14 +302,14 @@ class Parser {
     return String(t.value);
   }
 
-  skipGlobalDeclaration(expectedKind) {
+  skipGlobalDeclaration(expectedKind: string): void {
     if (!this.isIdent(expectedKind)) return;
     this.next();
     while (!this.atEnd() && !this.isOp(";")) this.next();
     if (this.isOp(";")) this.next();
   }
 
-  tryParseVarying() {
+  tryParseVarying(): [string, string] | null {
     if (!this.isIdent("varying")) return null;
     this.next();
     const type = this.expectIdent();
@@ -182,7 +318,7 @@ class Parser {
     return [type, name];
   }
 
-  tryParseFunction() {
+  tryParseFunction(): GlslFunction | null {
     const t0 = this.peek();
     if (!t0 || t0.type !== "ident") return null;
     const t1 = this.peek(1);
@@ -213,10 +349,10 @@ class Parser {
     if (name === "main") {
       const entryName = this.peekEntryCallName();
       const body = this.skipBracedBlock();
-      return { returnType, name, params, body, entryName };
+      return { returnType, name, params: params as [string, string][], body, entryName };
     }
     const body = this.parseBlock();
-    return { returnType, name, params, body };
+    return { returnType, name, params: params as [string, string][], body };
   }
 
   /** 扫描 main body 内第一个 `ident(` 形态的调用，作为入口函数名（vert/frag） */
@@ -235,17 +371,17 @@ class Parser {
     return null;
   }
 
-  skipBracedBlock() {
+  skipBracedBlock(): Stmt {
     let depth = 1;
     while (!this.atEnd() && depth > 0) {
       const t = this.next();
-      if (t.type === "op" && t.value === "{") depth++;
-      else if (t.type === "op" && t.value === "}") depth--;
+      if (t && t.type === "op" && t.value === "{") depth++;
+      else if (t && t.type === "op" && t.value === "}") depth--;
     }
     return { kind: "block", stmts: [] };
   }
 
-  parseStage() {
+  parseStage(): StageParse {
     const varyings = [];
     const functions = [];
 
@@ -288,7 +424,7 @@ class Parser {
     return { entry, varyings, tools, error: null };
   }
 
-  parseBlock() {
+  parseBlock(): Stmt {
     const stmts = [];
     while (!this.atEnd() && !this.isOp("}")) {
       const before = this.pos;
@@ -305,7 +441,7 @@ class Parser {
     return { kind: "block", stmts };
   }
 
-  parseStatement() {
+  parseStatement(): Stmt {
     const t = this.peek();
     if (!t) throw new TranslateError("意外的文件结束");
     if (t.type === "op" && t.value === "{") {
@@ -339,7 +475,7 @@ class Parser {
     if (this.isOp(";")) this.next();
   }
 
-  parseReturn() {
+  parseReturn(): Stmt {
     this.next();
     if (this.isOp(";")) {
       this.next();
@@ -350,7 +486,7 @@ class Parser {
     return { kind: "return", value };
   }
 
-  parseIf() {
+  parseIf(): Stmt {
     this.next();
     this.expectOp("(");
     const cond = this.parseExpression();
@@ -364,7 +500,7 @@ class Parser {
     return { kind: "if", cond, then, else: elseBranch };
   }
 
-  parseVarDecl() {
+  parseVarDecl(): Stmt {
     const type = this.expectIdent();
     const name = this.expectIdent();
     let init = null;
@@ -381,19 +517,21 @@ class Parser {
     return t && t.type === "op" ? t.value : null;
   }
 
-  parseAssignStatement() {
+  parseAssignStatement(): Stmt {
     const target = this.parseExpression();
     // 复合赋值（emissive += x / diffuseColor.rgb *= k）展开为 target = target op rhs
-    const compound = { "+=": "+", "-=": "-", "*=": "*", "/=": "/" };
-    const op = this.peekOp();
-    if (op && compound[op]) {
+    const compound: Record<string, string> = { "+=": "+", "-=": "-", "*=": "*", "/=": "/" };
+    const opRaw = this.peekOp();
+    const op = typeof opRaw === "string" ? opRaw : undefined;
+    const mapped = op !== undefined ? compound[op] : undefined;
+    if (op !== undefined && mapped) {
       this.next();
       const rhs = this.parseExpression();
       this.consumeSemicolon();
       return {
         kind: "assign",
         target,
-        value: { kind: "binary", op: compound[op], left: target, right: rhs },
+        value: { kind: "binary", op: mapped, left: target, right: rhs },
       };
     }
     if (!this.isOp("=")) {
@@ -406,10 +544,10 @@ class Parser {
     return { kind: "assign", target, value };
   }
 
-  parseExpression() {
+  parseExpression(): Expr {
     return this.parseTernary();
   }
-  parseTernary() {
+  parseTernary(): Expr {
     const cond = this.parseOr();
     if (this.isOp("?")) {
       this.next();
@@ -420,70 +558,70 @@ class Parser {
     }
     return cond;
   }
-  parseOr() {
+  parseOr(): Expr {
     let left = this.parseAnd();
     while (this.isOp("||")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseAnd();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseAnd() {
+  parseAnd(): Expr {
     let left = this.parseEquality();
     while (this.isOp("&&")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseEquality();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseEquality() {
+  parseEquality(): Expr {
     let left = this.parseRelational();
     while (this.isOp("==") || this.isOp("!=")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseRelational();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseRelational() {
+  parseRelational(): Expr {
     let left = this.parseAdditive();
     while (this.isOp("<") || this.isOp(">") || this.isOp("<=") || this.isOp(">=")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseAdditive();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseAdditive() {
+  parseAdditive(): Expr {
     let left = this.parseMultiplicative();
     while (this.isOp("+") || this.isOp("-")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseMultiplicative();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseMultiplicative() {
+  parseMultiplicative(): Expr {
     let left = this.parseUnary();
     while (this.isOp("*") || this.isOp("/")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const right = this.parseUnary();
       left = { kind: "binary", op, left, right };
     }
     return left;
   }
-  parseUnary() {
+  parseUnary(): Expr {
     const t = this.peek();
     if (t && t.type === "op" && (t.value === "-" || t.value === "!" || t.value === "+")) {
-      const op = String(this.next().value);
+      const op = String(this.next()!.value);
       const operand = this.parseUnary();
       return { kind: "unary", op, operand };
     }
     return this.parsePostfix();
   }
-  parsePostfix() {
+  parsePostfix(): Expr {
     let e = this.parsePrimary();
     for (;;) {
       if (this.isOp(".")) {
@@ -500,12 +638,12 @@ class Parser {
     }
     return e;
   }
-  parsePrimary() {
+  parsePrimary(): Expr {
     const t = this.peek();
     if (!t) throw new TranslateError("意外的表达式结束");
     if (t.type === "num") {
       this.next();
-      return { kind: "number", value: t.value };
+      return { kind: "number", value: t.value as number };
     }
     if (t.type === "ident") {
       const name = String(t.value);
@@ -543,14 +681,14 @@ class Parser {
 }
 
 /** 解析单个阶段源码（顶点或片元），返回入口函数与 varying 声明 */
-export function parseStage(src) {
+export function parseStage(src: string): StageParse {
   return new Parser(src).parseStage();
 }
 
 // ===================== 转译（codegen） =====================
 
 /** GLSL 内置标识符 → tsl 内置节点属性名 */
-const BUILTIN_IDENT = {
+const BUILTIN_IDENT: Record<string, string> = {
   position: "positionLocal",
   normal: "normalLocal",
   modelMatrix: "modelWorldMatrix",
@@ -568,7 +706,7 @@ const TYPE_CONSTRUCTORS = new Set([
 
 const SAMPLE_FUNCS = new Set(["texture", "texture2D", "textureCube"]);
 
-const FUNC_MAP = {
+const FUNC_MAP: Record<string, string> = {
   mix: "mix", clamp: "clamp", min: "min", max: "max", abs: "abs", sign: "sign",
   floor: "floor", ceil: "ceil", fract: "fract", round: "round", mod: "mod",
   pow: "pow", exp: "exp", exp2: "exp2", log: "log", log2: "log2", sqrt: "sqrt",
@@ -579,38 +717,42 @@ const FUNC_MAP = {
   reflect: "reflect", refract: "refract", step: "step", smoothstep: "smoothstep",
 };
 
-const BINARY_OPS = {
+const BINARY_OPS: Record<string, string> = {
   "+": "add", "-": "sub", "*": "mul", "/": "div",
   "==": "equal", "!=": "notEqual", "<": "lessThan", "<=": "lessThanEqual",
   ">": "greaterThan", ">=": "greaterThanEqual", "&&": "and", "||": "or",
 };
 
-const VARYING_INIT = {
+const VARYING_INIT: Record<string, string> = {
   vec2: "vec2", vec3: "vec3", vec4: "vec4", float: "float", int: "int", uint: "uint",
   bool: "bool", ivec2: "ivec2", ivec3: "ivec3", ivec4: "ivec4",
   bvec2: "bvec2", bvec3: "bvec3", bvec4: "bvec4",
 };
 
-function compileStageNode(stage, ctx) {
+function compileStageNode(stage: StageParse, ctx: GenContext): TslNode {
   if (!stage.entry) {
     throw new TranslateError("未找到入口函数（CGPROGRAM 缺 #pragma vertex/fragment 对应函数体）");
   }
   const entryBody = stage.entry.body;
   return ctx.tsl.Fn(() => {
-    const state = { earlyReturn: false, returnValue: null };
+    const state: GenState = { earlyReturn: false, returnValue: null };
     genStmts(entryBody, { ...ctx, locals: new Map() }, state);
     return state.returnValue;
   })();
 }
 
-function resolveIdent(name, ctx) {
+function resolveIdent(name: string, ctx: GenContext): TslNode {
   // 说明：idents 由 Hook 端口注入（normal → 视空间法线、viewDir → 视空间视线）
   if (name === "_Time") return ctx.timeNode;
-  if (ctx.locals.has(name)) return ctx.locals.get(name);
-  if (ctx.varyings.has(name)) return ctx.varyings.get(name);
+  const local = ctx.locals.get(name);
+  if (local !== undefined) return local;
+  const varying = ctx.varyings.get(name);
+  if (varying !== undefined) return varying;
   if (name in ctx.uniforms) return ctx.uniforms[name];
   if (ctx.idents && name in ctx.idents) return ctx.idents[name];
-  if (name in BUILTIN_IDENT) return ctx.tsl[BUILTIN_IDENT[name]];
+  if (name in BUILTIN_IDENT) {
+    return ctx.tsl[BUILTIN_IDENT[name] as keyof TslFnLib] as TslNode;
+  }
   if (name === "uv") return ctx.tsl.uv();
   if (name.startsWith("gl_")) {
     throw new TranslateError(`内置变量 ${name} 不能作为表达式值使用（仅 gl_Position 可作为赋值目标）`);
@@ -618,7 +760,7 @@ function resolveIdent(name, ctx) {
   throw new TranslateError(`未知标识符 '${name}'（非 varying/uniform/内置变量，且工具函数不在受控子集内）`);
 }
 
-function genExpr(e, ctx) {
+function genExpr(e: Expr, ctx: GenContext): TslNode {
   const tsl = ctx.tsl;
   switch (e.kind) {
     case "number":
@@ -629,7 +771,8 @@ function genExpr(e, ctx) {
       return resolveIdent(e.name, ctx);
     case "swizzle": {
       const base = genExpr(e.base, ctx);
-      return base[e.fields];
+      // swizzle 是 three/tsl 的动态属性（.xyz 等），消费点断言回节点
+      return base[e.fields] as TslNode;
     }
     case "unary": {
       const operand = genExpr(e.operand, ctx);
@@ -642,21 +785,23 @@ function genExpr(e, ctx) {
       const right = genExpr(e.right, ctx);
       const fnName = BINARY_OPS[e.op];
       if (!fnName) throw new TranslateError(`不支持的运算符 '${e.op}'`);
-      return tsl[fnName](left, right);
+      return (tsl as unknown as Record<string, (...a: unknown[]) => TslNode>)[fnName](left, right);
     }
     case "call":
       return genCall(e.name, e.args, ctx);
   }
 }
 
-function genCall(name, args, ctx) {
+function genCall(name: string, args: Expr[], ctx: GenContext): TslNode {
   const tsl = ctx.tsl;
   if (SAMPLE_FUNCS.has(name)) {
     if (args.length < 2) throw new TranslateError(`${name}() 至少需要 (sampler, uv) 两个参数`);
     return tsl.texture(genExpr(args[0], ctx), genExpr(args[1], ctx));
   }
   if (TYPE_CONSTRUCTORS.has(name)) {
-    return tsl[name](...args.map((a) => genExpr(a, ctx)));
+    return (tsl as unknown as Record<string, (...a: unknown[]) => TslNode>)[name](
+      ...args.map((a) => genExpr(a, ctx)),
+    );
   }
   if (name === "ternary") {
     if (args.length !== 3) throw new TranslateError("三元表达式需要三个操作数");
@@ -664,7 +809,9 @@ function genCall(name, args, ctx) {
   }
   const mapped = FUNC_MAP[name];
   if (mapped) {
-    return tsl[mapped](...args.map((a) => genExpr(a, ctx)));
+    return (tsl as unknown as Record<string, (...a: unknown[]) => TslNode>)[mapped](
+      ...args.map((a) => genExpr(a, ctx)),
+    );
   }
 
   // 自定义工具函数 → inline 展开：形参绑实参节点，在当前 Fn stack 内执行 body，
@@ -676,11 +823,11 @@ function genCall(name, args, ctx) {
         `函数 ${name}() 参数数量不匹配（声明 ${tool.params.length} 个，调用 ${args.length} 个）`,
       );
     }
-    const subCtx = { ...ctx, locals: new Map() };
+    const subCtx: GenContext = { ...ctx, locals: new Map() };
     for (let i = 0; i < tool.params.length; i++) {
       subCtx.locals.set(tool.params[i][1], genExpr(args[i], ctx));
     }
-    const subState = { earlyReturn: false, returnValue: null };
+    const subState: GenState = { earlyReturn: false, returnValue: null };
     genStmts(tool.body, subCtx, subState);
     if (subState.returnValue === null) {
       throw new TranslateError(`工具函数 ${name}() 未返回值`);
@@ -694,7 +841,7 @@ function genCall(name, args, ctx) {
 /** 局部变量是否包成可写节点（.toVar()）：Hook 片段常"声明后再赋值" */
 let varAsWritable = false;
 
-function genStmts(node, ctx, state) {
+function genStmts(node: Stmt, ctx: GenContext, state: GenState): void {
   if (state.earlyReturn) return;
   switch (node.kind) {
     case "block": {
@@ -738,7 +885,7 @@ function genStmts(node, ctx, state) {
       // 1) 合成钩子源码末尾的 return 会把共享 state.earlyReturn 置真，分支回调
       //    此时才执行会被整段跳过（镂空丢失、只剩辉光）；
       // 2) 分支内的 return 也不应把 earlyReturn 泄漏回外层语句流。
-      const branchState = () => ({ earlyReturn: false, returnValue: null });
+      const branchState = (): GenState => ({ earlyReturn: false, returnValue: null });
       const thenFn = () => genStmts(thenStmts, ctx, branchState());
       const elseFn = elseStmts ? () => genStmts(elseStmts, ctx, branchState()) : undefined;
       ctx.tsl.If(cond, thenFn, elseFn);
@@ -747,19 +894,20 @@ function genStmts(node, ctx, state) {
   }
 }
 
-function lvalueNode(target, ctx) {
+function lvalueNode(target: Expr, ctx: GenContext): TslNode {
   if (target.kind === "ident") {
     return resolveIdent(target.name, ctx);
   }
   if (target.kind === "swizzle") {
     const base = genExpr(target.base, ctx);
-    return base[target.fields];
+    // swizzle 是 three/tsl 的动态属性（.xyz 等），消费点断言回节点
+    return base[target.fields] as TslNode;
   }
   throw new TranslateError("不支持该赋值目标（仅局部变量 / varying / swizzle）");
 }
 
-function zeroOf(type, ctx) {
-  const tsl = ctx.tsl;
+function zeroOf(type: string, ctx: GenContext): TslNode {
+  const tsl = ctx.tsl as unknown as Record<string, (...a: unknown[]) => TslNode> & TslFnLib;
   const ctor = VARYING_INIT[type] ?? "float";
   return (tsl[ctor] ?? tsl.float)();
 }
@@ -768,17 +916,24 @@ function zeroOf(type, ctx) {
  * 把组装好的 GLSL 顶点/片元源码翻译成 TSL 回调体。
  * 失败（受控子集外语法 / 结构缺失）返回 error，上层回退占位程序。
  */
-export function translateProgram(input) {
+export function translateProgram(input: {
+  vertex: string;
+  fragment: string;
+  tsl: TslFnLib;
+  uniforms: Record<string, TslNode>;
+  timeNode: TslNode;
+}): { vertexNode: TslNode | null; fragmentNode: TslNode | null; error: string | null } {
   try {
     const vStage = parseStage(input.vertex);
     const fStage = parseStage(input.fragment);
 
-    const varyings = new Map();
-    const collect = (stage) => {
+    const varyings = new Map<string, TslNode>();
+    const collect = (stage: StageParse): void => {
       for (const [type, name] of stage.varyings) {
         if (varyings.has(name)) continue;
         const ctor = VARYING_INIT[type] ?? "vec3";
-        const init = (input.tsl[ctor] ?? input.tsl.vec3)();
+        const lib = input.tsl as unknown as Record<string, (...a: unknown[]) => TslNode> & TslFnLib;
+        const init = (lib[ctor] ?? input.tsl.vec3)();
         varyings.set(name, input.tsl.varying(init, name));
       }
     };
@@ -786,11 +941,11 @@ export function translateProgram(input) {
     collect(fStage);
 
     // 工具函数表（顶点/片元共享 CGINCLUDE 里的辅助函数，如 hash/noise）
-    const tools = new Map();
+    const tools = new Map<string, GlslFunction>();
     for (const fn of vStage.tools) tools.set(fn.name, fn);
     for (const fn of fStage.tools) tools.set(fn.name, fn);
 
-    const ctx = {
+    const ctx: GenContext = {
       tsl: input.tsl,
       locals: new Map(),
       varyings,
@@ -820,7 +975,15 @@ export function translateProgram(input) {
 // 节点；只读环境（normal/viewDir/uv/_Time）与 Properties uniform 由调用方注入。
 // 与编辑器侧 src/framework/material/tsl/glslToTsl.ts 的 compileHookNode 同规则。
 // ---------------------------------------------------------------------------
-export function compileHookNode(input) {
+export function compileHookNode(input: {
+  code: string;
+  include: string;
+  tsl: TslFnLib;
+  port: { name: string; seed: TslNode };
+  idents?: Record<string, TslNode>;
+  uniforms: Record<string, TslNode>;
+  timeNode: TslNode;
+}): TslNode {
   const tsl = input.tsl;
   const source = `${input.include}
 vec4 ${HOOK_ENTRY_NAME}(vec4 ${input.port.name}) {
@@ -832,16 +995,16 @@ return ${input.port.name};
   if (stage.error) throw new TranslateError(stage.error);
   if (!stage.entry) throw new TranslateError("Hook 片段为空或无法解析");
 
-  const tools = new Map();
+  const tools = new Map<string, GlslFunction>();
   for (const fn of stage.tools) tools.set(fn.name, fn);
 
   const prevWritable = varAsWritable;
   varAsWritable = true;
   try {
     return tsl.Fn(() => {
-      const locals = new Map();
+      const locals = new Map<string, TslNode>();
       locals.set(input.port.name, input.port.seed.toVar());
-      const ctx = {
+      const ctx: GenContext = {
         tsl,
         locals,
         varyings: new Map(),
@@ -850,9 +1013,10 @@ return ${input.port.name};
         tools,
         idents: input.idents,
       };
-      const state = { earlyReturn: false, returnValue: null };
-      genStmts(stage.entry.body, ctx, state);
-      return state.returnValue ?? locals.get(input.port.name);
+      const state: GenState = { earlyReturn: false, returnValue: null };
+      genStmts(stage.entry!.body, ctx, state);
+      // Hook 源码末尾固定 return 端口，returnValue 必有值；此处兜底回端口变量
+      return state.returnValue ?? (locals.get(input.port.name) as TslNode);
     })();
   } finally {
     varAsWritable = prevWritable;

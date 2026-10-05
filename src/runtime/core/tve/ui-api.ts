@@ -5,6 +5,8 @@
 // 空间约定：画布局部空间，原点 = 画布中心，y 向上，单位 = UI 单位。
 // ---------------------------------------------------------------------------
 import { state, numOr } from "./state";
+import type { Entity } from "./entity";
+import type { UiRect, UiSettings } from "./state";
 import {
   UICanvasNode,
   UIImageNode,
@@ -13,10 +15,23 @@ import {
   UILayoutNode,
 } from "./node-types";
 
+/** 画布屏幕度量（渲染画布 CSS 尺寸 ↔ rootRect；SDK UIScreenMetrics 消费面） */
+interface UIScreenMetrics {
+  width: number;
+  height: number;
+  rootWidth: number;
+  rootHeight: number;
+  pxPerUnitX: number;
+  pxPerUnitY: number;
+  scaleMode: string;
+  designWidth: number;
+  designHeight: number;
+}
+
 const UI_WIDGET_CLASSES = [UICanvasNode, UIImageNode, UITextNode, UIButtonNode, UILayoutNode];
 
 /** 实体所在 UI 画布（沿父链向上；不在画布子树内返回 null） */
-function uiCanvasEntityOf(entity) {
+function uiCanvasEntityOf(entity: Entity | null | undefined): Entity | null {
   let cur = entity ?? null;
   while (cur) {
     if (cur instanceof UICanvasNode) return cur;
@@ -26,8 +41,9 @@ function uiCanvasEntityOf(entity) {
 }
 
 /** 画布屏幕度量（渲染画布 CSS 尺寸 ↔ rootRect；布局未就绪返回 null） */
-function uiMetricsOfCanvas(canvasEntity) {
-  const rootRect = canvasEntity?.__obj?.userData?.uiRect;
+function uiMetricsOfCanvas(canvasEntity: Entity): UIScreenMetrics | null {
+  // 断言安全：userData.uiRect 为 ui.mjs 逐帧写入的画布根矩形（{cx,cy,w,h}）
+  const rootRect = canvasEntity?.__obj?.userData?.uiRect as UiRect | undefined;
   if (!rootRect || !(rootRect.w > 0) || !(rootRect.h > 0)) return null;
   const cvs = typeof document !== "undefined" ? document.querySelector?.("canvas") : null;
   const width =
@@ -57,11 +73,11 @@ function uiMetricsOfCanvas(canvasEntity) {
 }
 
 /** UI 节点的解析矩形（画布局部空间） */
-function uiRectOfEntity(entity) {
+function uiRectOfEntity(entity: Entity | null): UiRect | null {
   if (!entity || typeof entity.id !== "string") return null;
-  const chain = [];
-  let cur = entity;
-  let canvas = null;
+  const chain: Entity[] = [];
+  let cur: Entity | null = entity;
+  let canvas: UICanvasNode | null = null;
   while (cur) {
     if (cur instanceof UICanvasNode) {
       canvas = cur;
@@ -71,18 +87,19 @@ function uiRectOfEntity(entity) {
     cur = cur.parent;
   }
   if (!canvas) return null;
-  const rootRect = canvas.__obj?.userData?.uiRect;
+  // 断言安全：userData.uiRect 为 ui.mjs 逐帧写入的渲染矩形（{cx,cy,w,h}）
+  const rootRect = canvas.__obj?.userData?.uiRect as UiRect | undefined;
   if (!rootRect) return null;
   if (entity === canvas) {
     return { cx: rootRect.cx, cy: rootRect.cy, w: rootRect.w, h: rootRect.h };
   }
-  const leafRect = entity.__obj?.userData?.uiRect;
+  const leafRect = entity.__obj?.userData?.uiRect as UiRect | undefined;
   if (!leafRect) return null;
   const rect = { cx: leafRect.cx, cy: leafRect.cy, w: leafRect.w, h: leafRect.h };
   for (let i = chain.length - 1; i >= 1; i--) {
     const anc = chain[i];
     if (!UI_WIDGET_CLASSES.some((c) => anc instanceof c)) continue;
-    const ar = anc.__obj?.userData?.uiRect;
+    const ar = anc.__obj?.userData?.uiRect as UiRect | undefined;
     if (!ar) return null;
     rect.cx += ar.cx;
     rect.cy += ar.cy;
@@ -91,27 +108,27 @@ function uiRectOfEntity(entity) {
 }
 
 const uiApi = {
-  set(entity, patch) {
+  set(entity: Entity, patch: unknown): void {
     state.host?.ui?.updateSettings(entity?.id, patch);
   },
-  get(entity) {
+  get(entity: Entity): UiSettings | null {
     return state.host?.ui?.settingsOf(entity?.id) ?? null;
   },
-  onClick(entity, cb) {
+  onClick(entity: Entity, cb: () => void): () => void {
     const un = state.host?.ui?.onClick(entity?.id, cb);
     return typeof un === "function" ? un : () => {};
   },
-  offClick(entity, cb) {
+  offClick(entity: Entity, cb: () => void): void {
     state.host?.ui?.offClick(entity?.id, cb);
   },
-  rectOf(entity) {
+  rectOf(entity: Entity): UiRect | null {
     return uiRectOfEntity(entity);
   },
-  metricsOf(entity) {
+  metricsOf(entity: Entity): UIScreenMetrics | null {
     const canvas = uiCanvasEntityOf(entity);
     return canvas ? uiMetricsOfCanvas(canvas) : null;
   },
-  screenToUi(entity, x, y) {
+  screenToUi(entity: Entity, x: number, y: number): { x: number; y: number } | null {
     const canvas = uiCanvasEntityOf(entity);
     if (!canvas) return null;
     const m = uiMetricsOfCanvas(canvas);

@@ -45,7 +45,7 @@ const DEFAULTS = {
   sizeOverLifetime: true,
   blending: "additive",
   texture: "",
-};
+} as const;
 
 /** 取值域（与编辑器 PARTICLE_LIMITS 同一份边界） */
 const LIMITS = {
@@ -61,23 +61,62 @@ const LIMITS = {
   shapeAngle: [0, 89],
 };
 
-function num(v, fb) {
+type ParticleLimitKey = keyof typeof LIMITS;
+
+/** 收敛后的粒子系统设置（parseParticleSettings 输出） */
+export interface ParticleSettings {
+  duration: number;
+  looping: boolean;
+  prewarm: boolean;
+  startDelay: number;
+  startLifetime: number;
+  startSpeed: number;
+  startSize: number;
+  startColor: number;
+  endColor: number;
+  gravityModifier: number;
+  emissionRate: number;
+  maxParticles: number;
+  shape: "cone" | "sphere" | "hemisphere" | "box";
+  shapeRadius: number;
+  shapeAngle: number;
+  simulationSpace: "local" | "world";
+  colorOverLifetime: boolean;
+  sizeOverLifetime: boolean;
+  blending: "additive" | "normal";
+  texture: string;
+}
+
+/** 粒子材质句柄（GLSL/TSL 实现共用接口；发射器只依赖这个面） */
+export interface ParticleMaterialHandle {
+  material: THREE.Material;
+  currentTexture: THREE.Texture;
+  setSettings(next: ParticleSettings): void;
+  setTexture(tex: THREE.Texture | null): void;
+  dispose(): void;
+}
+
+/** 粒子材质工厂（按渲染后端注入：WebGPU 传 TSL 工厂，缺省 GLSL） */
+export type ParticleMaterialFactory = (settings: ParticleSettings) => ParticleMaterialHandle;
+
+function num(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fb;
 }
-function bool(v, fb) {
+function bool(v: unknown, fb: boolean): boolean {
   return typeof v === "boolean" ? v : fb;
 }
-function clampTo(v, key) {
+function clampTo(v: number, key: ParticleLimitKey): number {
   const [lo, hi] = LIMITS[key];
   return Math.max(lo, Math.min(hi, v));
 }
-function hexColor(v, fb) {
+function hexColor(v: unknown, fb: number): number {
   return typeof v === "number" && Number.isFinite(v) ? (Math.round(v) & 0xffffff) >>> 0 : fb;
 }
 
 /** 粒子设置收敛（缺失/非法字段回退默认；移植 parseParticleSystemSettings） */
-export function parseParticleSettings(v) {
-  const o = v && typeof v === "object" ? v : {};
+export function parseParticleSettings(v: unknown): ParticleSettings {
+  const o: Record<string, unknown> =
+    v && typeof v === "object" ? (v as Record<string, unknown>) : {};
   const d = DEFAULTS;
   const shape =
     o.shape === "sphere" || o.shape === "hemisphere" || o.shape === "box" || o.shape === "cone"
@@ -96,7 +135,7 @@ export function parseParticleSettings(v) {
     gravityModifier: clampTo(num(o.gravityModifier, d.gravityModifier), "gravityModifier"),
     emissionRate: clampTo(num(o.emissionRate, d.emissionRate), "emissionRate"),
     maxParticles: Math.round(clampTo(num(o.maxParticles, d.maxParticles), "maxParticles")),
-    shape,
+    shape: shape as ParticleSettings["shape"],
     shapeRadius: clampTo(num(o.shapeRadius, d.shapeRadius), "shapeRadius"),
     shapeAngle: clampTo(num(o.shapeAngle, d.shapeAngle), "shapeAngle"),
     simulationSpace: o.simulationSpace === "world" ? "world" : "local",
@@ -104,18 +143,18 @@ export function parseParticleSettings(v) {
     sizeOverLifetime: bool(o.sizeOverLifetime, d.sizeOverLifetime),
     blending: o.blending === "normal" ? "normal" : "additive",
     texture: typeof o.texture === "string" ? o.texture : "",
-  };
+  } as ParticleSettings;
 }
 
 /** 结构签名：变化时须重建渲染对象（缓冲容量 / 混合模式） */
-export function particleStructureSignature(s) {
+export function particleStructureSignature(s: ParticleSettings): string {
   return `${s.maxParticles}|${s.blending}`;
 }
 
-let spriteTexture = null;
+let spriteTexture: THREE.DataTexture | null = null;
 
 /** 软圆点精灵贴图（程序化径向渐变 DataTexture；全局共享） */
-export function getParticleSpriteTexture() {
+export function getParticleSpriteTexture(): THREE.DataTexture {
   if (spriteTexture) return spriteTexture;
   const n = SPRITE_SIZE;
   const data = new Uint8Array(n * n * 4);
@@ -188,7 +227,7 @@ const FRAGMENT_SHADER = `
 `;
 
 /** 基础四边形（±0.5，UV 铺满）：逐实例只有中心与寿命 */
-function createQuadGeometry() {
+function createQuadGeometry(): THREE.InstancedBufferGeometry {
   const geom = new THREE.InstancedBufferGeometry();
   geom.setAttribute(
     "position",
@@ -204,7 +243,7 @@ const _q = new THREE.Quaternion();
 const _inv = new THREE.Matrix4();
 
 /** 单位球面均匀随机方向 */
-function randomDirection(out) {
+function randomDirection(out: THREE.Vector3): void {
   const z = Math.random() * 2 - 1;
   const t = Math.random() * Math.PI * 2;
   const r = Math.sqrt(Math.max(0, 1 - z * z));
@@ -216,7 +255,7 @@ function randomDirection(out) {
  * 返回句柄 { material, setSettings, setTexture, dispose }——与 TSL 实现
  * （../core/particleNodeMaterial.mjs）同一接口，发射器只依赖这个面。
  */
-export function createGlslParticleMaterial(raw) {
+export function createGlslParticleMaterial(raw: unknown): ParticleMaterialHandle {
   const s = parseParticleSettings(raw);
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -234,7 +273,7 @@ export function createGlslParticleMaterial(raw) {
     depthTest: true,
     blending: s.blending === "normal" ? THREE.NormalBlending : THREE.AdditiveBlending,
   });
-  const handle = {
+  const handle: ParticleMaterialHandle = {
     material,
     currentTexture: getParticleSpriteTexture(),
     setSettings(next) {
@@ -259,13 +298,35 @@ export function createGlslParticleMaterial(raw) {
   return handle;
 }
 
+/** 粒子发射器句柄（object 挂场景；userData.particleEmitter 指回本句柄） */
+export interface ParticleEmitter {
+  object: THREE.Mesh;
+  readonly settings: ParticleSettings;
+  readonly aliveCount: number;
+  readonly texture: THREE.Texture;
+  readonly state: { playing: boolean; paused: boolean; finished: boolean; alive: number; time: number };
+  needsRebuild(next: unknown): boolean;
+  setSettings(next: unknown): void;
+  setTexture(tex: THREE.Texture | null): void;
+  update(dt: number, host?: THREE.Object3D | null): void;
+  play(): void;
+  pause(): void;
+  stop(): void;
+  clear(): void;
+  restart(): void;
+  dispose(): void;
+}
+
 /**
  * 创建粒子发射器：返回 { object, update(dt, host), setSettings, needsRebuild,
  * play, pause, stop, clear, restart, state, settings, texture, dispose }。
  * object 为实例化四边形网格（名 __particles，userData.particleEmitter 指回本句柄）。
  * materialFactory 按渲染后端注入（缺省 GLSL；WebGPU 传 TSL 工厂）。
  */
-export function createParticleEmitter(raw, materialFactory) {
+export function createParticleEmitter(
+  raw: unknown,
+  materialFactory?: ParticleMaterialFactory | null,
+): ParticleEmitter {
   let settings = parseParticleSettings(raw);
   const cap = Math.max(1, Math.round(settings.maxParticles));
   const structureSig = particleStructureSignature(settings);
@@ -303,7 +364,7 @@ export function createParticleEmitter(raw, materialFactory) {
   // 待预热：建出/重启时置位，首次 update 时（宿主已挂好）按稳态解析初始化
   let pendingPrewarm = settings.prewarm && settings.looping;
   // 本帧宿主对象（world 模拟空间；update 里取一次，spawn/writeBuffers 复用）
-  let worldParent = null;
+  let worldParent: THREE.Object3D | null = null;
   // 本发射器独占的包围球（每帧原地重写；共用同一实例会让后更新者覆盖其余发射器）
   const bounds = new THREE.Sphere();
 
@@ -311,7 +372,7 @@ export function createParticleEmitter(raw, materialFactory) {
     return !settings.looping && time >= settings.startDelay + settings.duration && alive === 0;
   }
 
-  function recycle(i) {
+  function recycle(i: number): void {
     const last = alive - 1;
     if (i !== last) {
       const src = last * 3;
@@ -328,7 +389,7 @@ export function createParticleEmitter(raw, materialFactory) {
     alive = last;
   }
 
-  function spawn(slot, initialAge) {
+  function spawn(slot: number, initialAge: number): void {
     const s = settings;
     const o = slot * 3;
     let px = 0;
@@ -417,7 +478,7 @@ export function createParticleEmitter(raw, materialFactory) {
     alive = Math.max(alive, want);
   }
 
-  function simulate(dt) {
+  function simulate(dt: number): void {
     const s = settings;
     const g = -PARTICLE_GRAVITY * s.gravityModifier * dt;
     let i = 0;
@@ -540,7 +601,7 @@ export function createParticleEmitter(raw, materialFactory) {
     pendingPrewarm = settings.prewarm && settings.looping;
   }
 
-  const api = {
+  const api: ParticleEmitter = {
     object: mesh,
     get settings() {
       return settings;

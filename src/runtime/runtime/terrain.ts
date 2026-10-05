@@ -7,6 +7,104 @@
 import * as THREE from "../core/three.module.min.js";
 import { num } from "../core/utils";
 import { resourceLoader } from "./resource";
+import type { NodeJson } from "./node-json";
+import type { SceneTerrainEntry } from "./nodes";
+
+// ---------------------------------------------------------------------------
+// 类型（JSON 宽松视图 + 解析产物 + 烘焙数据）
+// ---------------------------------------------------------------------------
+
+/** JSON 来源的宽松对象（索引签名放行未知键） */
+type UnknownRec = Record<string, unknown>;
+
+/** 地形设置（parseSettings 收敛结果；与编辑器 parseTerrainSettings 同取值域） */
+interface TerrainSettings {
+  seed: number;
+  size: number;
+  segments: number;
+  heightScale: number;
+  frequency: number;
+  octaves: number;
+  lacunarity: number;
+  gain: number;
+  erosion: number;
+  warp: number;
+  valleyBias: number;
+  seaLevel: number;
+  talus: number;
+  talusPasses: number;
+  grassColor: number;
+  rockColor: number;
+  snowColor: number;
+}
+
+/** 地形材质图层 JSON（materialSettings.layers[n]；color 为 sRGB hex） */
+interface TerrainLayerJson {
+  color?: number;
+  [key: string]: unknown;
+}
+
+/** 地形材质绑定 JSON（materialSettings：图层颜色覆盖 + splatmap 重烘焙 + PBR 参数） */
+interface TerrainMaterialSettingsJson {
+  layers?: TerrainLayerJson[];
+  /** splatmap 图片 rel（存在则异步重烘焙颜色纹理） */
+  splatmap?: string;
+  metalness?: number;
+  roughness?: number;
+  [key: string]: unknown;
+}
+
+/** 传给烘焙的 splatmap 权重源（data=null → 按海拔/坡度 4 层混合） */
+interface SplatmapInput {
+  data: Uint8Array | null;
+  width: number;
+  height: number;
+  layerColors: number[];
+}
+
+/** 线性 RGB 三元组（hexToLinear 产物；mix3/scale3 原地修改） */
+type Rgb = [number, number, number];
+
+/** 自适应四叉树叶节点（children 缺省即叶子；坐标为高度场网格下标） */
+interface TerrainQuad {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+  children?: TerrainQuad[];
+}
+
+/** 高度场网格简化产物（vertices = 网格坐标 [x,z] 对；indices 为叶子菱形三角带） */
+interface SimplifiedTerrainMesh {
+  vertices: Int32Array;
+  indices: Uint32Array;
+}
+
+/** buildTerrain 烘焙产物（buildSceneTree 地形条目 data 的实体） */
+interface TerrainBuildData {
+  geometry: THREE.BufferGeometry;
+  colorTexture: THREE.DataTexture;
+  heights: Float32Array;
+  gridSize: number;
+  size: number;
+  segments: number;
+  minY: number;
+  maxY: number;
+}
+
+/** DEM 数据源 JSON（dem.data = base64 Float32 归一化高度；gridN 网格边长） */
+interface DemJson {
+  data?: unknown;
+  gridN?: unknown;
+  [key: string]: unknown;
+}
+
+/** 雕刻偏移层 JSON（sculpt.data = base64 Float32；gridN 须与烘焙网格一致） */
+interface SculptJson {
+  data?: unknown;
+  gridN?: unknown;
+  [key: string]: unknown;
+}
 
 // ---------------------------------------------------------------------------
 // ImprovedNoise（Ken Perlin 2002；置换表固定 → 种子只能位移采样窗口）
@@ -25,23 +123,23 @@ const _p = [
 ];
 for (let i = 0; i < 256; i++) _p[256 + i] = _p[i];
 
-function fade(t) {
+function fade(t: number): number {
   return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-function grad(hash, x, y, z) {
+function grad(hash: number, x: number, y: number, z: number): number {
   const h = hash & 15;
   const u = h < 8 ? x : y;
   const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
   return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
 }
 
-function lerp(a, b, t) {
+function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
 class ImprovedNoise {
-  noise(x, y, z) {
+  noise(x: number, y: number, z: number): number {
     const floorX = Math.floor(x), floorY = Math.floor(y), floorZ = Math.floor(z);
     const X = floorX & 255, Y = floorY & 255, Z = floorZ & 255;
     x -= floorX;
@@ -90,7 +188,7 @@ const DEFAULTS = {
   snowColor: 0xe9ecf0,
 };
 
-const LIMITS = {
+const LIMITS: Record<string, [number, number]> = {
   seed: [1, 999999],
   size: [10, 2000],
   segments: [16, 256],
@@ -108,23 +206,23 @@ const LIMITS = {
   talusPasses: [0, 40],
 };
 
-function clampN(v, lo, hi, fb) {
+function clampN(v: unknown, lo: number, hi: number, fb: number): number {
   const n = typeof v === "number" && Number.isFinite(v) ? v : fb;
   return Math.min(hi, Math.max(lo, n));
 }
 
-function clampI(v, lo, hi, fb) {
+function clampI(v: unknown, lo: number, hi: number, fb: number): number {
   return Math.round(clampN(v, lo, hi, fb));
 }
 
-function clampHex(v, fb) {
+function clampHex(v: unknown, fb: number): number {
   const n = typeof v === "number" && Number.isFinite(v) ? v : fb;
   return Math.min(0xffffff, Math.max(0, Math.round(n))) & 0xffffff;
 }
 
 /** 收敛地形设置（缺字段/越界回默认或钳进取值域；与编辑器 parse 同边界） */
-function parseSettings(v) {
-  const o = v && typeof v === "object" ? v : {};
+function parseSettings(v: unknown): TerrainSettings {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // JSON 来源宽松对象，逐字段经 clamp 收敛
   return {
     seed: clampI(o.seed, ...LIMITS.seed, DEFAULTS.seed),
     size: clampN(o.size, ...LIMITS.size, DEFAULTS.size),
@@ -149,9 +247,9 @@ function parseSettings(v) {
 // ---------------------------------------------------------------------------
 // 高度场（mulberry32 种子 → ImprovedNoise 采样窗口位移 + 导数阻尼分形 + 域扭曲）
 // ---------------------------------------------------------------------------
-function createRandom(seed) {
+function createRandom(seed: number): () => number {
   let s = (seed >>> 0) || 1;
-  return function () {
+  return function (): number {
     s = (s + 0x6d2b79f5) | 0;
     let t = Math.imul(s ^ (s >>> 15), 1 | s);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -159,7 +257,7 @@ function createRandom(seed) {
   };
 }
 
-function heightField(p) {
+function heightField(p: TerrainSettings): (worldX: number, worldZ: number) => number {
   const perlin = new ImprovedNoise();
   const random = createRandom(p.seed);
   const offsetX = random() * 256;
@@ -167,7 +265,7 @@ function heightField(p) {
   const slice = random() * 256;
   const { frequency, octaves, lacunarity, gain, erosion, warp, valleyBias, seaLevel, heightScale } = p;
 
-  function warpField(x, z, zr) {
+  function warpField(x: number, z: number, zr: number): number {
     let freq = 1, amp = 1, sum = 0, norm = 0;
     for (let i = 0; i < 2; i++) {
       sum += amp * perlin.noise(x * freq + offsetX, z * freq + offsetZ, zr + i * 1.7);
@@ -178,7 +276,7 @@ function heightField(p) {
     return sum / norm;
   }
 
-  function eroded(x, z) {
+  function eroded(x: number, z: number): number {
     let sum = 0, amp = 1, dX = 0, dZ = 0, px = x, pz = z, freq = 1;
     const e = 0.004;
     for (let i = 0; i < octaves; i++) {
@@ -211,7 +309,7 @@ function heightField(p) {
 }
 
 /** 热侵蚀（talus）：超休止角坡面逐 pass 塌落；delta 缓冲保证物料守恒 */
-function thermalErode(h, n, cellSize, talus, passes) {
+function thermalErode(h: Float32Array, n: number, cellSize: number, talus: number, passes: number): void {
   const drop = talus * cellSize;
   const carry = 0.5;
   const delta = new Float32Array(n * n);
@@ -253,13 +351,13 @@ function thermalErode(h, n, cellSize, talus, passes) {
 // ---------------------------------------------------------------------------
 // 顶点色（海拔/坡度色带 + 值噪声扰动；hex → 线性 RGB 与 ColorManagement 一致）
 // ---------------------------------------------------------------------------
-function hash2(ix, iz, seed) {
+function hash2(ix: number, iz: number, seed: number): number {
   let h = (ix * 374761393 + iz * 668265263 + seed * 1442695) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function valueNoise2(x, z, seed) {
+function valueNoise2(x: number, z: number, seed: number): number {
   const ix = Math.floor(x);
   const iz = Math.floor(z);
   const tx = x - ix;
@@ -273,25 +371,25 @@ function valueNoise2(x, z, seed) {
   return ((a * (1 - sx) + b * sx) * (1 - sz) + (c * (1 - sx) + d * sx) * sz) * 2 - 1;
 }
 
-function smoothstep(e0, e1, x) {
+function smoothstep(e0: number, e1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 }
 
 /** sRGB hex → 线性 RGB（three 默认把 hex 视作 sRGB；顶点色按线性消费，需先转换） */
-function hexToLinear(hex) {
+function hexToLinear(hex: number): Rgb {
   const c = new THREE.Color();
   c.setHex(hex & 0xffffff);
   return [c.r, c.g, c.b];
 }
 
-function mix3(a, b, t) {
+function mix3(a: Rgb, b: Rgb, t: number): void {
   a[0] += (b[0] - a[0]) * t;
   a[1] += (b[1] - a[1]) * t;
   a[2] += (b[2] - a[2]) * t;
 }
 
-function scale3(a, f) {
+function scale3(a: Rgb, f: number): void {
   a[0] = Math.min(1, a[0] * f);
   a[1] = Math.min(1, a[1] * f);
   a[2] = Math.min(1, a[2] * f);
@@ -301,7 +399,7 @@ function scale3(a, f) {
 // 自适应四叉树网格简化（与编辑器 simplify.ts 同语义）
 // ---------------------------------------------------------------------------
 
-function _quadMaxError(h, n, x0, x1, z0, z1) {
+function _quadMaxError(h: Float32Array, n: number, x0: number, x1: number, z0: number, z1: number): number {
   const h00 = h[z0 * n + x0], h10 = h[z0 * n + x1], h01 = h[z1 * n + x0], h11 = h[z1 * n + x1];
   const dx = x1 - x0, dz = z1 - z0;
   let maxErr = 0;
@@ -316,8 +414,8 @@ function _quadMaxError(h, n, x0, x1, z0, z1) {
   return maxErr;
 }
 
-function _buildQuad(h, n, x0, x1, z0, z1, threshold, depth, maxDepth) {
-  const q = { x0, z0, x1, z1 };
+function _buildQuad(h: Float32Array, n: number, x0: number, x1: number, z0: number, z1: number, threshold: number, depth: number, maxDepth: number): TerrainQuad {
+  const q: TerrainQuad = { x0, z0, x1, z1 };
   if (x1 - x0 <= 1 || z1 - z0 <= 1 || depth >= maxDepth) return q;
   if (_quadMaxError(h, n, x0, x1, z0, z1) < threshold) return q;
   const mx = (x0 + x1) >> 1, mz = (z0 + z1) >> 1;
@@ -330,12 +428,12 @@ function _buildQuad(h, n, x0, x1, z0, z1, threshold, depth, maxDepth) {
   return q;
 }
 
-function _collectLeaves(q, leaves) {
+function _collectLeaves(q: TerrainQuad, leaves: TerrainQuad[]): void {
   if (!q.children) { leaves.push(q); return; }
   for (const c of q.children) _collectLeaves(c, leaves);
 }
 
-function _findLeaf(root, x, z) {
+function _findLeaf(root: TerrainQuad, x: number, z: number): TerrainQuad | null {
   if (x < root.x0 || x > root.x1 || z < root.z0 || z > root.z1) return null;
   if (!root.children) return root;
   for (const c of root.children) {
@@ -345,11 +443,11 @@ function _findLeaf(root, x, z) {
   return null;
 }
 
-function _balanceTree(root) {
+function _balanceTree(root: TerrainQuad): void {
   let changed = true;
   while (changed) {
     changed = false;
-    const leaves = [];
+    const leaves: TerrainQuad[] = [];
     _collectLeaves(root, leaves);
     for (const l of leaves) {
       if (l.children) continue;
@@ -378,7 +476,7 @@ function _balanceTree(root) {
   }
 }
 
-function _simplifyTerrainMesh(heights, n, threshold) {
+function _simplifyTerrainMesh(heights: Float32Array, n: number, threshold: number): SimplifiedTerrainMesh | null {
   const segs = n - 1;
   if (segs < 4 || (segs & (segs - 1)) !== 0) return null;
 
@@ -386,14 +484,14 @@ function _simplifyTerrainMesh(heights, n, threshold) {
   const root = _buildQuad(heights, n, 0, segs, 0, segs, threshold, 0, maxDepth);
   _balanceTree(root);
 
-  const leaves = [];
+  const leaves: TerrainQuad[] = [];
   _collectLeaves(root, leaves);
 
-  const vertMap = new Map();
-  const vertices = [];
-  const indices = [];
+  const vertMap = new Map<number, number>();
+  const vertices: number[] = [];
+  const indices: number[] = [];
 
-  function getVert(x, z) {
+  function getVert(x: number, z: number): number {
     const key = x * n + z;
     let idx = vertMap.get(key);
     if (idx === undefined) {
@@ -430,7 +528,7 @@ function _simplifyTerrainMesh(heights, n, threshold) {
   return { vertices: Int32Array.from(vertices), indices: Uint32Array.from(indices) };
 }
 
-function _sampleHeightAt(h, n, size, wx, wz) {
+function _sampleHeightAt(h: Float32Array, n: number, size: number, wx: number, wz: number): number {
   const half = size / 2;
   const segs = n - 1;
   const fx = Math.min(segs, Math.max(0, ((wx + half) / size) * segs));
@@ -442,7 +540,7 @@ function _sampleHeightAt(h, n, size, wx, wz) {
          (h[(iz + 1) * n + ix] * (1 - tx) + h[(iz + 1) * n + ix + 1] * tx) * tz;
 }
 
-function _bakeColorTexture(heights, n, p, min, max, splatmap) {
+function _bakeColorTexture(heights: Float32Array, n: number, p: TerrainSettings, min: number, max: number, splatmap: SplatmapInput | null): THREE.DataTexture {
   const res = 256;
   const data = new Uint8Array(res * res * 4);
   const hSpan = Math.max(1e-6, max - min);
@@ -451,13 +549,13 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
   const grass = hexToLinear(p.grassColor);
   const rock = hexToLinear(p.rockColor);
   const snow = hexToLinear(p.snowColor);
-  const dryGrass = [...grass]; scale3(dryGrass, 1.28);
-  const forest = [...grass]; scale3(forest, 0.55);
-  const scree = [...rock]; scale3(scree, 1.15);
-  const lichen = [...rock]; mix3(lichen, grass, 0.35);
-  const snowDeep = [...snow]; scale3(snowDeep, 0.88);
+  const dryGrass: Rgb = [...grass]; scale3(dryGrass, 1.28);
+  const forest: Rgb = [...grass]; scale3(forest, 0.55);
+  const scree: Rgb = [...rock]; scale3(scree, 1.15);
+  const lichen: Rgb = [...rock]; mix3(lichen, grass, 0.35);
+  const snowDeep: Rgb = [...snow]; scale3(snowDeep, 0.88);
   const colorSeed = p.seed & 0xffff;
-  const tmp = [0, 0, 0];
+  const tmp: Rgb = [0, 0, 0];
 
   for (let j = 0; j < res; j++) {
     for (let i = 0; i < res; i++) {
@@ -477,7 +575,7 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
       const grain = valueNoise2(wx * 0.18, wz * 0.18, colorSeed + 7);
       const macro = valueNoise2(wx * 0.012, wz * 0.012, colorSeed + 13);
 
-      let surface;
+      let surface: Rgb;
       if (splatmap) {
         const lc = splatmap.layerColors;
         const c0 = hexToLinear(lc[0]), c1 = hexToLinear(lc[1]), c2 = hexToLinear(lc[2]), c3 = hexToLinear(lc[3]);
@@ -515,7 +613,7 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
         surface = [...grass];
         mix3(surface, dryGrass, smoothstep(0.15, 0.75, macro) * smoothstep(0.22, 0.5, altitude));
         mix3(surface, forest, smoothstep(0.16, 0.34, altitude) * smoothstep(0.5, 0.72, flatness) * 0.75);
-        const rockShade = [...rock];
+        const rockShade: Rgb = [...rock];
         const strata = (Math.sin(wy * 0.5 + detail * 3 + macro * 4) * 0.6 + Math.sin(wy * 1.4 + grain * 2) * 0.4) * 0.5 + 0.5;
         const lichenMask = smoothstep(0.45, 0.72, grain) * smoothstep(0.62, 0.32, steep) * smoothstep(0.66, 0.34, altitude);
         mix3(rockShade, lichen, lichenMask * 0.45);
@@ -576,7 +674,7 @@ function _bakeColorTexture(heights, n, p, min, max, splatmap) {
 // ---------------------------------------------------------------------------
 
 /** 程序化基准高度（分形 + 热侵蚀；DEM 数据源地形不走这条路径） */
-function bakeHeights(p, coord, n) {
+function bakeHeights(p: TerrainSettings, coord: number[], n: number): Float32Array {
   const height = heightField(p);
   const heights = new Float32Array(n * n);
   for (let iz = 0; iz < n; iz++) {
@@ -590,7 +688,7 @@ function bakeHeights(p, coord, n) {
 
 // —— 数字地形数据源（编辑器 framework/terrain/dem.ts 的解码镜像：只解码内嵌
 //    归一化网格 + 双线性重采样，不解析 ASC/HGT 等源文件；两边算法需同步）——
-function _decodeDemData(data) {
+function _decodeDemData(data: string): Float32Array | null {
   try {
     const bin = atob(data);
     const bytes = new Uint8Array(bin.length);
@@ -601,7 +699,7 @@ function _decodeDemData(data) {
   }
 }
 
-function _resampleDemGrid(src, srcN, targetN) {
+function _resampleDemGrid(src: Float32Array, srcN: number, targetN: number): Float32Array {
   if (srcN === targetN) return src;
   const out = new Float32Array(targetN * targetN);
   const last = srcN - 1;
@@ -624,7 +722,7 @@ function _resampleDemGrid(src, srcN, targetN) {
 }
 
 /** DEM 基准高度（归一化 × heightScale 垂直夸张；损坏返回 null → 回退程序化） */
-function demBaseOf(dem, heightScale, targetN) {
+function demBaseOf(dem: DemJson | null | undefined, heightScale: number, targetN: number): Float32Array | null {
   if (!dem || typeof dem.data !== "string" || typeof dem.gridN !== "number" || dem.gridN < 2) return null;
   const norm = _decodeDemData(dem.data);
   if (!norm || norm.length !== dem.gridN * dem.gridN) return null;
@@ -641,11 +739,11 @@ function demBaseOf(dem, heightScale, targetN) {
  * 跳过程序化分形+热侵蚀（与编辑器 buildTerrain 的 baseHeights 参数同语义）。
  * 返回 { geometry, colorTexture, heights, gridSize, size, segments, minY, maxY }。
  */
-function buildTerrain(p, splatmap, sculpt, base) {
+function buildTerrain(p: TerrainSettings, splatmap: SplatmapInput | null, sculpt: Float32Array | null, base: Float32Array | null): TerrainBuildData {
   const n = p.segments + 1;
   const half = p.size / 2;
 
-  const coord = new Array(n);
+  const coord: number[] = new Array(n);
   for (let i = 0; i < n; i++) coord[i] = (i / p.segments) * p.size - half;
 
   const heights = base && base.length === n * n ? new Float32Array(base) : bakeHeights(p, coord, n);
@@ -666,7 +764,9 @@ function buildTerrain(p, splatmap, sculpt, base) {
   const hSpan = Math.max(1e-6, max - min);
   const simplified = _simplifyTerrainMesh(heights, n, hSpan * 0.05);
 
-  let positions, vertCount, indices;
+  let positions: Float32Array;
+  let vertCount: number;
+  let indices: Uint32Array | number[];
 
   if (simplified) {
     vertCount = simplified.vertices.length / 2;
@@ -723,7 +823,7 @@ function buildTerrain(p, splatmap, sculpt, base) {
 
 
 /** 双线性采样世界高度（x/z 超界钳到边缘） */
-function sampleHeight(data, x, z) {
+function sampleHeight(data: TerrainBuildData, x: number, z: number): number {
   const seg = data.segments;
   const half = data.size / 2;
   const n = data.gridSize;
@@ -742,14 +842,14 @@ function sampleHeight(data, x, z) {
 }
 
 /** 地表平坦度（1 = 平地 → 0 = 崖壁；有限差分） */
-function sampleSlope(data, x, z) {
+function sampleSlope(data: TerrainBuildData, x: number, z: number): number {
   const e = data.size / data.segments;
   const hx = sampleHeight(data, x + e, z) - sampleHeight(data, x - e, z);
   const hz = sampleHeight(data, x, z + e) - sampleHeight(data, x, z - e);
   return (2 * e) / Math.sqrt(hx * hx + 4 * e * e + hz * hz);
 }
 
-function _splitTerrainGeometry(geometry, size, chunks) {
+function _splitTerrainGeometry(geometry: THREE.BufferGeometry, size: number, chunks: number): THREE.BufferGeometry[] {
   if (chunks <= 1) return [geometry];
 
   const pos = geometry.getAttribute("position");
@@ -761,7 +861,7 @@ function _splitTerrainGeometry(geometry, size, chunks) {
   const chunkSize = size / chunks;
   const half = size / 2;
 
-  const chunkTriArrays = [];
+  const chunkTriArrays: number[][] = [];
   for (let i = 0; i < chunks * chunks; i++) chunkTriArrays.push([]);
   const triCount = index.count / 3;
   for (let t = 0; t < triCount; t++) {
@@ -773,13 +873,13 @@ function _splitTerrainGeometry(geometry, size, chunks) {
     chunkTriArrays[iz * chunks + ix].push(a, b, c);
   }
 
-  const result = [];
+  const result: THREE.BufferGeometry[] = [];
   for (let ci = 0; ci < chunks * chunks; ci++) {
     const tris = chunkTriArrays[ci];
     if (tris.length === 0) continue;
 
-    const vertMap = new Map();
-    const newPositions = [], newUVs = [], newNormals = [], newIndices = [];
+    const vertMap = new Map<number, number>();
+    const newPositions: number[] = [], newUVs: number[] = [], newNormals: number[] = [], newIndices: number[] = [];
 
     for (let i = 0; i < tris.length; i += 3) {
       for (let j = 0; j < 3; j++) {
@@ -812,17 +912,18 @@ function _splitTerrainGeometry(geometry, size, chunks) {
  * 供视锥剔除（每 chunk 独立 boundingBox，three.js 自动剔除不可见 chunk）。
  * 返回 { obj, data, settings }；obj 为名为 __terrainMesh 的 Group（含 chunk 子网格）。
  */
-export function createTerrain(json) {
+export function createTerrain(json: NodeJson): { obj: THREE.Group; data: TerrainBuildData; settings: TerrainSettings } {
   const settings = parseSettings(json.terrain);
   // 地形材质绑定時：用材质图层颜色覆盖地形内置配色 + PBR 参数
-  const ms = json.materialSettings ?? null;
-  const ts = ms
+  // （materialSettings 为编辑器材质绑定 JSON，结构断言收窄 layers/splatmap/PBR 字段）
+  const ms = (json.materialSettings ?? null) as TerrainMaterialSettingsJson | null;
+  const ts: TerrainSettings = ms
     ? { ...settings, grassColor: ms.layers?.[0]?.color ?? settings.grassColor,
                    rockColor: ms.layers?.[1]?.color ?? settings.rockColor,
                    snowColor: ms.layers?.[2]?.color ?? settings.snowColor }
     : settings;
   // 材质已绑定：传程序化 splatmap（data=null → 按海拔/坡度 4 层混合）
-  const splatmap = ms
+  const splatmap: SplatmapInput | null = ms
     ? { data: null, width: 0, height: 0,
         layerColors: [
           ms.layers?.[0]?.color ?? 0x6e7253,
@@ -832,10 +933,11 @@ export function createTerrain(json) {
         ] }
     : null;
   // 雕刻偏移层：节点 sculpt 字段（base64 Float32，编辑器笔刷雕刻写入）
-  let sculpt = null;
-  if (json.sculpt && typeof json.sculpt.data === "string" && json.sculpt.gridN === settings.segments + 1) {
+  const sculptJson = json.sculpt as SculptJson | null | undefined; // sculpt 为编辑器雕刻层 JSON（data/gridN）
+  let sculpt: Float32Array | null = null;
+  if (sculptJson && typeof sculptJson.data === "string" && sculptJson.gridN === settings.segments + 1) {
     try {
-      const bin = atob(json.sculpt.data);
+      const bin = atob(sculptJson.data);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       sculpt = new Float32Array(bytes.buffer);
@@ -843,7 +945,8 @@ export function createTerrain(json) {
       sculpt = null;
     }
   }
-  const data = buildTerrain(ts, splatmap, sculpt, demBaseOf(json.dem, settings.heightScale, settings.segments + 1));
+  // dem 为 DEM 数据源 JSON（data: base64 归一化高度，gridN 网格边长）
+  const data = buildTerrain(ts, splatmap, sculpt, demBaseOf(json.dem as DemJson | null | undefined, settings.heightScale, settings.segments + 1));
   // 分块数随尺寸自适应（与编辑器 SceneSynchronizer 同规则）：≥800 用 8×8
   const chunkGeoms = _splitTerrainGeometry(data.geometry, data.size, data.size >= 800 ? 8 : 4);
   data.geometry.dispose();
@@ -873,14 +976,15 @@ export function createTerrain(json) {
  * 与 applyMeshTextures 同一异步 pass（buildSceneTree 后执行）。
  * terrains = buildSceneTree 收集的 [{ json, obj, data, settings }]。
  */
-export async function applyTerrainSplatmaps(terrains) {
+export async function applyTerrainSplatmaps(terrains: SceneTerrainEntry[]): Promise<void> {
   await Promise.all(
     terrains.map(async (entry) => {
-      const ms = entry.json?.materialSettings;
+      // materialSettings 为编辑器材质绑定 JSON（结构断言收窄 splatmap/layers 字段）
+      const ms = entry.json?.materialSettings as TerrainMaterialSettingsJson | undefined;
       const rel = ms?.splatmap;
       if (!rel || typeof rel !== "string") return;
 
-      let bmp;
+      let bmp: ImageBitmap | undefined;
       try {
         bmp = await resourceLoader.loadImageBitmap(rel, false);
       } catch {
@@ -902,20 +1006,22 @@ export async function applyTerrainSplatmaps(terrains) {
         ms.layers?.[2]?.color ?? 0xe9ecf0,
         ms.layers?.[3]?.color ?? 0xffffff,
       ];
-      const splatmap = {
+      const splatmap: SplatmapInput = {
         data: new Uint8Array(imgData.data.buffer.slice(0)),
         width: bmp.width,
         height: bmp.height,
         layerColors,
       };
 
-      const d = entry.data;
-      const p = entry.settings;
+      // buildSceneTree 地形条目 data/settings 由 createTerrain 产出（SceneTerrainEntry 声明为 unknown）
+      const d = entry.data as TerrainBuildData;
+      const p = entry.settings as TerrainSettings;
       const newTex = _bakeColorTexture(d.heights, d.gridSize, p, d.minY, d.maxY, splatmap);
 
       const terrainGroup = entry.obj.children.find((c) => c.name === "__terrainMesh");
       if (!terrainGroup) return;
-      const mat = terrainGroup.children[0]?.material;
+      // chunk 子网格为 Mesh（_splitTerrainGeometry 产物挂 MeshStandardMaterial）
+      const mat = (terrainGroup.children[0] as THREE.Mesh | undefined)?.material as THREE.MeshStandardMaterial | undefined;
       if (!mat) return;
       if (mat.map) mat.map.dispose();
       mat.map = newTex;
@@ -928,26 +1034,31 @@ export async function applyTerrainSplatmaps(terrains) {
  * 地形运行时系统（贴地采样 API；脚本经 TerrainNode SDK / engine 寻址）。
  * entries = buildSceneTree 收集的 [{ json, obj, data }]。
  */
-export function createTerrains(entries) {
-  const byId = new Map();
+export function createTerrains(entries: SceneTerrainEntry[]): {
+  sampleHeight(nodeId: string, x: unknown, z: unknown): number;
+  sampleSlope(nodeId: string, x: unknown, z: unknown): number;
+  settingsOf(nodeId: string): TerrainSettings | null;
+} {
+  const byId = new Map<string, SceneTerrainEntry>();
   for (const e of entries) {
     const id = typeof e.json?.id === "string" ? e.json.id : "";
     if (id) byId.set(id, e);
   }
   return {
     /** 世界高度采样（节点本地 x/z；节点仅平移时即世界坐标） */
-    sampleHeight(nodeId, x, z) {
+    sampleHeight(nodeId: string, x: unknown, z: unknown): number {
       const e = byId.get(nodeId);
-      return e ? sampleHeight(e.data, num(x, 0), num(z, 0)) : 0;
+      return e ? sampleHeight(e.data as TerrainBuildData, num(x, 0), num(z, 0)) : 0;
     },
     /** 地表平坦度采样（1 = 平地 → 0 = 崖壁） */
-    sampleSlope(nodeId, x, z) {
+    sampleSlope(nodeId: string, x: unknown, z: unknown): number {
       const e = byId.get(nodeId);
-      return e ? sampleSlope(e.data, num(x, 0), num(z, 0)) : 1;
+      return e ? sampleSlope(e.data as TerrainBuildData, num(x, 0), num(z, 0)) : 1;
     },
-    settingsOf(nodeId) {
+    settingsOf(nodeId: string): TerrainSettings | null {
       const e = byId.get(nodeId);
-      return e ? { ...e.settings } : null;
+      // settings 由 createTerrain 的 parseSettings 收敛（SceneTerrainEntry 声明为 unknown）
+      return e ? { ...(e.settings as TerrainSettings) } : null;
     },
   };
 }

@@ -21,6 +21,8 @@
 import * as THREE from "../core/three.module.min.js";
 import { num } from "../core/utils";
 import { loadImageTex } from "./textures";
+import type { NodeJson } from "./node-json";
+import type { SceneNodeEntry } from "./nodes";
 
 /** UI 空间半高（UI 单位；屏幕纵向可见 10 个 UI 单位） */
 export const UI_HALF_HEIGHT = 5;
@@ -31,8 +33,81 @@ export const UI_PPU = 100;
 /** 文本光栅化像素密度（像素 / UI 单位） */
 const UI_TEXT_PPU = 128;
 
+// ---------------------------------------------------------------------------
+// 类型（JSON 宽松视图 + 解析产物 + 运行态条目）
+// ---------------------------------------------------------------------------
+
+/** JSON 来源的宽松对象（索引签名放行未知键） */
+type UnknownRec = Record<string, unknown>;
+
+/** UI 二维量（尺寸/锚点/偏移/间距分量） */
+interface Vec2 {
+  x: number;
+  y: number;
+}
+
+/** {x,y,z} 分量 JSON（分量可缺省/非法，经 num 收敛） */
+interface Vec3Json {
+  x?: unknown;
+  y?: unknown;
+  z?: unknown;
+}
+
+/** 父局部空间矩形（中心 + 尺寸） */
+interface Rect {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/** 布局容器内边距 */
+interface Padding {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** 锚点矩形解析输入（resolveUIRect 消费） */
+interface AnchorInput {
+  anchorMin: Vec2;
+  anchorMax: Vec2;
+  pivot: Vec2;
+  anchoredPosition: Vec2;
+  offsetMin: Vec2;
+  offsetMax: Vec2;
+  size: Vec2;
+}
+
+/** 字体族（FONT_STACKS 键） */
+type UIFontFamily = "system" | "serif" | "mono";
+/** 文本水平对齐 */
+type UITextAlign = "left" | "center" | "right";
+/** 布局排列模式（none = 子节点走锚点定位） */
+type UILayoutMode = "horizontal" | "vertical" | "grid" | "none";
+/** 画布缩放模式（fixedauto = 非等比拉伸满视野） */
+type UIScaleMode = "noscale" | "fixedwidth" | "fixedheight" | "full" | "fixedauto";
+
+/** 文本样式（uiTextSignature/buildUITextTexture/drawUIText 消费） */
+interface UITextStyle {
+  text: string;
+  fontSize: number;
+  color: number;
+  bold: boolean;
+  italic: boolean;
+  fontFamily: UIFontFamily;
+  align: UITextAlign;
+}
+
+/** 节点变换 JSON（本文件仅消费 scale 分量） */
+interface TransformJson {
+  scale?: Vec3Json;
+  [key: string]: unknown;
+}
+
 /** 锚点/布局解析对象类型（Widget + 布局容器） */
-const UI_POSITION_KINDS = new Set(["uiImageNode", "uiTextNode", "uiButtonNode", "uiLayoutNode"]);const UI_LABEL_CHILD_NAME = "__uiLabel";
+const UI_POSITION_KINDS = new Set<string | undefined>(["uiImageNode", "uiTextNode", "uiButtonNode", "uiLayoutNode"]);const UI_LABEL_CHILD_NAME = "__uiLabel";
 
 const FONT_STACKS = {
   system: 'system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
@@ -40,19 +115,19 @@ const FONT_STACKS = {
   mono: 'Consolas, "Courier New", monospace',
 };
 
-function clampSort(v, fallback = 0) {
+function clampSort(v: unknown, fallback = 0): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : fallback;
   return Math.min(999, Math.max(-999, n));
 }
 
-function clampCanvasSort(v, fallback = 0) {
+function clampCanvasSort(v: unknown, fallback = 0): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : fallback;
   return Math.min(500, Math.max(-500, n));
 }
 
 /** 合成渲染序：画布 SortOrder（1e7 档）→ Widget SortOrder（1e4 档；祖先链累加的
  *  层级继承值）→ 树序 rank（同值按 Canvas 下节点顺序，越靠后越在上层）——与编辑器同公式 */
-export function uiRenderOrder(canvasSortOrder, widgetSortOrder, treeRank = 0) {
+export function uiRenderOrder(canvasSortOrder: unknown, widgetSortOrder: unknown, treeRank = 0): number {
   return (
     UI_RENDER_ORDER_BASE +
     clampCanvasSort(canvasSortOrder) * 1e7 +
@@ -61,41 +136,41 @@ export function uiRenderOrder(canvasSortOrder, widgetSortOrder, treeRank = 0) {
   );
 }
 
-function vec2Of(v, fx, fy) {
-  const o = v && typeof v === "object" ? v : {};
-  const dim = (n, fb) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0.01, n) : fb);
+function vec2Of(v: unknown, fx: number, fy: number): Vec2 {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // JSON 来源宽松对象，分量经 dim 收敛
+  const dim = (n: unknown, fb: number): number => (typeof n === "number" && Number.isFinite(n) ? Math.max(0.01, n) : fb);
   return { x: dim(o.x, fx), y: dim(o.y, fy) };
 }
 
 /** 任意值 Vec2（分量允许任意有限值；用于锚点位置/偏移） */
-function freeVec2Of(v, fx, fy) {
-  const o = v && typeof v === "object" ? v : {};
-  const dim = (n, fb) => (typeof n === "number" && Number.isFinite(n) ? n : fb);
+function freeVec2Of(v: unknown, fx: number, fy: number): Vec2 {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // JSON 来源宽松对象，分量经 dim 收敛
+  const dim = (n: unknown, fb: number): number => (typeof n === "number" && Number.isFinite(n) ? n : fb);
   return { x: dim(o.x, fx), y: dim(o.y, fy) };
 }
 
 /** 归一化 Vec2（分量收敛 0..1；用于锚点/枢轴） */
-function unitVec2Of(v, fx, fy) {
+function unitVec2Of(v: unknown, fx: number, fy: number): Vec2 {
   const p = freeVec2Of(v, fx, fy);
-  const c01 = (n) => Math.min(1, Math.max(0, n));
+  const c01 = (n: number): number => Math.min(1, Math.max(0, n));
   return { x: c01(p.x), y: c01(p.y) };
 }
 
-function colorOf(v, fallback) {
+function colorOf(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(v) & 0xffffff : fallback;
 }
 
 /** 不透明度收敛（0..1；非法回退 fallback） */
-function opacityOf(v, fallback = 1) {
+function opacityOf(v: unknown, fallback = 1): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
 }
 
 /** 字号（设计像素，100px = 1 单位）→ UI 单位 */
-function uiFontSizeToUnits(fontSize) {
+function uiFontSizeToUnits(fontSize: unknown): number {
   return num(fontSize, 24) / UI_PPU;
 }
 
-function fontCss(style, px) {
+function fontCss(style: UITextStyle, px: number): string {
   const italic = style.italic ? "italic " : "";
   const weight = style.bold ? "700" : "400";
   const family = FONT_STACKS[style.fontFamily] || FONT_STACKS.system;
@@ -103,7 +178,7 @@ function fontCss(style, px) {
 }
 
 /** 缩放模式 → 画布缩放系数（与编辑器 uiCanvasModeScale 同一数学） */
-function canvasModeScale(mode, screenW, screenH, canvasW, canvasH) {
+function canvasModeScale(mode: UIScaleMode, screenW: number, screenH: number, canvasW: number, canvasH: number): { sx: number; sy: number } {
   const cw = Math.max(0.01, canvasW);
   const ch = Math.max(0.01, canvasH);
   switch (mode) {
@@ -126,7 +201,7 @@ function canvasModeScale(mode, screenW, screenH, canvasW, canvasH) {
  * 点锚点轴：中心 = 锚点 + anchoredPosition + (0.5 - pivot) × 设计尺寸；
  * 拉伸轴：矩形 = 两锚线之间收进 offset 边距。返回父局部空间坐标。
  */
-function resolveUIRect(parent, a) {
+function resolveUIRect(parent: Rect, a: AnchorInput): Rect {
   const pMinX = parent.cx - parent.w / 2;
   const pMinY = parent.cy - parent.h / 2;
   const aMinX = Math.min(1, Math.max(0, a.anchorMin.x));
@@ -159,7 +234,7 @@ function resolveUIRect(parent, a) {
 }
 
 /** Widget 数据 → 锚点解析输入（缺省中心点锚点 + 设计尺寸） */
-function anchorInputOf(json) {
+function anchorInputOf(json: NodeJson): AnchorInput {
   return {
     anchorMin: unitVec2Of(json.anchorMin, 0.5, 0.5),
     anchorMax: unitVec2Of(json.anchorMax, 0.5, 0.5),
@@ -175,7 +250,7 @@ function anchorInputOf(json) {
  * 布局排列（与编辑器 resolveUILayoutCenters 同一数学）：容器局部空间
  * （原点 = 容器中心，y 向上）返回每个子元素中心；子元素在槽位内居中。
  */
-function resolveUILayoutCenters(rect, mode, sizes, padding, spacing, gridColumns) {
+function resolveUILayoutCenters(rect: Rect, mode: UILayoutMode, sizes: Vec2[], padding: Padding, spacing: Vec2, gridColumns: number): Vec2[] {
   const n = sizes.length;
   if (mode === "none" || n === 0) return [];
   const contentL = rect.cx - rect.w / 2 + padding.left;
@@ -186,7 +261,7 @@ function resolveUILayoutCenters(rect, mode, sizes, padding, spacing, gridColumns
   const midX = (contentL + contentR) / 2;
   const sx = Math.max(0, spacing.x);
   const sy = Math.max(0, spacing.y);
-  const out = new Array(n);
+  const out: Vec2[] = new Array(n);
 
   if (mode === "horizontal") {
     let cursor = contentL;
@@ -224,19 +299,24 @@ function resolveUILayoutCenters(rect, mode, sizes, padding, spacing, gridColumns
   return out;
 }
 
-function paddingOf(v) {
-  const o = v && typeof v === "object" ? v : {};
-  const d = (n, fb) => (typeof n === "number" && Number.isFinite(n) ? n : fb);
+function paddingOf(v: unknown): Padding {
+  const o = (v && typeof v === "object" ? v : {}) as UnknownRec; // JSON 来源宽松对象，分量经 d 收敛
+  const d = (n: unknown, fb: number): number => (typeof n === "number" && Number.isFinite(n) ? n : fb);
   return { left: d(o.left, 0), right: d(o.right, 0), top: d(o.top, 0), bottom: d(o.bottom, 0) };
 }
 
-function layoutModeOf(v) {
+function layoutModeOf(v: unknown): UILayoutMode {
   return v === "horizontal" || v === "vertical" || v === "grid" ? v : "none";
 }
 
 /** 画布 scaleMode 解析（非法回退 fixedauto） */
-function scaleModeOf(v) {
+function scaleModeOf(v: unknown): UIScaleMode {
   return v === "noscale" || v === "fixedwidth" || v === "fixedheight" || v === "full" ? v : "fixedauto";
+}
+
+/** three 类型库不在 Camera 基类声明正交标志（结构断言收窄到正交相机） */
+function isOrthoCamera(cam: THREE.Camera): cam is THREE.OrthographicCamera {
+  return (cam as { isOrthographicCamera?: boolean }).isOrthographicCamera === true;
 }
 
 /** 画布贴合缩放（UI 单位 → 相机平面世界单位；正交含基础对齐缩放；按画布缩放模式）。
@@ -244,14 +324,15 @@ function scaleModeOf(v) {
  *  CSS 缩放后恒占满屏幕，因此画布 design 矩形直接按 scaleMode 映射到该满视野矩形即可
  *  （归一化 NDC 与 CSS 拉伸线性无关，无需求实际屏幕比例）；等比模式下 sx=sy 保持等比，
  *  锚点定位的 Widget 随之等比缩放、不被非等比拉伸。 */
-function glueScaleForCamera(cam, canvasW, canvasH, mode) {
-  const camAspect = cam.isOrthographicCamera === true
+function glueScaleForCamera(cam: THREE.Camera, canvasW: number, canvasH: number, mode: UIScaleMode): { sx: number; sy: number } {
+  const persp = cam as THREE.PerspectiveCamera; // 非正交分支按透视消费 aspect（运行时仅正交/透视两类相机）
+  const camAspect = isOrthoCamera(cam)
     ? (Math.abs(cam.top - cam.bottom) > 1e-6
         ? Math.abs(cam.right - cam.left) / Math.abs(cam.top - cam.bottom)
         : 1)
-    : (cam.aspect > 0 ? cam.aspect : 1);
+    : (persp.aspect > 0 ? persp.aspect : 1);
   const s = canvasModeScale(mode, UI_HALF_HEIGHT * 2 * camAspect, UI_HALF_HEIGHT * 2, canvasW, canvasH);
-  if (cam.isOrthographicCamera === true) {
+  if (isOrthoCamera(cam)) {
     const halfH = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) : 1;
     const s0 = halfH / UI_HALF_HEIGHT;
     return { sx: s0 * s.sx, sy: s0 * s.sy };
@@ -264,16 +345,17 @@ function glueScaleForCamera(cam, canvasW, canvasH, mode) {
  * 与编辑器 uiGlueMatrixForCamera 同一基础数学，再按画布 scaleMode 把设计矩形
  * 映射到相机满视野（缩放模式仅运行时生效——编辑器布局视图恒按设计尺寸 1:1）。
  */
-export function glueMatrixForCamera(cam, out, canvasW = UI_HALF_HEIGHT * 2, canvasH = UI_HALF_HEIGHT * 2, mode = "fixedauto") {
+export function glueMatrixForCamera(cam: THREE.Camera, out: THREE.Matrix4, canvasW = UI_HALF_HEIGHT * 2, canvasH = UI_HALF_HEIGHT * 2, mode: UIScaleMode = "fixedauto"): THREE.Matrix4 {
   const s = glueScaleForCamera(cam, canvasW, canvasH, mode);
-  if (cam.isOrthographicCamera === true) {
+  if (isOrthoCamera(cam)) {
     const halfH = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) : 1;
     const s0 = halfH / UI_HALF_HEIGHT;
     out.makeTranslation(0, 0, -(cam.near + cam.far) / 2);
     out.scale(_scaleVec.set(s.sx, s.sy, s0));
     return out;
   }
-  const fovDeg = cam.fov > 0 ? cam.fov : 50;
+  const persp = cam as THREE.PerspectiveCamera; // 非正交分支按透视消费 fov（运行时仅正交/透视两类相机）
+  const fovDeg = persp.fov > 0 ? persp.fov : 50;
   const d = UI_HALF_HEIGHT / Math.tan((fovDeg * Math.PI) / 360);
   out.makeTranslation(0, 0, -d);
   out.scale(_scaleVec.set(s.sx, s.sy, 1));
@@ -287,12 +369,12 @@ const _camMat = new THREE.Matrix4();
 const _inv = new THREE.Matrix4();
 
 /** UI 文本样式签名（样式或尺寸变化 → 重光栅化） */
-export function uiTextSignature(style, size) {
+export function uiTextSignature(style: UITextStyle, size: Vec2): string {
   return [style.text, style.fontSize, style.color, style.bold, style.italic, style.fontFamily, style.align, size.x, size.y].join("|");
 }
 
 /** 文本样式 → 光栅化 CanvasTexture（sRGB；调用方持有与释放） */
-export function buildUITextTexture(style, size) {
+export function buildUITextTexture(style: UITextStyle, size: Vec2): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(size.x * UI_TEXT_PPU));
   canvas.height = Math.max(1, Math.round(size.y * UI_TEXT_PPU));
@@ -306,7 +388,7 @@ export function buildUITextTexture(style, size) {
 }
 
 /** 换行后的文本行（逐字符断行；新行丢弃行首空格）——与编辑器 uiWrapText 同算法 */
-function wrapText(ctx, style, maxWidth) {
+function wrapText(ctx: CanvasRenderingContext2D, style: UITextStyle, maxWidth: number): string[] {
   const lines = [];
   for (const paragraph of String(style.text).split("\n")) {
     if (paragraph.length === 0) {
@@ -329,7 +411,7 @@ function wrapText(ctx, style, maxWidth) {
 }
 
 /** 文本绘制（水平按 align，垂直居中；超界自然裁剪）——与编辑器 drawUIText 同算法 */
-function drawUIText(ctx, style, w, h) {
+function drawUIText(ctx: CanvasRenderingContext2D, style: UITextStyle, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h);
   const px = Math.max(4, Math.round(uiFontSizeToUnits(style.fontSize) * UI_TEXT_PPU));
   ctx.font = fontCss(style, px);
@@ -347,7 +429,7 @@ function drawUIText(ctx, style, w, h) {
 }
 
 /** UI 材质（叠加语义统一：透明 + 关深度测试/写深度 + 无雾 + 不参与色调映射） */
-function uiMaterial() {
+function uiMaterial(): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial();
   mat.transparent = true;
   mat.depthTest = false;
@@ -358,7 +440,7 @@ function uiMaterial() {
   return mat;
 }
 
-function textStyleOf(json, forLabel) {
+function textStyleOf(json: NodeJson, forLabel: boolean): UITextStyle {
   return {
     text: forLabel ? String(json.label ?? "Button") : String(json.text ?? "Text"),
     fontSize: num(json.fontSize, 24),
@@ -375,18 +457,18 @@ function textStyleOf(json, forLabel) {
 // ---------------------------------------------------------------------------
 
 /** UI 画布根：Group 容器（uiCanvas 标记；矩阵由 createUI 每帧覆写） */
-export function buildUICanvas() {
+export function buildUICanvas(): THREE.Group {
   const group = new THREE.Group();
   group.userData.uiCanvas = true;
   return group;
 }
 
-function planeOf(size) {
+function planeOf(size: Vec2): THREE.PlaneGeometry {
   return new THREE.PlaneGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y));
 }
 
 /** UI 图片：矩形网格（贴图由 applyTextures 异步回填；无图 = 纯色矩形） */
-export function buildUIImage(json) {
+export function buildUIImage(json: NodeJson): THREE.Mesh {
   const size = vec2Of(json.size, 2, 2);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
   mesh.material.color.setHex(colorOf(json.color, 0xffffff));
@@ -396,7 +478,7 @@ export function buildUIImage(json) {
 }
 
 /** UI 文本：矩形网格 + 文本光栅化贴图（构建期同步绘制） */
-export function buildUIText(json) {
+export function buildUIText(json: NodeJson): THREE.Mesh {
   const size = vec2Of(json.size, 4, 1);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
   mesh.material.opacity = opacityOf(json.opacity);
@@ -408,7 +490,7 @@ export function buildUIText(json) {
 }
 
 /** UI 按钮：背景网格 + __uiLabel 文本子网格（z 偏移浮向相机，同 renderOrder） */
-export function buildUIButton(json) {
+export function buildUIButton(json: NodeJson): THREE.Mesh {
   const size = vec2Of(json.size, 2, 0.8);
   const opacity = opacityOf(json.opacity);
   const mesh = new THREE.Mesh(planeOf(size), uiMaterial());
@@ -428,7 +510,7 @@ export function buildUIButton(json) {
 }
 
 /** UI 布局容器：空 Group（无渲染内容；子元素位置由 createUI 每帧布局解析接管） */
-export function buildUILayout() {
+export function buildUILayout(): THREE.Group {
   return new THREE.Group();
 }
 
@@ -436,26 +518,117 @@ export function buildUILayout() {
 // 运行态系统
 // ---------------------------------------------------------------------------
 
+/** UI 画布运行态条目（layoutRev/resolvedRev 为布局解析缓存版本对） */
+interface UICanvasEntry {
+  json: NodeJson;
+  obj: THREE.Object3D;
+  sort: number;
+  /** 顶层画布根（父链无其它画布） */
+  top: boolean;
+  layoutRev: number;
+  resolvedRev: number;
+}
+
+/** UI Widget/布局容器条目（锚点/布局解析对象；root = 所属画布顶层根） */
+interface UIWidgetEntry {
+  json: NodeJson;
+  obj: THREE.Object3D;
+  root: THREE.Object3D | null;
+}
+
+/** UI 画布设置快照（settingsOf 返回；tve SDK 转发） */
+interface UICanvasSettings {
+  sortOrder: number;
+  designWidth: number;
+  designHeight: number;
+  scaleMode: string;
+}
+
+/** UI Widget/布局容器设置快照（公共字段恒有；其余按节点类型增量填充） */
+interface UIWidgetSettings {
+  sortOrder: number;
+  opacity: number;
+  size: Vec2;
+  anchorMin: Vec2;
+  anchorMax: Vec2;
+  pivot: Vec2;
+  anchoredPosition: Vec2;
+  offsetMin: Vec2;
+  offsetMax: Vec2;
+  layoutMode?: UILayoutMode;
+  padding?: Padding;
+  spacing?: Vec2;
+  gridColumns?: number;
+  text?: string;
+  fontSize?: number;
+  color?: number;
+  bold?: boolean;
+  italic?: boolean;
+  fontFamily?: UIFontFamily;
+  align?: UITextAlign;
+  image?: string;
+  label?: string;
+  labelColor?: number;
+  labelBold?: boolean;
+  interactable?: boolean;
+}
+
+/** createUI 入参（player 注入） */
+/** 指针画布最小消费面（DOM 结构由桥接层按平台注入） */
+interface PointerSurface {
+  getBoundingClientRect(): { left: number; top: number; width: number; height: number };
+  addEventListener(type: string, cb: (e: never) => void, options?: boolean): void;
+  removeEventListener(type: string, cb: (e: never) => void, options?: boolean): void;
+}
+
+interface UICreateOptions {
+  /** buildSceneTree 的全节点注册表 */
+  nodes: SceneNodeEntry[];
+  /** 预览画布（按钮指针事件） */
+  canvas: PointerSurface | null;
+  /** 场景根（叠加 pass 顶层子树隐藏用） */
+  scene: THREE.Scene | null;
+  /** 不清屏叠加渲染回调（置空背景 + autoClear 关 + renderer.render） */
+  render: ((cam: THREE.Camera | null) => void) | null;
+  /** 统一缩放模式（项目设置；非法回退 fixedauto） */
+  scaleMode?: unknown;
+}
+
+/** UI 回放系统（update 每帧渲染前调用；beginRender/endRender 画布主渲染隐藏与
+ *  专属叠加渲染；applyTextures 贴图异步回填；settingsOf/updateSettings/onClick/
+ *  offClick 供 tve SDK 转发） */
+export interface UISystem {
+  /** 每帧（渲染前）：画布根贴合相机 + 锚点/布局解析 */
+  update(cam: THREE.Camera | null): void;
+  /** 主渲染前：隐藏全部可见的顶层画布根（返回隐藏数量；0 = 无 UI 可跳过 endRender） */
+  beginRender(): number;
+  /** 主渲染后：恢复画布根可见并做一次不清屏叠加渲染 */
+  endRender(cam: THREE.Camera | null): void;
+  /** 图片/按钮背景贴图异步回填 */
+  applyTextures(): Promise<void>;
+  /** UI 节点设置快照（非 UI 节点返回 null） */
+  settingsOf(id: string): UICanvasSettings | UIWidgetSettings | null;
+  /** 合并 Widget/画布设置（运行态生效，不回写场景文件） */
+  updateSettings(id: string, patch: unknown): void;
+  /** 订阅按钮点击（返回解绑函数；非按钮/不可交互返回空解绑） */
+  onClick(id: string, cb: unknown): () => void;
+  /** 解绑按钮点击 */
+  offClick(id: string, cb: unknown): void;
+  /** 释放（解绑指针事件 + 清空点击回调表） */
+  dispose(): void;
+}
+
 /**
  * 创建 UI 回放系统。
- * @param {object} opts
- * @param {Array<{json: object, obj: object}>} opts.nodes buildSceneTree 的全节点注册表
- * @param {HTMLCanvasElement|null} opts.canvas 预览画布（按钮指针事件）
- * @param {THREE.Scene|null} opts.scene 场景根（叠加 pass 顶层子树隐藏用）
- * @param {(cam: object) => void|null} opts.render 不清屏叠加渲染回调（player 提供：
- *        置空背景 + autoClear 关 + renderer.render；UI 存在时每帧多一次 UI 专属渲染）
- * @returns UI 系统（update 每帧渲染前调用；beginRender/endRender 画布主渲染隐藏与
- *          专属叠加渲染；applyTextures 贴图异步回填；settingsOf/updateSettings/
- *          onClick/offClick 供 tve SDK 转发）
  */
-export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleMode = "fixedauto" }) {
-  const texCache = new Map();
-  const canvases = []; // { json, obj, sort, top, cw, ch, layoutRev, resolvedRev }
-  const widgets = []; // { json, obj, root }（Widget + 布局容器，锚点/布局解析对象）
-  const byId = new Map();
-  const clickHandlers = new Map(); // 按钮节点 id → Set<cb>
-  const topRoots = []; // 顶层画布根（主渲染隐藏；endRender 恢复 + 叠加渲染）
-  let lastCam = null;
+export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleMode = "fixedauto" }: UICreateOptions): UISystem {
+  const texCache = new Map<string, Promise<THREE.Texture | null>>();
+  const canvases: UICanvasEntry[] = []; // { json, obj, sort, top, cw, ch, layoutRev, resolvedRev }
+  const widgets: UIWidgetEntry[] = []; // { json, obj, root }（Widget + 布局容器，锚点/布局解析对象）
+  const byId = new Map<string | undefined, SceneNodeEntry>();
+  const clickHandlers = new Map<string | undefined, Set<() => void>>(); // 按钮节点 id → Set<cb>
+  const topRoots: UICanvasEntry[] = []; // 顶层画布根（主渲染隐藏；endRender 恢复 + 叠加渲染）
+  let lastCam: THREE.Camera | null = null;
   // 统一缩放模式（来自项目设置；所有画布共用，不再逐画布独立）
   const uiScaleMode = scaleModeOf(globalScaleMode);
 
@@ -472,7 +645,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   // 画布：顶层判定（父链无其它画布即顶层根）+ 排序/首 pass 标注 + 树序 rank
   for (const c of canvases) {
     let top = true;
-    let p = c.obj.parent;
+    let p: THREE.Object3D | null = c.obj.parent;
     while (p) {
       if (p.userData?.nodeKind === "uiCanvasNode") {
         top = false;
@@ -488,7 +661,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
       topRoots.push(c);
       // 树序（先序）：渲染序同 SortOrder 时的稳定细分（越靠后越在上层）
       let rank = 0;
-      const walk = (o) => {
+      const walk = (o: THREE.Object3D): void => {
         for (const child of o.children) {
           if (UI_POSITION_KINDS.has(child.userData?.nodeKind)) child.userData.uiTreeRank = rank++;
           walk(child);
@@ -499,8 +672,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 父链最近的画布顶层根（无则 null；画布外 Widget 不参与叠加序合成） */
-  function nearestRoot(obj) {
-    let p = obj.parent;
+  function nearestRoot(obj: THREE.Object3D): THREE.Object3D | null {
+    let p: THREE.Object3D | null = obj.parent;
     while (p) {
       if (p.userData?.uiCanvasRoot === true) return p;
       p = p.parent;
@@ -508,12 +681,12 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     return null;
   }
 
-  function applyOrder(w) {
+  function applyOrder(w: UIWidgetEntry): void {
     const root = nearestRoot(w.obj);
     w.root = root;
     // 层级继承：自身 + 父链祖先 sortOrder 累加（改父值整棵子树随之移动），与编辑器同公式
     let sort = clampSort(w.json.sortOrder, 0);
-    for (let cur = w.obj.parent; cur && cur !== root; cur = cur.parent) {
+    for (let cur: THREE.Object3D | null = w.obj.parent; cur && cur !== root; cur = cur.parent) {
       const ancestor = cur.userData?.nodeId != null ? byId.get(cur.userData.nodeId) : undefined;
       if (ancestor) sort += clampSort(ancestor.json.sortOrder, 0);
     }
@@ -531,7 +704,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
 
   /** 每帧（渲染前）：画布根贴合相机 + 锚点/布局解析（脚本/动画已更新相机位姿之后调用）。
    *  解析按版本缓存（layoutRev，updateSettings 触发递增）——静态 UI 每帧零解析成本 */
-  function update(cam) {
+  function update(cam: THREE.Camera | null): void {
     if (!cam) return;
     lastCam = cam;
     cam.updateMatrixWorld();
@@ -554,11 +727,12 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
       const ch = num(c.json.designHeight, 720) / UI_PPU;
       // 锚点解析在屏幕尺寸矩形内：rootRect = screenRect / s
       // 经 glue 缩放 s 后覆盖满视野 → 锚点定位到屏幕像素（所有模式统一）
-      const camAspect = cam.isOrthographicCamera === true
+      const persp = cam as THREE.PerspectiveCamera; // 非正交分支按透视消费 aspect（运行时仅正交/透视两类相机）
+      const camAspect = isOrthoCamera(cam)
         ? (Math.abs(cam.top - cam.bottom) > 1e-6
             ? Math.abs(cam.right - cam.left) / Math.abs(cam.top - cam.bottom)
             : 1)
-        : (cam.aspect > 0 ? cam.aspect : 1);
+        : (persp.aspect > 0 ? persp.aspect : 1);
       const sw = UI_HALF_HEIGHT * 2 * camAspect;
       const sh = UI_HALF_HEIGHT * 2;
       const s = canvasModeScale(uiScaleMode, sw, sh, cw, ch);
@@ -574,7 +748,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
    * 布局容器的直接子节点位置由 applyLayout 接管（anchoredPosition 不生效）；
    * 普通容器（嵌套画布/空组）矩形按其位置平移后下传。
    */
-  function resolveSubtree(owner, rect, ownerIsLayout) {
+  function resolveSubtree(owner: THREE.Object3D, rect: Rect, ownerIsLayout: boolean): void {
     for (const child of owner.children) {
       const kind = child.userData?.nodeKind;
       if (!UI_POSITION_KINDS.has(kind)) {
@@ -589,8 +763,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
       }
       const entry = byId.get(child.userData.nodeId);
       if (!entry) continue;
-      const t = entry.json.transform ?? {};
-      const s = t.scale ?? {};
+      const t = (entry.json.transform ?? {}) as TransformJson; // NodeJson.transform 索引签名 → 收窄到本文件消费的 scale 分量
+      const s: Vec3Json = t.scale ?? {};
       const design = vec2Of(entry.json.size, 1, 1);
       let r;
       if (ownerIsLayout) {
@@ -615,7 +789,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 布局容器排列直接子 UI 节点（容器局部空间；mode=none 时子节点走锚点定位） */
-  function applyLayout(container, json, rect) {
+  function applyLayout(container: THREE.Object3D, json: NodeJson, rect: Rect): void {
     const mode = layoutModeOf(json.layoutMode);
     if (mode === "none") return;
     const kids = [];
@@ -643,14 +817,14 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     }
   }
 
-  let hiddenRoots = null;
+  let hiddenRoots: THREE.Object3D[] | null = null;
 
   /**
    * 主渲染前：隐藏全部可见的顶层画布根（返回隐藏数量；0 = 无 UI 可跳过 endRender）。
    * UI 不参与主渲染（含分层多 pass）——后续 pass 不清屏重画其它层对象会踩掉 UI；
    * 主渲染完成后调用 endRender 恢复可见并做专属叠加渲染。
    */
-  function beginRender() {
+  function beginRender(): number {
     if (topRoots.length === 0) return 0;
     hiddenRoots = [];
     for (const c of topRoots) {
@@ -663,20 +837,20 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 主渲染后：恢复画布根可见；只保留画布祖先链可见做一次不清屏叠加渲染 */
-  function endRender(cam) {
+  function endRender(cam: THREE.Camera | null): void {
     const roots = hiddenRoots;
     hiddenRoots = null;
     if (!roots || roots.length === 0 || !render) return;
     for (const root of roots) root.visible = true;
-    const keep = new Set();
+    const keep = new Set<THREE.Object3D>();
     for (const root of roots) {
-      let cur = root;
+      let cur: THREE.Object3D | null = root;
       while (cur) {
         keep.add(cur);
         cur = cur.parent;
       }
     }
-    const hiddenOthers = [];
+    const hiddenOthers: THREE.Object3D[] = [];
     if (scene) {
       for (const child of scene.children) {
         if (!keep.has(child) && child.visible) {
@@ -693,14 +867,15 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 图片/按钮背景贴图异步回填（资产已在导出产物内，按相对路径 fetch） */
-  async function applyTextures() {
+  async function applyTextures(): Promise<void> {
     for (const w of widgets) {
       if (w.json.type !== "uiImageNode" && w.json.type !== "uiButtonNode") continue;
       const rel = typeof w.json.image === "string" ? w.json.image : "";
       if (!rel) continue;
       const tex = await loadImageTex(texCache, rel, true);
       if (!tex) continue;
-      const mat = w.obj.material;
+      // image/button 的 obj 恒为 Mesh（buildUIImage/buildUIButton 产出）
+      const mat = (w.obj as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.map = tex;
       mat.needsUpdate = true;
     }
@@ -709,20 +884,21 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   // —— tve SDK 转发（engine.ui）——
 
   /** UI 节点设置快照（非 UI 节点返回 null） */
-  function settingsOf(id) {
+  function settingsOf(id: string): UICanvasSettings | UIWidgetSettings | null {
     const entry = byId.get(id);
     if (!entry) return null;
     const { json } = entry;
     if (json.type === "uiCanvasNode") {
       return {
-        sortOrder: json.sortOrder ?? 0,
+        // 场景文件中 sortOrder 恒为数字；nullish 缺省 → 0（断言仅类型面放行 ?? 结果）
+        sortOrder: (json.sortOrder ?? 0) as number,
         designWidth: num(json.designWidth, 1280),
         designHeight: num(json.designHeight, 720),
         scaleMode: typeof json.scaleMode === "string" ? json.scaleMode : "fixedauto",
       };
     }
     if (!UI_POSITION_KINDS.has(json.type)) return null;
-    const snap = {
+    const snap: UIWidgetSettings = {
       sortOrder: clampSort(json.sortOrder, 0),
       opacity: opacityOf(json.opacity),
       size: { ...vec2Of(json.size, 2, 2) },
@@ -764,7 +940,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 单个 Widget 重排（sortOrder/父画布变化后重算渲染序） */
-  function reapplyWidget(w) {
+  function reapplyWidget(w: UIWidgetEntry): void {
     const c = canvases.find((x) => x.obj === nearestRoot(w.obj));
     if (c) {
       c.sort = clampCanvasSort(c.json.sortOrder, 0);
@@ -773,20 +949,23 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     applyOrder(w);
   }
 
-  function rebuildGeometry(w, size) {
-    for (const mesh of [w.obj, ...w.obj.children.filter((c) => c.name === UI_LABEL_CHILD_NAME)]) {
+  function rebuildGeometry(w: UIWidgetEntry, size: Vec2): void {
+    for (const o of [w.obj, ...w.obj.children.filter((c) => c.name === UI_LABEL_CHILD_NAME)]) {
+      // Widget 主体与 __uiLabel 子网格均为 Mesh（buildUIImage/buildUIButton 产出）
+      const mesh = o as THREE.Mesh;
       mesh.geometry?.dispose();
       mesh.geometry = planeOf(size);
       mesh.userData.uiSizeSig = `${size.x}|${size.y}`;
     }
   }
 
-  function rebuildText(w, style, size) {
+  function rebuildText(w: UIWidgetEntry, style: UITextStyle, size: Vec2): void {
     const target = w.json.type === "uiButtonNode"
       ? w.obj.children.find((c) => c.name === UI_LABEL_CHILD_NAME)
       : w.obj;
     if (!target) return;
-    const mat = target.material;
+    // 文本承载网格均为 Mesh（button 取 __uiLabel 子网格，text 取主体）
+    const mat = (target as THREE.Mesh).material as THREE.MeshBasicMaterial;
     const old = mat.map;
     mat.map = buildUITextTexture(style, vec2Of(size, 4, 1));
     mat.needsUpdate = true;
@@ -796,8 +975,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** Widget/容器所属的顶层画布条目（布局版本递增用） */
-  function topCanvasOf(obj) {
-    let cur = obj;
+  function topCanvasOf(obj: THREE.Object3D): UICanvasEntry | null {
+    let cur: THREE.Object3D | null = obj;
     while (cur) {
       const c = canvases.find((x) => x.obj === cur);
       if (c && c.top) return c;
@@ -807,7 +986,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 画布设置合并（运行态生效，不回写场景文件） */
-  function updateCanvasSettings(c, patch) {
+  function updateCanvasSettings(c: UICanvasEntry, patch: Record<string, unknown>): void {
     const j = c.json;
     let layoutChanged = false;
     for (const [k, v] of Object.entries(patch)) {
@@ -836,22 +1015,23 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
    * （designWidth/designHeight/scaleMode）/ image / color / text / fontSize /
    * bold / italic / fontFamily / align / label / labelColor / labelBold / interactable。
    */
-  function updateSettings(id, patch) {
+  function updateSettings(id: string, patch: unknown): void {
     if (!patch || typeof patch !== "object") return;
+    const rec = patch as Record<string, unknown>; // 已过 object 守卫，索引签名放行逐键收敛
     const c = canvases.find((x) => x.json.id === id);
     if (c) {
-      updateCanvasSettings(c, patch);
+      updateCanvasSettings(c, rec);
       return;
     }
     const w = widgets.find((x) => x.json.id === id);
     if (!w) return;
     const j = w.json;
-    const restyleText = {};
+    const restyleText: Record<string, unknown> = {};
     let sizeChanged = false;
     let orderChanged = false;
     let imageChanged = false;
     let layoutChanged = false;
-    for (const [k, v] of Object.entries(patch)) {
+    for (const [k, v] of Object.entries(rec)) {
       switch (k) {
         case "sortOrder":
           if (typeof v === "number" && clampSort(v) !== clampSort(j.sortOrder, 0)) {
@@ -915,7 +1095,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
         case "padding":
           if (j.type === "uiLayoutNode") {
             const cur = paddingOf(j.padding);
-            j.padding = paddingOf({ ...cur, ...v });
+            // v 保持原 spread 语义（null/原始值展开为空对象）；断言仅类型面放行展开
+            j.padding = paddingOf({ ...cur, ...(v as UnknownRec) });
             layoutChanged = true;
           }
           break;
@@ -941,17 +1122,26 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
           break;
         case "color":
           if (j.type !== "uiTextNode" && j.type !== "uiLayoutNode") {
-            j.color = colorOf(v, j.color);
-            w.obj.material.color.setHex(colorOf(v, j.color));
+            // colorOf 对非数字 v 原样返回 fallback（j.color 未收敛时透传）；只算一次与原两处调用同值
+            const col = colorOf(v, j.color as number);
+            j.color = col;
+            // image/button 的 obj 恒为 Mesh（buildUIImage/buildUIButton 产出）
+            ((w.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setHex(col);
           }
           break;
         case "opacity": {
           // Widget 材质透明度（按钮：背景 + 标签子网格跟随；布局容器无渲染材质，仅存档）
           if (typeof v === "number" && Number.isFinite(v)) {
             j.opacity = Math.min(1, Math.max(0, v));
-            if (w.obj.material) w.obj.material.opacity = j.opacity;
+            // Widget 主体为 Mesh（layout 容器为 Group，此处 material 为 undefined 跳过）
+            const mat = (w.obj as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+            if (mat) mat.opacity = j.opacity as number; // 上一行已收敛为数字
             for (const c of w.obj.children) {
-              if (c.userData?.uiRenderable === true && c.material) c.material.opacity = j.opacity;
+              if (c.userData?.uiRenderable === true) {
+                // __uiLabel 标签子网格为 Mesh
+                const cm = (c as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+                if (cm) cm.opacity = j.opacity as number; // 已收敛为数字
+              }
             }
           }
           break;
@@ -1000,7 +1190,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
           break;
         case "labelColor":
           if (j.type === "uiButtonNode" && typeof v === "number") {
-            j.labelColor = colorOf(v, j.labelColor);
+            // colorOf 对非数字 v 原样返回 fallback（j.labelColor 未收敛时透传）
+            j.labelColor = colorOf(v, j.labelColor as number);
             restyleText.labelColor = j.labelColor;
           }
           break;
@@ -1027,7 +1218,8 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     }
     if (imageChanged) {
       const rel = typeof j.image === "string" ? j.image : "";
-      const mat = w.obj.material;
+      // image/button 的 obj 恒为 Mesh（buildUIImage/buildUIButton 产出）
+      const mat = (w.obj as THREE.Mesh).material as THREE.MeshBasicMaterial;
       if (!rel) {
         mat.map = null;
         mat.needsUpdate = true;
@@ -1043,27 +1235,29 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 订阅按钮点击（返回解绑函数；非按钮/不可交互返回空解绑） */
-  function onClick(id, cb) {
+  function onClick(id: string, cb: unknown): () => void {
     if (typeof cb !== "function") return () => {};
+    const fn = cb as () => void; // 已过 typeof function 守卫
     const w = widgets.find((x) => x.json.id === id);
     if (!w || w.json.type !== "uiButtonNode") return () => {};
     let set = clickHandlers.get(id);
     if (!set) {
-      set = new Set();
+      set = new Set<() => void>();
       clickHandlers.set(id, set);
     }
-    set.add(cb);
-    return () => set.delete(cb);
+    set.add(fn);
+    return () => set.delete(fn);
   }
 
-  function offClick(id, cb) {
-    clickHandlers.get(id)?.delete(cb);
+  function offClick(id: string, cb: unknown): void {
+    // 非 function 值在 Set 中不存在、删除为 no-op；断言仅类型面
+    clickHandlers.get(id)?.delete(cb as () => void);
   }
 
   // —— 按钮点击命中（指针 → NDC → 画布空间 → 按渲染序取最上层命中矩形）——
 
-  function chainVisible(obj) {
-    let cur = obj;
+  function chainVisible(obj: THREE.Object3D): boolean {
+    let cur: THREE.Object3D | null = obj;
     while (cur) {
       if (cur.visible === false) return false;
       cur = cur.parent;
@@ -1071,8 +1265,9 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     return true;
   }
 
-  function pointerNdc(e) {
-    const rect = canvas.getBoundingClientRect();
+  function pointerNdc(e: PointerEvent): { x: number; y: number } | null {
+    // 指针事件仅在 canvas 存在时注册（见底部 addEventListener），此处直接解引用
+    const rect = canvas!.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return null;
     return {
       x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -1081,23 +1276,26 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
   }
 
   /** 指针 NDC → 画布根本地空间点（贴合矩阵的逆：世界点 ÷ 画布贴合缩放） */
-  function uiPointFor(root, ndc) {
+  function uiPointFor(root: THREE.Object3D | null, ndc: { x: number; y: number }): { x: number; y: number } | null {
     const cam = lastCam;
     if (!cam || !root) return null;
     const c = canvases.find((x) => x.obj === root);
     const cw = c ? num(c.json.designWidth, 1280) / UI_PPU : UI_HALF_HEIGHT * 2;
     const ch = c ? num(c.json.designHeight, 720) / UI_PPU : UI_HALF_HEIGHT * 2;
     const mode = uiScaleMode;
-    let wx; let wy;
-    if (cam.isOrthographicCamera === true) {
+    let wx: number;
+    let wy: number;
+    if (isOrthoCamera(cam)) {
       const s0 = Math.abs(cam.top) > 1e-6 ? Math.abs(cam.top) / UI_HALF_HEIGHT : 1;
       wx = (ndc.x * Math.abs(cam.right)) / s0;
       wy = (ndc.y * cam.top) / s0;
     } else {
-      const fovDeg = cam.fov > 0 ? cam.fov : 50;
+      // 非正交分支按透视消费 fov/aspect（运行时仅正交/透视两类相机）
+      const persp = cam as THREE.PerspectiveCamera;
+      const fovDeg = persp.fov > 0 ? persp.fov : 50;
       const tanHalf = Math.tan((fovDeg * Math.PI) / 360);
       const d = UI_HALF_HEIGHT / tanHalf;
-      wx = ndc.x * tanHalf * (cam.aspect > 0 ? cam.aspect : 1) * d;
+      wx = ndc.x * tanHalf * (persp.aspect > 0 ? persp.aspect : 1) * d;
       wy = ndc.y * tanHalf * d;
     }
     // 画布贴合缩放（含缩放模式）：世界标尺 → 画布本地坐标（与 update 的 glue 同一数学）
@@ -1105,7 +1303,7 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     return { x: wx / s.sx, y: wy / s.sy };
   }
 
-  function dispatchClick(e) {
+  function dispatchClick(e: PointerEvent): void {
     const cam = lastCam;
     if (!cam) return;
     const ndc = pointerNdc(e);
@@ -1114,10 +1312,12 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
       .filter((w) => w.json.type === "uiButtonNode" && w.json.interactable !== false && w.root && chainVisible(w.obj))
       .sort((a, b) => b.obj.renderOrder - a.obj.renderOrder);
     for (const w of hittable) {
-      const p = uiPointFor(w.root, ndc);
+      // filter 谓词已确保 w.root 非空（画布顶层根）
+      const root = w.root as THREE.Object3D;
+      const p = uiPointFor(root, ndc);
       if (!p) continue;
       // 画布空间点 → 世界（画布根矩阵）→ 按钮本地（按钮世界矩阵逆），做矩形命中
-      _v.set(p.x, p.y, 0).applyMatrix4(w.root.matrixWorld);
+      _v.set(p.x, p.y, 0).applyMatrix4(root.matrixWorld);
       _inv.copy(w.obj.matrixWorld).invert();
       _v.applyMatrix4(_inv);
       const size = vec2Of(w.json.size, 2, 2);
@@ -1137,11 +1337,11 @@ export function createUI({ nodes, canvas, scene, render, scaleMode: globalScaleM
     }
   }
 
-  let downPos = null;
-  const onDown = (e) => {
+  let downPos: { x: number; y: number } | null = null;
+  const onDown = (e: PointerEvent): void => {
     downPos = { x: e.clientX, y: e.clientY };
   };
-  const onUp = (e) => {
+  const onUp = (e: PointerEvent): void => {
     if (!downPos) return;
     const dx = e.clientX - downPos.x;
     const dy = e.clientY - downPos.y;
