@@ -143,7 +143,8 @@ function callLifecycle(record: ScriptRecord, method: string, ...args: unknown[])
   const fn = record.inst[method];
   if (typeof fn !== "function") return;
   try {
-    (fn as (...a: unknown[]) => void)(...args);
+    // 必须以实例为接收者调用（用户脚本在 onStart/onUpdate 里读 this.entity 等）
+    (fn as (...a: unknown[]) => void).apply(record.inst, args);
   } catch (e) {
     record.dead = true;
     postLog("error", `[脚本] ${record.script} ${method}() 出错（已停用）: ${errText(e)}`);
@@ -548,7 +549,7 @@ export async function createScripts({
       }
       if (typeof record.inst.onGraphInput === "function") {
         try {
-          (record.inst.onGraphInput as (v: unknown) => void)(converted);
+          (record.inst.onGraphInput as (v: unknown) => void).call(record.inst, converted);
         } catch (e) {
           if (!graphInputWarned.has(record.script)) {
             graphInputWarned.add(record.script);
