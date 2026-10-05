@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use super::classify::scene_entry_name;
-use super::job::PackedScene;
+use crate::build::job::PackedScene;
 use super::release::apply_release;
 
 /// 单场景并行收集结果
@@ -36,7 +36,7 @@ fn collect_scene_inputs(root: &Path, scenes: &[String]) -> Result<Vec<SceneInput
                 .map_err(|e| format!("读取场景失败 '{rel}': {e}"))?;
             let mut text_assets: HashMap<String, String> = HashMap::new();
             let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
-            let missing = crate::preview::collect_scene_assets(root, &text, &mut text_assets, &mut binaries);
+            let missing = crate::scene_pack::collect_scene_assets(root, &text, &mut text_assets, &mut binaries);
             Ok::<_, String>(SceneInput {
                 rel: rel.clone(),
                 text,
@@ -49,7 +49,7 @@ fn collect_scene_inputs(root: &Path, scenes: &[String]) -> Result<Vec<SceneInput
 }
 
 /// 导出内容清单：渠道包装阶段的唯一内容来源（两渠道同源同构）
-pub(super) struct ContentManifest {
+pub(in crate::build) struct ContentManifest {
     /// 场景清单（name/rel/file；重名自动加序号）
     pub packed: Vec<PackedScene>,
     /// 产物内场景键（scenes/<名>.json）→ 场景 JSON 文本
@@ -69,7 +69,7 @@ pub(super) struct ContentManifest {
 /// 构建导出内容：收集 + 合并去重（or_insert 保留首次）+ 场景名去重（串行累积，
 /// 重名自动加序号）+ release 处理（uid 重命名只作用于资产键——运行时键经
 /// is_runtime_code 过滤天然排除，渠道传入与否不影响结果）
-pub(super) fn build_content(
+pub(in crate::build) fn build_content(
     root: &Path,
     scenes: &[String],
     release: bool,

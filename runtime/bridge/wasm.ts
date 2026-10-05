@@ -11,6 +11,7 @@
 import { bridgeActive, host } from "./host.ts";
 import { setGlobal } from "./install.ts";
 import { bridgeLog } from "./log.ts";
+import { TVE_INSTANTIATE_WASM_FILE } from "./protocol.ts";
 
 /**
  * 组装 WebAssembly 垫片（纯函数，便于契约测试）。
@@ -105,7 +106,8 @@ export function installWasmShim() {
 
   // 包内路径实例化钩子（构建期改写的引擎胶水直连：rapier/jolt/ammo/meshopt）：
   // __tveInstantiateWasmFile(path, imports) → Promise<{module, instance}>
-  setGlobal("__tveInstantiateWasmFile", (path, imports) => {
+  // （钩子名与改写方见 ./protocol.ts：web=wasm-fileize.mjs、微信=wechat.mjs）
+  setGlobal(TVE_INSTANTIATE_WASM_FILE, (path, imports) => {
     const result = instantiateBound(path, imports);
     if (result === null) {
       return Promise.reject(new Error(`[runtime-bridge] 平台不支持 wasm 路径实例化: ${path}`));

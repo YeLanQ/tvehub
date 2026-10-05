@@ -4,8 +4,8 @@
 // .wasm 文件——rapier/jolt 胶水体量从 2.8/3.2MB 降到百 KB 级，浏览器可缓存、
 // 可并行加载，主线程与物理 Worker 走同一钩子链路。
 //
-// 改写目标 = 全局钩子 __tveInstantiateWasmFile(path, imports)（与微信渠道桥接层
-// runtime/bridge/wasm.ts 同一契约，安装方）：
+// 改写目标 = 全局钩子 __tveInstantiateWasmFile(path, imports)（协议见
+// runtime/bridge/protocol.ts，安装方）：
 // - web 播放器主线程与物理 Worker：src/runtime/runtime/physics.ts 顶层安装
 //   （实现见 src/framework/physics/wasm-file-hook.ts：主线程按文档地址解析、
 //   Worker 按 worker 脚本上两级解析）；编辑器 canvas 由 ammoBackend 安装；
@@ -13,34 +13,24 @@
 // 路径形态 = 产物根相对（如 "engine/runtime/physics-engines/rapier.wasm"），
 // 主线程/Worker 各自解析出绝对地址；单页模式被资产 fetch 垫片命中（内联资产表）。
 //
-// 锚点断言命中次数，失配即构建失败（上游产物更新时人工核对再扩展锚点）。
+// 锚点清单（lib/anchor.mjs replaceExact 的 label 索引）：
+// - rapier: "rapier 内嵌 base64 锚点"（+ indexOf 定位与闭合校验）、
+//   "rapier fetch 分发锚点"（R2 内嵌 minified 布尔分发长串——上游重打包即失配）、
+//   "rapier load IIFE 整体替换锚点"
+// - jolt: "jolt 工厂入口锚点"、"jolt 内嵌字节串剥除锚点"（+ 单引号串扫描）
+//
 // 用法：engine.mjs 构建链内调用 fileizePhysicsEngines()（copyExtraAssets 之后）。
 // ---------------------------------------------------------------------------
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+import { replaceExact, assertWasmMagic } from "./lib/anchor.mjs";
+import { writeIfChanged } from "./lib/fs.mjs";
+import { ENGINE_DIR, ROOT } from "./lib/paths.mjs";
+import { TVE_INSTANTIATE_WASM_FILE, physicsEnginePath } from "../bridge/protocol.ts";
+
 const EXTRA_DIR = path.join(ROOT, "src", "runtime", "extra", "runtime", "physics-engines");
-const OUT_DIR = path.join(ROOT, "public", "engine", "runtime", "physics-engines");
-
-/** 断言 wasm 魔数（\0asm + 版本 1），抽取正确性的最后防线 */
-export function assertWasmMagic(bytes, label) {
-  const magic = [0, 0x61, 0x73, 0x6d];
-  for (let i = 0; i < 4; i++) {
-    if (bytes[i] !== magic[i]) throw new Error(`[wasm-fileize] ${label} wasm 魔数不符（抽取逻辑漂移）`);
-  }
-  if (bytes[4] !== 1) throw new Error(`[wasm-fileize] ${label} wasm 版本非 1`);
-}
-
-/** 精确锚点替换：命中次数不符即抛错（期望默认 1 次） */
-export function replaceExact(text, anchor, replacement, label, expect = 1) {
-  const count = text.split(anchor).length - 1;
-  if (count !== expect) {
-    throw new Error(`[wasm-fileize] ${label} 锚点命中 ${count} 次（期望 ${expect}），产物源可能已变化，请人工核对`);
-  }
-  return text.split(anchor).join(replacement);
-}
+const OUT_DIR = path.join(ENGINE_DIR, "runtime", "physics-engines");
 
 /** 单引号字符串字面量扫描：返回含引号的完整区间终点（处理反斜杠转义） */
 function scanSingleQuotedEnd(text, startIdx) {
@@ -60,7 +50,7 @@ function scanSingleQuotedEnd(text, startIdx) {
 /** rapier 定点改写（compat 构建内嵌 base64 → 包外文件路径 + 钩子分发）。
  *  同时把解码出的 wasm 字节写入 wasmOut（落盘 rapier.wasm）。 */
 export function transformRapier(text, wasmOut) {
-  const PATH = "engine/runtime/physics-engines/rapier.wasm";
+  const PATH = physicsEnginePath("rapier.wasm");
   // R1：默认 init 的内嵌 base64 → 路径字符串（胶水减重 ~2.2MB）。
   // 源形态为 ng.toByteArray("<b64>").buffer —— 尾部 .buffer 一并替换为纯路径串
   const r1Start = text.indexOf('ng.toByteArray("');
@@ -85,7 +75,7 @@ export function transformRapier(text, wasmOut) {
   out = replaceExact(
     out,
     R2,
-    R2.replace("fetch(A)", "globalThis.__tveInstantiateWasmFile(A,I)"),
+    R2.replace("fetch(A)", `globalThis.${TVE_INSTANTIATE_WASM_FILE}(A,I)`),
     "rapier fetch 分发锚点",
   );
   // R3：load IIFE（Response/bytes 分支链）整体替换为直收钩子结果
@@ -105,13 +95,14 @@ export function transformRapier(text, wasmOut) {
 /** jolt 定点改写：注入 emscripten 标准的 Module.instantiateWasm 钩子（钩子在位时
  *  emscripten 在 `if(d) return` 短路，内嵌字节串永不使用）+ 剥内嵌字节串并抽取
  *  wasm 字节。node 环境分支保留（web 产物恒非 node，死代码无害；微信渠道的 CJS
- *  预转换仍需自行剥除）。 */export function transformJolt(text, wasmOut) {
-  const PATH = "engine/runtime/physics-engines/jolt.wasm";
+ *  预转换仍需自行剥除）。 */
+export function transformJolt(text, wasmOut) {
+  const PATH = physicsEnginePath("jolt.wasm");
   const J1 = "async function Jolt(moduleArg={}){var Module=moduleArg;";
   const HOOK =
     `async function Jolt(moduleArg={}){var Module=moduleArg;` +
     `if(!Module.instantiateWasm){Module.instantiateWasm=function(imports,receiveInstance){` +
-    `return globalThis.__tveInstantiateWasmFile(${JSON.stringify(PATH)},imports).then(function(res){` +
+    `return globalThis.${TVE_INSTANTIATE_WASM_FILE}(${JSON.stringify(PATH)},imports).then(function(res){` +
     `receiveInstance(res.instance,res.module);return res.instance&&res.instance.exports;});};}`;
   let out = replaceExact(text, J1, HOOK, "jolt 工厂入口锚点");
   // J2：剥内嵌字节串（解码抽成 jolt.wasm 文件）
@@ -129,14 +120,6 @@ export function transformRapier(text, wasmOut) {
   assertWasmMagic(bytes, "jolt");
   wasmOut.push(bytes);
   return replaceExact(out, out.slice(j2Start, strEnd + 2), "na=void 0;", "jolt 内嵌字节串剥除锚点");
-}
-
-/** 内容一致才跳过写入（dev watcher 防抖：重复构建不更新 mtime） */
-function writeIfChanged(dest, buf) {
-  if (fs.existsSync(dest) && fs.readFileSync(dest).equals(buf)) return false;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.writeFileSync(dest, buf);
-  return true;
 }
 
 /** 从 extra 的 b64 模块抽取 ammo wasm 字节（Buffer） */

@@ -62,20 +62,34 @@ function fetchRuntimeText(url: string, cacheKey: string): Promise<string> {
   return p;
 }
 
+/** .wasm base64 缓存（key = fetch URL）：与文本缓存同策略——运行时文件随编辑器
+ *  打包内容不可变，而 base64 编码是 CPU 密集操作且产物体积大（三物理后端 +
+ *  draco/basis 解码器全开约 15MB base64），预览/构建反复导出时按 URL 记忆化，
+ *  每个文件整个应用生命周期内最多 fetch+编码一次。 */
+const runtimeWasmCache = new Map<string, Promise<string>>();
+
 /** .wasm 运行时文件：二进制经文本 IPC 会 UTF-8 损坏，改读 arrayBuffer 并以
  *  base64 进 files map（Rust 管线按 .wasm 键解码为二进制写盘）。 */
 function fetchRuntimeWasmBase64(url: string): Promise<string> {
-  return fetch(url).then(async (res) => {
-    if (!res.ok) throw new Error(`读取运行时失败: ${url} (${res.status})`);
-    const buf = await res.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    return btoa(binary);
-  });
+  let p = runtimeWasmCache.get(url);
+  if (!p) {
+    p = fetch(url).then(async (res) => {
+      if (!res.ok) {
+        runtimeWasmCache.delete(url); // 失败不缓存，下次重试
+        throw new Error(`读取运行时失败: ${url} (${res.status})`);
+      }
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    });
+    runtimeWasmCache.set(url, p);
+  }
+  return p;
 }
 
 /** 拉取指定渠道的运行时文本（base + 条件组，按清单 key 组装 files map） */

@@ -21,8 +21,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 项目根（本脚本位于 <root>/runtime/scripts/） */
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+import { ROOT } from "./lib/paths.mjs";
+import { PHYSICS_ENGINES_PREFIX } from "../bridge/protocol.ts";
 
 /** 运行时源目录（相对项目根；vite 插件据此挂文件监听） */
 export const CHANNEL_RUNTIME_ROOTS = [
@@ -34,8 +34,8 @@ export const CHANNEL_RUNTIME_ROOTS = [
 /** 生成清单的目标文件（相对项目根） */
 export const CHANNEL_RUNTIMES_PATH = "src/generated/channel-runtimes.ts";
 
-/** 物理引擎在清单键里的前缀（体积大，按后端分组按需打包） */
-const PHYSICS_PREFIX = "engine/runtime/physics-engines/";
+/** 物理引擎在清单键里的前缀（体积大，按后端分组按需打包；协议见 bridge/protocol.ts） */
+const PHYSICS_PREFIX = PHYSICS_ENGINES_PREFIX;
 
 /**
  * WebGPU 运行时文件（体积大：three 的 WebGPU 构建 + 粒子/材质 Hook 的节点
@@ -67,7 +67,7 @@ const EXPORT_EXCLUDED = new Set(["engine/runtime/loaders/draco/draco_decoder.js"
 
 /** 微信渠道随包的物理引擎文件前缀（CJS 预转换产物；键 = 产物内相对路径，
  *  前缀下第一段目录/文件名（剥 .js）即后端 id：rapier.js / jolt.js / ammo/**） */
-const WECHAT_PHYSICS_PREFIX = "engine/runtime/physics-engines/";
+const WECHAT_PHYSICS_PREFIX = PHYSICS_ENGINES_PREFIX;
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {

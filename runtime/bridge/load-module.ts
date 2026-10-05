@@ -2,13 +2,15 @@
 // 改写为 __tveLoadModule(spec)（引擎源零改动）。此处实现 spec → 包内 require：
 // 剥 tve: 前缀（scripts.ts 对内联数据形态恒发 tve:<rel>）、小写折叠（开发者工具
 // 包内注册表小写归一）、补 ./ 前缀（微信 require 需显式相对形态）。
+// 钩子名与前缀取自 ./protocol.ts（构建脚本改写侧同一事实源）。
 
 import { bridgeActive } from "./host.ts";
 import { setGlobal } from "./install.ts";
+import { TVE_LOAD_MODULE, TVE_SPEC_PREFIX } from "./protocol.ts";
 
 function normalizeSpec(spec) {
   let rel = String(spec ?? "").replace(/\\/g, "/");
-  if (rel.startsWith("tve:")) rel = rel.slice(4);
+  if (rel.startsWith(TVE_SPEC_PREFIX)) rel = rel.slice(TVE_SPEC_PREFIX.length);
   rel = rel.toLowerCase();
   if (!rel.startsWith("./") && !rel.startsWith("../")) rel = `./${rel}`;
   return rel;
@@ -20,7 +22,7 @@ function loadModule(spec) {
 
 export function installLoadModule() {
   if (!bridgeActive()) return;
-  setGlobal("__tveLoadModule", loadModule);
+  setGlobal(TVE_LOAD_MODULE, loadModule);
 }
 
 // 求值期安装（bootstrap 以 import 装配，见该文件说明）

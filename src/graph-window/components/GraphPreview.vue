@@ -11,19 +11,7 @@ import { api } from "../../lib/api";
 import { sceneApi } from "../../lib/scene-api";
 import { logStore } from "../../app/stores/log";
 import { getGraphWindowStore } from "../graphStore";
-import {
-  configPhysicsBackend,
-  configUsesDracoCompression,
-  configUsesPhysics,
-  configUsesTextureCompression,
-  configUsesWebgpu,
-  fetchWebPreviewRuntimeTexts,
-} from "../../app/lib/web-preview-runtime";
-import {
-  compileProjectScripts,
-  ensureEntryScript,
-  loadProjectScripts,
-} from "../../app/lib/script-compile";
+import { collectExportFiles } from "../../app/lib/build";
 
 const store = getGraphWindowStore();
 
@@ -38,49 +26,22 @@ let runSeq = 0;
 
 const previewUrl = computed(() => (baseUrl.value ? `${baseUrl.value}/index.html` : ""));
 
-/** 组装导出文件：网页运行时 + 项目配置（注入场景图标记）+ 用户脚本编译产物 */
+/** 组装导出文件（collect 单实现）：网页运行时 + 项目配置 + 场景图（图窗口
+ *  直出带格式版本/模块指纹的会话文档，不走磁盘侧车）+ 用户脚本编译产物 */
 async function buildExportFiles(): Promise<Record<string, string>> {
   const root = store.root;
   if (!root) throw new Error("尚未打开项目");
-  let configText = "{}";
-  try {
-    configText = await api.readText(root, "project.config.json");
-  } catch {
-    /* 无配置按未启用处理 */
-  }
-  const files = await fetchWebPreviewRuntimeTexts({
-    includePhysics: configUsesPhysics(configText),
-    physicsBackend: configPhysicsBackend(configText) ?? undefined,
-    includeWebgpu: configUsesWebgpu(configText),
-    includeDracoDecoder: configUsesDracoCompression(configText),
-    includeBasisDecoder: configUsesTextureCompression(configText),
+  return collectExportFiles({
+    root,
+    channel: "web",
+    mode: "preview",
+    // 场景图注入：带格式版本/模块指纹的会话文档 + config 标记（与侧车同源，
+    // player 检测到即装配行为解释器）；无画布会话时不注入
+    graph: store.canvas
+      ? { kind: "inline", text: JSON.stringify(store.stampedExportDoc()) }
+      : undefined,
+    logs: null,
   });
-  // 场景图注入：带格式版本/模块指纹的会话文档 + config 标记（与侧车同源，
-  // player 检测到即装配行为解释器）
-  if (store.canvas) {
-    files["script-graph.json"] = JSON.stringify(store.stampedExportDoc());
-    let cfg: Record<string, unknown> = {};
-    try {
-      cfg = JSON.parse(configText) as Record<string, unknown>;
-    } catch {
-      cfg = {};
-    }
-    cfg.scriptGraph = "./script-graph.json";
-    configText = JSON.stringify(cfg, null, 2);
-  }
-  files["config.json"] = configText;
-  // 用户脚本：按磁盘内容全量编译（图窗口无工作台脏状态，磁盘即真相）
-  try {
-    await ensureEntryScript(root);
-    const scripts = await loadProjectScripts(root);
-    if (scripts.length) {
-      const { files: jsFiles } = await compileProjectScripts(scripts);
-      Object.assign(files, jsFiles);
-    }
-  } catch {
-    /* 编译失败不阻断导出（运行时按无脚本运行） */
-  }
-  return files;
 }
 
 /** 导出并启动（首次进入/重试） */

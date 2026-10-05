@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "node scripts/sync-version.mjs && vitest run && vite",
     "check:layers": "node scripts/check-layers.mjs",
+    "check:surface": "node runtime/bridge/check-surface.mjs",
+    "test:bridge": "node runtime/bridge/bridge.spec.mjs",
     "build": "node scripts/sync-version.mjs && node runtime/scripts/engine.mjs && node runtime/scripts/wechat.mjs && node runtime/scripts/manifest.mjs && node scripts/sync-licenses.mjs && node scripts/gen-lan-theme.mjs && vue-tsc --noEmit && node scripts/check-layers.mjs && node scripts/audit/scan.mjs --no-cve && vitest run && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

@@ -16,19 +16,23 @@
 //!   包内注册表小写归一），经 tve.js 门面 require 引擎 API；
 //! - 工程文件（game.js/game.json/project.config.json）由 pack 子模块生成。
 //!
-//! 子模块：pack（包文件生成）、preflight（能力边界预检）；场景收集走共享
-//! 阶段 scene_collect，渠道无关阶段在 build 根的扁平模块。
+//! 子模块：pack（包文件生成）、preflight（能力边界预检）；场景收集走内容内核
+//! kernel::content，产物 config 组装走共享步骤 steps::config。
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::path::Path;
 
 use base64::Engine as _;
 
-use super::config::product_config;
-use super::content::build_content;
-use super::job::{BuildResult, JobCtx, Prepared};
-use super::release::minify_js_source;
-use super::ChannelPipeline;
+use crate::build::finalize::{
+    finish_result, main_scene_name, read_project_config, write_products, ResultDraft,
+};
+use crate::build::job::{BuildJob, BuildResult, JobCtx, Prepared};
+use crate::build::kernel::content::build_content;
+use crate::build::kernel::release::minify_js_source;
+use crate::build::options::{ResolvedChannel, WechatParams};
+use crate::build::pipeline::{progress, ChannelPipeline};
+use crate::build::steps::config::product_config;
 
 mod pack;
 mod preflight;
@@ -42,11 +46,32 @@ use self::preflight::preflight_project;
 pub struct WechatPipeline;
 
 impl ChannelPipeline for WechatPipeline {
-    fn build(&self, p: &Prepared, ctx: &JobCtx) -> Result<BuildResult, String> {
-        let job = &p.job;
+    fn id(&self) -> &'static str {
+        "wechat"
+    }
 
-        // 项目配置预检（v1 能力边界，前置到收集之前快速失败）
-        preflight_project(p.root_path.as_path())?;
+    fn resolve(&self, job: &BuildJob) -> ResolvedChannel {
+        // 方向归一化：trim + 小写，仅 landscape/portrait 两值（缺省 portrait）
+        let orientation = job
+            .wechat_orientation
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        ResolvedChannel::Wechat(WechatParams {
+            appid: job.wechat_appid.clone(),
+            orientation: if orientation == "landscape" { "landscape" } else { "portrait" }.to_string(),
+        })
+    }
+
+    fn preflight(&self, job: &BuildJob) -> Result<(), String> {
+        // 项目配置预检（v1 能力边界，构建期最早点快速失败）
+        preflight_project(Path::new(&job.root))
+    }
+
+    fn build(&self, p: &Prepared, ctx: &JobCtx) -> Result<BuildResult, String> {
+        let wechat = p.channel.wechat();
+        let job = &p.job;
 
         // —— 前端传入文件的分流：微信运行时 / 用户脚本 / 其余（仅允许 script-graph.json）——
         let mut runtime_files: HashMap<String, String> = HashMap::new();
@@ -81,28 +106,23 @@ impl ChannelPipeline for WechatPipeline {
         if ctx.cancelled() {
             return Err("任务已取消".into());
         }
-        ctx.progress(0.15, "收集场景与资产");
+        ctx.progress(progress::COLLECT, "收集场景与资产");
         let content = build_content(&p.root_path, &job.scenes, job.release)?;
 
         // release 一致性：用户脚本与 web 渠道同一压缩器同源压缩（此前仅 web 压缩）
         if job.release {
+            if ctx.cancelled() {
+                return Err("任务已取消".into());
+            }
             for text in user_scripts.values_mut() {
                 *text = minify_js_source(text);
             }
         }
-        ctx.progress(0.45, "组装内联数据");
+        ctx.progress(progress::ASSEMBLE, "组装内联数据");
 
         // 产物 config：项目配置 + 构建入口（mainScene/scenes/debug/scriptGraph）
-        let project_cfg: serde_json::Value = fs::read_to_string(p.root_path.join("project.config.json"))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or(serde_json::Value::Null);
-        let main_name = content
-            .packed
-            .iter()
-            .find(|s| s.rel == p.main_scene)
-            .map(|s| s.name.clone())
-            .unwrap_or_default();
+        let project_cfg = read_project_config(&p.root_path);
+        let main_name = main_scene_name(&content.packed, &p.main_scene);
         // script-graph 检测沿用 config.rs 语义（files 键存在即标记）；微信无 gzip 基址
         let mut cfg_input = extra.clone();
         for (rel, text) in &content.text_assets {
@@ -133,19 +153,13 @@ impl ChannelPipeline for WechatPipeline {
         asset_files.sort_by(|a, b| a.0.cmp(&b.0));
 
         // —— 包组装 ——
-        let orientation = job
-            .wechat_orientation
-            .as_deref()
-            .map(str::trim)
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_default();
-        let orientation = if orientation == "landscape" { "landscape" } else { "portrait" };
+        let orientation = wechat.orientation.as_str();
         let project_name = p
             .root_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "tve-game".to_string());
-        let appid = resolve_appid(job.wechat_appid.as_deref(), &p.out);
+        let appid = resolve_appid(wechat.appid.as_deref(), &p.out);
 
         let mut package: HashMap<String, String> = HashMap::new();
         let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
@@ -153,6 +167,9 @@ impl ChannelPipeline for WechatPipeline {
             // .wasm 运行时文件（物理引擎）经前端 base64 传入：文本 IPC 通道会
             // UTF-8 损坏二进制，此处解码进 binaries 按字节写盘
             if rel.ends_with(".wasm") {
+                if ctx.cancelled() {
+                    return Err("任务已取消".into());
+                }
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(text.as_bytes())
                     .map_err(|e| format!("微信运行时 wasm 文件 base64 解码失败 '{rel}': {e}"))?;
@@ -172,14 +189,14 @@ impl ChannelPipeline for WechatPipeline {
         }
         package.insert("game.js".to_string(), game_js());
         package.insert("data.js".to_string(), data_js(cfg, &entries, &asset_files)?);
-        package.insert("game.json".to_string(), game_json(orientation));
+        package.insert("game.json".to_string(), game_json(orientation)?);
         package.insert(
             "project.config.json".to_string(),
-            project_config_json(&project_name, &appid),
+            project_config_json(&project_name, &appid)?,
         );
         package.insert(
             "project.private.config.json".to_string(),
-            project_private_config_json(&project_name),
+            project_private_config_json(&project_name)?,
         );
         package.insert("README.txt".to_string(), readme(&appid, orientation));
         // 包体积不做构建期限制：由微信开发者工具在预览/上传发布时按其规则判定
@@ -187,9 +204,8 @@ impl ChannelPipeline for WechatPipeline {
         let total_kb = (package.values().map(|t| t.len()).sum::<usize>()
             + binaries.values().map(|b| b.len()).sum::<usize>())
             / 1024;
-        ctx.progress(0.9, "写入产物");
-        crate::preview::write_export_dir(&p.out, package, &binaries)
-            .map_err(|e| format!("写入构建产物失败: {e}"))?;
+        // 写盘（公共收尾：取消检查 + 写入锚点 + 原子换入）
+        write_products(p, package, &binaries, ctx)?;
 
         let mut message = format!(
             "构建完成（appid: {appid}，方向: {orientation}；数据全内联，主包 {total_kb}KB）"
@@ -197,22 +213,20 @@ impl ChannelPipeline for WechatPipeline {
         if !content.missing.is_empty() {
             message.push_str(&format!("（{} 项缺失资产被跳过）", content.missing.len()));
         }
-        Ok(BuildResult {
-            ok: true,
-            channel: job.channel.clone(),
-            output_dir: p.out.display().to_string(),
-            main_scene: p.main_scene.clone(),
-            main_scene_name: main_name,
-            scenes: content.packed,
-            single_page: false,
-            gzip: false,
-            release: job.release,
-            cdn: false,
-            bin_converted: content.bin_converted,
-            assets_packed: content.assets_packed,
-            missing: content.missing,
-            message,
-        })
+        Ok(finish_result(
+            p,
+            ResultDraft {
+                packed: content.packed,
+                main_name,
+                bin_converted: content.bin_converted,
+                assets_packed: content.assets_packed,
+                missing: content.missing,
+                single_page: false,
+                gzip: false,
+                cdn: false,
+                message,
+            },
+        ))
     }
 }
 

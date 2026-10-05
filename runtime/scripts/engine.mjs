@@ -32,14 +32,12 @@
 import { build } from "vite";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { vendorPreviewLoaders } from "./vendor-preview-loaders.mjs";
 import { fileizePhysicsEngines } from "./wasm-fileize.mjs";
+import { ENGINE_DIR, ROOT, RUNTIME_SRC } from "./lib/paths.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const ENGINE_DIR = path.join(ROOT, "public", "engine");
 const CORE_DIR = path.join(ENGINE_DIR, "core");
-const RUNTIME_SRC = path.join(ROOT, "src", "runtime");
 const EXTRA_SRC = path.join(RUNTIME_SRC, "extra");
 
 const BANNER =
@@ -220,19 +218,32 @@ function copyExtraAssets() {
   if (copied) console.log(`[build-runtime] extra 外部资产已拷出 ${copied} 个文件 → public/engine`);
 }
 
-/** 产物自检：无 import.meta.url 残留（单页内联 blob 安全）。
+/** 产物自检（吸收原 scripts/check-runtime.mjs 的全部断言，该游离脚本已删除）：
+ *  AUTO-GENERATED 横幅、无 import.meta.url 残留（单页内联 blob 安全）、无裸
+ *  three 说明符（外部化生效）、无裸说明符（预览运行时无打包器）。
  *  three 相对说明符仅对 import three 的产物校验（log/utils 等纯工具模块不 import three）。 */
 function verifyOutput(input) {
   for (const name of Object.keys(input)) {
     const file = path.join(ENGINE_DIR, `${name}.mjs`);
     if (!fs.existsSync(file)) throw new Error(`[build-runtime] 产物缺失: ${file}`);
     const text = fs.readFileSync(file, "utf8");
+    if (!text.startsWith("// AUTO-GENERATED")) {
+      throw new Error(`[build-runtime] 产物缺 AUTO-GENERATED 横幅（来源标记丢失）: ${file}`);
+    }
     if (text.includes("import.meta.url")) {
       throw new Error(`[build-runtime] 产物残留 import.meta.url（单页内联 blob 下会抛 Invalid URL）: ${file}`);
     }
     // 若产物引用了 three，校验说明符为相对路径（外部化生效）
     if (/from\s+["']three(?:\/webgpu)?["']/.test(text)) {
       throw new Error(`[build-runtime] 产物残留裸 three 说明符（外部化失效）: ${file}`);
+    }
+    // 裸说明符扫描（静态 import）：预览运行时无打包器，非相对/非 HTTP 说明符
+    // 浏览器无法解析——外部化漏网即在此暴露
+    for (const line of text.split("\n")) {
+      const m = line.match(/from\s+["']([^"']+)["']/);
+      if (m && !m[1].startsWith(".") && !m[1].startsWith("http")) {
+        throw new Error(`[build-runtime] 产物残留裸说明符 '${m[1]}'（外部化失效）: ${file}`);
+      }
     }
   }
 }
@@ -350,7 +361,7 @@ export function buildRuntime(why = "") {
   return inFlight;
 }
 
-// 直接执行（node scripts/build-runtime.mjs）时运行
+// 直接执行（node runtime/scripts/engine.mjs）时运行
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   buildRuntime("手动").catch((e) => {

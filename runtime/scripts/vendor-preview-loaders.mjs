@@ -4,37 +4,27 @@
 //   three.core.min.js 共享核心；three.webgpu.min.js = WebGPU 渲染器，同样依赖
 //   three.core.min.js，故两套渲染器共享同一份核心类，场景对象可互用）；
 // - 模型加载器 → public/engine/runtime/loaders/（离线可用）。加载器清单持续瘦身：
-//   DRACOLoader 已改由 scripts/build-runtime.mjs 从 npm 源打包进生成的
+//   DRACOLoader 已改由 runtime/scripts/engine.mjs 从 npm 源打包进生成的
 //   compressed.mjs（顶层 new URL 补丁在构建期做），不再 vendor；
 // - Draco JS 解码器 → loaders/draco/（压缩 glTF 预览/导出必需；见
 //   DRACO_DECODER_FILES 注释说明为何不用 wasm 版）。
 //
-// public/engine 为纯构建产物目录（不入库）：本步骤已并入 build-runtime.mjs 的
+// public/engine 为纯构建产物目录（不入库）：本步骤已并入 engine.mjs 的
 // 统一入口（buildRuntime() 先调 vendorPreviewLoaders()），dev 启动与 build 链
 // 自动补齐；所有写入均做变更检测（内容一致不落盘），重复执行幂等、不触发 watcher 抖动。
 // 也可单独运行：node runtime/scripts/vendor-preview-loaders.mjs（如升级 three 后主动同步）。
 // 若上游出现新的未知 import 会直接报错退出，避免静默产出缺依赖的文件。
 // ---------------------------------------------------------------------------
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const threeDir = join(root, "node_modules", "three");
-const outDir = join(root, "public", "engine", "runtime", "loaders");
-const coreDir = join(root, "public", "engine", "core");
+import { writeIfChanged } from "./lib/fs.mjs";
+import { ENGINE_DIR, ROOT } from "./lib/paths.mjs";
 
-/** 变更检测写入：内容一致跳过（幂等 + 避免 chokidar add/change 抖动）；返回是否写入 */
-function writeIfChanged(file, content) {
-  if (existsSync(file)) {
-    const cur = readFileSync(file);
-    const next = typeof content === "string" ? Buffer.from(content, "utf8") : content;
-    if (cur.equals(next)) return false;
-  }
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, content);
-  return true;
-}
+const threeDir = join(ROOT, "node_modules", "three");
+const outDir = join(ENGINE_DIR, "runtime", "loaders");
+const coreDir = join(ENGINE_DIR, "core");
 
 /** three 运行时构建（public/engine/core/）：字节与 npm 包一致，不改写 */
 const THREE_BUILDS = ["three.core.min.js", "three.module.min.js", "three.webgpu.min.js"];

@@ -43,8 +43,8 @@ await api.exportWebPreviewFromScene(root, sceneRel, files);
 const base = await api.startWebPreviewServer(root);
 ```
 
-`src/app/components/BuildPanel.vue:266`（构建产物预览：`startWebPreviewServer(root, "build/"+channel)`，
-`:291` stopWebPreview）；实际构建走 `src/app/lib/build-export.ts:271` 的 `api.buildExport({...})`。
+`src/app/components/BuildPanel.vue`（构建产物预览：`startWebPreviewServer(root, "build/"+channel)`，
+`:291` stopWebPreview）；实际构建走 `src/app/lib/build/run.ts`（runBuild → api.buildExport；兼容门面 build-export.ts 仍在）。
 
 ## 测试例
 

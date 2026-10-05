@@ -1,2 +1,4 @@
 # 外部资产单一事实源：字节级原样（构建期 verbatim 拷入 public/engine），禁止 Git eol 转换
 src/runtime/extra/** -text
+# 生成文件：生成器写 LF，避免 autocrlf 造成的行尾幻影改动（常态性 M 零实体 diff）
+src/generated/** text eol=lf

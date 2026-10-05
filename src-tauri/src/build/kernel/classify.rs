@@ -2,7 +2,7 @@
 //! 可压缩脚本与模型扩展名识别。
 
 /// 场景文件在产物内的显示名（去目录与 .scene 扩展名；重名追加序号去重）
-pub(super) fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
+pub(in crate::build) fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
     let base = rel.rsplit('/').next().unwrap_or(rel);
     let stem = base.strip_suffix(".scene").unwrap_or(base);
     let mut name = stem.to_string();
@@ -19,7 +19,7 @@ pub(super) fn scene_entry_name(rel: &str, used: &mut Vec<String>) -> String {
 /// 的场景/资产部分）；入口页 index.html 与多模板附加页 index-<模板目录>.html 都算运行时代码。
 /// src/ 前缀 = 编辑器编译后的用户脚本模块（src/**.js，前端随 files 传入；
 /// 相对 import 由 rewrite_module_imports 重写，与 engine 模块同一套加载机制）
-pub(super) fn is_runtime_code(rel: &str) -> bool {
+pub(in crate::build) fn is_runtime_code(rel: &str) -> bool {
     rel == "player.mjs"
         || (rel.starts_with("engine/") && !is_runtime_support_data(rel))
         || rel.starts_with("src/")
@@ -31,25 +31,25 @@ pub(super) fn is_runtime_code(rel: &str) -> bool {
 /// 供数据，而非内联成 blob 模块——解码器无 export、内联后无法按文件名取回，wasm
 /// 二进制文本化即损坏），也不参与发布模式 uid 改名（DRACOLoader 等按固定文件名
 /// decoderPath + 文件名拉取）。
-pub(super) fn is_runtime_support_data(rel: &str) -> bool {
+pub(in crate::build) fn is_runtime_support_data(rel: &str) -> bool {
     rel.starts_with("engine/runtime/loaders/draco/")
         || rel.starts_with("engine/runtime/loaders/basis/")
         || (rel.starts_with("engine/") && rel.ends_with(".wasm"))
 }
 
 /// 入口页：首个模板生成 index.html，其余模板生成 index-<模板目录>.html
-pub(super) fn is_entry_page(rel: &str) -> bool {
+pub(in crate::build) fn is_entry_page(rel: &str) -> bool {
     rel == "index.html" || (rel.starts_with("index-") && rel.ends_with(".html"))
 }
 
-pub(super) fn is_model_ext(rel: &str) -> bool {
+pub(in crate::build) fn is_model_ext(rel: &str) -> bool {
     matches!(
         rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str(),
         "glb" | "gltf" | "obj"
     )
 }
 
-pub(super) fn rel_ext(rel: &str) -> String {
+pub(in crate::build) fn rel_ext(rel: &str) -> String {
     let file = rel.rsplit('/').next().unwrap_or(rel);
     match file.rfind('.') {
         Some(_) => file.rsplit('.').next().unwrap_or("").to_ascii_lowercase(),
@@ -58,7 +58,7 @@ pub(super) fn rel_ext(rel: &str) -> String {
 }
 
 /// 需要压缩的运行时脚本（.js/.mjs；已压缩的 *.min.* 跳过，如 three 运行时）
-pub(super) fn is_minifiable_script(rel: &str) -> bool {
+pub(in crate::build) fn is_minifiable_script(rel: &str) -> bool {
     is_runtime_code(rel)
         && (rel.ends_with(".js") || rel.ends_with(".mjs"))
         && !rel.contains(".min.")

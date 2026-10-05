@@ -2,6 +2,9 @@
 // 负责把端点能力装配成浏览器形态的全局。HOST_SURFACE/GLOBAL_SURFACE 均为机器
 // 可校验数据——assertHost 在端点注册时校验实现完整性；check-surface.mjs 用
 // GLOBAL_SURFACE 与覆盖清单对照统一运行时源码的全局用法（漂移守卫）。
+// __tve* 钩子名等跨边界常量见 ./protocol.ts（运行时协议单源）。
+
+import { TVE_BUILD_DATA, TVE_LOAD_MODULE } from "./protocol.ts";
 
 /** 平台触摸事件的中性形态（端点负责从平台事件映射） */
 export interface HostTouch {
@@ -135,8 +138,8 @@ export const GLOBAL_SURFACE: string[] = [
   "createImageBitmap",
   "AudioContext",
   "webkitAudioContext",
-  "__tveLoadModule",
-  "__TVE_BUILD_DATA",
+  TVE_LOAD_MODULE,
+  TVE_BUILD_DATA,
 ];
 
 /** 端点完整性校验：缺方法/类型不符时抛出带方法名的明确错误（注册期即失败，

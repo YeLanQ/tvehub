@@ -7,22 +7,13 @@ import { getProjectStore, DEFAULT_SCENE_REL } from "../stores/project";
 import { getEditorStore } from "../stores/editor";
 import { getAssetsStore } from "../stores/assets";
 import { getScriptsStore } from "../stores/scripts";
-import { logStore } from "../stores/log";
 import { sceneApi } from "../../lib/scene-api";
 import { api } from "../../lib/api";
 import { handoffToWindow } from "../lib/window-handoff";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { JsonRecord } from "../../framework/prototype/types";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
-import {
-  fetchWebPreviewRuntimeTexts,
-  configUsesPhysics,
-  configPhysicsBackend,
-  configUsesWebgpu,
-  configUsesDracoCompression,
-  configUsesTextureCompression,
-} from "../lib/web-preview-runtime";
-import { loadProjectScripts, compileProjectScripts, ensureEntryScript } from "../lib/script-compile";
+import { collectExportFiles } from "../lib/build";
 import {
   defaultExportTemplateId,
   loadBuildPrefs,
@@ -30,7 +21,6 @@ import {
   runBuild,
 } from "../lib/build-export";
 import { registerCommand } from "./registry";
-import { graphSidecarRel } from "../../framework/graph";
 
 /** 当前项目根；未打开项目时抛错（各域命令共用） */
 function requireRoot(): string {
@@ -39,60 +29,19 @@ function requireRoot(): string {
   return root;
 }
 
-/** 组装网页预览导出文件（与 WebPreviewPanel 同一链路：运行时 + 项目配置 + 编译脚本） */
+/** 组装网页预览导出文件（与 WebPreviewPanel / 图窗口预览同一链路：collect 单实现，
+ *  运行时 + 项目配置 + 场景图侧车 + 编译脚本） */
 async function buildPreviewFiles(): Promise<Record<string, string>> {
   const root = requireRoot();
-  let physicsConfigText: string | null = null;
-  try {
-    physicsConfigText = await api.readText(root, "project.config.json");
-  } catch {
-    /* 无配置按未启用物理处理 */
-  }
-  const files = await fetchWebPreviewRuntimeTexts({
-    includePhysics: configUsesPhysics(physicsConfigText),
-    physicsBackend: configPhysicsBackend(physicsConfigText) ?? undefined,
-    // 渲染后端为 WebGPU/自动时必须随产物带上 WebGPU 运行时（three.webgpu 构建等），
-    // 漏带会让播放器静默回退 WebGL——预览画面与项目设置的 WebGPU 后端不符
-    includeWebgpu: configUsesWebgpu(physicsConfigText),
-    includeDracoDecoder: configUsesDracoCompression(physicsConfigText),
-    includeBasisDecoder: configUsesTextureCompression(physicsConfigText),
-  });
-  files["config.json"] = physicsConfigText ?? "{}";
-  // 场景图注入：读取当前场景对应的图文件（graph/<scene>.graph），存在则注入产物 +
-  // config 标记（player 检测到即装配行为解释器；与图窗口预览同一链路）
   const project = getProjectStore();
-  const sceneRel = project.sceneRel || DEFAULT_SCENE_REL;
-  try {
-    const graphText = await api.readText(root, graphSidecarRel(sceneRel));
-    if (graphText.trim()) {
-      files["script-graph.json"] = graphText;
-      let cfg: Record<string, unknown> = {};
-      try { cfg = JSON.parse(files["config.json"]) as Record<string, unknown>; } catch { cfg = {}; }
-      cfg.scriptGraph = "./script-graph.json";
-      files["config.json"] = JSON.stringify(cfg, null, 2);
-    }
-  } catch {
-    /* 无图文件按无图预览处理 */
-  }
-  try {
-    await getScriptsStore().saveAll();
-  } catch {
-    /* 脚本保存失败按磁盘内容导出 */
-  }
-  try {
-    await ensureEntryScript(root);
-    const scripts = await loadProjectScripts(root);
-    if (scripts.length) {
-      const { files: jsFiles, errors } = await compileProjectScripts(scripts);
-      Object.assign(files, jsFiles);
-      for (const [rel, err] of Object.entries(errors)) {
-        logStore.log("error", `脚本编译失败 ${rel}: ${err}（该脚本不参与预览）`, "preview");
-      }
-    }
-  } catch {
-    /* 编译失败跳过用户脚本 */
-  }
-  return files;
+  return collectExportFiles({
+    root,
+    channel: "web",
+    mode: "preview",
+    graph: { kind: "sidecar", sceneRel: project.sceneRel || DEFAULT_SCENE_REL },
+    saveDirtyScripts: true,
+    logs: { tag: "preview", errorSuffix: "预览", warnOnSkip: false },
+  });
 }
 
 // ===================== 编辑器 / 项目 =====================

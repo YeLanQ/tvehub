@@ -83,7 +83,10 @@ pub(super) fn rewrite_specifier_text(
             None
         };
         let Some((kw_at, kw_len, is_import)) = kw else {
-            let ch = text[i..].chars().next().unwrap();
+            let ch = text[i..]
+                .chars()
+                .next()
+                .expect("扫描按字符边界推进，切片起点必为字符边界");
             out.push(ch);
             i += ch.len_utf8();
             continue;
@@ -144,7 +147,7 @@ pub(super) fn rewrite_module_imports(
             Some(i) => &rel[..=i],
             None => "",
         };
-        let text = code.get_mut(&rel).unwrap();
+        let text = code.get_mut(&rel).expect("rel 来自同表 keys 快照，条目必在");
         *text = rewrite_specifier_text(text, dir, &remap);
     }
 }

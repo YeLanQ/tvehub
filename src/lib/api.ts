@@ -221,32 +221,7 @@ export const api = {
   stopWebPreview: () => invoke<void>("stop_web_preview"),
   /** 构建导出：打包选中场景 + 引用资产 + 网页运行时到 <root>/build/<channel>/
    *  （files 为前端 fetch 的网页运行时文本；场景与资产由后端直读磁盘） */
-  buildExport: (args: {
-    root: string;
-    channel: string;
-    scenes: string[];
-    mainScene: string;
-    title: string;
-    debug: boolean;
-    /** 产物形态：true = 单页（数据内联 index.html）/ false = 多文件 */
-    singlePage: boolean;
-    /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
-    gzip: boolean;
-    /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
-    release: boolean;
-    /** CDN 模式：three.js 运行时不内嵌（从 Three CDN 地址在线加载） */
-    cdn: boolean;
-    /** gzip 资源地址（归档远程基址；空 = 本地 assets.gzip） */
-    gzipBase: string;
-    /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
-    cdnBase: string;
-    files: Record<string, string>;
-    /** 产物落盘目录（项目相对路径；缺省 build/<channel>/），如局域网共享用 .tmp/share */
-    outDir?: string;
-    /** 微信小游戏渠道：AppID（缺省 = 继承上次产物 > touristappid）与屏幕方向 */
-    wechatAppid?: string;
-    wechatOrientation?: string;
-  }) => invoke<BuildResult>("build_export", args),
+  buildExport: (args: BuildExportArgs) => invoke<BuildResult>("build_export", args),
   /** 扫描 exe 旁 public 目录下的用户自定义模板
    *  （kind: "templates"=项目模板 / "exports-web"=web 导出模板） */
   scanUserTemplates: (kind: "templates" | "exports-web") =>
@@ -762,6 +737,37 @@ export interface UserTemplateInfo {
   mode: string;
   files: string[];
 }
+
+/** build_export 的 IPC 载荷（与 Rust build::BuildJob 字段一一对应，单一契约源；
+ *  应用侧由 src/app/lib/build/run.ts 从 BuildOptions + 渠道 adapter 组装。
+ *  用 type 而非 interface：invoke 的 InvokeArgs 要求 Record 索引签名，
+ *  类型别名才有隐式索引签名） */
+export type BuildExportArgs = {
+  root: string;
+  channel: string;
+  scenes: string[];
+  mainScene: string;
+  title: string;
+  debug: boolean;
+  /** 产物形态：true = 单页（数据内联 index.html）/ false = 多文件 */
+  singlePage: boolean;
+  /** 资产 gzip 归档（多文件写 assets.gzip；单页 base64 内联） */
+  gzip: boolean;
+  /** 发布模式：资源 uid 重命名 + 引用重写 + JSON 压缩 */
+  release: boolean;
+  /** CDN 模式：three.js 运行时不内嵌（从 Three CDN 地址在线加载） */
+  cdn: boolean;
+  /** gzip 资源地址（归档远程基址；空 = 本地 assets.gzip） */
+  gzipBase: string;
+  /** Three CDN 地址（three.js 远程基址；空 = 内嵌 three.js） */
+  cdnBase: string;
+  files: Record<string, string>;
+  /** 产物落盘目录（项目相对路径；缺省 build/<channel>/），如局域网共享用 .tmp/share */
+  outDir?: string;
+  /** 微信小游戏渠道：AppID（缺省 = 继承上次产物 > touristappid）与屏幕方向 */
+  wechatAppid?: string;
+  wechatOrientation?: string;
+};
 
 /** 构建导出结果（与 Rust build::BuildResult 对应） */
 export interface BuildResult {

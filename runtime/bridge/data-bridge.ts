@@ -5,6 +5,7 @@
 import { bridgeActive } from "./host.ts";
 import { setGlobal, windowRef } from "./install.ts";
 import { bridgeLog, flushBridgeLogs } from "./log.ts";
+import { TVE_BUILD_DATA } from "./protocol.ts";
 
 import * as tveBuildData from "./data.js";
 
@@ -16,10 +17,10 @@ export function installBuildData() {
     flushBridgeLogs();
     return;
   }
-  setGlobal("__TVE_BUILD_DATA", data);
+  setGlobal(TVE_BUILD_DATA, data);
   try {
     const w = windowRef.current;
-    if (w) w.__TVE_BUILD_DATA = data;
+    if (w) w[TVE_BUILD_DATA] = data;
   } catch {
     /* window 未就绪时忽略 */
   }

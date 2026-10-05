@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 
-use crate::build::archive::build_archive_bytes;
-use crate::build::classify::{is_entry_page, is_runtime_code};
-use crate::build::specifiers::rewrite_specifier_text;
-use crate::build::urls::three_cdn_remap;
+use super::archive::build_archive_bytes;
+use super::specifiers::rewrite_specifier_text;
+use super::urls::three_cdn_remap;
+use crate::build::kernel::classify::{is_entry_page, is_runtime_code};
 
 /// 多文件产物附带的零依赖静态服务器脚本（node server.mjs [端口]）。
 /// 引导用户走 HTTP 而非 file://（fetch/Worker 在 file:// 下受限）。
@@ -70,7 +70,9 @@ fn rewrite_runtime_three_imports(files: &mut HashMap<String, String>, remap: &Ha
             Some(i) => &rel[..=i],
             None => "",
         };
-        let text = files.get_mut(&rel).unwrap();
+        let text = files
+            .get_mut(&rel)
+            .expect("rel 来自同表 keys 快照，条目必在");
         *text = rewrite_specifier_text(text, dir, remap);
     }
 }

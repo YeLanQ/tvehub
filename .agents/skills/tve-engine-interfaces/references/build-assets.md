@@ -12,8 +12,9 @@
 3. vite lib 模式编译 `src/runtime/**.ts` → `.mjs`（AUTO-GENERATED 横幅；three 外部化为
    相对说明符；说明符相对化；**落盘前内容比对幂等**——一致不写，防 watcher 抖动）。
 
-校验：`verifyOutput`（无 `import.meta.url` 残留/裸 three 残留，未命中显式失败）；
-`scripts/check-runtime.mjs` 独立校验横幅/外部化一致性。
+校验：`verifyOutput`（内建全部产物形态断言：AUTO-GENERATED 横幅、无
+`import.meta.url` 残留、无裸 three/裸说明符残留，未命中显式失败——原独立校验
+脚本已并入本断言并删除）。
 触发点：`pnpm build` 链第一步 + vite.config.ts `runtimeBuildPlugin()`（dev 启动全量
 再生 + 源变化防抖重建）。**public/engine 不入库**，任何机器一次全量再生。
 
@@ -49,10 +50,10 @@ extra b64 抽取落盘；dev 产物根 = public/，单页产物 wasm 进内联�
 ## 测试例
 
 真实测试例：
-- `scripts/check-runtime.mjs` —— 产物横幅/外部化一致性（build 链与手动可跑）；
+- `verifyOutput`（engine.mjs 内建）—— 产物横幅/外部化一致性（每次构建自动跑）；
 - `pnpm test:regression:core` —— P0 套件群直连 public/engine 产物（harness
   `engineURL/coreURL`），产物损坏/缺失在此第一时间暴露；
 - `pnpm test:all` 归档 reports/（coverage + smoke + summary + history.jsonl）。
 
-产物相关失败排查顺序：产物是否存在 → check-runtime → smoke P0 →
-web-preview-files 清单一致性（见 runtime-comm.md 已知坑）。
+产物相关失败排查顺序：产物是否存在 → engine.mjs 重建（verifyOutput 失败即形态漂移）→ smoke P0 →
+channel-runtimes 清单一致性（见 runtime-comm.md 已知坑）。

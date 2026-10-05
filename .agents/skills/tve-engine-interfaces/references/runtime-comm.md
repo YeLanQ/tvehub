@@ -27,8 +27,8 @@ CDN 模式下 three 运行时从远程基址加载（构建期相对说明符重
 ## 使用例
 
 `src/app/components/WebPreviewPanel.vue`（iframe 加载预览 URL + 调试面板
-postMessage 切换）；`src/app/lib/build-export.ts:271`（buildExport 时把运行时
-文本集随 files 提交后端）。
+postMessage 切换）；`src/app/lib/build/run.ts`（runBuild 时把运行时
+文本集随 files 提交后端；兼容门面 build-export.ts 保留）。
 
 ## 测试例
 
@@ -39,5 +39,6 @@ postMessage 切换）；`src/app/lib/build-export.ts:271`（buildExport 时把�
   跑导入期访问 window/document 的运行时模块，缺更多桩（canvas/baseURI）时调用后自行补。
 
 **已知坑**：产物被 SPA 兜底成 200+HTML 会以 blob 模块语法错误的形式爆发
-（文件缺失 / 存在但不在 web-preview-files 快照内两种根因）——预览白屏先核对
-清单与产物一致性，再查 `check-runtime.mjs` 校验（AUTO-GENERATED 横幅、无裸 three 残留）。
+（文件缺失 / 存在但不在 channel-runtimes 快照内两种根因）——预览白屏先核对
+清单与产物一致性，再查 engine.mjs `verifyOutput` 校验（AUTO-GENERATED 横幅、
+无裸 three/裸说明符残留）。

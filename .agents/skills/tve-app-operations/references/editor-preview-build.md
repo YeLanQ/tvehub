@@ -47,7 +47,7 @@ repos 目录，code/effect 原型可增删改，只读分类仅打开目录）�
 
 ## 测试例
 
-- 构建/预览 IPC 调用点：`src/app/lib/build-export.ts:271`、WebPreviewPanel.vue:293
+- 构建/预览 IPC 调用点：`src/app/lib/build/run.ts`、WebPreviewPanel.vue
   （契约见 `tve-api-usage` facade-tasks-build.md，含浏览器分支示范 spec）。
 - 项目设置解析收敛真实落点：`src/app/stores/project.ts:135 applyProjectConfig`
   （缺字段回默认）——无 spec，推荐示范见 facade-projects.md 测试例段。

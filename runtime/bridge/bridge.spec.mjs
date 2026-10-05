@@ -170,10 +170,13 @@ const missingGlobals = GLOBAL_SURFACE.filter(
 );
 check("GLOBAL_SURFACE：清单全部安装", missingGlobals.length === 0, `缺 ${missingGlobals.join(",")}`);
 {
+  // 钩子名经 protocol.ts 单源引用后，源文本断言同步为「protocol 导入 + 协议名安装」
   const src = fs.readFileSync(new URL("./data-bridge.ts", import.meta.url), "utf8");
   check(
     "data-bridge：静态接线断言（import data.js + __TVE_BUILD_DATA 安装）",
-    src.includes('from "./data.js"') && src.includes('setGlobal("__TVE_BUILD_DATA"'),
+    src.includes('from "./data.js"') &&
+      src.includes('from "./protocol.ts"') &&
+      src.includes("setGlobal(TVE_BUILD_DATA"),
   );
 }
 

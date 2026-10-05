@@ -9,7 +9,7 @@ use super::classify::{is_model_ext, is_runtime_code, is_runtime_support_data, re
 use super::refs::{rewrite_mat_text, rewrite_scene_refs, rewrite_texcube_text};
 
 /// fnv1a64 → 16 位十六进制（无 .meta 资产的确定性 uid，路径稳定）
-pub(super) fn fallback_uid(rel: &str) -> String {
+pub(in crate::build) fn fallback_uid(rel: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in rel.as_bytes() {
         h ^= u64::from(*b);
@@ -49,7 +49,7 @@ fn meta_uuid(root_path: &Path, rel: &str) -> Option<String> {
 /// 发布模式处理：模型二进制化（LQENBIN1）+ 资产 uid 重命名（.meta uuid 优先，否则
 /// 路径哈希）+ 重写场景与材质引用 + 场景/材质 JSON 紧凑化。返回重命名表。
 /// 场景 JSON 文件名保持不变（config.scenes 按名引用，是产物公开入口）。
-pub(super) fn apply_release(
+pub(in crate::build) fn apply_release(
     root_path: &Path,
     files: &mut HashMap<String, String>,
     binaries: &mut HashMap<String, Vec<u8>>,
@@ -153,6 +153,6 @@ pub(super) fn apply_release(
 }
 
 /// 发布模式 JS 压缩：保守压缩（去注释 + 空白折叠，语义不变；见 js_minify 模块）
-pub(super) fn minify_js_source(text: &str) -> String {
+pub(in crate::build) fn minify_js_source(text: &str) -> String {
     crate::js_minify::minify_js(text)
 }

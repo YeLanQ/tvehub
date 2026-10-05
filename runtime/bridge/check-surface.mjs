@@ -3,7 +3,8 @@
 // 引擎新增未覆盖的全局用法 → 本检查失败，构建链阻断——把「设备上发现漂移」
 // 变成「构建时发现漂移」。
 //
-// 用法：node scripts/runtime-bridge/check-surface.mjs [--update-baseline]
+// 用法：node runtime/bridge/check-surface.mjs [--update-baseline]
+//   （独立 npm script：pnpm check:surface；wechat.mjs 构建链内自动执行）
 //   --update-baseline  把当前未覆盖集写入台账（首次收录/有意接受时使用，需带理由复核）
 
 import fs from "node:fs";
@@ -119,7 +120,7 @@ function main() {
       const at = findings.get(k);
       console.error(`  ✗ ${k}  首现于 ${at.file}:${at.line}`);
     }
-    console.error(`  处置：在 scripts/runtime-bridge/ 核心扩展覆盖（未来所有平台继承），`);
+    console.error(`  处置：在 runtime/bridge/ 核心扩展覆盖（未来所有平台继承），`);
     console.error(`  或确认无需覆盖后加入 surface-baseline.json（--update-baseline 后补理由）。`);
     process.exit(1);
   }

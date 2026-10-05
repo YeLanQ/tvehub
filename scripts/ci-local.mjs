@@ -9,6 +9,8 @@
 //   layers  = node scripts/check-layers.mjs        分层门禁（仅 src/lib 可碰 Tauri API）
 //   audit   = node scripts/audit/scan.mjs          质量+安全统一扫描（密钥/XSS/穿越/
 //                                                  CVE/覆盖率/复杂度/重复，分级门禁）
+//   surface = pnpm check:surface                   运行时全局消费面漂移守卫（桥接覆盖清单）
+//   bridge  = pnpm test:bridge                     桥接层契约测试（核心语义+端点+wasm 链）
 //   unit    = pnpm exec vitest run                 单元/组件测试（351 例）
 //   smoke   = node scripts/smoke/runner.mjs --core P0 核心回归（必须全绿）
 //
@@ -52,6 +54,18 @@ const STEPS = [
     title: "质量+安全统一扫描",
     cmd: "node scripts/audit/scan.mjs",
     hint: "报告 reports/audit/audit-report.md；设计内项用 --accept <token> --reason 入台账",
+  },
+  {
+    name: "surface",
+    title: "运行时全局消费面漂移守卫",
+    cmd: "pnpm check:surface",
+    hint: "runtime/bridge/check-surface.mjs：未覆盖全局用法入 runtime/bridge/surface-baseline.json 台账",
+  },
+  {
+    name: "bridge",
+    title: "桥接层契约测试",
+    cmd: "pnpm test:bridge",
+    hint: "runtime/bridge/bridge.spec.mjs：桥接核心语义 + 微信端点 + wasm 链路",
   },
   { name: "unit", title: "单元/组件测试", cmd: "pnpm exec vitest run" },
   {

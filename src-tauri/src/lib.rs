@@ -17,6 +17,7 @@ pub mod preview;
 mod project;
 mod repos;
 mod scene;
+mod scene_pack;
 pub mod ui_state;
 mod store;
 mod task;

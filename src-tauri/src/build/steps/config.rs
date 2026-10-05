@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use super::job::PackedScene;
+use crate::build::job::PackedScene;
 
 /// 由项目配置 + 打包场景推导产物 config（单页内联与多文件落盘共用）
-pub(super) fn product_config(
+pub(in crate::build) fn product_config(
     project_cfg: serde_json::Value,
     packed: &[PackedScene],
     main_name: &str,

@@ -1443,9 +1443,11 @@ console.log("⑤ 工作台契约");
   check(inspector.includes("flowDef") && inspector.includes("commitFlowParam") && inspector.includes("G_COMPARE_OPERATORS"), "检查器：控制流面板");
 
   const preview = read("src/graph-window/components/GraphPreview.vue");
+  const previewCollect = read("src/app/lib/build/collect.ts");
   check(
-    preview.includes("script-graph.json") && preview.includes("scriptGraph") && preview.includes("exportWebPreviewFromScene"),
-    "预览：注入场景图文档 + config 标记",
+    preview.includes("collectExportFiles") && preview.includes("exportWebPreviewFromScene") &&
+      previewCollect.includes("script-graph.json") && previewCollect.includes("scriptGraph"),
+    "预览：注入场景图文档 + config 标记（collect 单实现）",
   );
   const hierarchy = read("src/graph-window/components/GraphHierarchy.vue");
   check(hierarchy.includes("dragstart") && hierarchy.includes("addProto"), "层级：行拖入生成原型");

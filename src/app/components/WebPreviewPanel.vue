@@ -18,17 +18,7 @@ import { logStore } from "../stores/log";
 import { api } from "../../lib/api";
 import { uiStateGet, uiStateSet } from "../../lib/ui-state";
 import { saveCurrentSceneToMain } from "../lib/save-scene";
-import {
-  fetchWebPreviewRuntimeTexts,
-  configUsesPhysics,
-  configPhysicsBackend,
-  configUsesWebgpu,
-  configUsesDracoCompression,
-  configUsesTextureCompression,
-} from "../lib/web-preview-runtime";
-import { ensureEntryScript } from "../lib/script-compile";
-import { loadProjectScripts, compileProjectScripts } from "../lib/script-compile";
-import { graphSidecarRel } from "../../framework/graph";
+import { collectExportFiles } from "../lib/build";
 import "../../styles/components/web-preview.scss";
 const emit = defineEmits<{ close: [] }>();
 const projectStore = getProjectStore();
@@ -213,59 +203,20 @@ const previewUrl = computed(() => {
   return base;
 });
 
-/** 组装导出文件：WebView 打包的网页运行时 + 项目配置 + 用户脚本编译产物（文本）。
- *  scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制由 Rust 直接从磁盘
- *  读取写入导出目录（export_web_preview_from_scene），不再以 base64 过 IPC。 */
+/** 组装导出文件（collect 单实现）：WebView 打包的网页运行时 + 项目配置 + 用户
+ *  脚本编译产物（文本）。scene.json 与场景引用的 .mat 材质、材质引用的贴图二进制
+ *  由 Rust 直接从磁盘读取写入导出目录（export_web_preview_from_scene），
+ *  不再以 base64 过 IPC。 */
 async function buildExportFiles(): Promise<Record<string, string>> {
   const root = projectStore.currentPath;
   if (!root) throw new Error("尚未打开项目，无法预览");
-  // 项目配置：物理启用状态与渲染后端（磁盘上的 config）决定体积大的可选运行时
-  // 是否随产物（按需打包）
-  let configText = "{}";
-  try {
-    configText = await api.readText(root, "project.config.json");
-  } catch {
-    /* 无配置按未启用处理 */
-  }
-  const includePhysics = configUsesPhysics(configText);
-  const files = await fetchWebPreviewRuntimeTexts({
-    includePhysics,
-    physicsBackend: configPhysicsBackend(configText) ?? undefined,
-    includeWebgpu: configUsesWebgpu(configText),
-    includeDracoDecoder: configUsesDracoCompression(configText),
-    includeBasisDecoder: configUsesTextureCompression(configText),
+  return collectExportFiles({
+    root,
+    channel: "web",
+    mode: "preview",
+    graph: { kind: "sidecar", sceneRel: projectStore.sceneRel || "assets/Main.scene" },
+    logs: { tag: "preview", errorSuffix: "预览", warnOnSkip: true },
   });
-  files["config.json"] = configText;
-  // 场景图注入：读取当前场景对应的图文件（graph/<scene>.graph），存在则注入产物 +
-  // config 标记（player 检测到即装配行为解释器；与图窗口预览同一链路）
-  const sceneRel = projectStore.sceneRel || "assets/Main.scene";
-  try {
-    const graphText = await api.readText(root, graphSidecarRel(sceneRel));
-    if (graphText.trim()) {
-      files["script-graph.json"] = graphText;
-      let cfg: Record<string, unknown> = {};
-      try { cfg = JSON.parse(files["config.json"]) as Record<string, unknown>; } catch { cfg = {}; }
-      cfg.scriptGraph = "./script-graph.json";
-      files["config.json"] = JSON.stringify(cfg, null, 2);
-    }
-  } catch {
-    /* 无图文件按无图预览处理 */
-  }
-  // 用户脚本：全量编译（src/**.ts → src/**.js）随导出注入；单个失败跳过并告警
-  try {
-    await ensureEntryScript(root);
-    const scripts = await loadProjectScripts(root);
-    if (scripts.length) {
-      const { files: jsFiles, errors } = await compileProjectScripts(scripts);
-      Object.assign(files, jsFiles);
-      for (const [rel, err] of Object.entries(errors)) {
-        logStore.log("error", `脚本编译失败 ${rel}: ${err}（该脚本不参与预览）`, "preview");
-      }
-    }
-  } catch (e) {
-    logStore.log("warn", `脚本编译跳过: ${e}`, "preview");
-  }
-  return files;
 }
 
 /** 导出并启动（首次进入 / 重试） */

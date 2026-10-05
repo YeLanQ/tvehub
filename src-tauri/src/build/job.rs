@@ -71,24 +71,20 @@ impl JobCtx<'_> {
     }
 }
 
-/// 公共预检的就绪上下文：校验/归一化结果，渠道管线实现直接消费
+/// 公共预检的就绪上下文：校验/兜底结果 + 渠道强类型参数，渠道管线直接消费
 pub struct Prepared {
     pub job: BuildJob,
     pub root_path: PathBuf,
     /// 产物输出目录（已解析默认值与覆盖目录）
     pub out: PathBuf,
-    /// 归一化后的 gzip 归档远程基址（空 = 本地读取）
-    pub gzip_base: String,
-    /// 归一化后的 Three CDN 基址（空 = 内嵌 three.js）
-    pub three_base: String,
-    /// CDN 模式实际生效（cdn 开启且 three 地址非空）
-    pub cdn_active: bool,
     /// 兜底后的主场景（项目相对路径）
     pub main_scene: String,
+    /// 渠道参数（管线 resolve 已归一；与管线的配对由工厂保证）
+    pub channel: super::options::ResolvedChannel,
 }
 
 /// 产物内单场景条目（前端结果展示用）
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct PackedScene {
     /// 场景显示名（去扩展名的文件名，重名自动加序号；?scene= 参数用它）
     pub name: String,
@@ -99,7 +95,7 @@ pub struct PackedScene {
 }
 
 /// 构建结果（自描述；前端结果展示用）
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct BuildResult {
     pub ok: bool,
     pub channel: String,

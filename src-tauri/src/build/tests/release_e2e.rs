@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use crate::build::{run_build, BuildJob, JobCtx};
-use crate::build::release::fallback_uid;
+use crate::build::kernel::release::fallback_uid;
 
 /// 发布模式：资产 uid 重命名（.meta uuid 优先/哈希回退）、场景与材质引用重写、
 /// JSON 紧凑化、模型二进制化（LQENBIN1，.gltf 外部兄弟内联剔除）。

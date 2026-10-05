@@ -48,7 +48,7 @@ pub(super) fn data_js(
 /// `.bin`——消费侧按 rel 键分派加载器，不依赖文件扩展名；重名（哈希碰撞，
 /// 理论事件）追加 `-2/-3` 序号（序号在扩展名之前）。
 pub(super) fn asset_file_name(rel: &str, used: &mut HashSet<String>) -> String {
-    let uid = crate::build::release::fallback_uid(rel);
+    let uid = crate::build::kernel::release::fallback_uid(rel);
     let ext = match rel.rsplit('.').next() {
         Some(e) => match e.to_ascii_lowercase().as_str() {
             "png" => ".png",
@@ -78,7 +78,7 @@ pub(super) fn asset_file_name(rel: &str, used: &mut HashSet<String>) -> String {
 }
 
 /// game.json：屏幕方向由构建配置选择（portrait / landscape，缺省 portrait）
-pub(super) fn game_json(orientation: &str) -> String {
+pub(super) fn game_json(orientation: &str) -> Result<String, String> {
     let orientation = match orientation {
         "landscape" => "landscape",
         _ => "portrait",
@@ -93,7 +93,7 @@ pub(super) fn game_json(orientation: &str) -> String {
             "downloadFile": 10000
         }
     });
-    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&value).map_err(|e| format!("game.json 序列化失败: {e}"))
 }
 
 /// project.config.json 的 condition 槽位结构（照官方 quickstart——工程按小游戏
@@ -122,7 +122,7 @@ pub(super) fn resolve_appid(explicit: Option<&str>, out_dir: &Path) -> String {
 }
 
 /// project.config.json：compileType=game + appid + condition 槽位
-pub(super) fn project_config_json(project_name: &str, appid: &str) -> String {
+pub(super) fn project_config_json(project_name: &str, appid: &str) -> Result<String, String> {
     let value = serde_json::json!({
         "description": "由 TvE Hub 微信小游戏构建生成（appid 变更后需在开发者工具重新导入工程）",
         "setting": {
@@ -155,18 +155,19 @@ pub(super) fn project_config_json(project_name: &str, appid: &str) -> String {
         "isGameTourist": appid == TOURIST_APPID,
         "editorSetting": {}
     });
-    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&value).map_err(|e| format!("project.config.json 序列化失败: {e}"))
 }
 
 /// project.private.config.json：condition 必须为空对象（清空自定义编译条件）
-pub(super) fn project_private_config_json(project_name: &str) -> String {
+pub(super) fn project_private_config_json(project_name: &str) -> Result<String, String> {
     let value = serde_json::json!({
         "libVersion": "latest",
         "projectname": project_name,
         "setting": {},
         "condition": {}
     });
-    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("project.private.config.json 序列化失败: {e}"))
 }
 
 /// README.txt：导入步骤 + 限制说明（包体积由微信开发者工具在发布/上传时判定，

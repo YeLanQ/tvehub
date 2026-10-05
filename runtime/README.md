@@ -7,8 +7,8 @@
 
 | 渠道 | 平台宿主 | 接入形态 | 构建 |
 | --- | --- | --- | --- |
-| web | 浏览器（编辑器 iframe / 产物页） | **零桥接**：原生 ESM 多文件，入口 `public/web-preview/player.mjs` 直接自启 | `scripts/engine.mjs` 产出 public/engine + 产物按多文件/单页落盘 |
-| wechat（微信小游戏） | wx 小游戏沙箱 | `bridge/entries/wechat.ts`：平台端点注册 → 桥接核心安装 → player | `scripts/wechat.mjs` 产出 `public/exports/wechat/runtime/`（code.js 单文件 CJS bundle） |
+| web | 浏览器（编辑器 iframe / 产物页） | **零桥接**：原生 ESM 多文件，入口 `public/web-preview/player.mjs` 直接自启 | `runtime/scripts/engine.mjs` 产出 public/engine + 产物按多文件/单页落盘 |
+| wechat（微信小游戏） | wx 小游戏沙箱 | `bridge/entries/wechat.ts`：平台端点注册 → 桥接核心安装 → player | `runtime/scripts/wechat.mjs` 产出 `public/exports/wechat/runtime/`（code.js 单文件 CJS bundle） |
 
 新渠道（抖音小游戏 / 原生壳等）= 平级新增 `bridge/platforms/<id>.ts`（实现
 ~22 方法的 `HostEndpoint` 契约，见 `bridge/contract.ts`）+ 一份组装入口，核心
@@ -19,6 +19,7 @@
 ```
 runtime/
 ├── bridge/                 桥接层（TS 源码；构建时由 esbuild 转译打包生成 js）
+│   ├── protocol.ts         运行时协议单源：__tve* 钩子名 / tve: 前缀 / 包内路径约定
 │   ├── contract.ts         契约：HostEndpoint 接口 + HOST_SURFACE/GLOBAL_SURFACE
 │   │                       清单 + assertHost 注册期校验
 │   ├── host.ts             端点容器（setHost/host/bridgeActive；缺席 = 核心空转）
@@ -29,12 +30,17 @@ runtime/
 │   ├── entries/wechat.ts   渠道组装入口（求值序 = 安装序，player 最后）
 │   ├── check-surface.mjs   漂移守卫：统一运行时源码的全局消费面对照覆盖清单 +
 │   │                       surface-baseline.json 台账；新增未覆盖 = 构建失败
-│   ├── bridge.spec.mjs     契约一致性测试（node 类型剥离直跑 TS；构建链内运行）
+│   │                       （独立 npm script：pnpm check:surface）
+│   ├── bridge.spec.mjs     契约一致性测试（node 类型剥离直跑 TS；pnpm test:bridge）
 │   └── smoke.cjs           bundle 冒烟（裸包装脚本语义加载 + 门面可达性）
 └── scripts/                运行时构建/生成脚本
-    ├── engine.mjs          src/runtime/** → public/engine（ESM 多文件，双渠道共用）
-    ├── wechat.mjs          bridge + engine + player → 微信渠道 bundle（三连：漂移
-    │                       守卫 → 契约测试 → 冒烟）
+    ├── lib/                公共件：paths（目录单源）/ fs（幂等写）/ anchor（锚点
+    │                       与形态断言）/ esbuild（统一构建选项，charset utf8）
+    ├── engine.mjs          src/runtime/** → public/engine（ESM 多文件，双渠道共用；
+    │                       verifyOutput 内建产物形态断言）
+    ├── wechat.mjs          bridge + engine + player → 微信渠道 bundle（编排；实现
+    │                       拆在 wechat/：engines 物理预转换、meshopt、transforms
+    │                       锚点改写、guards 三连守卫）
     └── manifest.mjs        双渠道运行时清单 → src/generated/channel-runtimes.ts
 ```
 

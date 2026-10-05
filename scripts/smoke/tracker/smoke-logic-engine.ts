@@ -360,9 +360,9 @@ async function main(): Promise<void> {
       && /logicApi\.update\(dt\)/.test(playerSrc));
 
     const rustMigrate = readFileSync(resolve(process.cwd(), "src-tauri/src/scene/migrate.rs"), "utf8");
-    const rustPreview = readFileSync(resolve(process.cwd(), "src-tauri/src/preview.rs"), "utf8");
+    const rustPack = readFileSync(resolve(process.cwd(), "src-tauri/src/scene_pack.rs"), "utf8");
     check("导出：collect_logic_refs 收集 .fsm/.bt + preview 打包接线", /collect_logic_refs/.test(rustMigrate)
-      && /collect_logic_refs/.test(rustPreview));
+      && /collect_logic_refs/.test(rustPack));
 
     const runner = resolve(process.cwd(), "scripts", "smoke", "runner.mjs");
     check("统一入口 runner.mjs 已就位（本脚本由其动态发现）", existsSync(runner));

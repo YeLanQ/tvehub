@@ -118,7 +118,7 @@ fn resolve_uri(
         let cleaned: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
         return base64::engine::general_purpose::STANDARD.decode(cleaned).ok();
     }
-    let sib = crate::preview::gltf_sibling_rel(model_rel, uri)?;
+    let sib = crate::scene_pack::gltf_sibling_rel(model_rel, uri)?;
     let data = binaries.get(&sib)?;
     inlined.push(sib);
     Some(data.clone())
