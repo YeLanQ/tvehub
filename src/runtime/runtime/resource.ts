@@ -3,6 +3,7 @@
 // 内置缓存（按 URL+类型 去重），installAssetShim 兼容保留（fetch 回退时仍经拦截）。
 
 import { AssetBundle } from "./asset-bundle";
+import { withLoadSlot } from "./parallel";
 
 /** 加载类型 */
 export type LoadType = "arrayBuffer" | "text" | "json" | "blob";
@@ -61,24 +62,27 @@ export class ResourceLoader {
   }
 
   private async _doLoad(url: string, type: LoadType): Promise<any> {
-    // 1) AssetBundle 优先（尝试多种路径归一化）
+    // 1) AssetBundle 优先（内存直读，零开销不占并发闸；尝试多种路径归一化）
     if (this._bundle) {
       const data = this._bundle.tryGet(url);
       if (data) return this._decode(data, type);
     }
-    // 2) fetch（installAssetShim 仍可能生效）
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`资源加载失败: HTTP ${r.status} (${url})`);
-    switch (type) {
-      case "arrayBuffer":
-        return r.arrayBuffer();
-      case "text":
-        return r.text();
-      case "json":
-        return r.json();
-      case "blob":
-        return r.blob();
-    }
+    // 2) fetch（installAssetShim 仍可能生效）：网络传输 + 解码都在并发闸内
+    //    排队，避免启动期全量并发导致解码挤爆主线程（见 parallel.ts）
+    return withLoadSlot(async () => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`资源加载失败: HTTP ${r.status} (${url})`);
+      switch (type) {
+        case "arrayBuffer":
+          return r.arrayBuffer();
+        case "text":
+          return r.text();
+        case "json":
+          return r.json();
+        case "blob":
+          return r.blob();
+      }
+    });
   }
 
   /** 从 Uint8Array 按类型解码 */

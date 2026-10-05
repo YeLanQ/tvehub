@@ -485,6 +485,8 @@ export function createAnimations(meshes, models) {
     if (typeof json.id === "string" && json.id) byId.set(json.id, b);
   }
   return {
+    /** 运行线程标识（调试面板/回退告警消费：false = 主线程步进） */
+    workerMode: false,
     /** 每帧推进：mixer 步进 → IK 求解 → 骨骼绑定跟随 → 图状态机评估过渡 */
     update(dt) {
       if (dt <= 0) return;
@@ -1257,6 +1259,8 @@ export async function createAnimationsWorker(meshes, models, workerUrl) {
   postLog("info", "[动画] Worker 模式已启动（骨骼动画 + IK 在独立线程）");
 
   return {
+    /** 运行线程标识（调试面板/回退告警消费：true = 独立线程步进） */
+    workerMode: true,
     /** 每帧：应用 Worker 回写的骨骼变换 → 附件跟随 → 事件分发 → 发 dt 给 Worker */
     update(dt) {
       if (dt <= 0) return;

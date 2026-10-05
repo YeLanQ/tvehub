@@ -1315,6 +1315,8 @@ export async function createPhysics({ nodes, terrains, settings } = {}) {
    *  后端接线完全一致——脚本经 getComponent("rigidBody")/engine.physics 访问
    *  任一方法都不应抛错，否则脚本宿主会把整个脚本实例停用） */
   const api = {
+    /** 运行线程标识（调试面板/回退告警消费：false = 主线程模拟） */
+    workerMode: false,
     /** 每帧推进（渲染循环调用） */
     update() {},
     setGravity() {},
@@ -1641,6 +1643,8 @@ export async function createPhysicsWorker(opts) {
   const stepBufPool: Float32Array[] = [];
 
   const api = {
+    /** 运行线程标识（调试面板/回退告警消费：true = 独立线程模拟） */
+    workerMode: true,
     update(dt) {
       // 1) 应用上一帧 Worker 返回的动力学体变换
       if (pending) {

@@ -180,6 +180,16 @@ async function main() {
   let pipeline = initialPipeline;
   // 立方体贴图采样约定按后端不同（GL vs D3D）：天空纹理翻转策略随之后定（见 sky.mjs）
   configureSkyOrientation(backend);
+  // 回退告警：请求 WebGPU/auto 但实际落在 WebGL2 时真实浏览器里无从感知
+  // （两后端性能剖面完全不同）。console 直出——发布构建（debug=false）下
+  // postLog 静默，告警也必须在控制台可见
+  function warnRuntime(text) {
+    console.warn(text);
+    postLog("warn", text);
+  }
+  if ((cfg.renderer === "webgpu" || cfg.renderer === "auto") && backend !== "webgpu") {
+    warnRuntime("[TvE] 渲染后端回退: 请求 " + cfg.renderer + " 但环境不可用 WebGPU，已回退 WebGL2");
+  }
   if (backend === "webgpu") {
     postLog("info", "渲染后端: WebGPU（不可用时自动回退 WebGL2）");
   }
@@ -785,6 +795,22 @@ async function main() {
     if (!anyCaster) renderer.setShadowMapEnabled(false);
   }
 
+  // Worker 回退告警：物理/骨骼动画退回主线程是导出产物卡顿的高频成因
+  // （单页模式 import.meta.url 为 blob、file:// 协议、Worker 模块加载失败都
+  // 走静默回退）。运行线程标识由 createPhysicsWorker/createAnimationsWorker
+  // 的返回 API 暴露（workerMode），此处只按"内容存在但未 Worker 化"告警。
+  const runtimeStatus = {
+    backend: backend === "webgpu" ? "WebGPU" : "WebGL2",
+    physicsWorker: physicsApi?.workerMode === true,
+    animationWorker: animations?.workerMode === true,
+  };
+  if (physicsActive && physicsApi && !runtimeStatus.physicsWorker) {
+    warnRuntime("[TvE] 物理 Worker 未启用（单页模式或 Worker 创建失败），物理模拟在主线程运行");
+  }
+  if (hasModelClip && animations && !runtimeStatus.animationWorker) {
+    warnRuntime("[TvE] 动画 Worker 未启用（单页模式或 Worker 创建失败），骨骼动画/IK 在主线程步进");
+  }
+
   // 帧间隔计时（THREE.Clock 已在 r183 弃用 → Timer；connect 启用页面可见性处理，
   // 切后台恢复后不产生巨大补帧间隔。update 用 rAF 时间戳，与帧回调同源对齐）
   const timer = new THREE.Timer();
@@ -803,6 +829,20 @@ async function main() {
       (sceneData.settings && sceneData.settings.performance && sceneData.settings.performance.frameRate);
     return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 60;
   })();
+  // —— 动态场景阴影重画节流（显式 opt-in）——
+  // 缺省 1 = 每帧重画（three 默认行为）。阴影 pass 与主 pass 同频全量重画时
+  // drawcall 成倍（60 动力学体实测 61+61=122），但 N>1 会让阴影以 1/N 帧率
+  // 步进——转灯脚本（昼夜循环）或移动物体下阴影边界跳变 = 可感知闪烁
+  // （Demo990 实测回归，因此不能默认开启）。静态光影/低频场景可在
+  // settings.performance.shadowUpdateInterval 设 2~4 换取阴影 pass 降频。
+  // 其余帧跳过整套阴影 pass 的机制：渲染器级 autoUpdate=false +
+  // needsUpdate=false 时 three 直接 return。静态冻结场景不经过此路径。
+  const shadowUpdateInterval = Math.max(1, Math.round(
+    (cfg && cfg.performance && cfg.performance.shadowUpdateInterval) ??
+    (sceneData.settings && sceneData.settings.performance && sceneData.settings.performance.shadowUpdateInterval) ??
+    1,
+  ));
+  let shadowFrame = shadowUpdateInterval; // 首帧即重画（++ 后超过 interval）
   let pageHidden = document.hidden;
   let viewVisible = true;
   let rafPending = false;
@@ -848,6 +888,8 @@ async function main() {
   let debugVertices = 0;
   let debugPanel = null;
   let debugTimer = 0;
+  // 最近 120 帧的帧间隔样本（毫秒）：帧距百分位比 FPS EMA 更能暴露尖刺
+  const debugFrameDeltas = [];
 
   function fmtNum(n) {
     if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -863,7 +905,11 @@ async function main() {
       "font:11px/1.6 monospace;color:#ddd;min-width:120px;";
     el.innerHTML =
       '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">FPS</span><b id="dbg-fps">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">帧距 p50/p95/max</span><b id="dbg-frame">-</b></div>' +
       '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">DrawCalls</span><b id="dbg-calls">0</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">后端</span><b id="dbg-backend">-</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">Worker</span><b id="dbg-worker">-</b></div>' +
+      '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">JS堆</span><b id="dbg-heap">-</b></div>' +
       '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">网格</span><b id="dbg-meshes">0</b></div>' +
       '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">顶点</span><b id="dbg-verts">0</b></div>' +
       '<div style="display:flex;justify-content:space-between;gap:12px"><span style="opacity:.6">三角面</span><b id="dbg-tris">0</b></div>' +
@@ -879,7 +925,28 @@ async function main() {
     const fpsEl = debugPanel.querySelector("#dbg-fps");
     fpsEl.textContent = Math.round(debugFps);
     fpsEl.style.color = debugFps < 30 ? "#f44" : debugFps < 50 ? "#fa0" : "#ddd";
+    // 帧距百分位（样本 ≥5 才有意义）
+    let frameText = "-";
+    if (debugFrameDeltas.length >= 5) {
+      const sorted = [...debugFrameDeltas].sort((a, b) => a - b);
+      const p50 = sorted[Math.floor(sorted.length / 2)];
+      const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+      const max = sorted[sorted.length - 1];
+      frameText = p50.toFixed(1) + "/" + p95.toFixed(1) + "/" + max.toFixed(1) + "ms";
+    }
+    debugPanel.querySelector("#dbg-frame").textContent = frameText;
     debugPanel.querySelector("#dbg-calls").textContent = info?.drawCalls ?? 0;
+    debugPanel.querySelector("#dbg-backend").textContent = runtimeStatus.backend;
+    const workerEl = debugPanel.querySelector("#dbg-worker");
+    workerEl.textContent =
+      "物理:" + (runtimeStatus.physicsWorker ? "Worker" : "主线程") +
+      " 动画:" + (runtimeStatus.animationWorker ? "Worker" : "主线程");
+    workerEl.style.color =
+      runtimeStatus.physicsWorker && runtimeStatus.animationWorker ? "#ddd" : "#fa0";
+    const mem = performance.memory;
+    debugPanel.querySelector("#dbg-heap").textContent = mem
+      ? Math.round(mem.usedJSHeapSize / 1048576) + " MB"
+      : "N/A";
     debugPanel.querySelector("#dbg-meshes").textContent = debugMeshes;
     debugPanel.querySelector("#dbg-verts").textContent = fmtNum(debugVertices);
     debugPanel.querySelector("#dbg-tris").textContent = info?.triangles ?? 0;
@@ -989,7 +1056,17 @@ async function main() {
     // 阴影相机贴合（每 20 帧节拍；首次立即）：范围贴合场景包围盒 + 兑现自动
     // normalBias——没有这一步，受光面会出现整面自阴影条纹（shadow acne）。
     // 静态冻结场景跳过：世界矩阵已停更（对象不会动），阴影也已一次性贴合+冻结
-    if (scene.matrixWorldAutoUpdate) refitShadowCameras(scene);
+    if (scene.matrixWorldAutoUpdate) {
+      refitShadowCameras(scene);
+      // 动态场景阴影节流重画（见 shadowUpdateInterval 注释）：周期起点帧置
+      // needsUpdate=true 重画一次，其余帧 needsUpdate=false 跳过整套阴影 pass
+      if (++shadowFrame > shadowUpdateInterval) {
+        shadowFrame = 1;
+        renderer.setShadowMapOnDemand(true);
+      } else {
+        renderer.setShadowMapOnDemand(false);
+      }
+    }
     // UI 相机叠加：画布根贴合渲染相机（相机位姿回填之后）
     uiApi.update(cam);
     applyClearFlags();
@@ -999,14 +1076,18 @@ async function main() {
     // 占用 → 单 pass 零开销；多层占用 → 按层拆，灯光只照亮各自掩码内的层）
     pipeline.renderView({ scene, camera: cam, clear: frameClear });
     if (uiHidden > 0) uiApi.endRender(cam);
-    // 调试统计：FPS（EMA 平滑）+ 场景网格/顶点遍历
+    // 调试统计：FPS（EMA 平滑）+ 帧距样本 + 场景网格/顶点遍历
     if (debugVisible) {
       const t = performance.now();
       if (debugLastTime > 0) {
         const d = t - debugLastTime;
-        if (d > 0) {
+        // d 钳制在合理帧距区间：面板刚打开/恢复后的首帧间隔会污染 EMA（曾爆出
+        // 超刷新率的假 FPS）；帧距样本同样只收该区间
+        if (d > 1 && d < 1000) {
           const inst = 1000 / d;
           debugFps = debugFps > 0 ? debugFps * 0.9 + inst * 0.1 : inst;
+          debugFrameDeltas.push(d);
+          if (debugFrameDeltas.length > 120) debugFrameDeltas.shift();
         }
       }
       debugLastTime = t;
