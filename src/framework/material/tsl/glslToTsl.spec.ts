@@ -29,8 +29,12 @@ function mockTsl(): { lib: TslFnLib; calls: string[] } {
   return { lib, calls };
 }
 
-const uniforms = { _MainTex: { tag: "uniform", args: [] }, _Speed: { tag: "uniform", args: [] } };
-const timeNode = { tag: "time", args: [] };
+// mock uniform/time 节点只模拟被消费的成员（读写 value / 属性访问），非完整节点
+const uniforms = {
+  _MainTex: { tag: "uniform", args: [] },
+  _Speed: { tag: "uniform", args: [] },
+} as unknown as Record<string, TslNode>;
+const timeNode = { tag: "time", args: [] } as unknown as TslNode;
 
 const VERTEX = `
 varying vec2 vUv;

@@ -26,6 +26,8 @@ export interface EditorCommand<A = unknown> {
   description?: string;
   /** 可用性判定（如焦点在文本框、窗口非编辑器视图时返回 false → 静默跳过） */
   canRun?: (ctx: CommandContext) => boolean;
-  /** 执行主体；args 为各入口传入的结构化参数（可为 undefined） */
-  run: (ctx: CommandContext, args: A) => unknown | Promise<unknown>;
+  /** 执行主体；args 为各入口传入的结构化参数（可为 undefined）。
+   *  方法形式声明：注册表异构存储把泛型 A 擦除为 unknown（方法参数双变，
+   *  各命令可安全收窄自身实参形状）。 */
+  run(ctx: CommandContext, args: A): unknown | Promise<unknown>;
 }

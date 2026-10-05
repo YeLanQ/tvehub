@@ -13,6 +13,13 @@ export interface ThinkingCfg {
   effort: "low" | "medium" | "high" | "xhigh";
 }
 
+/** 流式工具调用增量（供应商方言；字段可能逐块到达，主线程按 index 聚合） */
+interface StreamedToolCall {
+  index?: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+
 export function createTauriTransport(
   onReqId?: (reqId: string) => void,
   thinking?: ThinkingCfg,
@@ -46,7 +53,7 @@ export function createTauriTransport(
         args.onReasoning?.(reasoning);
       }
       if (Array.isArray(p.toolCalls)) {
-        for (const raw of p.toolCalls as Array<Record<string, any>>) {
+        for (const raw of p.toolCalls as StreamedToolCall[]) {
           const index = typeof raw.index === "number" ? raw.index : 0;
           const slot = calls.get(index) ?? { id: "", name: "", arguments: "", argsBuf: "" };
           if (typeof raw.id === "string" && raw.id) slot.id = raw.id;

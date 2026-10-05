@@ -7,6 +7,11 @@
  * 所有 Rust 侧命令与窗口 API 调用都会抛「Cannot read properties of undefined」这类
  * 晦涩 TypeError。此函数用于提前识别环境，并在界面层给出提示。
  */
+/** @tauri-apps/api v2 注入的全局内部对象（浏览器直开 devUrl 时不存在） */
+interface TauriInternalsWindow {
+  __TAURI_INTERNALS__?: Record<string, unknown>;
+}
+
 export function isTauri(): boolean {
-  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+  return typeof window !== "undefined" && !!(window as TauriInternalsWindow).__TAURI_INTERNALS__;
 }

@@ -11,7 +11,7 @@ export type LoadType = "arrayBuffer" | "text" | "json" | "blob";
 /** 统一资源加载器：按 URL 路由加载，AssetBundle 优先，未命中走 fetch。
  *  缓存按 `type|url` 去重；失败清除缓存允许重试。 */
 export class ResourceLoader {
-  private _cache = new Map<string, Promise<any>>();
+  private _cache = new Map<string, Promise<unknown>>();
   private _bundle: AssetBundle | null = null;
 
   /** 设置当前 AssetBundle（load 时优先从 bundle 取） */
@@ -26,22 +26,22 @@ export class ResourceLoader {
 
   /** 加载二进制（ArrayBuffer） */
   async loadArrayBuffer(url: string): Promise<ArrayBuffer> {
-    return this._load(url, "arrayBuffer");
+    return (await this._load(url, "arrayBuffer")) as ArrayBuffer;
   }
 
   /** 加载文本 */
   async loadText(url: string): Promise<string> {
-    return this._load(url, "text");
+    return (await this._load(url, "text")) as string;
   }
 
   /** 加载 JSON */
-  async loadJSON<T = any>(url: string): Promise<T> {
-    return this._load(url, "json");
+  async loadJSON<T = unknown>(url: string): Promise<T> {
+    return (await this._load(url, "json")) as T;
   }
 
   /** 加载 Blob */
   async loadBlob(url: string): Promise<Blob> {
-    return this._load(url, "blob");
+    return (await this._load(url, "blob")) as Blob;
   }
 
   /** 加载 ImageBitmap（flipY 翻转，贴图用） */
@@ -50,8 +50,8 @@ export class ResourceLoader {
     return createImageBitmap(blob, flipY ? { imageOrientation: "flipY" } : {});
   }
 
-  /** 核心：按类型加载，bundle 优先 */
-  private async _load(url: string, type: LoadType): Promise<any> {
+  /** 核心：按类型加载，bundle 优先（解码结果形状由包装方法按 LoadType 收窄） */
+  private async _load(url: string, type: LoadType): Promise<unknown> {
     const key = `${type}|${url}`;
     const cached = this._cache.get(key);
     if (cached) return cached;
@@ -61,7 +61,7 @@ export class ResourceLoader {
     return p;
   }
 
-  private async _doLoad(url: string, type: LoadType): Promise<any> {
+  private async _doLoad(url: string, type: LoadType): Promise<unknown> {
     // 1) AssetBundle 优先（内存直读，零开销不占并发闸；尝试多种路径归一化）
     if (this._bundle) {
       const data = this._bundle.tryGet(url);
@@ -85,8 +85,8 @@ export class ResourceLoader {
     });
   }
 
-  /** 从 Uint8Array 按类型解码 */
-  private _decode(data: Uint8Array, type: LoadType): any {
+  /** 从 Uint8Array 按类型解码（形状由 LoadType 决定） */
+  private _decode(data: Uint8Array, type: LoadType): unknown {
     switch (type) {
       case "arrayBuffer":
         return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);

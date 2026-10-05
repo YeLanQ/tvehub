@@ -12,6 +12,7 @@
 // - WebGPU: navigator.gpu 存在（可选，当前框架用 WebGL）
 
 import * as THREE from "three";
+import type { RenderWorkerOut } from "./render-worker.ts";
 import RenderWorker from "./render-worker.ts?worker";
 
 export interface RenderWorkerOptions {
@@ -42,7 +43,7 @@ export class RenderWorkerBridge {
       this.offscreen = opts.canvas.transferControlToOffscreen();
       this.worker = new RenderWorker();
       this.worker.onmessage = (e: MessageEvent) => {
-        const msg: any = e.data;
+        const msg = e.data as RenderWorkerOut;
         if (msg.type === "ready") this.ready = true;
         if (msg.type === "error") console.error("[render-worker]", msg.message);
       };

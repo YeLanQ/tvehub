@@ -5,8 +5,9 @@
 // 设计要点（对齐 particleNodeMaterial.ts 的“最小结构声明 + 断言”哲学）：
 // - 本模块不 import three/tsl（其类型不完整），而是通过注入的 TslFnLib 接口
 //   构造节点，运行时由承载层（customNodeMaterial.ts）以动态 import 的真实库传入；
-// - 节点以不透明类型 TslNode（any）传递，翻译结果是一组「回调体」——
-//   承载层用 tsl.Fn(body)() 挂到 NodeMaterial.vertexNode / fragmentNode；
+// - 节点以不透明结构类型 TslNode 传递（只声明实际消费的成员，动态成员经索引
+//   签名放行），翻译结果是一组「回调体」——承载层用 tsl.Fn(body)() 挂到
+//   NodeMaterial.vertexNode / fragmentNode；
 // - 内置矩阵/属性按 three 命名映射（gl_Position 是顶点回调的返回值；
 //   projectionMatrix→cameraProjectionMatrix、viewMatrix→cameraViewMatrix、
 //   modelMatrix→modelWorldMatrix、normalMatrix→modelNormalMatrix、position→positionLocal）；
@@ -16,8 +17,21 @@
 import type { Expr, GlslFunction, StageParse, Stmt } from "./ast";
 import { parseStage, TranslateError, HOOK_ENTRY_NAME } from "./glslParser";
 
-/** TSL 节点（运行时为 three 节点对象；不透明传递，避免被不完整类型绑住） */
-export type TslNode = any;
+/**
+ * TSL 节点（运行时为 three/tsl 节点对象；不透明结构传递——three 的 tsl 类型
+ * 不完整，按「最小结构声明 + 断言」哲学只声明转译器/承载层实际消费的成员，
+ * swizzle 等动态属性经索引签名放行，消费点按需断言）。
+ */
+export interface TslNode {
+  /** uniform 节点载荷（承载层读写 uniform 值用） */
+  value?: unknown;
+  /** 变量化包装（Hook 端口等声明后再赋值的节点必须可 assign） */
+  toVar(): TslNode;
+  /** 节点赋值（GLSL assign 语句编译） */
+  assign(value: TslNode): TslNode;
+  /** swizzle / 动态属性访问（.rgb / .a / .xyz 等；three/tsl 运行时提供） */
+  [field: string]: unknown;
+}
 
 /**
  * 注入的 TSL 函数库（承载层以 three/tsl 实现，测试以 mock 实现）。
@@ -104,7 +118,8 @@ export interface TslFnLib {
   // varying / 控制流
   varying(node: TslNode, name?: string): TslNode;
   If(cond: TslNode, then: () => void, els?: () => void): TslNode;
-  Fn(body: (...args: unknown[]) => TslNode): TslNode;
+  /** 返回可调用体（惯例 Fn(body)() 立即执行挂到节点槽位）；body 返回 null = 无显式返回 */
+  Fn(body: (...args: unknown[]) => TslNode | null): () => TslNode;
   Return(node?: TslNode): TslNode;
   Discard(): TslNode;
   // 内置节点（constant / 访问器）
@@ -221,8 +236,10 @@ function compileStageNode(stage: StageParse, ctx: GenContext): TslNode {
 /** 解析单个标识符到 TSL 节点（locals > varyings > uniforms > idents > 内置；_Time 特判） */
 function resolveIdent(name: string, ctx: GenContext): TslNode {
   if (name === "_Time") return ctx.timeNode;
-  if (ctx.locals.has(name)) return ctx.locals.get(name);
-  if (ctx.varyings.has(name)) return ctx.varyings.get(name);
+  const local = ctx.locals.get(name);
+  if (local !== undefined) return local;
+  const varying = ctx.varyings.get(name);
+  if (varying !== undefined) return varying;
   if (name in ctx.uniforms) return ctx.uniforms[name];
   if (ctx.idents && name in ctx.idents) return ctx.idents[name];
   if (name in BUILTIN_IDENT) return ctx.tsl[BUILTIN_IDENT[name]] as TslNode;
@@ -244,7 +261,8 @@ function genExpr(e: Expr, ctx: GenContext): TslNode {
       return resolveIdent(e.name, ctx);
     case "swizzle": {
       const base = genExpr(e.base, ctx);
-      return base[e.fields];
+      // swizzle 是 three/tsl 的动态属性（.xyz 等），消费点断言回节点
+      return base[e.fields] as TslNode;
     }
     case "unary": {
       const operand = genExpr(e.operand, ctx);
@@ -377,7 +395,8 @@ function lvalueNode(target: Expr, ctx: GenContext): TslNode {
   }
   if (target.kind === "swizzle") {
     const base = genExpr(target.base, ctx);
-    return base[target.fields];
+    // swizzle 是 three/tsl 的动态属性（.xyz 等），消费点断言回节点
+    return base[target.fields] as TslNode;
   }
   throw new TranslateError("不支持该赋值目标（仅局部变量 / varying / swizzle）");
 }
@@ -525,7 +544,8 @@ export function compileHookNode(input: HookCompileInput): TslNode {
       };
       const state: GenState = { earlyReturn: false, returnValue: null };
       genStmts(stage.entry!.body, ctx, state);
-      return state.returnValue ?? locals.get(input.port.name);
+      // Hook 源码末尾固定 return 端口，returnValue 必有值；此处兜底回端口变量
+      return state.returnValue ?? (locals.get(input.port.name) as TslNode);
     })();
   } finally {
     varAsWritable = prevWritable;

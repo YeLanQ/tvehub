@@ -17,6 +17,7 @@
 
 import { postLog } from "../core/log";
 import { resourceLoader } from "./resource";
+import type { NodeJson } from "./node-json";
 import { FsmRunner } from "../../framework/fsm/fsmRuntime";
 import { parseFsmGraph } from "../../framework/fsm/fsmTypes";
 import { BTRunner } from "../../framework/behavior/behaviorRuntime";
@@ -59,7 +60,7 @@ interface FsmCallbacks {
 interface Binding {
   kind: "fsm" | "bt";
   nodeId: string;
-  json: Record<string, unknown>;
+  json: NodeJson;
   obj: unknown;
   asset: string;
   fsm: FsmRunner | null;
@@ -118,7 +119,12 @@ export interface LogicApi {
  * 创建逻辑运行时：收集场景中的运行器节点，异步加载资产并构建求值器。
  * 必须在 createScripts 之前 await 完成（脚本 onStart 时 engine.logic 可用）。
  */
-export async function createLogic({ nodes }: { nodes: Array<{ json: any; obj: any }> }): Promise<LogicApi> {
+export async function createLogic({
+  nodes,
+}: {
+  /** 场景节点条目（buildSceneTree 产出；obj 为重建出的三维对象，运行器不消费） */
+  nodes: Array<{ json: NodeJson; obj: unknown }>;
+}): Promise<LogicApi> {
   const bindings = new Map<string, Binding>();
 
   // —— 收集运行器节点（注册表为文档序）——
@@ -243,7 +249,11 @@ export async function createLogic({ nodes }: { nodes: Array<{ json: any; obj: an
     binding.tickActions.clear();
   }
 
-  function dispatchState(list: Array<{ match: string; cb: StateMatchCb }>, state: any, binding: Binding): void {
+  function dispatchState(
+    list: Array<{ match: string; cb: StateMatchCb }>,
+    state: { id: string; name: string },
+    binding: Binding,
+  ): void {
     const info = stateInfo(state, binding);
     for (const { match, cb } of list) {
       if (match && match !== info.id && match !== info.name) continue;

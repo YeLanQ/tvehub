@@ -15,7 +15,7 @@ registerCommand({
   group: "资源",
   description: "弹出统一输入框重命名选中的资产（资产面板/F2 共用；args.rel 可显式指定）",
   canRun: (ctx) => ctx.view === "editor",
-  run: async (_ctx, args: any) => {
+  run: async (_ctx, args: Record<string, unknown>) => {
     const project = getProjectStore();
     const root = project.currentPath;
     const rel = args?.rel ? String(args.rel) : getAssetsStore().selectedAsset;

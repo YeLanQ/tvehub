@@ -43,7 +43,9 @@ interface NodeHookPort {
 
 /** 视空间视线方向（与 GL 侧 `normalize(vViewPosition)` 等价：-mvPosition 归一化） */
 function viewDirNode(tsl: TslFnLib): TslNode {
-  return tsl.positionView.negate().normalize();
+  // negate/normalize 是 three/tsl 节点的动态方法链（TslNode 索引签名之外），消费点断言
+  const view = tsl.positionView as unknown as { negate(): { normalize(): TslNode } };
+  return view.negate().normalize();
 }
 
 /** 支持端口的渲染分支（与后端 shader.rs 的 hook_support 一致：Unlit 无 Normal/Emissive） */
@@ -69,7 +71,8 @@ const NODE_HOOK_PORTS: Record<string, NodeHookPort> = {
       const target = mat as unknown as { colorNode: TslNode | null; opacityNode: TslNode | null };
       // alpha 单独走 opacityNode（避免与三材质自身的不透明度相乘两次）
       target.colorNode = tsl.vec4(node.rgb, 1);
-      target.opacityNode = node.a;
+      // .a 是 swizzle 动态属性（TslNode 索引签名之外），消费点断言
+      target.opacityNode = node.a as TslNode;
     },
     idents: (tsl) => ({ normal: tsl.normalView, viewDir: viewDirNode(tsl), uv: tsl.uv() }),
     kinds: MESH_KINDS,

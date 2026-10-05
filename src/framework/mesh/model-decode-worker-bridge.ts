@@ -7,9 +7,11 @@
 // - 序列化/反序列化失败或 Worker 异常 → 回退主线程 GLTFLoader.parse
 
 import * as THREE from "three";
+import type { AnimationClipJSON } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { applyCompressedGltfSupport, compressedGltfSupport } from "./compressed-gltf";
 import type { ModelLoadContext, LoadedModelData } from "./loaders";
+import type { ModelDecodeWorkerOut } from "./model-decode-worker.ts";
 import ModelDecodeWorker from "./model-decode-worker.ts?worker";
 
 let worker: Worker | null = null;
@@ -26,7 +28,7 @@ export function initModelDecodeWorker(decoderBase: string, basisBase: string): v
   try {
     worker = new ModelDecodeWorker();
     worker.onmessage = (e: MessageEvent) => {
-      const msg: any = e.data;
+      const msg = e.data as ModelDecodeWorkerOut;
       switch (msg.type) {
         case "ready":
           workerReady = true;
@@ -38,18 +40,22 @@ export function initModelDecodeWorker(decoderBase: string, basisBase: string): v
           try {
             const loader = new THREE.ObjectLoader();
             const object = loader.parse(msg.sceneJson);
-            const clips = (msg.animationsJson ?? []).map(
-              (j: any) => THREE.AnimationClip.parse(j),
+            const clips = (msg.animationsJson ?? []).map((j) =>
+              THREE.AnimationClip.parse(j as AnimationClipJSON),
             );
             task.resolve({ object, clips });
-          } catch (err: any) {
+          } catch (err) {
             task.reject(
-              new Error(`Worker 结果反序列化失败: ${String(err?.message ?? err)}`),
+              new Error(
+                `Worker 结果反序列化失败: ${err instanceof Error ? err.message : String(err)}`,
+              ),
             );
           }
           break;
         }
         case "error": {
+          // init 失败不带 id（无在途任务可 reject），仅 parse 失败携带
+          if (msg.id === undefined) break;
           const task = pending.get(msg.id);
           if (!task) return;
           pending.delete(msg.id);

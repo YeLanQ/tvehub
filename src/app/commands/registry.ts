@@ -9,7 +9,7 @@ import { logStore } from "../stores/log";
 import { createContext } from "./context";
 import type { CommandResult, EditorCommand } from "./types";
 
-const commandMap = new Map<string, EditorCommand<any>>();
+const commandMap = new Map<string, EditorCommand<unknown>>();
 
 /** 注册一条命令（重复 id 记 warning 并覆盖，便于热替换） */
 export function registerCommand<A = unknown>(cmd: EditorCommand<A>): void {
@@ -20,7 +20,7 @@ export function registerCommand<A = unknown>(cmd: EditorCommand<A>): void {
 }
 
 /** 按 id 取命令定义 */
-export function getCommand(id: string): EditorCommand<any> | undefined {
+export function getCommand(id: string): EditorCommand<unknown> | undefined {
   return commandMap.get(id);
 }
 
@@ -29,7 +29,7 @@ export function hasCommand(id: string): boolean {
 }
 
 /** 全部已注册命令（按注册顺序；注册表驱动 工具权限/MCP 清单） */
-export function listCommands(): EditorCommand<any>[] {
+export function listCommands(): EditorCommand<unknown>[] {
   return [...commandMap.values()];
 }
 

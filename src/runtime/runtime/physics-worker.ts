@@ -2,22 +2,88 @@
 // 双缓冲策略：主线程发当前帧运动学体变换 → Worker 步进 → 回写动力学体变换。
 // Worker 中使用 THREE.Object3D 作为代理（仅需数学运算，无 WebGL 依赖）。
 //
-// 消息协议：
-// → { type: "init", nodes, terrains, settings }
-// ← { type: "ready", dynamicIds: string[], bodyInfos: Record<string, {mode,gravityScale,colliderCount}> }
-// → { type: "step", dt, transforms: Float32Array }
-// ← { type: "recycleInput", buffer: ArrayBuffer }（step 输入缓冲消费完归还主线程复用）
-// ← { type: "stepped", transforms: Float32Array, velocities: Float32Array, collisions: any[] }
-// → { type: "recycleResult", buf: Float32Array }（stepped 结果缓冲消费完归还 Worker 复用）
-// → { type: "command", method: string, args: any[] }
-// ← { type: "result", method: string, value: any }
-// → { type: "castRay", id: number, options: any }
-// ← { type: "raycastResult", id: number, hits: any[] }
+// 消息协议（类型单源；主线程适配在 physics.ts createPhysicsWorker）：
+// → PhysicsWorkerIn
+// ← PhysicsWorkerOut
 
 import * as THREE from "../core/three.module.min.js";
 import { createPhysics } from "./physics";
 
-let api: any = null;
+// ---------------------------------------------------------------------------
+// 消息协议
+// ---------------------------------------------------------------------------
+
+/** 序列化物理节点（主线程 init 下发；位置/旋转/缩放为分量数组） */
+interface SerializedPhysNode {
+  nodeId: string;
+  json: Record<string, unknown>;
+  position: number[];
+  quaternion: number[];
+  scale: number[];
+  parentId: string | null;
+  isMesh: boolean;
+  /** 顶点位置分量数组（仅 isMesh；地形/复杂网格烘焙采样用） */
+  vertices: Float32Array | null;
+}
+
+/** 序列化地形（只含 createPhysics 需要的高度场纯数据） */
+interface SerializedPhysTerrain {
+  json: { id: string };
+  data: { heights: unknown; gridSize: unknown; size: unknown };
+}
+
+/** 物理体信息（bodyInfo 返回；worker 只转发 dynamic 体给主线程） */
+interface PhysicsBodyInfo {
+  mode?: string;
+  gravityScale?: number;
+  colliderCount?: number;
+}
+
+/** createPhysics 返回控制面的 worker 消费面（形状对齐 physics.ts） */
+interface PhysicsApiView {
+  update(dt: number): void;
+  bodyInfo(nodeId: string): PhysicsBodyInfo | null;
+  getLinearVelocity(nodeId: string): { x: number; y: number; z: number } | null;
+  drainCollisions(): unknown[];
+  castRay(options: Record<string, unknown>): Promise<unknown[]> | unknown[];
+  dispose?(): void;
+}
+
+/** 主线程 → Worker */
+export type PhysicsWorkerIn =
+  | { type: "recycleResult"; buf?: Float32Array }
+  | {
+      type: "init";
+      nodes: SerializedPhysNode[];
+      terrains: SerializedPhysTerrain[];
+      settings: Record<string, unknown>;
+    }
+  | { type: "step"; dt: number; transforms: Float32Array }
+  | { type: "command"; method: string; args: unknown[] }
+  | { type: "castRay"; id: number; options: Record<string, unknown> }
+  | { type: "dispose" };
+
+/** Worker → 主线程（TypedArray 随消息转移所有权） */
+export type PhysicsWorkerOut =
+  | {
+      type: "ready";
+      dynamicIds: string[];
+      bodyInfos: Record<string, PhysicsBodyInfo>;
+    }
+  | { type: "recycleInput"; buffer: ArrayBuffer }
+  | { type: "stepped"; transforms: Float32Array; velocities: Float32Array; collisions: unknown[] }
+  | { type: "result"; method: string; value: unknown }
+  | { type: "raycastResult"; id: number; hits: unknown[] }
+  | { type: "error"; message: string };
+
+/** 专用 Worker 作用域（TS DOM lib 下 self 是 Window；收敛 Worker 专有 API 的类型面） */
+interface WorkerScope {
+  postMessage(message: PhysicsWorkerOut, transfer?: Transferable[]): void;
+  close(): void;
+}
+const scope = self as unknown as WorkerScope;
+
+let api: PhysicsApiView | null = null;
 let proxyMap = new Map<string, THREE.Object3D>();
 let allNodes: { nodeId: string; obj: THREE.Object3D }[] = [];
 let dynamicIds: string[] = [];
@@ -25,10 +91,10 @@ let dynamicIds: string[] = [];
 const resultPool: Float32Array[] = [];
 
 self.onmessage = async (e: MessageEvent) => {
-  const msg = e.data;
+  const msg = e.data as PhysicsWorkerIn;
   switch (msg.type) {
     case "recycleResult": {
-      if (msg.buf?.buffer) resultPool.push(msg.buf as Float32Array);
+      if (msg.buf?.buffer) resultPool.push(msg.buf);
       break;
     }
     case "init": {
@@ -36,8 +102,8 @@ self.onmessage = async (e: MessageEvent) => {
         const { nodes, terrains, settings } = msg;
         const proxyNodes = buildProxyTree(nodes);
         allNodes = proxyNodes;
-        api = await createPhysics({ nodes: proxyNodes, terrains, settings });
-        const bodyInfos: Record<string, any> = {};
+        api = (await createPhysics({ nodes: proxyNodes, terrains, settings })) as PhysicsApiView;
+        const bodyInfos: Record<string, PhysicsBodyInfo> = {};
         for (const { nodeId } of proxyNodes) {
           const info = api.bodyInfo(nodeId);
           if (info && info.mode === "dynamic") {
@@ -45,23 +111,26 @@ self.onmessage = async (e: MessageEvent) => {
             bodyInfos[nodeId] = info;
           }
         }
-        (self as any).postMessage({ type: "ready", dynamicIds, bodyInfos });
+        scope.postMessage({ type: "ready", dynamicIds, bodyInfos });
       } catch (err) {
-        (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
+        scope.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
     case "step": {
       if (!api) break;
       try {
-        const { dt, transforms } = msg as { dt: number; transforms: Float32Array };
+        const { dt, transforms } = msg;
         for (let i = 0, j = 0; i < allNodes.length; i++, j += 7) {
           const obj = allNodes[i].obj;
           obj.position.set(transforms[j], transforms[j + 1], transforms[j + 2]);
           obj.quaternion.set(transforms[j + 3], transforms[j + 4], transforms[j + 5], transforms[j + 6]);
         }
         // 输入缓冲消费完立即归还主线程复用（零拷贝往返；免每帧 nodes×7 分配）
-        (self as any).postMessage({ type: "recycleInput", buffer: transforms.buffer }, [transforms.buffer]);
+        scope.postMessage(
+          { type: "recycleInput", buffer: transforms.buffer as ArrayBuffer },
+          [transforms.buffer as ArrayBuffer],
+        );
         api.update(dt);
         const out = resultPool.pop() ?? new Float32Array(dynamicIds.length * 7);
         const vel = new Float32Array(dynamicIds.length * 3);
@@ -79,51 +148,66 @@ self.onmessage = async (e: MessageEvent) => {
           if (v) { vel[k] = v.x; vel[k + 1] = v.y; vel[k + 2] = v.z; }
         }
         const collisions = api.drainCollisions();
-        (self as any).postMessage({ type: "stepped", transforms: out, velocities: vel, collisions }, [out.buffer, vel.buffer]);
+        scope.postMessage(
+          { type: "stepped", transforms: out, velocities: vel, collisions },
+          [out.buffer as ArrayBuffer, vel.buffer as ArrayBuffer],
+        );
       } catch (err) {
-        (self as any).postMessage({ type: "error", message: String(err?.message ?? err) });
+        scope.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
     case "command": {
       const { method, args } = msg;
-      if (api && typeof api[method] === "function") {
-        const value = api[method](...args);
-        if (value !== undefined) (self as any).postMessage({ type: "result", method, value });
+      if (api) {
+        // 动态分发：createPhysics 的方法面远宽于 worker 消费视图，经记录视图调用
+        const methods = api as unknown as Record<string, (...a: unknown[]) => unknown>;
+        const fn = methods[method];
+        if (typeof fn === "function") {
+          const value = fn.apply(api, args);
+          if (value !== undefined) scope.postMessage({ type: "result", method, value });
+        }
       }
       break;
     }
     case "castRay": {
       const { id, options } = msg;
       try {
-        const hits = api?.castRay ? api.castRay(options) : [];
+        const hits = api?.castRay(options) ?? [];
         Promise.resolve(hits).then((h) => {
-          (self as any).postMessage({ type: "raycastResult", id, hits: h ?? [] });
+          scope.postMessage({ type: "raycastResult", id, hits: h ?? [] });
         });
       } catch {
-        (self as any).postMessage({ type: "raycastResult", id, hits: [] });
+        scope.postMessage({ type: "raycastResult", id, hits: [] });
       }
       break;
     }
     case "dispose": {
-      if (api?.dispose) api.dispose();
-      (self as any).close();
+      api?.dispose?.();
+      scope.close();
       break;
     }
   }
 };
 
-function buildProxyTree(serialized: any[]): { nodeId: string; obj: THREE.Object3D; json: any }[] {
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function buildProxyTree(
+  serialized: SerializedPhysNode[],
+): { nodeId: string; obj: THREE.Object3D; json: Record<string, unknown> }[] {
   proxyMap = new Map();
-  const result: { nodeId: string; obj: THREE.Object3D; json: any }[] = [];
+  const result: { nodeId: string; obj: THREE.Object3D; json: Record<string, unknown> }[] = [];
   for (const s of serialized) {
-    const obj = s.isMesh ? new THREE.Mesh() : new THREE.Object3D();
+    const obj: THREE.Object3D = s.isMesh ? new THREE.Mesh() : new THREE.Object3D();
     obj.position.fromArray(s.position);
     obj.quaternion.fromArray(s.quaternion);
     obj.scale.fromArray(s.scale);
     if (s.isMesh && s.vertices) {
-      obj.geometry = new THREE.BufferGeometry();
-      obj.geometry.setAttribute("position", new THREE.BufferAttribute(s.vertices, 3));
+      const mesh = obj as THREE.Mesh;
+      mesh.geometry = new THREE.BufferGeometry();
+      mesh.geometry.setAttribute("position", new THREE.BufferAttribute(s.vertices, 3));
     }
     proxyMap.set(s.nodeId, obj);
     result.push({ nodeId: s.nodeId, obj, json: s.json });
