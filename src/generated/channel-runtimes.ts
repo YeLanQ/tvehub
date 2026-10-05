@@ -307,6 +307,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "url": "/engine/runtime/pak.mjs"
       },
       {
+        "key": "engine/runtime/parallel.mjs",
+        "rel": "engine/runtime/parallel.mjs",
+        "url": "/engine/runtime/parallel.mjs"
+      },
+      {
         "key": "engine/runtime/particles.mjs",
         "rel": "engine/runtime/particles.mjs",
         "url": "/engine/runtime/particles.mjs"
