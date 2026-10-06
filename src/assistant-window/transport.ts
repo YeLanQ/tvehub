@@ -82,6 +82,9 @@ export function createTauriTransport(
         model: args.model,
         messages: args.messages,
         temperature: args.temperature,
+        // 工具目录随请求下发（原生 function-calling）；不支持 tools 的端点
+        // 由后端 400/422 识别后自动去 tools 重试，前端无感
+        ...(args.tools?.length ? { tools: args.tools } : {}),
         // 思考参数随请求下发（default 不传参）；方言组装在后端 ai_chat_stream
         ...(thinking && thinking.mode !== "default"
           ? { thinking: thinking.mode, thinkingEffort: thinking.effort }

@@ -1,47 +1,32 @@
 // 正文内联工具调用解析：部分模型/供应商不支持 function-calling，会把调用
 // 以文本形式写进回复正文。本模块把这类块抠出来转成 ToolCall，让 runAgent
 // 照常执行——指令任务因此不再"只聊天不干活"。
-// 支持四种形态：
+// 支持五种形态：
 //   1. JSON 对象：{"tool": "x", "input": {…}} / {"name": "x", "arguments": {…}}
 //   2. XML invoke：<invoke name="x"><parameter name="k">v</parameter>…</invoke>
 //   3. 包裹标签：<tool_call>{"name": …}</tool_call>（剥壳后按 JSON 解析）
 //   4. Markdown 标签：**工具调用：** `x` {…}（含伪结果块，见 ./labeled-calls）
+//   5. 任意结构标记模板（DeepSeek DSML 等，见 ./tool-dialects）+ 两种非标记壳
 // 非调用形状的内容不误吞；cleaned 供展示净化（抠掉已识别块）。
 
 import type { ToolCall } from "./agent";
 import {
   balancedObject,
+  callFromLooseJson,
+  decodeEntities,
   makeCall,
   parseObjectAt,
   labeledTailStart,
   scanLabeledCalls,
   stripLabeledCalls,
 } from "./labeled-calls";
+import { scanDialectCalls } from "./tool-dialects";
+import { stripTagCalls } from "./tool-dialect-sanitize";
 
 export interface ParsedInline {
   calls: ToolCall[];
   /** 去掉已识别调用块后的正文（历史与展示都用净化版） */
   cleaned: string;
-}
-
-/** JSON 对象形状校验：tool|name + input|arguments|args */
-function callFromJson(raw: unknown): ToolCall | null {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const obj = raw as Record<string, unknown>;
-  const name = typeof obj.tool === "string" ? obj.tool : typeof obj.name === "string" ? obj.name : "";
-  if (!name || !("input" in obj || "arguments" in obj || "args" in obj)) return null;
-  return makeCall(name, obj.input ?? obj.arguments ?? obj.args ?? {});
-}
-
-/** XML 实体解码（parameter 值里常见 &lt; &amp; 等） */
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 /** <invoke name="x">…</invoke> 块解析已由宽松参数槽解析（callFromParams）取代 */
@@ -133,6 +118,16 @@ export function parseInlineToolCalls(content: string): ParsedInline {
     }
   }
 
+  // 1.5 通用结构方言（DSML 等任意标记模板）与非标记壳：经典 invoke 形态已被
+  // 第 1 步精确消费，第 1 步颗粒无收时才交给通用引擎（不与旧路径抢块）
+  if (!calls.length) {
+    const dialect = scanDialectCalls(content);
+    if (dialect.calls.length) {
+      calls.push(...dialect.calls);
+      ranges.push(...dialect.ranges);
+    }
+  }
+
   // 2. <tool_call>/<tool_calls> 壳：壳内（含已识别的嵌套块）捞出有效调用才整壳消费
   for (const m of content.matchAll(WRAPPER_RE)) {
     const s = m.index ?? 0;
@@ -147,7 +142,7 @@ export function parseInlineToolCalls(content: string): ParsedInline {
       if (brace < 0) break;
       const range = balancedObject(inner, brace);
       if (!range) break;
-      const call = callFromJson(parseObjectAt(inner, brace));
+      const call = callFromLooseJson(parseObjectAt(inner, brace));
       if (call) {
         calls.push(call);
         found = true;
@@ -174,7 +169,7 @@ export function parseInlineToolCalls(content: string): ParsedInline {
     if (start < 0) break;
     const range = balancedObject(scanText, start);
     if (!range) break;
-    const call = callFromJson(parseObjectAt(scanText, start));
+      const call = callFromLooseJson(parseObjectAt(scanText, start));
     if (call) {
       calls.push(call);
       ranges.push([range[0], range[1] + 1]);
@@ -242,7 +237,8 @@ export function hasInlineToolCalls(content: string): boolean {
 const FEED_ECHO_RE = /\[工具 [^\]\n]{0,60} 执行结果\]\s*[\s\S]{0,400}?(?:（系统代为执行[^）]*）|(?=\n\s*\n)|$)/g;
 
 export function stripCallTags(text: string): string {
-  const out = stripLabeledCalls(text)
+  // 先剥结构方言残骸（DSML 等任意标记模板），再走旧有的标签/围栏/回声净化
+  const out = stripTagCalls(stripLabeledCalls(text))
     .replace(/<tool_calls?(?:\s[^>]*)?>[\s\S]*?(?:<\/tool_calls?>|$)/g, "")
     .replace(/<(?:invoke|function|parameter)\b[^>]*>[\s\S]*?(?:<\/(?:invoke|function|parameter)>|$)/g, "")
     .replace(/<\/?(?:tool_calls?|invoke|function|parameter)\b[^>]*>/g, "")
@@ -307,6 +303,12 @@ export function streamingDisplay(text: string): string {
   }
   const tagStart = cleaned.search(/<\s*(?:tool_calls?|invoke|function|parameter)\b[^<]*$/);
   if (tagStart >= 0) return cleaned.slice(0, tagStart).trimEnd();
+  // 通用结构方言的半截标记（如 <｜DSML｜ invoke … 还没流到 >）：带语义词且
+  // 至文本尾没有闭合 >，一律隐藏；完整成对的块已由 cleanedContent 消费
+  const dialectStart = cleaned.search(
+    /<[^\s<>][^<>]*\s(?:invokes?|functions?|parameters?|params?|args?|tool_calls?|calls?)(?![\w-])[^<>]*$/i,
+  );
+  if (dialectStart >= 0) return cleaned.slice(0, dialectStart).trimEnd();
   const labelStart = labeledTailStart(cleaned);
   if (labelStart >= 0) return cleaned.slice(0, labelStart).trimEnd();
   const fenceStart = cleaned.search(/```[a-zA-Z]+\b[ \t]*(?:\r?\n)?[ \t]*$/);

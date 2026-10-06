@@ -13,6 +13,40 @@ export interface ParsedLabeled {
   ranges: Array<[number, number]>;
 }
 
+/** XML 实体解码（XML 形态方言的 parameter 值里常见 &lt; &amp; 等） */
+export function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** 参数键到调用 JSON 形状的名字/参数槽：tool|name + input|arguments|args|parameters
+ * （parameters 是 Llama/Mistral 系方言的参数槽名） */
+const JSON_NAME_KEYS = new Set(["tool", "name", "method", "function"]);
+const JSON_ARGS_KEYS = new Set(["input", "arguments", "args", "parameters"]);
+
+/** 宽松调用 JSON 形状校验：tool|name + 参数槽；不构成调用的数据返回 null */
+export function callFromLooseJson(raw: unknown): ToolCall | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  let name = "";
+  for (const key of JSON_NAME_KEYS) {
+    if (typeof obj[key] === "string" && obj[key]) {
+      name = obj[key];
+      break;
+    }
+  }
+  if (!name) return null;
+  for (const key of JSON_ARGS_KEYS) {
+    if (key in obj) return makeCall(name, obj[key] ?? {});
+  }
+  return null;
+}
+
 let seq = 0;
 
 /** 生成内联调用 id（JSON / invoke / 标签三种内联形态共用一套前缀语义） */

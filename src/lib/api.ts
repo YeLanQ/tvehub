@@ -417,6 +417,9 @@ export const api = {
     model: string;
     messages: unknown;
     temperature?: number;
+    /** 工具目录（OpenAI tools 数组）：下发走原生 function-calling；
+     * 端点不支持时后端 400/422 自动去 tools 重试 */
+    tools?: unknown;
     /** 思考模式（缺省 = 不传参）：on/off 显式开关，方言在后端组装 */
     thinking?: "on" | "off";
     /** 思考强度（thinking = on 时随 reasoning_effort 下发） */

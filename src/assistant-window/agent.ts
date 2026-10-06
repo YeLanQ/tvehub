@@ -8,6 +8,7 @@ import { skillIndexPrompt } from "./skills";
 import { loadableIndexPrompt, type LoadableCatalogs } from "./loadable-index";
 import { cleanedContent, parseInlineToolCalls, stripCallTags } from "./inline-tools";
 import { hasLabeledCallTrace } from "./labeled-calls";
+import { hasTagCallTrace } from "./tool-dialect-sanitize";
 import { assistantTools, type OpenAITool } from "./tools";
 import type { AgentCard } from "./store";
 
@@ -36,6 +37,9 @@ export interface StreamArgs {
   model: string;
   temperature?: number;
   messages: WireMessage[];
+  /** 工具目录（OpenAI tools 数组）：下发后支持 function-calling 的模型走
+   * 原生 tool_calls；不支持 tools 的端点由后端 400/422 自动降级重试 */
+  tools?: OpenAITool[];
   onDelta?: (cumulative: string) => void;
   /** 思考增量（本轮内聚合全文；不返回思考的模型/供应商不会回调） */
   onReasoning?: (cumulative: string) => void;
@@ -104,20 +108,21 @@ export function fitWireBudget(wire: WireMessage[], budgetChars: number): WireMes
 }
 
 /** 正文疑似工具调用但解析失败的痕迹（只认标签形态，普通 JSON 数据不误伤；
- * Markdown 标签方言的痕迹判据在 labeled-calls，完整形态已被解析执行，
- * 剩下的都是解析不了的坏格式）。 */
+ * Markdown 标签方言的痕迹判据在 labeled-calls，结构标记模板（DSML 等）在
+ * tool-dialects；完整形态已被解析执行，剩下的都是解析不了的坏格式）。 */
 const TOOL_MARK_RE = /<\s*tool_call|<\s*invoke\b|<\s*function\b|<\/\s*(tool_call|invoke|function)>/;
 
-/** 坏格式调用痕迹：调用标签或「工具调用：name {…}」方言痕迹（解析没产出时） */
+/** 坏格式调用痕迹：调用标签、结构标记模板或「工具调用：name {…}」方言痕迹 */
 function hasUnparsedCallTrace(content: string): boolean {
-  return TOOL_MARK_RE.test(content) || hasLabeledCallTrace(content);
+  return TOOL_MARK_RE.test(content) || hasLabeledCallTrace(content) || hasTagCallTrace(content);
 }
 /** 格式纠偏提示（解析失败时作为 user 消息回灌） */
 const TOOL_FORMAT_NUDGE =
   "（系统）你上面的工具调用格式无法解析、没有被执行。请改用以下任一格式重新发起，" +
   "除调用外不要输出多余文字：\n" +
   '① 正文独立 JSON：{"tool": "方法名", "input": {参数}}\n' +
-  '② <invoke name="方法名"><parameter name="参数名">值</parameter></invoke>';
+  '② <invoke name="方法名"><parameter name="参数名">值</parameter></invoke>\n' +
+  '③ 你所用模型自带的调用标记语法（各家的 invoke/参数标记模板系统均能识别）。';
 /** 行动宣言特征：模型宣布"要去做"却没带任何调用（拉回循环的判据）。
  * 措辞千变万化（"我先并行添加""先验证参数能力"…），宁可放宽——误救的代价
  * 有界（提示模型别重复已完成步骤，至多烧掉救援预算后照常收尾），
@@ -241,7 +246,7 @@ export function buildSystemPrompt(
       "- deny：拒绝执行并转述原因，不要绕过。",
       "brain.query 可查图谱能力（技能/命令/概念），brain.stats 查历史正确率与效能。每次工具执行的结果会自动回灌大脑进化策略，无需手动上报。",
       "工具执行由后端大脑决策中心统一门控：只读（绿灯）直接执行；写操作（黄灯）会先请求用户批准，批准一次即覆盖本任务的后续写调用。收到「用户拒绝执行」的回执时改为只读方案或询问用户，不要原样重试同一调用。",
-      "调用方式：优先 function-calling 的 tool_calls；若当前模型不支持，则在正文中输出独立 JSON 对象（每块一个调用）：{\"tool\": \"方法名\", \"input\": {参数}}，系统会识别并代为执行。",
+      "调用方式：优先 function-calling 的 tool_calls（原生通道可用时系统自动启用）；不支持时在正文中用任意调用语法发起——独立 JSON 对象 {\"tool\": \"方法名\", \"input\": {参数}}（每块一个调用）或你模型自带的 invoke/参数标记模板均可，系统都会识别并代为执行。",
       "回合协议：不要输出「开始执行」「我将依次操作」之类的过渡宣言——纯文字回合会被视为任务结束。要么直接发起工具调用（无依赖的调用放同一轮并行），要么在全部步骤完成后输出以「任务完成」开头的最终总结；没有工具需要调用且任务未完成时，继续发起调用而不是输出说明文字。",
       "任务边界：每条新的用户消息是一个独立任务——brain.plan 的 task 与工具调用只描述本轮新指令；往期任务已完成的操作（见「会话进度备忘」）不要并入计划、也不要再次执行，需要先前成果时直接引用其结果（项目名/路径）。",
       "防重复：每次发起调用前先看上文结果与「会话进度备忘」判断进度——已成功执行的步骤不要再次执行；报错的步骤先修正参数，也不要原样重发。",
@@ -319,6 +324,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AssistantReply> {
       apiKey: opts.apiKey,
       model: opts.model,
       temperature: opts.temperature,
+      tools: opts.tools,
       messages: fitWireBudget(history, budget),
       onDelta: opts.onDelta,
       onReasoning: opts.onReasoning,
