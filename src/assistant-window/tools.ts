@@ -82,7 +82,12 @@ function specToTool(spec: ToolSpec): OpenAITool {
     function: {
       name: spec.method,
       description: spec.description,
-      parameters: { type: "object", properties },
+      parameters: {
+        type: "object",
+        properties,
+        // 必填参数随 schema 下发：原生 function-calling 的模型据此少漏参
+        ...(spec.required?.length ? { required: spec.required } : {}),
+      },
     },
   };
 }

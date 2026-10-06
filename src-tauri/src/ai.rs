@@ -34,6 +34,9 @@ pub struct AiChatArgs {
     /// OpenAI messages 数组（含 system/user/assistant/tool）
     messages: serde_json::Value,
     temperature: Option<f64>,
+    /// 工具目录（OpenAI tools 数组）：下发走原生 function-calling；端点不支持
+    /// 时按 400/422 识别自动去 tools 重试（降级正文调用，前端方言解析兜底）
+    tools: Option<serde_json::Value>,
     /// 思考模式：缺省/default = 不传参；on = 显式开启；off = 显式关闭
     thinking: Option<String>,
     /// 思考强度：low / medium / high（thinking = on 时随请求下发）
@@ -76,13 +79,21 @@ pub async fn ai_chat_stream(
     Ok(())
 }
 
+/// 请求是否携带非空 tools（缺省/空数组都不下发——部分端点对空 tools 报错）
+fn has_tools(args: &AiChatArgs) -> bool {
+    args.tools
+        .as_ref()
+        .and_then(|t| t.as_array())
+        .is_some_and(|a| !a.is_empty())
+}
+
 /// 组装 /chat/completions 请求体（含思考参数方言；纯函数便于单测）。
 /// 思考方言按主流 OpenAI 兼容端点并发三套：
 /// - thinking.type：GLM/Zhipu 系（enabled / disabled）
 /// - enable_thinking：Qwen/DashScope/SiliconFlow 系（true / false）
 /// - reasoning_effort：OpenAI o系/GPT-5、vLLM、Gemini 兼容层（low/medium/high/xhigh）
 /// 不支持额外字段的严格端点会 400——前端以「默认（不传参）」兜底。
-fn build_chat_body(args: &AiChatArgs) -> serde_json::Value {
+fn build_chat_body(args: &AiChatArgs, include_tools: bool) -> serde_json::Value {
     let mut body = json!({
         "model": args.model,
         "messages": args.messages,
@@ -90,6 +101,16 @@ fn build_chat_body(args: &AiChatArgs) -> serde_json::Value {
     });
     if let Some(t) = args.temperature {
         body["temperature"] = json!(t);
+    }
+    if include_tools {
+        if let Some(tools) = args.tools.as_ref() {
+            // 缺省/空数组都不下发——部分端点对空 tools 报错（与 has_tools 同判据）
+            let non_empty = tools.as_array().is_some_and(|a| !a.is_empty());
+            if non_empty {
+                body["tools"] = tools.clone();
+                body["tool_choice"] = json!("auto");
+            }
+        }
     }
     match args.thinking.as_deref() {
         Some("on") => {
@@ -117,24 +138,35 @@ async fn run_stream(
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     let url = format!("{}/chat/completions", normalize_base(&args.base_url));
-    let body = build_chat_body(args);
-    let resp = reqwest::Client::new()
-        .post(url)
-        .json(&body)
-        .timeout(Duration::from_secs(300));
-    // 空 Key 不带 Authorization（本地端点如 Ollama/LM Studio 会拒绝空 Bearer）
-    let resp = if args.api_key.trim().is_empty() {
-        resp.send().await
-    } else {
-        resp.bearer_auth(&args.api_key).send().await
-    }
-    .map_err(|e| format!("请求失败: {e}"))?;
-    if !resp.status().is_success() {
+    // 首选带 tools（原生 function-calling）；不支持 tools 字段的严格端点以
+    // 400/422 拒单——自动去 tools 重试一次，降级为正文调用通道（前端方言
+    // 解析兜底），对上层透明。仅重试一次，其余错误原样上报。
+    let mut with_tools = has_tools(args);
+    let resp = loop {
+        let body = build_chat_body(args, with_tools);
+        let req = reqwest::Client::new()
+            .post(url.clone())
+            .json(&body)
+            .timeout(Duration::from_secs(300));
+        // 空 Key 不带 Authorization（本地端点如 Ollama/LM Studio 会拒绝空 Bearer）
+        let sent = if args.api_key.trim().is_empty() {
+            req.send().await
+        } else {
+            req.bearer_auth(&args.api_key).send().await
+        };
+        let resp = sent.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status();
+        if status.is_success() {
+            break resp;
+        }
+        if matches!(status.as_u16(), 400 | 422) && with_tools {
+            with_tools = false;
+            continue;
+        }
         let text = resp.text().await.unwrap_or_default();
         let short: String = text.chars().take(300).collect();
         return Err(format!("HTTP {status}: {short}"));
-    }
+    };
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -264,6 +296,7 @@ mod tests {
             model: "m".into(),
             messages: json!([]),
             temperature: None,
+            tools: None,
             thinking: thinking.map(String::from),
             thinking_effort: effort.map(String::from),
         }
@@ -271,7 +304,7 @@ mod tests {
 
     #[test]
     fn body_default_sends_no_thinking_keys() {
-        let body = build_chat_body(&args(None, None));
+        let body = build_chat_body(&args(None, None), false);
         assert!(body.get("thinking").is_none());
         assert!(body.get("enable_thinking").is_none());
         assert!(body.get("reasoning_effort").is_none());
@@ -280,7 +313,7 @@ mod tests {
 
     #[test]
     fn body_on_enables_all_dialects_with_effort() {
-        let body = build_chat_body(&args(Some("on"), Some("high")));
+        let body = build_chat_body(&args(Some("on"), Some("high")), false);
         assert_eq!(body["thinking"], json!({ "type": "enabled" }));
         assert_eq!(body["enable_thinking"], json!(true));
         assert_eq!(body["reasoning_effort"], json!("high"));
@@ -288,19 +321,19 @@ mod tests {
 
     #[test]
     fn body_on_without_effort_falls_back_medium() {
-        let body = build_chat_body(&args(Some("on"), None));
+        let body = build_chat_body(&args(Some("on"), None), false);
         assert_eq!(body["reasoning_effort"], json!("medium"));
     }
 
     #[test]
     fn body_on_xhigh_passes_through() {
-        let body = build_chat_body(&args(Some("on"), Some("xhigh")));
+        let body = build_chat_body(&args(Some("on"), Some("xhigh")), false);
         assert_eq!(body["reasoning_effort"], json!("xhigh"));
     }
 
     #[test]
     fn body_off_disables_without_effort() {
-        let body = build_chat_body(&args(Some("off"), Some("low")));
+        let body = build_chat_body(&args(Some("off"), Some("low")), false);
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
         assert_eq!(body["enable_thinking"], json!(false));
         assert!(body.get("reasoning_effort").is_none());
@@ -308,14 +341,51 @@ mod tests {
 
     #[test]
     fn body_unknown_thinking_value_is_ignored() {
-        let body = build_chat_body(&args(Some("bogus"), None));
+        let body = build_chat_body(&args(Some("bogus"), None), false);
         assert!(body.get("thinking").is_none());
         assert!(body.get("enable_thinking").is_none());
     }
 
     #[test]
     fn body_invalid_effort_is_dropped() {
-        let body = build_chat_body(&args(Some("on"), Some("max")));
+        let body = build_chat_body(&args(Some("on"), Some("max")), false);
         assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn tools_sent_with_choice_when_flag_on() {
+        let mut a = args(None, None);
+        a.tools = Some(json!([{ "type": "function", "function": { "name": "node.list" } }]));
+        assert!(has_tools(&a));
+        let body = build_chat_body(&a, true);
+        assert_eq!(body["tool_choice"], json!("auto"));
+        assert_eq!(body["tools"][0]["function"]["name"], json!("node.list"));
+    }
+
+    #[test]
+    fn tools_omitted_without_flag_or_when_empty() {
+        let mut a = args(None, None);
+        a.tools = Some(json!([{ "type": "function" }]));
+        assert!(has_tools(&a));
+        assert!(build_chat_body(&a, false).get("tools").is_none());
+        a.tools = Some(json!([]));
+        assert!(!has_tools(&a));
+        assert!(build_chat_body(&a, true).get("tools").is_none());
+        let none = args(None, None);
+        assert!(!has_tools(&none));
+    }
+
+    #[test]
+    fn tools_retry_only_on_400_422_first_attempt() {
+        // 降级重试判据：带 tools 时的 400/422 才去 tools 重试；其余状态码
+        // （401/403/429/5xx）原样上报，第二轮 400 属真错误不再重试
+        let retry = |status: u16, with_tools: bool| {
+            matches!(status, 400 | 422) && with_tools
+        };
+        assert!(retry(400, true));
+        assert!(retry(422, true));
+        assert!(!retry(401, true));
+        assert!(!retry(500, true));
+        assert!(!retry(400, false));
     }
 }

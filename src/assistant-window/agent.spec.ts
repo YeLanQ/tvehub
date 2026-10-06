@@ -254,6 +254,65 @@ describe("runAgent 工具循环", () => {
     expect(reply.content).toBe("好了，全部完成。");
   });
 
+  it("正常：DSML 方言残骸（载荷残缺）同样触发纠偏续跑", async () => {
+    let n = 0;
+    const brokenDsml =
+      '<｜｜DSML｜｜ invoke name="asset.write">\n' +
+      '<｜｜DSML｜｜ parameter name="content" string="false">{"path":"x","半截\n' +
+      "</｜｜DSML｜｜ parameter>\n" +
+      "</｜｜DSML｜｜ invoke>";
+    const script: AssistantReply[] = [
+      { content: brokenDsml, toolCalls: [] },
+      { content: '{ "tool": "editor.state", "input": {} }', toolCalls: [] },
+      { content: "好了，全部完成。", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "写文件" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return {};
+      },
+    });
+    expect(executed).toEqual(["editor.state"]);
+    expect(reply.content).toBe("好了，全部完成。");
+  });
+
+  it("正常：完整 DSML 调用块（DeepSeek 方言）被解析执行", async () => {
+    let n = 0;
+    const dsml =
+      '<｜｜DSML｜｜ calls>\n' +
+      '<｜｜DSML｜｜ invoke name="editor.state">\n' +
+      "</｜｜DSML｜｜ invoke>\n" +
+      '<｜｜DSML｜｜ invoke name="project.list">\n' +
+      "</｜｜DSML｜｜ invoke>\n" +
+      "</｜｜DSML｜｜ calls>";
+    const script: AssistantReply[] = [
+      { content: dsml, toolCalls: [] },
+      { content: "查询完成。", toolCalls: [] },
+    ];
+    const executed: string[] = [];
+    const reply = await runAgent({
+      messages: [{ role: "user", content: "看看状态" }],
+      tools: assistantTools(),
+      chat: async () => script[Math.min(n++, script.length - 1)],
+      baseUrl: "https://x/v1",
+      apiKey: "k",
+      model: "m",
+      execTool: async (name) => {
+        executed.push(name);
+        return { decision: "autoExecute" };
+      },
+    });
+    expect(executed).toEqual(["editor.state", "project.list"]);
+    expect(reply.content).toBe("查询完成。");
+  });
+
   it("正常：行动宣言（纯文字无调用）被拉回循环继续执行", async () => {
     let n = 0;
     const script: AssistantReply[] = [
