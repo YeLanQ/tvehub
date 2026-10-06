@@ -77,13 +77,15 @@ pub(super) fn asset_file_name(rel: &str, used: &mut HashSet<String>) -> String {
     }
 }
 
-/// game.json：屏幕方向由构建配置选择（portrait / landscape，缺省 portrait）
-pub(super) fn game_json(orientation: &str) -> Result<String, String> {
+/// game.json：屏幕方向由构建配置选择（portrait / landscape，缺省 portrait）；
+/// with_workers = 物理 Worker bundle 实际随包时声明 workers 字段（wx.createWorker
+/// 依赖该声明；声明而无目录会令开发者工具编译失败，故按实际随包条件写入）
+pub(super) fn game_json(orientation: &str, with_workers: bool) -> Result<String, String> {
     let orientation = match orientation {
         "landscape" => "landscape",
         _ => "portrait",
     };
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "deviceOrientation": orientation,
         "showStatusBar": false,
         "networkTimeout": {
@@ -93,6 +95,11 @@ pub(super) fn game_json(orientation: &str) -> Result<String, String> {
             "downloadFile": 10000
         }
     });
+    if with_workers {
+        value.as_object_mut()
+            .ok_or_else(|| "game.json 结构异常".to_string())?
+            .insert("workers".to_string(), serde_json::Value::String("workers".to_string()));
+    }
     serde_json::to_string_pretty(&value).map_err(|e| format!("game.json 序列化失败: {e}"))
 }
 
@@ -201,6 +208,8 @@ pub(super) fn readme(appid: &str, orientation: &str) -> String {
 - src/               用户脚本（CommonJS 编译产物）
 - engine/runtime/physics-engines/  物理引擎（启用物理的项目按后端随包：
   rapier/jolt/ammo 的胶水 .js + .wasm 文件）
+- workers/tve.js     物理 Worker（启用物理的项目随包：物理模拟在独立线程运行，
+  wasm 字节经主线程读包回传实例化；game.json 已声明 workers 字段）
 - engine/runtime/loaders/meshopt_decoder.wasm  meshopt 解码（GLTFLoader 依赖）
 
 已知限制
@@ -210,11 +219,13 @@ pub(super) fn readme(appid: &str, orientation: &str) -> String {
 - 资产文件化：二进制资产以白名单扩展名（png/jpg/gif/webp/mp3/wav/ogg/m4a）
   或 .bin 落盘，首次导出后请在工具确认包内文件齐全（工具对陌生扩展名会
   静默剔除，.bin 兜底应可规避）；
-- 物理：rapier/jolt/ammo 三后端均支持——wasm 以代码包内 .wasm 文件随包，由
-  桥接层经 WXWebAssembly.instantiate(路径) 实例化；Draco/Basis 压缩资产不支持
-  （依赖 Worker，启用压缩的项目请关闭后重新构建）；
-- Worker 类能力走主线程回退（动画/物理自动降级）；真机（iOS/Android）wasm 物理
-  未经实机验证，请以开发者工具模拟器验收为准。
+- 物理：rapier/jolt/ammo 三后端均支持——wasm 以代码包内 .wasm 文件随包，主
+  线程由桥接层经 WXWebAssembly.instantiate(路径) 实例化，Worker 线程经字节
+  中继以原生 WebAssembly 实例化；物理模拟默认跑在 Worker 线程（平台不支持
+  或 Worker 就绪失败时自动回退主线程，控制台有告警行）；Draco 压缩已支持
+  （主线程内联解码）；Basis 纹理压缩不支持（请关闭后重新构建）；
+- 真机（iOS/Android）的 Worker 线程与 wasm 物理未经实机验证，请以开发者
+  工具模拟器验收为准，真机异常时留意控制台 [runtime-bridge]/[物理] 告警行。
 "#
     )
 }

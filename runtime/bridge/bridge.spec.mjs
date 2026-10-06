@@ -119,6 +119,8 @@ function makeMockHost() {
     storageGet: (k) => storage.get(k) ?? null,
     storageSet: (k, v) => storage.set(k, v),
     storageRemove: (k) => storage.delete(k),
+    // 平台 Worker 缺省不支持（worker 桥语义在专设场景以可编程桩验证）
+    createWorker: () => null,
     __canvases: canvases,
     __images: images,
     __touchHandlers: touchHandlers,
@@ -161,6 +163,7 @@ await import("./http.ts");
 await import("./events.ts");
 await import("./audio.ts");
 await import("./storage.ts");
+await import("./worker.ts");
 await import("./load-module.ts");
 
 // 全局覆盖：GLOBAL_SURFACE 全部就位（__TVE_BUILD_DATA 例外——由 data-bridge 安装，
@@ -517,6 +520,93 @@ check(
     }
   }
   fsp.rmSync(userDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- 场景 E：平台 Worker 桥
+// ns 信封多路复用（可编程 wx worker 桩）：ready 门缓冲/放行、拷贝归一（TypedArray
+// → 纯数组）、上行按 ns 派发、{data} 包装解包、wasm 字节中继（读包 b64 回传/缺失
+// 回 null）、不支持协议回 null、末端口关闭终结单例。
+{
+  const downEvents = []; // 主 → worker 下行（平台 postMessage 收到的信封）
+  let fakeOnMessage = null;
+  let createdPath = "";
+  let terminatedCount = 0;
+  const fakeWxWorker = {
+    onMessage(cb) {
+      fakeOnMessage = cb;
+    },
+    postMessage(msg) {
+      downEvents.push(msg);
+    },
+    terminate() {
+      terminatedCount++;
+    },
+  };
+  const workerHost = makeMockHost();
+  workerHost.createWorker = (path) => {
+    createdPath = String(path);
+    return fakeWxWorker;
+  };
+  workerHost.readPackageFile = (rel) =>
+    rel === "engine/runtime/physics-engines/rapier.wasm"
+      ? new Uint8Array([0x00, 0x61, 0x73, 0x6d]).buffer
+      : null;
+  setHost(workerHost);
+  await import("./worker.ts?scen");
+  const hook = globalThis.__tveCreateWorker;
+  check("worker 桥：钩子已安装", typeof hook === "function");
+  check("worker 桥：未支持协议（animation）返回 null", hook("", "animation") === null);
+
+  const port = hook("", "physics");
+  check("worker 桥：physics 端口创建", !!port);
+  check("worker 桥：平台 createWorker 收到入口路径", createdPath === "workers/tve.js");
+
+  // ready 门：握手前下行缓冲，握手后放行
+  port.postMessage({ type: "init", verts: new Float32Array([1, 2, 3]) });
+  check("worker 桥：ready 前下行缓冲", downEvents.length === 0);
+  fakeOnMessage({ ns: "bridge", seq: 1, payload: { t: "ready" } });
+  check("worker 桥：ready 后缓冲放行", downEvents.length === 1);
+  const env1 = downEvents[0];
+  check("worker 桥：下行信封 ns/seq/payload", env1.ns === "physics" && env1.seq > 0 && !!env1.payload);
+  check("worker 桥：TypedArray 拷贝归一为纯数组", Array.isArray(env1.payload.verts) && env1.payload.verts[1] === 2);
+
+  // 上行按 ns 派发
+  let got = null;
+  port.onmessage = (ev) => {
+    got = ev.data;
+  };
+  fakeOnMessage({ ns: "physics", seq: 2, payload: { type: "ready" } });
+  check("worker 桥：上行按 ns 派发到端口", !!got && got.type === "ready");
+
+  // {data} 包装解包（平台双形态）
+  let wrapped = null;
+  port.onmessage = (ev) => {
+    wrapped = ev.data;
+  };
+  fakeOnMessage({ data: { ns: "physics", seq: 3, payload: { v: 9 } } });
+  check("worker 桥：{data} 包装解包", !!wrapped && wrapped.v === 9);
+
+  // wasm 字节中继：读包 b64 回传 / 缺失回 null
+  fakeOnMessage({ ns: "bridge", seq: 4, payload: { t: "wasmReq", id: 7, path: "engine/runtime/physics-engines/rapier.wasm" } });
+  const hit = downEvents.map((e) => e.payload).find((p) => p && p.t === "wasmRes" && p.id === 7);
+  check(
+    "worker 桥：wasm 字节回传 base64（wasm 魔数 AGFzbQ==）",
+    !!hit && typeof hit.b64 === "string" && hit.b64.startsWith("AGFzbQ"),
+  );
+  fakeOnMessage({ ns: "bridge", seq: 5, payload: { t: "wasmReq", id: 8, path: "missing.wasm" } });
+  const miss = downEvents.map((e) => e.payload).find((p) => p && p.t === "wasmRes" && p.id === 8);
+  check("worker 桥：读包失败回传 b64 null", !!miss && miss.b64 === null);
+
+  // 末端口关闭 → 终结平台 worker；此后同协议新建 → 平台 worker 重新懒建
+  port.terminate();
+  check("worker 桥：末端口关闭终结平台 worker", terminatedCount === 1);
+  const port2 = hook("", "physics");
+  port2.terminate();
+  check("worker 桥：单例重建后再次终结", terminatedCount === 2);
+
+  // 清理：全局钩子摘除，避免泄漏到后续求值（node 进程内全局）
+  delete globalThis.__tveCreateWorker;
+  setHost(mock);
 }
 
 // ---------------------------------------------------------------- 汇总

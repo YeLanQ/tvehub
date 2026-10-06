@@ -37,8 +37,9 @@ import { assertCjsOutput } from "./lib/anchor.mjs";
 import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "./lib/paths.mjs";
 import { wechatTransformPlugin } from "./wechat/transforms.mjs";
 import { buildPhysicsEngines } from "./wechat/engines.mjs";
+import { buildWorkerBundles } from "./wechat/worker.mjs";
 import { copyDracoJsDecoder } from "./wechat/draco.mjs";
-import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, writeTveFacade } from "./wechat/guards.mjs";
+import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, runWorkerSmoke, writeTveFacade } from "./wechat/guards.mjs";
 import { MESHOPT_WASM_PATH } from "../bridge/protocol.ts";
 
 /** 产物体积上限告警阈值（微信主包 4MB，data.js 由导出期另计） */
@@ -75,23 +76,29 @@ export async function buildWechatRuntime(reason = "") {
   const label = reason ? `（${reason}）` : "";
   const main = await buildMainBundle();
   const engines = await buildPhysicsEngines();
+  const workers = await buildWorkerBundles();
   const dracoBytes = copyDracoJsDecoder();
   const facadeBytes = writeTveFacade();
   runSurfaceCheck();
   runBridgeSpec();
   smokeRequireBundle(engines);
   runDracoDecodeSmoke(dracoBytes);
+  for (const backend of Object.keys(workers)) runWorkerSmoke(backend);
   const kb = (n) => `${(n / 1024).toFixed(1)}KB`;
   const engineSummary = Object.entries(engines)
+    .map(([key, bytes]) => `${key} ${kb(bytes)}`)
+    .join(" + ");
+  const workerSummary = Object.entries(workers)
     .map(([key, bytes]) => `${key} ${kb(bytes)}`)
     .join(" + ");
   console.log(
     `[wechat-bundle] 构建完成${label}: code.js ${kb(main.code)} + tve.js ${kb(facadeBytes)}` +
       (dracoBytes ? ` + draco_decoder.js ${kb(dracoBytes)}（主线程内联解码）` : "") +
       (engineSummary ? ` + ${engineSummary}` : "") +
+      (workerSummary ? ` + worker[${workerSummary}]` : "") +
       ` → public/exports/wechat/runtime/`,
   );
-  return { codeBytes: main.code, engines, facadeBytes, dracoBytes };
+  return { codeBytes: main.code, engines, workers, facadeBytes, dracoBytes };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

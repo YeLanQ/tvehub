@@ -20,6 +20,7 @@
 
 import * as THREE from "../core/three.module.min.js";
 import { postLog } from "../core/log";
+import { createChannelWorker } from "./channelWorker";
 import { installWasmFileHook } from "../../framework/physics/wasm-file-hook";
 import type { NodeJson } from "./node-json";
 import type { SceneNodeEntry } from "./nodes";
@@ -2256,11 +2257,11 @@ interface WorkerReadyMsg {
 /** Worker → 主线程消息（对齐 physics-worker.ts PhysicsWorkerOut） */
 type WorkerOutMsg =
   | WorkerReadyMsg
-  | { type: "recycleInput"; buffer: ArrayBuffer }
+  | { type: "recycleInput"; buffer?: ArrayBuffer }
   | { type: "stepped"; transforms: Float32Array; velocities?: Float32Array; collisions?: CollisionEvent[] }
   | { type: "result"; method: string; value: unknown }
   | { type: "raycastResult"; id: number; hits?: RayHit[] }
-  | { type: "error" };
+  | { type: "error"; message?: string };
 
 /** 序列化节点为 Worker 可传输的纯数据（obj → position/quaternion/scale/parent/geometry） */
 function serializeNodes(nodes: ReadonlyArray<PhysNodeInput>): SerializedPhysNode[] {
@@ -2290,12 +2291,14 @@ function serializeNodes(nodes: ReadonlyArray<PhysNodeInput>): SerializedPhysNode
 
 /**
  * 创建物理 Worker 代理（与 createPhysics 同接口）。
- * 在多文件导出模式下使用 Worker 线程；单页模式回退到 createPhysics。
+ * 渠道端口优先：平台桥接（微信 = wx.createWorker 单实例 + ns 信封）在位时即使
+ * 无 workerUrl 也走 Worker；否则 web 原生 module Worker（workerUrl 由 player 解析；
+ * 单页内联/file:// 为空 → 回退）。创建失败/init 失败一律回退 createPhysics 主线程。
  */
 export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerUrl?: string }): Promise<PhysicsApi> {
   const { nodes, terrains, settings, workerUrl } = opts || {};
   const enabled = settings?.physicsEnabled === true;
-  if (!enabled || !workerUrl) return createPhysics(opts);
+  if (!enabled) return createPhysics(opts);
 
   // 标记节点 Object3D 的 nodeId（供 serializeNodes 查找 parent）
   for (const { json, obj } of nodes) {
@@ -2320,25 +2323,38 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
         },
       };
     });
-  let worker: Worker;
-  try {
-    worker = new Worker(workerUrl, { type: "module" });
-    worker.postMessage({ type: "init", nodes: serialized, terrains: serializedTerrains, settings });
-  } catch {
-    return createPhysics(opts);
-  }
+  const port = createChannelWorker(workerUrl ?? "", "physics", "[物理]");
+  if (!port) return createPhysics(opts);
 
-  // 等待 Worker ready
+  // 先挂监听再发 init（端口消息只在事件循环投递，同块注册无竞态；
+  // ready 携带动态体清单与 bodyInfo 缓存，error/onerror → 回退主线程）。
+  // ready 超时兜底：下行投递断/worker 内部静默卡死时 init 永无应答——
+  // 超时即回退主线程实现（物理晚启动优于整个游戏挂死黑屏）。10s 余量覆盖
+  // 模拟器冷启动的 wasm 字节中继（读包+b64 回传）与编译；worker 装配完成后
+  // 迟到的 ready 经 port.terminate() 随线程一起废弃
   const ready = await new Promise<WorkerReadyMsg | null>((resolve) => {
-    worker.onmessage = (e: MessageEvent): void => {
+    const timeout = setTimeout(() => {
+      postLog("warn", "[物理] Worker ready 超时（下行投递或初始化无应答），回退主线程");
+      resolve(null);
+    }, 10000);
+    port.onmessage = (e: { data: unknown }): void => {
       const msg = e.data as Partial<WorkerReadyMsg> | null; // Worker 协议（见 physics-worker.ts）
-      if (msg?.type === "ready") resolve(msg as WorkerReadyMsg);
-      else if (msg?.type === "error") resolve(null);
+      if (msg?.type === "ready") {
+        clearTimeout(timeout);
+        resolve(msg as WorkerReadyMsg);
+      } else if (msg?.type === "error") {
+        clearTimeout(timeout);
+        resolve(null);
+      }
     };
-    worker.onerror = (): void => resolve(null);
+    port.onerror = (): void => {
+      clearTimeout(timeout);
+      resolve(null);
+    };
+    port.postMessage({ type: "init", nodes: serialized, terrains: serializedTerrains, settings });
   });
   if (!ready) {
-    worker.terminate();
+    port.terminate();
     return createPhysics(opts);
   }
 
@@ -2354,21 +2370,23 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
   const cachedBodyInfos: Record<string, BodyInfo> = ready.bodyInfos || {};
 
   // 双缓冲：pending = Worker 上一帧返回的动力学体变换
+  // （平台拷贝传输下 transforms/velocities 为纯数组，索引读写兼容）
   let pending: Extract<WorkerOutMsg, { type: "stepped" }> | null = null;
   let workerBusy = false;
   let cachedCollisions: CollisionEvent[] = [];
-  let cachedVelocities = new Float32Array(dynamicIds.length * 3);
+  let cachedVelocities: Float32Array | number[] = new Float32Array(dynamicIds.length * 3);
   let raycastId = 0;
   const raycastPending = new Map<number, (hits: RayHit[]) => void>();
 
-  worker.onmessage = (e: MessageEvent): void => {
+  port.onmessage = (e: { data: unknown }): void => {
     const msg = e.data as WorkerOutMsg; // Worker 协议（见 physics-worker.ts）
     if (msg.type === "stepped") {
       pending = msg;
       if (msg.velocities) cachedVelocities = msg.velocities;
       workerBusy = false;
     } else if (msg.type === "recycleInput") {
-      // Worker 消费完 step 输入缓冲后原样送回（零拷贝复用；池空时兜底新建）
+      // Worker 消费完 step 输入缓冲后原样送回（零拷贝复用；池空时兜底新建；
+      // 拷贝传输无缓冲可还，buffer 缺席）
       if (msg.buffer) stepBufPool.push(new Float32Array(msg.buffer));
     } else if (msg.type === "result" && msg.method === "drainCollisions") {
       // 协议约定 value = 碰撞事件数组（节点 id 对）
@@ -2379,6 +2397,11 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
         raycastPending.delete(msg.id);
         resolve(msg.hits ?? []);
       }
+    } else if (msg.type === "error") {
+      // init 就绪后的 worker 内错误（如引擎步进 trap）：解冻发送环 + 落日志——
+      // 无此处理 workerBusy 恒 true，步进静默冻结且无任何日志可查
+      workerBusy = false;
+      postLog("error", `[物理] Worker 内部错误: ${msg.message ?? "未知"}（该线程物理步进已停止）`);
     }
   };
 
@@ -2400,9 +2423,12 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
           obj.quaternion.set(t[j + 3], t[j + 4], t[j + 5], t[j + 6]);
         }
         // 消费完的结果缓冲送回 Worker 复用（velocities 由 cachedVelocities
-        // 长期引用，不回收；只回收 transforms）
+        // 长期引用，不回收；只回收 transforms。拷贝传输下为纯数组，无缓冲可还）
         try {
-          worker.postMessage({ type: "recycleResult", buf: t }, [t.buffer]);
+          port.postMessage(
+            { type: "recycleResult", buf: t },
+            t instanceof Float32Array ? [t.buffer] : [],
+          );
         } catch {
           /* Worker 已终止等，静默忽略 */
         }
@@ -2423,18 +2449,18 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
           buf[j + 6] = obj.quaternion.w;
         }
         try {
-          worker.postMessage({ type: "step", dt, transforms: buf }, [buf.buffer]);
+          port.postMessage({ type: "step", dt, transforms: buf }, [buf.buffer]);
           workerBusy = true;
         } catch {
           /* Worker 已终止等，静默忽略 */
         }
       }
     },
-    setGravity(x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setGravity", args: [x, y, z] }); } catch {} },
-    applyImpulse(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] }); } catch {} },
-    applyForce(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
-    setLinearVelocity(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
-    setAngularVelocity(nodeId: string, x: number, y: number, z: number): void { try { worker.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    setGravity(x: number, y: number, z: number): void { try { port.postMessage({ type: "command", method: "setGravity", args: [x, y, z] }); } catch {} },
+    applyImpulse(nodeId: string, x: number, y: number, z: number): void { try { port.postMessage({ type: "command", method: "applyImpulse", args: [nodeId, x, y, z] }); } catch {} },
+    applyForce(nodeId: string, x: number, y: number, z: number): void { try { port.postMessage({ type: "command", method: "applyForce", args: [nodeId, x, y, z] }); } catch {} },
+    setLinearVelocity(nodeId: string, x: number, y: number, z: number): void { try { port.postMessage({ type: "command", method: "setLinearVelocity", args: [nodeId, x, y, z] }); } catch {} },
+    setAngularVelocity(nodeId: string, x: number, y: number, z: number): void { try { port.postMessage({ type: "command", method: "setAngularVelocity", args: [nodeId, x, y, z] }); } catch {} },
     getLinearVelocity(nodeId: string): PhysVec3 | null {
       const idx = dynamicIndex.get(nodeId);
       if (idx === undefined) return null;
@@ -2442,14 +2468,14 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
       return { x: cachedVelocities[k], y: cachedVelocities[k + 1], z: cachedVelocities[k + 2] };
     },
     bodyInfo(nodeId: string): BodyInfo | null { return cachedBodyInfos[nodeId] || null; },
-    setGravityScale(nodeId: string, scale: number): void { try { worker.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
-    wakeUp(nodeId: string): void { try { worker.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
+    setGravityScale(nodeId: string, scale: number): void { try { port.postMessage({ type: "command", method: "setGravityScale", args: [nodeId, scale] }); } catch {} },
+    wakeUp(nodeId: string): void { try { port.postMessage({ type: "command", method: "wakeUp", args: [nodeId] }); } catch {} },
     castRay(options: RaycastOptions): Promise<RayHit[]> {
       return new Promise<RayHit[]>((resolve) => {
         const id = ++raycastId;
         raycastPending.set(id, resolve);
         try {
-          worker.postMessage({ type: "castRay", id, options });
+          port.postMessage({ type: "castRay", id, options });
         } catch {
           raycastPending.delete(id);
           resolve([]);
@@ -2464,8 +2490,8 @@ export async function createPhysicsWorker(opts: CreatePhysicsOptions & { workerU
     dispose(): void {
       for (const resolve of raycastPending.values()) resolve([]);
       raycastPending.clear();
-      worker.postMessage({ type: "dispose" });
-      worker.terminate();
+      port.postMessage({ type: "dispose" });
+      port.terminate();
     },
   };
 

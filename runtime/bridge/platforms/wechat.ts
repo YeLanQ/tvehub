@@ -221,6 +221,49 @@ const wechatHost = {
     return null;
   },
 
+  // 平台 Worker（wx.createWorker；平台每包限额 1 个，ns 多路复用在 worker.ts）：
+  // 缺能力/路径未随包/创建抛错一律 null（调用方回退主线程实现）。返回对象收敛为
+  // HostWorker 中性形态（onMessage/postMessage/terminate），wx 特有方法不出平台层。
+  createWorker(path) {
+    try {
+      if (wxApi && typeof wxApi.createWorker === "function") {
+        const w = /** @type {null | { onMessage?: unknown; postMessage?: unknown; terminate?: unknown }} */ (
+          wxApi.createWorker(path)
+        );
+        if (
+          w &&
+          typeof w.onMessage === "function" &&
+          typeof w.postMessage === "function" &&
+          typeof w.terminate === "function"
+        ) {
+          const worker = w as { onMessage: (cb: (msg: unknown) => void) => void; postMessage: (msg: unknown) => void; terminate: () => void };
+          return {
+            onMessage: (cb) => {
+              try {
+                worker.onMessage(cb);
+              } catch (e) {
+                bridgeLog("warn", "[runtime-bridge] worker.onMessage 注册失败", e);
+              }
+            },
+            postMessage: (msg) => {
+              worker.postMessage(msg);
+            },
+            terminate: () => {
+              try {
+                worker.terminate();
+              } catch {
+                /* 平台已自灭按终止 */
+              }
+            },
+          };
+        }
+      }
+    } catch {
+      /* 平台缺能力/创建失败按 null（调用方回退主线程） */
+    }
+    return null;
+  },
+
   onTouchStart(handler) {
     bindTouch("onTouchStart", handler);
   },

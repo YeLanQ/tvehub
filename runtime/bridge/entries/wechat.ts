@@ -21,6 +21,7 @@ import "../http.js";
 import "../events.js";
 import "../audio.js";
 import "../storage.js";
+import "../worker.js";
 import "../load-module.js";
 import "../data-bridge.js";
 import * as tveApi from "../../../public/engine/core/tve.mjs";

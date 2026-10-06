@@ -78,6 +78,20 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     expect(engines).toContain("engine/runtime/physics-engines/rapier.js");
     expect(engines).not.toContain("engine/runtime/physics-engines/jolt.js");
   });
+
+  it("正常：物理启用随包物理 Worker bundle（改键 workers/tve.js，同后端同选）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("wechat", {
+      includePhysics: true,
+      physicsBackend: "jolt",
+    });
+    // wx.createWorker 入口路径恒定：按后端拉取的 workers/jolt/tve.js 改键落盘
+    expect(files["workers/tve.js"]).toBe("// stub");
+    expect(Object.keys(files).some((k) => k.startsWith("workers/jolt/"))).toBe(false);
+    // 物理未启用时 worker bundle 不随包（无 workers/ 键）
+    const disabled = await fetchChannelRuntimeFiles("wechat", { includePhysics: false });
+    expect(Object.keys(disabled).some((k) => k.startsWith("workers/"))).toBe(false);
+  });
 });
 
 describe("fetchChannelRuntimeFiles web 可选运行时", () => {

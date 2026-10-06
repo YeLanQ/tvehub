@@ -40,6 +40,12 @@ export interface RHIDeviceOptions {
   /** 跨帧保留绘制缓冲（仅清深度/仅清颜色标志需要保留上一帧画面） */
   preserveDrawingBuffer?: boolean;
   powerPreference?: RHIPowerPreference;
+  /**
+   * 注入画布（重建设备复用首画布）：微信等平台首画布归首渲染器，重建时若不传，
+   * 后端自建画布会落到平台离屏链（渲染到屏外 = 黑屏）。传旧设备 domElement 让
+   * 新渲染器接管同一画布（同类型 getContext 返回既有上下文，dispose 不强杀）。
+   */
+  canvas?: HTMLCanvasElement;
   /** 着色器编译失败回调（接编辑器控制台/引擎事件） */
   onShaderError?: (error: RHIShaderError) => void;
 }

@@ -52,6 +52,20 @@ export function runDracoDecodeSmoke(dracoBytes) {
   );
 }
 
+/** 物理 Worker bundle · node 全链冒烟：伪平台 worker 环境驱动 init→ready→step→
+ *  castRay 全链，物理引擎以随包 .wasm 真字节实例化（见 ./worker-smoke.mjs；
+ *  依赖随包产物，仅在对应后端 worker bundle 已构建时执行） */
+export function runWorkerSmoke(backend) {
+  const def = PHYSICS_ENGINES.find((d) => d.key === backend);
+  const bundle = path.join(WECHAT_RUNTIME_DIR, "workers", backend, "tve.js");
+  if (!def || !fs.existsSync(bundle)) return;
+  execFileSync(
+    process.execPath,
+    [path.join(path.dirname(fileURLToPath(import.meta.url)), "worker-smoke.mjs"), bundle, path.join(WECHAT_RUNTIME_DIR, def.wasm), backend],
+    { stdio: "inherit", timeout: 120_000 },
+  );
+}
+
 /** tve 门面：转发主 bundle 的命名空间导出（用户脚本 require "../../engine/core/tve.js"） */
 export function writeTveFacade() {
   const facade =

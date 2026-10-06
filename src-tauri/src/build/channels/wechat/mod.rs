@@ -160,6 +160,9 @@ impl ChannelPipeline for WechatPipeline {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "tve-game".to_string());
         let appid = resolve_appid(wechat.appid.as_deref(), &p.out);
+        // 物理 Worker bundle 随包 → game.json 声明 workers 字段（声明而无目录会
+        // 令开发者工具编译失败，故按实际随包条件写入）
+        let with_workers = runtime_files.contains_key("workers/tve.js");
 
         let mut package: HashMap<String, String> = HashMap::new();
         let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();
@@ -189,7 +192,7 @@ impl ChannelPipeline for WechatPipeline {
         }
         package.insert("game.js".to_string(), game_js());
         package.insert("data.js".to_string(), data_js(cfg, &entries, &asset_files)?);
-        package.insert("game.json".to_string(), game_json(orientation)?);
+        package.insert("game.json".to_string(), game_json(orientation, with_workers)?);
         package.insert(
             "project.config.json".to_string(),
             project_config_json(&project_name, &appid)?,
@@ -232,11 +235,13 @@ impl ChannelPipeline for WechatPipeline {
 
 /// 预构建微信运行时文件键（前端按 wechat-runtime-files 清单传入；物理引擎按
 /// 项目后端附带：engine/runtime/physics-engines/{rapier|jolt|ammo/**}.{js,wasm}；
+/// 物理 Worker bundle 按后端改键随包：workers/tve.js（wx.createWorker 入口）；
 /// meshopt 解码 wasm 与 Draco 纯 JS 解码器为 bundle 依赖的随包资产：
 /// engine/runtime/loaders/）
 fn is_wechat_runtime_key(rel: &str) -> bool {
     rel == "code.js"
         || rel == "engine/core/tve.js"
+        || rel == "workers/tve.js"
         || rel == "engine/runtime/loaders/meshopt_decoder.wasm"
         || rel == "engine/runtime/loaders/draco/draco_decoder.js"
         || rel.starts_with("engine/runtime/physics-engines/")

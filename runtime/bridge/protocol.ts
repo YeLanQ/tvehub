@@ -22,9 +22,24 @@ export const TVE_LOAD_MODULE = "__tveLoadModule";
 export const TVE_INSTANTIATE_WASM_FILE = "__tveInstantiateWasmFile";
 
 /** 平台 Worker 单实例多路复用钩子：微信渠道桥接 worker.ts 安装（wx.createWorker
- *  平台限额 1），player.mjs 动画 Worker 经 `workers/tve.js#<ns>` 使用；web 渠道
- *  不安装（保持 module Worker 形态） */
+ *  平台限额 1），runtime/channelWorker.ts 经 `__tveCreateWorker(url, protocol)` 取
+ *  ns 信封端口（protocol 即 ns：physics/animation）；web 渠道不安装（保持原生
+ *  module Worker 形态）。wasm 字节经保留 ns "bridge" 由主线程 readPackageFile 回传
+ *  （worker 线程无文件系统/WXWebAssembly） */
 export const TVE_CREATE_WORKER = "__tveCreateWorker";
+
+/** 微信渠道 worker bundle 的包内入口（wx.createWorker 路径；导出期按项目物理后端
+ *  从 workers/<backend>/tve.js 改键落盘；game.json 仅在其实际随包时声明 workers 字段） */
+export const TVE_WORKER_ENTRY = "workers/tve.js";
+
+/** worker 信封的保留 ns：ready 握手 / wasm 字节请求回传 / worker 侧日志
+ *  （主线程侧 worker.ts 与 worker 侧 worker-relay.ts 共用） */
+export const TVE_WORKER_NS_BRIDGE = "bridge";
+
+/** 引擎 postLog 的 worker 转发钩子：worker 侧 worker-relay 安装，core/log 的
+ *  postLog 检测在位即优先转发（worker 线程无 window，原 window.parent 通道
+ *  不可达；不定义 window 全局——emscripten 环境探测会误判成 web） */
+export const TVE_WORKER_LOG_HOOK = "__tveWorkerLog";
 
 /** 微信主 bundle 的 tve 门面导出名：entries/wechat.ts 命名空间导出，
  *  包内 engine/core/tve.js 转发它供用户脚本 require */

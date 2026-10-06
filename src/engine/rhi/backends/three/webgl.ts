@@ -30,11 +30,13 @@ function shaderErrorSummary(
 /** 创建 WebGL 设备（three WebGLRenderer） */
 export async function createThreeWebGLDevice(options: RHIDeviceOptions): Promise<RHIDevice> {
   // preserveDrawingBuffer：仅深度/仅颜色清除标志需要跨帧保留颜色/深度缓冲
-  // （WebGL 默认呈现后缓冲失效，不清颜色会退化成黑屏/花屏）
+  // （WebGL 默认呈现后缓冲失效，不清颜色会退化成黑屏/花屏）。
+  // canvas 注入：重建设备复用首画布（微信等平台第二画布落离屏链 = 屏外渲染黑屏）。
   const renderer = new THREE.WebGLRenderer({
     antialias: options.antialias === true,
     preserveDrawingBuffer: options.preserveDrawingBuffer === true,
     powerPreference: options.powerPreference ?? "default",
+    canvas: options.canvas,
   });
   // 着色器编译失败（扩展着色器 GLSL 有误等）：three 默认只打印浏览器控制台，
   // 这里显式接出摘要到回调（引擎事件 → 编辑器控制台）

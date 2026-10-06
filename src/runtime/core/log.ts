@@ -10,9 +10,21 @@ export function setLogForwarding(on: unknown): void {
   forwardingEnabled = !!on;
 }
 
-/** 预览页 → 编辑器控制台转发（编辑器 WebPreviewPanel 监听 message） */
+/** 预览页 → 编辑器控制台转发（编辑器 WebPreviewPanel 监听 message）。
+ *  worker 线程（微信物理 Worker）经 __tveWorkerLog 钩子优先转发（桥接层
+ *  worker-relay 安装 → bridge 保留信道 → 主线程 console；钩子登记见
+ *  runtime/bridge/protocol.ts TVE_WORKER_LOG_HOOK，引擎源保持字面量） */
 export function postLog(level: string, text: unknown): void {
   if (!forwardingEnabled) return;
+  try {
+    const hook = (globalThis as { __tveWorkerLog?: (lv: string, tx: string) => void }).__tveWorkerLog;
+    if (typeof hook === "function") {
+      hook(level, String(text));
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     window.parent?.postMessage(
       { __editorPreviewLog: true, level, text: String(text), time: new Date().toLocaleTimeString() },

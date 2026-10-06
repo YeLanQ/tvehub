@@ -137,11 +137,6 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "url": "/engine/core/utils.mjs"
       },
       {
-        "key": "engine/runtime/_chunks/SkeletonUtils.mjs",
-        "rel": "engine/runtime/_chunks/SkeletonUtils.mjs",
-        "url": "/engine/runtime/_chunks/SkeletonUtils.mjs"
-      },
-      {
         "key": "engine/runtime/animation-worker.mjs",
         "rel": "engine/runtime/animation-worker.mjs",
         "url": "/engine/runtime/animation-worker.mjs"
@@ -175,6 +170,11 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "key": "engine/runtime/camera.mjs",
         "rel": "engine/runtime/camera.mjs",
         "url": "/engine/runtime/camera.mjs"
+      },
+      {
+        "key": "engine/runtime/channelWorker.mjs",
+        "rel": "engine/runtime/channelWorker.mjs",
+        "url": "/engine/runtime/channelWorker.mjs"
       },
       {
         "key": "engine/runtime/fog.mjs",
@@ -546,6 +546,27 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "key": "engine/runtime/physics-engines/rapier.wasm",
           "rel": "exports/wechat/runtime/engine/runtime/physics-engines/rapier.wasm",
           "url": "/exports/wechat/runtime/engine/runtime/physics-engines/rapier.wasm"
+        }
+      ],
+      "worker:physics:ammo": [
+        {
+          "key": "workers/ammo/tve.js",
+          "rel": "exports/wechat/runtime/workers/ammo/tve.js",
+          "url": "/exports/wechat/runtime/workers/ammo/tve.js"
+        }
+      ],
+      "worker:physics:jolt": [
+        {
+          "key": "workers/jolt/tve.js",
+          "rel": "exports/wechat/runtime/workers/jolt/tve.js",
+          "url": "/exports/wechat/runtime/workers/jolt/tve.js"
+        }
+      ],
+      "worker:physics:rapier": [
+        {
+          "key": "workers/rapier/tve.js",
+          "rel": "exports/wechat/runtime/workers/rapier/tve.js",
+          "url": "/exports/wechat/runtime/workers/rapier/tve.js"
         }
       ]
     }

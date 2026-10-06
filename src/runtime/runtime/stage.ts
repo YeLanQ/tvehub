@@ -92,13 +92,16 @@ export async function createRenderer(cfg: StageConfig): Promise<{
  * 重建 WebGL 渲染设备并开启跨帧缓冲保留（仅深度/仅颜色清除标志需要；场景
  * 数据在设备创建之后才可读，player 在首个渲染前、挂载舞台前调用本函数换出
  * 设备，此时 GPU 资源尚未上传，重建零成本）。管线随新设备重建返回。
+ * 注入旧设备画布：微信等平台首画布归首渲染器，重建自建画布会落平台离屏链
+ * （渲染到屏外 = 黑屏）；同画布 getContext 返回既有上下文，dispose 不强杀。
  */
 export async function recreateWebGLRendererPreserveBuffer(
   cfg: StageConfig,
   renderer: RHIDevice,
 ): Promise<{ renderer: RHIDevice; pipeline: RPIPipeline }> {
+  const canvas = renderer.domElement;
   renderer.dispose();
-  const device = await createRHIDevice("webgl", deviceOptions(cfg, true));
+  const device = await createRHIDevice("webgl", { ...deviceOptions(cfg, true), canvas });
   applyCommon(cfg, device);
   return { renderer: device, pipeline: createRPIPipeline(device) };
 }

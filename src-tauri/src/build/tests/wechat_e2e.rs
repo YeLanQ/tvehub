@@ -136,6 +136,11 @@ fn wechat_export_end_to_end() {
     let game_json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
     assert_eq!(game_json["deviceOrientation"], "portrait");
+    // Worker 未随包 → game.json 不声明 workers 字段（声明而无目录会令工具编译失败）
+    assert!(
+        game_json.get("workers").is_none(),
+        "未随包 worker 时 game.json 不应声明 workers 字段"
+    );
 
     // project.config.json：游客 appid + compileType game + condition 槽位
     let pcfg: serde_json::Value =
@@ -405,6 +410,32 @@ fn wechat_release_levers() {
         debug_script.len(),
         release_script.len()
     );
+
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// 物理 Worker bundle 随包：workers/tve.js 进包 + game.json 声明 workers 字段
+/// （wx.createWorker 依赖声明；声明而无目录会令开发者工具编译失败，故按实际
+/// 随包条件写入——见 pack::game_json）
+#[test]
+fn wechat_worker_bundle_in_package() {
+    let base = std::env::temp_dir().join(format!("tve-wechat-worker-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = setup_project(&base);
+
+    let mut files = wechat_files();
+    files.insert(
+        "workers/tve.js".to_string(),
+        "// tve wechat physics worker bundle\n".to_string(),
+    );
+    run_build(wechat_job(&root, files), &JobCtx::default())
+        .unwrap_or_else(|e| panic!("含 Worker bundle 的微信构建失败: {e}"));
+
+    let out = root.join("build/wechat");
+    assert!(out.join("workers/tve.js").is_file(), "worker bundle 应随包落盘");
+    let game_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
+    assert_eq!(game_json["workers"], "workers", "随包 worker 时 game.json 应声明 workers 字段");
 
     let _ = fs::remove_dir_all(&base);
 }

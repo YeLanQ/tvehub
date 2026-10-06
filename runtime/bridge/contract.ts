@@ -4,7 +4,7 @@
 // GLOBAL_SURFACE 与覆盖清单对照统一运行时源码的全局用法（漂移守卫）。
 // __tve* 钩子名等跨边界常量见 ./protocol.ts（运行时协议单源）。
 
-import { TVE_BUILD_DATA, TVE_LOAD_MODULE } from "./protocol.ts";
+import { TVE_BUILD_DATA, TVE_CREATE_WORKER, TVE_LOAD_MODULE } from "./protocol.ts";
 
 /** 平台触摸事件的中性形态（端点负责从平台事件映射） */
 export interface HostTouch {
@@ -33,7 +33,15 @@ export interface WasmInstantiateResult {
   instance: unknown;
 }
 
-/** 平台端点：渠道接入的唯一职责面（~23 方法；实现放在 platforms/<id>.ts） */
+/** 平台 Worker 的中性形态（worker.ts 的 ns 多路复用消费面；消息恒拷贝语义，
+ *  下行以 onMessage 回调送达——回调参数可能是消息本体或 {data} 包装，消费方解包） */
+export interface HostWorker {
+  onMessage(cb: (msg: unknown) => void): void;
+  postMessage(msg: unknown): void;
+  terminate(): void;
+}
+
+/** 平台端点：渠道接入的唯一职责面（~24 方法；实现放在 platforms/<id>.ts） */
 export interface HostEndpoint {
   platformId: string;
   /** 平台是否可用（wx 缺席等场景为 false → 桥接核心整体空转） */
@@ -55,6 +63,12 @@ export interface HostEndpoint {
    * rel 为包内相对路径（如 "assets/<uid>.png"）。平台不支持/读取失败返回 null。
    */
   readPackageFile(rel: string): ArrayBuffer | null;
+  /**
+   * 创建平台 Worker（微信 = wx.createWorker；平台缺能力/创建失败返回 null）。
+   * path 为包内 worker 入口（如 "workers/tve.js"，game.json 须声明 workers 字段）。
+   * worker.ts 在其上做 ns 信封多路复用（wx 平台限额每包 1 个 Worker）。
+   */
+  createWorker(path: string): HostWorker | null;
   getViewport(): HostViewport;
   requestAnimationFrame(fn: (now: number) => void): number;
   cancelAnimationFrame(id: number): void;
@@ -86,6 +100,7 @@ export const HOST_SURFACE: string[] = [
   "available",
   "instantiateWasm",
   "readPackageFile",
+  "createWorker",
   "getViewport",
   "requestAnimationFrame",
   "cancelAnimationFrame",
@@ -140,6 +155,7 @@ export const GLOBAL_SURFACE: string[] = [
   "webkitAudioContext",
   TVE_LOAD_MODULE,
   TVE_BUILD_DATA,
+  TVE_CREATE_WORKER,
 ];
 
 /** 端点完整性校验：缺方法/类型不符时抛出带方法名的明确错误（注册期即失败，

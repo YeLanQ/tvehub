@@ -113,9 +113,15 @@ export async function fetchChannelRuntimeFiles(
     if (opts.includeBasisDecoder) groupKeys.push("basis");
   } else if (opts.includePhysics) {
     // wechat：物理引擎按后端随包（rapier/jolt/ammo CJS 预转换产物；真机 wasm
-    // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）
-    const key = `physics:${opts.physicsBackend || "rapier"}`;
+    // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）。
+    // 同后端的物理 Worker bundle（workers/<backend>/tve.js）一并随包——wx.createWorker
+    // 单实例跑物理模拟（信封多路复用 + bridge 保留信道回传 wasm 字节）。
+    const backend = opts.physicsBackend || "rapier";
+    const key = `physics:${backend}`;
     groupKeys.push(spec.groups[key] ? key : "physics:rapier");
+    const workerKey = `worker:physics:${backend}`;
+    if (spec.groups[workerKey]) groupKeys.push(workerKey);
+    else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
   }
 
   const list: ChannelRuntimeFile[] = [...spec.base, ...groupKeys.flatMap((k) => spec.groups[k] ?? [])];
@@ -124,6 +130,17 @@ export async function fetchChannelRuntimeFiles(
   );
   const files: Record<string, string> = {};
   for (let i = 0; i < list.length; i++) files[list[i].key] = texts[i];
+  if (channel === "wechat" && opts.includePhysics) {
+    // Worker bundle 改键落盘：wx.createWorker 入口路径恒为 workers/tve.js
+    //（常量单源 runtime/bridge/protocol.ts TVE_WORKER_ENTRY；引擎源同款保持字面量）
+    const workerFile = groupKeys
+      .flatMap((k) => spec.groups[k] ?? [])
+      .find((f) => f.key.startsWith("workers/"));
+    if (workerFile) {
+      files["workers/tve.js"] = files[workerFile.key];
+      delete files[workerFile.key];
+    }
+  }
   return files;
 }
 
