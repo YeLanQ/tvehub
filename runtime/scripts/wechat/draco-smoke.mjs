@@ -1,10 +1,12 @@
 // 微信 bundle · Draco 主线程内联解码冒烟（node 自包含，构建链内运行）：
 // 用 draco3dgltf 编码器现场压缩一个最小网格 → 从 GLB 提取 KHR_draco_mesh_
 // compression 的 bufferView 原始字节 → 经 DracoInlineLoader（桥接钩子
-// __tveLoadModule 桩 → require 随包的 draco_decoder.js 真字节）解码 → 断言
-// 顶点/索引与源数据一致（量化误差容忍）。另含两条负路径（坏字节报错、钩子缺席
-// 报错）。旧方案（wasm 腿 + worker 仿真）就是在「每轮 vm 复刻都过、模拟器实跑
-// 才红」上翻的车——本冒烟让每次微信构建都对真实解码链回归一次。
+// __tveLoadModule 桩 → require 随包的 draco_wasm_wrapper.js 真字节；
+// __tveInstantiateWasmFile 桩 → 读随包 draco_decoder.wasm 真字节 → 原生
+// WebAssembly.instantiate，对齐桥接平台端点的兜底语义）解码 → 断言顶点/索引
+// 与源数据一致（量化误差容忍）。另含两条负路径（坏字节报错、钩子缺席报错）。
+// 旧方案（wasm 腿 + worker 仿真）就是在「每轮 vm 复刻都过、模拟器实跑才红」
+// 上翻的车——本冒烟让每次微信构建都对真实解码链回归一次。
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,9 +70,13 @@ function extractDracoPayload(glb) {
 }
 
 async function main() {
-  const decoderPath = process.argv[2];
-  if (!decoderPath) throw new Error("用法: node draco-smoke.mjs <随包 draco_decoder.js 路径>");
-  const expectedSpec = "tve:engine/runtime/loaders/draco/draco_decoder.js";
+  const wrapperPath = process.argv[2];
+  const wasmPath = process.argv[3];
+  if (!wrapperPath || !wasmPath) {
+    throw new Error("用法: node draco-smoke.mjs <随包 draco_wasm_wrapper.js 路径> <随包 draco_decoder.wasm 路径>");
+  }
+  const expectedSpec = "tve:engine/runtime/loaders/draco/draco_wasm_wrapper.js";
+  const expectedWasmPath = "engine/runtime/loaders/draco/draco_decoder.wasm";
   let pass = 0;
   let fail = 0;
   const check = (name, ok, detail = "") => {
@@ -93,7 +99,7 @@ async function main() {
   // 字节与随包产物一致，也更贴近微信工具的 CJS 模块包装形态
   const require = createRequire(import.meta.url);
   const cjsCopy = path.join(tmpdir(), `tve-draco-smoke-${process.pid}.cjs`);
-  fs.copyFileSync(path.resolve(decoderPath), cjsCopy);
+  fs.copyFileSync(path.resolve(wrapperPath), cjsCopy);
   globalThis.__tveLoadModule = (spec) => {
     if (spec !== expectedSpec) return Promise.reject(new Error(`意外说明符: ${spec}`));
     try {
@@ -101,6 +107,13 @@ async function main() {
     } catch (e) {
       return Promise.reject(e);
     }
+  };
+  // 桩 = 微信桥接的 __tveInstantiateWasmFile 语义（包内路径 → 读包文件字节 →
+  // 实例化，返回 {module, instance}；对齐 platforms/wechat.ts 的原生 WebAssembly
+  // 兜底腿）。wasm 真字节来自随包产物
+  globalThis.__tveInstantiateWasmFile = (pkgPath, imports) => {
+    if (pkgPath !== expectedWasmPath) return Promise.reject(new Error(`意外 wasm 路径: ${pkgPath}`));
+    return Promise.resolve(WebAssembly.instantiate(new Uint8Array(fs.readFileSync(path.resolve(wasmPath))), imports));
   };
 
   const loader = new DracoInlineLoader();
@@ -124,7 +137,17 @@ async function main() {
   });
   check("负路径：坏字节报错", badError instanceof Error, String(badError));
 
-  // 负路径 2：桥接钩子缺席 → 明确报错（换新实例隔离模块缓存）
+  // 负路径 2：wasm 实例化失败 → 明确报错而非悬挂（wrapper 丢弃 instantiateWasm
+  // 的返回 Promise，拒绳必须由 draco-inline 自行接走——换新实例隔离模块缓存）
+  const wasmHook = globalThis.__tveInstantiateWasmFile;
+  globalThis.__tveInstantiateWasmFile = () => Promise.reject(new Error("模拟实例化失败"));
+  const wasmError = await new Promise((resolve) => {
+    new DracoInlineLoader().decodeDracoFile(bytes.buffer, () => resolve(null), attributeIDs, { position: "Float32Array" }, "srgb-linear", resolve);
+  });
+  globalThis.__tveInstantiateWasmFile = wasmHook;
+  check("负路径：wasm 实例化失败报错", wasmError instanceof Error && String(wasmError).includes("实例化失败"), String(wasmError));
+
+  // 负路径 3：桥接钩子缺席 → 明确报错（换新实例隔离模块缓存）
   delete globalThis.__tveLoadModule;
   const hookError = await new Promise((resolve) => {
     new DracoInlineLoader().decodeDracoFile(bytes.buffer, () => resolve(null), attributeIDs, { position: "Float32Array" }, "srgb-linear", resolve);

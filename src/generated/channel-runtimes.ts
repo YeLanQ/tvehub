@@ -566,9 +566,14 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
       ],
       "draco": [
         {
-          "key": "engine/runtime/loaders/draco/draco_decoder.js",
-          "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js",
-          "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js"
+          "key": "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+          "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+          "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_wasm_wrapper.js"
+        },
+        {
+          "key": "engine/runtime/loaders/draco/draco_decoder.wasm",
+          "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.wasm",
+          "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.wasm"
         }
       ]
     }

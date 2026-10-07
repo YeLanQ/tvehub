@@ -243,6 +243,9 @@ fn is_wechat_runtime_key(rel: &str) -> bool {
         || rel == "engine/core/tve.js"
         || rel == "workers/tve.js"
         || rel == "engine/runtime/loaders/meshopt_decoder.wasm"
-        || rel == "engine/runtime/loaders/draco/draco_decoder.js"
+        // Draco wasm 解码器（wrapper 胶水 + .wasm，主线程内联解码；实例化走物理
+        // wasm 同款包内路径链。2026-10-07 起替代旧纯 JS 解码器 draco_decoder.js）
+        || rel == "engine/runtime/loaders/draco/draco_wasm_wrapper.js"
+        || rel == "engine/runtime/loaders/draco/draco_decoder.wasm"
         || rel.starts_with("engine/runtime/physics-engines/")
 }

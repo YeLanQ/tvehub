@@ -26,8 +26,8 @@ export interface ChannelRuntimeOptions {
   includeAnimationWorker?: boolean;
   /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出 */
   includeWebgpu?: boolean;
-  /** 项目启用 Draco 压缩 → 解码器随导出（web = wasm wrapper JS + .wasm；
-   *  wechat = 纯 JS 主线程解码器） */
+  /** 项目启用 Draco 压缩 → 解码器随导出（web/wechat 同为 wasm 形态 wrapper JS
+   *  + .wasm；wechat 解码在主线程内联执行，实例化走物理 wasm 同款桥接钩子链） */
   includeDracoDecoder?: boolean;
   /** 项目启用纹理压缩 → Basis 转码器（胶水 JS + .wasm）随导出 */
   includeBasisDecoder?: boolean;
@@ -133,9 +133,9 @@ export async function fetchChannelRuntimeFiles(
       if (spec.groups[workerKey]) groupKeys.push(workerKey);
       else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
     }
-    // Draco 纯 JS 解码器按项目配置随包（与 web 同判据 resources.dracoCompression）：
-    // 运行时懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require，未启用
-    // 的包内无此文件，主包省 512KB
+    // Draco wasm 解码器按项目配置随包（与 web 同判据 resources.dracoCompression）：
+    // 运行时懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require wrapper
+    // 胶水 + __tveInstantiateWasmFile 实例化 .wasm，未启用的包内无此文件
     if (opts.includeDracoDecoder) groupKeys.push("draco");
   }
 

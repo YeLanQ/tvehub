@@ -7,8 +7,10 @@
 //   engine/runtime/physics-engines/jolt.js/.wasm     jolt 同上
 //   engine/runtime/physics-engines/ammo/ammo-esm.js/.wasm  ammo 同上
 //   engine/runtime/loaders/meshopt_decoder.wasm      meshopt（GLTFLoader 内联依赖）
-//   engine/runtime/loaders/draco/draco_decoder.js    Draco 纯 JS 解码器（主线程内联解码；
-//     导出期按项目 resources.dracoCompression 条件随包——manifest 独立 draco 组）
+//   engine/runtime/loaders/draco/draco_wasm_wrapper.js   Draco wasm 解码器胶水 +
+//   engine/runtime/loaders/draco/draco_decoder.wasm   包内 .wasm（主线程内联解码，
+//     实例化经 __tveInstantiateWasmFile 直连 WXWebAssembly；导出期按项目
+//     resources.dracoCompression 条件随包——manifest 独立 draco 组）
 //
 // 关键决策（与 web 渠道隔离）：
 // - 引擎源码 src/runtime/** 零改动；对本包内三处运行时形态做构建期定点改写
@@ -39,7 +41,7 @@ import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "./lib/paths.mjs";
 import { wechatTransformPlugin } from "./wechat/transforms.mjs";
 import { buildPhysicsEngines } from "./wechat/engines.mjs";
 import { buildWorkerBundles } from "./wechat/worker.mjs";
-import { copyDracoJsDecoder } from "./wechat/draco.mjs";
+import { copyDracoWasmDecoder } from "./wechat/draco.mjs";
 import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, runWorkerSmoke, writeTveFacade } from "./wechat/guards.mjs";
 import { MESHOPT_WASM_PATH } from "../bridge/protocol.ts";
 
@@ -78,7 +80,7 @@ export async function buildWechatRuntime(reason = "") {
   const main = await buildMainBundle();
   const engines = await buildPhysicsEngines();
   const workers = await buildWorkerBundles();
-  const dracoBytes = copyDracoJsDecoder();
+  const dracoBytes = copyDracoWasmDecoder();
   const facadeBytes = writeTveFacade();
   runSurfaceCheck();
   runBridgeSpec();
@@ -94,7 +96,7 @@ export async function buildWechatRuntime(reason = "") {
     .join(" + ");
   console.log(
     `[wechat-bundle] 构建完成${label}: code.js ${kb(main.code)} + tve.js ${kb(facadeBytes)}` +
-      (dracoBytes ? ` + draco_decoder.js ${kb(dracoBytes)}（主线程内联解码）` : "") +
+      (dracoBytes ? ` + draco wasm ${kb(dracoBytes)}（wrapper 胶水 + .wasm 主线程内联解码）` : "") +
       (engineSummary ? ` + ${engineSummary}` : "") +
       (workerSummary ? ` + worker[${workerSummary}]` : "") +
       ` → public/exports/wechat/runtime/`,

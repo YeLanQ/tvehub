@@ -104,10 +104,12 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     expect(runtimeKeys(files)).toHaveLength(0);
   });
 
-  it("正常：启用 Draco 压缩随包纯 JS 解码器（与物理/Worker 无关独立生效）", async () => {
+  it("正常：启用 Draco 压缩随包 wasm 解码器（wrapper JS + .wasm，与物理/Worker 无关独立生效）", async () => {
     stubRuntimeFetch();
     const files = await fetchChannelRuntimeFiles("wechat", { includeDracoDecoder: true });
-    expect(Object.keys(files)).toContain("engine/runtime/loaders/draco/draco_decoder.js");
+    expect(Object.keys(files)).toContain("engine/runtime/loaders/draco/draco_wasm_wrapper.js");
+    // .wasm 二进制以 base64 进 files map（Rust 侧解码写盘，与 web 渠道同形态）
+    expect(files["engine/runtime/loaders/draco/draco_decoder.wasm"]).toBe("AGFzbQ==");
     // Draco 与物理互不连带：不开物理不随引擎产物与 Worker bundle
     expect(runtimeKeys(files)).toHaveLength(0);
     expect(Object.keys(files).some((k) => k.startsWith("workers/"))).toBe(false);

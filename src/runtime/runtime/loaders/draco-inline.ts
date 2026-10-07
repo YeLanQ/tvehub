@@ -3,13 +3,20 @@
 //
 // 为什么不用 DRACOLoader：微信沙箱无 Worker，且基础库把 globalThis.Function
 // hijack 成只放行 "return this" 尾参的补丁（new Function/eval 全灭）——
-// DRACOLoader 的「fetch 解码器文本 → Blob → Worker」链在 js/wasm 两形态下都
-// 无法存活；wasm 解码腿（draco_wasm_wrapper + WXWebAssembly，2026-10-03/04
-// 方案）已在模拟器多轮证伪后废弃。本实现把解码完全收回主线程：
-// - 解码器 = 包内真实模块文件 engine/runtime/loaders/draco/draco_decoder.js
-//   （纯 JS 构建、零动态求值，随包由 runtime/scripts/wechat/draco.mjs 从
-//   public/engine vendor 产物拷入），经桥接钩子 __tveLoadModule require——
-//   零 Blob、零 Worker、零 wasm；
+// DRACOLoader 的「fetch 解码器文本 → Blob → Worker」链无法存活。本实现把
+// 解码收回主线程，解码器用 wasm 形态（2026-10-03/04 的 wasm 腿曾因字节/
+// 用户目录路径被基础库拒绝而废弃；物理 wasm 与 meshopt wasm 落地后证明唯一
+// 可靠通路 = 包内路径直连 WXWebAssembly，本文件改走同一条链）：
+// - 胶水 = 包内真实模块文件 engine/runtime/loaders/draco/draco_wasm_wrapper.js
+//   （emscripten 产物、零动态求值，随包由 runtime/scripts/wechat/draco.mjs 从
+//   public/engine vendor 产物拷入），经桥接钩子 __tveLoadModule require；
+//   零 Blob、零 Worker、零 fetch；
+// - wasm = 包内文件 engine/runtime/loaders/draco/draco_decoder.wasm，经桥接
+//   钩子 __tveInstantiateWasmFile(路径, imports) 实例化——与物理引擎/meshopt
+//   wasm 同一条链（基础库只认代码包内路径；字节直传与用户目录路径均被拒）。
+//   接线用 emscripten 标准配置口 instantiateWasm(imports, receiveInstance)
+//   运行期注入，不做构建期文本改写（wrapper 的工厂回调契约稳定，无上游
+//   minified 锚点漂移风险）；
 // - 解码序列与 three r185 DRACOLoader 内置 DRACOWorker 逐句对齐
 //   （decodeGeometry / decodeIndex / decodeAttribute 的移植），TypedArray
 //   构造器用词法内建表查值（沙箱内 globalThis 运行期查值有视图隔离前科）；
@@ -18,9 +25,10 @@
 //   的 dracoDecoder 参数。仅支持 glTF 的 unique-ID 形态（KHR_draco_mesh_
 //   compression 恒如此；播放运行时无独立 .drc 入口）。
 //
-// 钩子名 __tveLoadModule / 前缀 "tve:" 是 runtime/bridge/protocol.ts 的
-// TVE_LOAD_MODULE / TVE_SPEC_PREFIX 在引擎源内的字面量登记（引擎产物不 import
-// 桥接层，交叉常量以注释对齐）。
+// 钩子名 __tveLoadModule / __tveInstantiateWasmFile / 前缀 "tve:" 是
+// runtime/bridge/protocol.ts 的 TVE_LOAD_MODULE / TVE_INSTANTIATE_WASM_FILE /
+// TVE_SPEC_PREFIX 在引擎源内的字面量登记（引擎产物不 import 桥接层，交叉常量
+// 以注释对齐）。
 // ---------------------------------------------------------------------------
 import {
   BufferAttribute,
@@ -99,7 +107,7 @@ interface DracoDecoder {
   GetTrianglesUInt32Array(geometry: DracoGeometryHandle, byteLength: number, ptr: number): boolean;
 }
 
-/** DracoDecoderModule 工厂装饰后的模块面（JS 构建，无 wasmBinary 参与） */
+/** DracoDecoderModule 工厂装饰后的模块面（wasm 构建） */
 interface DracoModule {
   Decoder: new () => DracoDecoder;
   Mesh: new () => DracoGeometryHandle;
@@ -114,10 +122,17 @@ interface DracoModule {
   [enumName: string]: unknown;
 }
 
-/** DracoDecoderModule 工厂签名（UMD 头 var DracoDecoderModule = (() => …)()） */
+/** DracoDecoderModule 工厂签名（UMD 尾 module.exports = DracoDecoderModule；
+ *  MODULARIZE 形态：调厂返回模块就绪 Promise） */
 type DracoDecoderFactory = (config: {
   onModuleLoaded?: (module: DracoModule) => void;
-}) => unknown;
+  /** emscripten 标准实例化配置口：返回 Promise 时 wrapper 丢弃返回值、只认
+   *  receiveInstance 回调——拒绳须自行接走（见 ensureModule 的 reject 接线） */
+  instantiateWasm?: (
+    imports: Record<string, unknown>,
+    receiveInstance: (instance: { exports: unknown }) => void,
+  ) => Promise<unknown> | null;
+}) => Promise<DracoModule> | void;
 
 /** 解码产物（对齐 DRACOWorker 的消息几何形态，供组装 BufferGeometry） */
 interface DecodedGeometryData {
@@ -132,8 +147,11 @@ interface DecodedGeometryData {
   }>;
 }
 
-/** 包内解码器模块说明符（load-module 剥前缀 + 小写后 require 包内键） */
-const DRACO_DECODER_SPEC = "tve:engine/runtime/loaders/draco/draco_decoder.js";
+/** 包内解码器胶水说明符 + wasm 包内路径（load-module 剥前缀 + 小写后 require
+ *  包内键；wasm 路径经 __tveInstantiateWasmFile 直连 WXWebAssembly，与物理
+ *  引擎/meshopt wasm 同目录布局同源） */
+const DRACO_WRAPPER_SPEC = "tve:engine/runtime/loaders/draco/draco_wasm_wrapper.js";
+const DRACO_WASM_PATH = "engine/runtime/loaders/draco/draco_decoder.wasm";
 
 /** 模块枚举查值（索引签名收窄：DT_* 恒为数字） */
 function dracoEnum(draco: DracoModule, name: string): number {
@@ -197,23 +215,71 @@ export class DracoInlineLoader {
     this.module ??= new Promise<DracoModule>((resolve, reject) => {
       const load = (globalThis as { __tveLoadModule?: (spec: string) => Promise<unknown> })
         .__tveLoadModule;
-      if (typeof load !== "function") {
-        reject(new Error("[draco-inline] 桥接钩子 __tveLoadModule 缺席（内联解码器仅微信渠道可用）"));
+      const instantiateWasmFile = (
+        globalThis as {
+          __tveInstantiateWasmFile?: (
+            path: string,
+            imports: Record<string, unknown>,
+          ) => Promise<{ instance: { exports: unknown } }>;
+        }
+      ).__tveInstantiateWasmFile;
+      if (typeof load !== "function" || typeof instantiateWasmFile !== "function") {
+        reject(
+          new Error(
+            "[draco-inline] 桥接钩子 __tveLoadModule/__tveInstantiateWasmFile 缺席（内联解码器仅微信渠道可用）",
+          ),
+        );
         return;
       }
-      load(DRACO_DECODER_SPEC).then(
+      load(DRACO_WRAPPER_SPEC).then(
         (exported) => {
           const factory = typeof exported === "function" ? exported : (exported as { default?: unknown }).default;
           if (typeof factory !== "function") {
-            reject(new Error("[draco-inline] draco_decoder.js 导出形态异常（缺 DracoDecoderModule 工厂，请重建微信运行时）"));
+            reject(new Error("[draco-inline] draco_wasm_wrapper.js 导出形态异常（缺 DracoDecoderModule 工厂，请重建微信运行时）"));
             return;
           }
-          // 与 DRACOWorker 的 init 消息同构：onModuleLoaded 回调拿装饰后的模块
-          (factory as DracoDecoderFactory)({
-            onModuleLoaded: (draco) => resolve(draco),
-          });
+          // 双就绪口都接（wrapper 的 MODULARIZE 形态两个都给）：onModuleLoaded
+          // 回调 + 工厂返回的 ready Promise，先到先定；wasm 链的拒绳在这里收拢
+          // ——wrapper 丢弃 instantiateWasm 的返回 Promise，拒绝不自动传播
+          let settled = false;
+          const settle = (fn: (v: never) => void, value: never) => {
+            if (settled) return;
+            settled = true;
+            fn(value);
+          };
+          try {
+            const ready = (factory as DracoDecoderFactory)({
+              onModuleLoaded: (draco) => settle(resolve, draco as never),
+              instantiateWasm: (imports, receiveInstance) =>
+                instantiateWasmFile(DRACO_WASM_PATH, imports).then(
+                  (result) => {
+                    if (!result || !result.instance) {
+                      throw new Error("[draco-inline] wasm 实例化结果缺 instance（平台端点形态异常）");
+                    }
+                    receiveInstance(result.instance);
+                  },
+                  (e) =>
+                    settle(
+                      reject as (v: never) => void,
+                      new Error(`[draco-inline] Draco wasm 实例化失败: ${e instanceof Error ? e.message : String(e)}`) as never,
+                    ),
+                ),
+            });
+            if (ready && typeof (ready as PromiseLike<DracoModule>).then === "function") {
+              (ready as PromiseLike<DracoModule>).then(
+                (draco) => settle(resolve, draco as never),
+                (e) =>
+                  settle(
+                    reject as (v: never) => void,
+                    new Error(`[draco-inline] 解码器模块初始化失败: ${e instanceof Error ? e.message : String(e)}`) as never,
+                  ),
+              );
+            }
+          } catch (e) {
+            reject(new Error(`[draco-inline] 解码器工厂调用失败: ${e instanceof Error ? e.message : String(e)}`));
+          }
         },
-        (e) => reject(new Error(`[draco-inline] 解码器模块加载失败: ${e instanceof Error ? e.message : String(e)}`)),
+        (e) => reject(new Error(`[draco-inline] 解码器胶水加载失败: ${e instanceof Error ? e.message : String(e)}`)),
       );
     });
     return this.module;

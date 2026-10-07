@@ -39,30 +39,36 @@ Worker 由 physics.ts 顶层安装，编辑器 canvas 由 ammoBackend 安装）�
 extra b64 抽取落盘；dev 产物根 = public/，单页产物 wasm 进内联资产表经 fetch
 垫片供数，多文件产物 .wasm 一律真实文件落盘（gzip 归档例外：Worker 命中不到
 主线程垫片）。Draco/Basis 解码器切 wasm 形态（three 主线程取数 postMessage 进
-解码 Worker），draco_decoder.js 不随 web 产物（manifest EXPORT_EXCLUDED；微信
-渠道例外，见下）。
+解码 Worker），draco_decoder.js 不随任何渠道产物（manifest EXPORT_EXCLUDED；
+仅留在本地产物目录作 JS 形态降级开关）。
 **多文件 gzip 特判**：.wasm 不进 assets.gzip（Rust web 管线 binaries 分流）。
 
-**微信渠道 Draco 解码**（2026-10-05 起，主线程内联方案）：微信沙箱无 Worker 且
-`globalThis.Function` 被基础库 hijack（new Function/eval 全灭）——DRACOLoader 的
-「fetch 解码器文本 → Blob → Worker」链与 wasm 解码腿（draco_wasm_wrapper +
-WXWebAssembly，旧方案已废弃）都无法存活。现行链路：
+**微信渠道 Draco 解码**（2026-10-05 起主线程内联方案；2026-10-07 起解码器切
+wasm 形态）：微信沙箱无 Worker 且 `globalThis.Function` 被基础库 hijack
+（new Function/eval 全灭）——DRACOLoader 的「fetch 解码器文本 → Blob →
+Worker」链无法存活。现行链路（wasm 腿经物理 wasm 验证过的包内路径链复活）：
 - `src/runtime/runtime/loaders/draco-inline.ts` = `DracoInlineLoader`（DRACOLoader
   的结构替换件，接口面 = GLTFLoader 消费的 `preload`/`decodeDracoFile`/`dispose`；
-  解码序列与 three r185 DRACOWorker 逐句对齐），解码器经桥接钩子
-  `__tveLoadModule`（"tve:engine/runtime/loaders/draco/draco_decoder.js"）require
-  包内真实模块——零 Blob/零 Worker/零 wasm/零动态求值；
+  解码序列与 three r185 DRACOWorker 逐句对齐），胶水经桥接钩子
+  `__tveLoadModule`（"tve:engine/runtime/loaders/draco/draco_wasm_wrapper.js"）
+  require 包内真实模块，wasm 经 `__tveInstantiateWasmFile`
+  （"engine/runtime/loaders/draco/draco_decoder.wasm"）包内路径直连
+  WXWebAssembly 实例化（物理/meshopt wasm 同链；字节直传与用户目录路径均被
+  基础库拒绝）——接线用 emscripten 标准 `instantiateWasm` 配置口运行期注入，
+  零构建期文本改写、零 Blob/零 Worker/零 fetch/零动态求值；
 - 注入路径：`runtime/loaders/compressed.ts` 检测钩子在场 → 经
   `setupCompressedGltfSupport({ dracoDecoder })` 注入（web/编辑器走 DRACOLoader
   wasm 形态不变；framework 只见 `DracoDecoderLike` 结构接口）；
 - 随包供给：`runtime/scripts/wechat/draco.mjs` 把 vendor 产物
-  draco_decoder.js（three gltf 变体，~500KB 纯 JS）拷入微信产物目录（含
-  UMD 形态 + 禁动态求值两道断言）；导出期按项目 `resources.dracoCompression`
-  条件随包（manifest 独立 `draco` 组 → runtime-supply `includeDracoDecoder`
-  映射，与 web 同判据；未启用的包内无此文件），Rust
-  `is_wechat_runtime_key` 白名单收键；preflight 不再拦 Draco（Basis 仍拦）；
+  draco_wasm_wrapper.js（58KB）+ draco_decoder.wasm（192KB，合计 245KB，比旧
+  纯 JS 解码器省约 260KB）拷入微信产物目录（含工厂/配置口形态 + 禁动态求值 +
+  wasm 魔数三道断言）；导出期按项目 `resources.dracoCompression` 条件随包
+  （manifest 独立 `draco` 组 → runtime-supply `includeDracoDecoder` 映射，与
+  web 同判据；未启用的包内无此文件），Rust `is_wechat_runtime_key` 白名单收键
+  （.wasm 按后缀通判 base64 解码落盘）；preflight 不再拦 Draco（Basis 仍拦）；
 - 回归守卫：`wechat/draco-smoke.mjs` 挂在微信构建链（编码器现场压缩最小网格 →
-  随包解码器真字节 → DracoInlineLoader 解码断言 + 两条负路径）。
+  随包 wrapper + .wasm 真字节 → DracoInlineLoader 经双钩子桩解码断言 + 三条
+  负路径：坏字节/wasm 实例化失败/钩子缺席）。
 
 ## 使用例
 

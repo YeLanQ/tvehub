@@ -301,7 +301,7 @@ fn wechat_channel_guards() {
     // 恢复无物理配置，供后续用例使用
     fs::write(root.join("project.config.json"), r#"{"designResolution":{"width":1280,"height":720}}"#).unwrap();
 
-    // Draco 压缩启用 → 已支持（主线程内联解码）：构建通过，纯 JS 解码器随包
+    // Draco 压缩启用 → 已支持（主线程 wasm 内联解码）：构建通过，wrapper + .wasm 随包
     fs::write(
         root.join("project.config.json"),
         r#"{"resources":{"dracoCompression":true}}"#,
@@ -309,14 +309,33 @@ fn wechat_channel_guards() {
     .unwrap();
     let mut draco_files = wechat_files();
     draco_files.insert(
-        "engine/runtime/loaders/draco/draco_decoder.js".to_string(),
-        "var DracoDecoderModule = (() => function() {})();\nmodule.exports = DracoDecoderModule;\n".to_string(),
+        "engine/runtime/loaders/draco/draco_wasm_wrapper.js".to_string(),
+        "var DracoDecoderModule = function() { return Promise.resolve({}); };\nmodule.exports = DracoDecoderModule;\n".to_string(),
+    );
+    draco_files.insert(
+        "engine/runtime/loaders/draco/draco_decoder.wasm".to_string(),
+        "AGFzbQEAAAA=".to_string(), // base64("\0asm\1\0\0\0")
     );
     run_build(wechat_job(&root, draco_files), &JobCtx::default())
-        .unwrap_or_else(|e| panic!("Draco 启用应构建通过（主线程内联解码）: {e}"));
+        .unwrap_or_else(|e| panic!("Draco 启用应构建通过（主线程 wasm 内联解码）: {e}"));
     assert!(
-        root.join("build/wechat/engine/runtime/loaders/draco/draco_decoder.js").is_file(),
-        "Draco 纯 JS 解码器应随包写入"
+        root.join("build/wechat/engine/runtime/loaders/draco/draco_wasm_wrapper.js").is_file(),
+        "Draco wasm 解码器胶水应随包写入"
+    );
+    assert_eq!(
+        fs::read(root.join("build/wechat/engine/runtime/loaders/draco/draco_decoder.wasm")).unwrap(),
+        vec![0u8, 0x61, 0x73, 0x6d, 1, 0, 0, 0],
+        "Draco wasm 应为 base64 解码后的原始字节"
+    );
+    // 旧纯 JS 解码器键已下线：白名单不再收（前端清单与管线预期一致才放行）
+    let mut legacy_files = wechat_files();
+    legacy_files.insert(
+        "engine/runtime/loaders/draco/draco_decoder.js".to_string(),
+        "var DracoDecoderModule = (() => function() {})();\n".to_string(),
+    );
+    assert!(
+        run_build(wechat_job(&root, legacy_files), &JobCtx::default()).is_err(),
+        "旧 draco_decoder.js 键应被白名单拒绝（已切换 wasm 解码器）"
     );
 
     // Basis 纹理压缩 → 仍不支持（KTX2Loader 依赖 Worker）

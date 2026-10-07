@@ -9,8 +9,8 @@
 //   运行时经全局钩子加载 .wasm，不再内联进 JS）、webgpu（three WebGPU 构建 + 粒子
 //   TSL 材质）、draco / basis（解码器胶水 JS + .wasm，按项目资源配置）
 // - wechat：physics:<rapier|jolt|ammo>（CJS 预转换产物，按项目物理后端随包）、
-//   worker:physics:<后端>（物理/动画 Worker bundle）、draco（纯 JS 解码器，项目启用
-//   resources.dracoCompression 才随包）
+//   worker:physics:<后端>（物理/动画 Worker bundle）、draco（wasm 解码器 wrapper
+//   + .wasm，项目启用 resources.dracoCompression 才随包）
 //
 // 两处调用，保证任何入口都拿到最新清单：
 // - vite.config.ts 的索引插件：dev 启动 / 构建 / 运行时文件增删时重建；
@@ -77,10 +77,15 @@ const WECHAT_PHYSICS_PREFIX = PHYSICS_ENGINES_PREFIX;
  *  导出期改键落盘为 workers/tve.js——wx.createWorker 入口路径恒定） */
 const WECHAT_WORKERS_PREFIX = "workers/";
 
-/** 微信渠道按需随包的 Draco 纯 JS 解码器（与 web 的 draco 组同键名；运行时
- *  懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require，项目未启用
- *  resources.dracoCompression 的包内零成本省 512KB） */
-const WECHAT_DRACO_KEYS = ["engine/runtime/loaders/draco/draco_decoder.js"];
+/** 微信渠道按需随包的 Draco wasm 解码器（wrapper 胶水 + .wasm；与 web 的 draco
+ *  组同键名，解码走物理 wasm 同款链——主线程内联 + __tveInstantiateWasmFile
+ *  包内路径直连 WXWebAssembly。运行时懒加载：仅模型带 KHR_draco 扩展时经
+ *  __tveLoadModule require 胶水，项目未启用 resources.dracoCompression 的包内
+ *  零成本，启用也比旧纯 JS 解码器省约 260KB） */
+const WECHAT_DRACO_KEYS = [
+  "engine/runtime/loaders/draco/draco_wasm_wrapper.js",
+  "engine/runtime/loaders/draco/draco_decoder.wasm",
+];
 
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {

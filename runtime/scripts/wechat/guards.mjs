@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "../lib/paths.mjs";
 import { TVE_FACADE } from "../../bridge/protocol.ts";
 import { PHYSICS_ENGINES } from "./engines.mjs";
-import { DRACO_JS_KEY } from "./draco.mjs";
+import { DRACO_WASM_KEY, DRACO_WRAPPER_KEY } from "./draco.mjs";
 
 /** 漂移守卫：统一运行时源码的全局用法对照桥接覆盖清单（未覆盖新增 = 构建失败） */
 export function runSurfaceCheck() {
@@ -41,13 +41,18 @@ export function smokeRequireBundle(engineSizes) {
   );
 }
 
-/** Draco 内联解码冒烟：编码器现场压缩最小网格 → 随包解码器真字节解码回归
- *  （依赖随包产物，仅在解码器已拷入时执行；见 ./draco-smoke.mjs） */
+/** Draco 内联解码冒烟：编码器现场压缩最小网格 → 随包 wrapper + .wasm 真字节
+ *  经 instantiateWasm 钩子链路解码回归（依赖随包产物，仅在解码器已拷入时执行；
+ *  见 ./draco-smoke.mjs） */
 export function runDracoDecodeSmoke(dracoBytes) {
   if (!dracoBytes) return;
   execFileSync(
     process.execPath,
-    [path.join(path.dirname(fileURLToPath(import.meta.url)), "draco-smoke.mjs"), path.join(WECHAT_RUNTIME_DIR, DRACO_JS_KEY)],
+    [
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "draco-smoke.mjs"),
+      path.join(WECHAT_RUNTIME_DIR, DRACO_WRAPPER_KEY),
+      path.join(WECHAT_RUNTIME_DIR, DRACO_WASM_KEY),
+    ],
     { stdio: "inherit", timeout: 120_000 },
   );
 }
