@@ -85,6 +85,8 @@ const WECHAT_CHANNEL: BuildChannel = {
     // 垫片经 WXWebAssembly 实例化）
     includePhysics: configUsesPhysics(configText),
     physicsBackend: configPhysicsBackend(configText),
+    // Draco 纯 JS 解码器按项目配置随包（与 web 同判据；微信为懒加载的内联解码形态）
+    includeDracoDecoder: configUsesDracoCompression(configText),
   }),
   compileTarget: "wechat",
   applyExportArtifacts: async () => ({ singlePage: false }),

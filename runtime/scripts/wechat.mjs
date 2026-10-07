@@ -7,7 +7,8 @@
 //   engine/runtime/physics-engines/jolt.js/.wasm     jolt 同上
 //   engine/runtime/physics-engines/ammo/ammo-esm.js/.wasm  ammo 同上
 //   engine/runtime/loaders/meshopt_decoder.wasm      meshopt（GLTFLoader 内联依赖）
-//   engine/runtime/loaders/draco/draco_decoder.js    Draco 纯 JS 解码器（主线程内联解码）
+//   engine/runtime/loaders/draco/draco_decoder.js    Draco 纯 JS 解码器（主线程内联解码；
+//     导出期按项目 resources.dracoCompression 条件随包——manifest 独立 draco 组）
 //
 // 关键决策（与 web 渠道隔离）：
 // - 引擎源码 src/runtime/** 零改动；对本包内三处运行时形态做构建期定点改写

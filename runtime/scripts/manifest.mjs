@@ -8,7 +8,9 @@
 // - web：physics:<ammo|jolt|rapier>（按后端，胶水 .mjs + 同目录 .wasm 文件——
 //   运行时经全局钩子加载 .wasm，不再内联进 JS）、webgpu（three WebGPU 构建 + 粒子
 //   TSL 材质）、draco / basis（解码器胶水 JS + .wasm，按项目资源配置）
-// - wechat：physics:<rapier|jolt|ammo>（CJS 预转换产物，按项目物理后端随包）
+// - wechat：physics:<rapier|jolt|ammo>（CJS 预转换产物，按项目物理后端随包）、
+//   worker:physics:<后端>（物理/动画 Worker bundle）、draco（纯 JS 解码器，项目启用
+//   resources.dracoCompression 才随包）
 //
 // 两处调用，保证任何入口都拿到最新清单：
 // - vite.config.ts 的索引插件：dev 启动 / 构建 / 运行时文件增删时重建；
@@ -75,6 +77,11 @@ const WECHAT_PHYSICS_PREFIX = PHYSICS_ENGINES_PREFIX;
  *  导出期改键落盘为 workers/tve.js——wx.createWorker 入口路径恒定） */
 const WECHAT_WORKERS_PREFIX = "workers/";
 
+/** 微信渠道按需随包的 Draco 纯 JS 解码器（与 web 的 draco 组同键名；运行时
+ *  懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require，项目未启用
+ *  resources.dracoCompression 的包内零成本省 512KB） */
+const WECHAT_DRACO_KEYS = ["engine/runtime/loaders/draco/draco_decoder.js"];
+
 /** 递归列出 <ROOT>/<rel> 下全部文件（返回相对 ROOT 的正斜杠路径） */
 function listFilesRecursive(rel) {
   const abs = path.join(ROOT, rel);
@@ -140,7 +147,12 @@ function scanWechat() {
     };
   });
   const base = all
-    .filter((f) => !f.key.startsWith(WECHAT_PHYSICS_PREFIX) && !f.key.startsWith(WECHAT_WORKERS_PREFIX))
+    .filter(
+      (f) =>
+        !f.key.startsWith(WECHAT_PHYSICS_PREFIX) &&
+        !f.key.startsWith(WECHAT_WORKERS_PREFIX) &&
+        !WECHAT_DRACO_KEYS.includes(f.key),
+    )
     .sort((a, b) => a.key.localeCompare(b.key));
   // 物理引擎按后端分组（与 web 渠道同规则：前缀下第一段目录，否则剥扩展名；
   // 胶水 .js 与随包 .wasm 归同一后端组）
@@ -168,6 +180,10 @@ function scanWechat() {
   for (const k of Object.keys(byWorkerBackend).sort()) {
     groups[`worker:physics:${k}`] = byWorkerBackend[k].sort((a, b) => a.key.localeCompare(b.key));
   }
+  // Draco 解码器条件组（与 web 组同名：项目启用 resources.dracoCompression 才随包）
+  groups.draco = WECHAT_DRACO_KEYS.filter((k) => all.some((f) => f.key === k)).map((k) =>
+    all.find((f) => f.key === k),
+  );
   return {
     id: "wechat",
     base,

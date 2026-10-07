@@ -57,7 +57,9 @@ WXWebAssembly，旧方案已废弃）都无法存活。现行链路：
   wasm 形态不变；framework 只见 `DracoDecoderLike` 结构接口）；
 - 随包供给：`runtime/scripts/wechat/draco.mjs` 把 vendor 产物
   draco_decoder.js（three gltf 变体，~500KB 纯 JS）拷入微信产物目录（含
-  UMD 形态 + 禁动态求值两道断言），manifest 自动进 wechat base，Rust
+  UMD 形态 + 禁动态求值两道断言）；导出期按项目 `resources.dracoCompression`
+  条件随包（manifest 独立 `draco` 组 → runtime-supply `includeDracoDecoder`
+  映射，与 web 同判据；未启用的包内无此文件），Rust
   `is_wechat_runtime_key` 白名单收键；preflight 不再拦 Draco（Basis 仍拦）；
 - 回归守卫：`wechat/draco-smoke.mjs` 挂在微信构建链（编码器现场压缩最小网格 →
   随包解码器真字节 → DracoInlineLoader 解码断言 + 两条负路径）。

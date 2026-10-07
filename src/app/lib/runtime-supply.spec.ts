@@ -103,6 +103,21 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     // 骨骼动画在 worker 内为纯数学代理，无需引擎 wasm → 物理引擎产物整组缺省
     expect(runtimeKeys(files)).toHaveLength(0);
   });
+
+  it("正常：启用 Draco 压缩随包纯 JS 解码器（与物理/Worker 无关独立生效）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("wechat", { includeDracoDecoder: true });
+    expect(Object.keys(files)).toContain("engine/runtime/loaders/draco/draco_decoder.js");
+    // Draco 与物理互不连带：不开物理不随引擎产物与 Worker bundle
+    expect(runtimeKeys(files)).toHaveLength(0);
+    expect(Object.keys(files).some((k) => k.startsWith("workers/"))).toBe(false);
+  });
+
+  it("边界：未启用 Draco 时包内不随解码器（base 清单无 loaders/draco/）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("wechat", {});
+    expect(Object.keys(files).some((k) => k.includes("loaders/draco/"))).toBe(false);
+  });
 });
 
 describe("fetchChannelRuntimeFiles web 可选运行时", () => {

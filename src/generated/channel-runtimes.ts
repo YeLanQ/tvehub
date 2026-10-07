@@ -501,11 +501,6 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
         "url": "/exports/wechat/runtime/engine/core/tve.js"
       },
       {
-        "key": "engine/runtime/loaders/draco/draco_decoder.js",
-        "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js",
-        "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js"
-      },
-      {
         "key": "engine/runtime/loaders/meshopt_decoder.wasm",
         "rel": "exports/wechat/runtime/engine/runtime/loaders/meshopt_decoder.wasm",
         "url": "/exports/wechat/runtime/engine/runtime/loaders/meshopt_decoder.wasm"
@@ -567,6 +562,13 @@ export const CHANNEL_RUNTIMES: Record<"web" | "wechat", ChannelRuntimeSpec> = {
           "key": "workers/rapier/tve.js",
           "rel": "exports/wechat/runtime/workers/rapier/tve.js",
           "url": "/exports/wechat/runtime/workers/rapier/tve.js"
+        }
+      ],
+      "draco": [
+        {
+          "key": "engine/runtime/loaders/draco/draco_decoder.js",
+          "rel": "exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js",
+          "url": "/exports/wechat/runtime/engine/runtime/loaders/draco/draco_decoder.js"
         }
       ]
     }

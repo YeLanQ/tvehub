@@ -26,7 +26,8 @@ export interface ChannelRuntimeOptions {
   includeAnimationWorker?: boolean;
   /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出 */
   includeWebgpu?: boolean;
-  /** 项目启用 Draco 压缩 → Draco wasm 解码器（wrapper JS + .wasm）随导出 */
+  /** 项目启用 Draco 压缩 → 解码器随导出（web = wasm wrapper JS + .wasm；
+   *  wechat = 纯 JS 主线程解码器） */
   includeDracoDecoder?: boolean;
   /** 项目启用纹理压缩 → Basis 转码器（胶水 JS + .wasm）随导出 */
   includeBasisDecoder?: boolean;
@@ -115,21 +116,27 @@ export async function fetchChannelRuntimeFiles(
     if (opts.includeWebgpu) groupKeys.push("webgpu");
     if (opts.includeDracoDecoder) groupKeys.push("draco");
     if (opts.includeBasisDecoder) groupKeys.push("basis");
-  } else if (opts.includePhysics || opts.includeAnimationWorker) {
+  } else {
     // wechat：物理引擎按后端随包（rapier/jolt/ammo CJS 预转换产物；真机 wasm
     // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）。
     // 同后端的物理 Worker bundle（workers/<backend>/tve.js，内含 physics/animation
     // 双路由）一并随包——wx.createWorker 单实例跑物理模拟与骨骼动画（信封多路复用
     // + bridge 保留信道回传 wasm 字节）。仅动画（无物理）时引擎胶水不随包，worker
     // bundle 里的物理路由永不接收 init（主线程物理未启用不建端口）。
-    const backend = opts.physicsBackend || "rapier";
-    if (opts.includePhysics) {
-      const key = `physics:${backend}`;
-      groupKeys.push(spec.groups[key] ? key : "physics:rapier");
+    if (opts.includePhysics || opts.includeAnimationWorker) {
+      const backend = opts.physicsBackend || "rapier";
+      if (opts.includePhysics) {
+        const key = `physics:${backend}`;
+        groupKeys.push(spec.groups[key] ? key : "physics:rapier");
+      }
+      const workerKey = `worker:physics:${backend}`;
+      if (spec.groups[workerKey]) groupKeys.push(workerKey);
+      else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
     }
-    const workerKey = `worker:physics:${backend}`;
-    if (spec.groups[workerKey]) groupKeys.push(workerKey);
-    else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
+    // Draco 纯 JS 解码器按项目配置随包（与 web 同判据 resources.dracoCompression）：
+    // 运行时懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require，未启用
+    // 的包内无此文件，主包省 512KB
+    if (opts.includeDracoDecoder) groupKeys.push("draco");
   }
 
   const list: ChannelRuntimeFile[] = [...spec.base, ...groupKeys.flatMap((k) => spec.groups[k] ?? [])];
