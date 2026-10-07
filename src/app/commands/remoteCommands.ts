@@ -21,7 +21,7 @@ import {
   runBuild,
 } from "../lib/build-export";
 import { registerCommand } from "./registry";
-import { asStrings } from "./args";
+import { asBool, asStringList } from "./args";
 
 /** 当前项目根；未打开项目时抛错（各域命令共用） */
 function requireRoot(): string {
@@ -505,7 +505,8 @@ registerCommand({
     const root = requireRoot();
     const project = getProjectStore();
     const prefs = await loadBuildPrefs(root);
-    const singlePage = args?.singlePage === true;
+    // 布尔参数宽松收窄：助手 schema 按 string 下发，弱模型惯传 "true" 字符串
+    const singlePage = asBool(args?.singlePage) ?? false;
     // 模板形态与构建形态一致：single → 单页模板，multi → 多页模板
     const templates = await loadExportTemplates();
     const templateId =
@@ -513,7 +514,7 @@ registerCommand({
         ? args.template
         : (templates.find((t) => t.mode === (singlePage ? "single" : "multi"))?.id ??
           defaultExportTemplateId());
-    const sceneList = asStrings(args?.scenes);
+    const sceneList = asStringList(args?.scenes);
     const result = await runBuild({
       root,
       channel: "web",
@@ -530,11 +531,11 @@ registerCommand({
         typeof args?.title === "string" && args.title
           ? args.title
           : prefs?.title || project.projectName || "TvE Build",
-      debug: typeof args?.debug === "boolean" ? args.debug : (prefs?.debug ?? true),
+      debug: asBool(args?.debug) ?? (prefs?.debug ?? true),
       templates: [templateId],
-      gzip: args?.gzip === true,
-      release: args?.release === true,
-      cdn: args?.cdn === true,
+      gzip: asBool(args?.gzip) ?? false,
+      release: asBool(args?.release) ?? false,
+      cdn: asBool(args?.cdn) ?? false,
       gzipBase: typeof args?.gzipBase === "string" ? args.gzipBase : "",
       cdnBase: typeof args?.cdnBase === "string" ? args.cdnBase : "",
       outDir: typeof args?.outDir === "string" && args.outDir ? args.outDir : undefined,

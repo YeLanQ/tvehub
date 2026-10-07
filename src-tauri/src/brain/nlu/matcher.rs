@@ -68,6 +68,11 @@ const LEXICON: &[(&str, &str)] = &[
     ("试玩", "preview.open"),
     ("截图", "preview.screenshot"),
     ("启动预览服务", "preview.start"),
+    ("构建项目", "project.build"),
+    ("构建导出", "project.build"),
+    ("打包", "project.build"),
+    ("构建", "project.build"),
+    ("导出", "project.build"),
 ];
 
 /// 调研语（出现即判 Inspect，优先于验证语）
@@ -180,6 +185,19 @@ mod tests {
         let (m, src) = predict_method("写一个tween动画脚本", &[]).expect("动宾组合应命中");
         assert_eq!(m, "asset.write");
         assert_eq!(src, "lexicon");
+    }
+
+    #[test]
+    fn build_utterances_predict_project_build() {
+        // 构建语汇 → project.build（长词优先：「构建项目」压过泛词「构建」）
+        let (m, src) = predict_method("构建项目发给我朋友", &[]).expect("应有预测");
+        assert_eq!(m, "project.build");
+        assert_eq!(src, "lexicon");
+        let (m2, _) = predict_method("打包成单页发出去", &[]).expect("应有预测");
+        assert_eq!(m2, "project.build");
+        // 泛词「导出」也落构建导出（应用内没有第二种导出）
+        let (m3, _) = predict_method("导出当前项目", &[]).expect("应有预测");
+        assert_eq!(m3, "project.build");
     }
 
     #[test]

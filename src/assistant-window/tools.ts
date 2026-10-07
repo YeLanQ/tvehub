@@ -26,6 +26,7 @@ const CATALOG: ToolSpec[] = [
   { method: "project.create", description: "新建项目（默认 3D 模板，含场景/脚本/配置，无需编辑器）。", params: { name: "项目名", parent: "父目录绝对路径；缺省用默认项目位置（未设置时需显式提供）" }, required: ["name"] },
   { method: "project.open", description: "在编辑器中打开项目：无活跃编辑器窗口时新建一个编辑器窗口（等同首页打开，返回即就绪）；有活跃编辑器时切换其工作区。", params: { path: "项目绝对路径" }, required: ["path"] },
   { method: "project.close", description: "关闭当前项目回首页。" },
+  { method: "project.build", description: "构建导出当前项目为 Web 产物（与构建面板同一链路；需编辑器已打开该项目）。singlePage=true 产出单页 index.html（资产全内联，可直接发给他人双击打开）；缺省取构建面板（build.config.json）已保存的渠道/场景/标题配置。返回 output_dir 与缺失资产清单 missing——发送产物前确认 missing 为空。", params: { singlePage: "true=单页模板（产物为单个 index.html）；缺省多页模板（整个输出目录一起交付）", title: "页面标题（缺省取构建面板配置/项目名）", mainScene: "主场景相对路径（缺省当前场景）", scenes: "场景相对路径，多个用逗号分隔；缺省用构建面板勾选", release: "true=发布模式（uid 重命名+引用重写+压缩，体积更小；与 debug 互斥）", gzip: "true=资产 gzip（单页模板会 base64 内联进 HTML）", cdn: "true=CDN 模式（three.js 走外链，需联网；缺省内嵌可离线）", outDir: "输出目录（缺省 build/web）" } },
   { method: "scene.list", description: "列出项目内全部 .scene 场景（可带 root 指定工作区，无需打开编辑器）。", params: { root: "工作区项目根（缺省=当前工作区）" } },
   { method: "scene.open", description: "在编辑器中打开场景（需编辑器已开项目）。", params: { rel: "场景相对路径" }, required: ["rel"] },
   { method: "scene.save", description: "保存编辑器当前场景（需编辑器已开项目）。" },
