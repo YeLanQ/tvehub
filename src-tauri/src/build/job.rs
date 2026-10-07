@@ -40,6 +40,10 @@ pub struct BuildJob {
     pub wechat_appid: Option<String>,
     /// 微信小游戏屏幕方向（"portrait" / "landscape"；缺省 portrait）
     pub wechat_orientation: Option<String>,
+    /// 微信小游戏分包：文件化二进制资产移出主包（主包 4MB 限制的解法）
+    pub wechat_subpackages: Option<bool>,
+    /// 单个分包体积上限（MB；管线 resolve 阶段归一化钳到 1..=4，缺省 2）
+    pub wechat_subpackage_size: Option<f64>,
 }
 
 /// 任务运行期上下文：取消检查与进度上报（命令层注入，单元测试传默认值）

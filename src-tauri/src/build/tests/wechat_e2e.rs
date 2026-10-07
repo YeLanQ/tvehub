@@ -77,6 +77,8 @@ fn wechat_job(root: &std::path::Path, files: HashMap<String, String>) -> BuildJo
         out_dir: None,
         wechat_appid: None,
         wechat_orientation: None,
+        wechat_subpackages: None,
+        wechat_subpackage_size: None,
     }
 }
 
@@ -140,6 +142,11 @@ fn wechat_export_end_to_end() {
     assert!(
         game_json.get("workers").is_none(),
         "未随包 worker 时 game.json 不应声明 workers 字段"
+    );
+    // 分包未启用（缺省）→ 不声明 subpackages，资产留主包 assets/
+    assert!(
+        game_json.get("subpackages").is_none(),
+        "未启用分包时 game.json 不应声明 subpackages 字段"
     );
 
     // project.config.json：游客 appid + compileType game + condition 槽位
@@ -456,5 +463,133 @@ fn wechat_worker_bundle_in_package() {
         serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
     assert_eq!(game_json["workers"], "workers", "随包 worker 时 game.json 应声明 workers 字段");
 
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// 分包选项：文件化二进制资产按体积分入 pkg-N 分包——game.json 声明
+/// subpackages、game.js 启动前预加载、data.js 清单带分包前缀、原始字节落盘
+/// 分包目录；运行时文件与场景文本留主包。未启用时保持单包形态（在
+/// wechat_export_end_to_end 内断言无 subpackages 字段与主包 assets/）。
+#[test]
+fn wechat_subpackage_split() {
+    let base = std::env::temp_dir().join(format!("tve-wechat-subpkg-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = setup_project(&base);
+    // 三张 800KB 贴图各挂一个材质、三个 meshNode 引用（1MB 分包上限下
+    // 贪心装箱 → 一贴图一分包）
+    let big = vec![7u8; 800 * 1024];
+    for name in ["a.png", "b.png", "c.png"] {
+        fs::write(root.join("assets/textures").join(name), &big).unwrap();
+    }
+    for (mat, tex) in [("N", "b"), ("O", "c")] {
+        fs::write(
+            root.join(format!("assets/materials/{mat}.mat")),
+            format!(r#"{{"$type":"material","name":"{mat}","map":"assets/textures/{tex}.png"}}"#),
+        )
+        .unwrap();
+    }
+    fs::write(
+        root.join("assets/Main.scene"),
+        r#"{"type":"scene","root":{"type":"node","children":[{"type":"meshNode","material":"assets/materials/M.mat"},{"type":"meshNode","material":"assets/materials/N.mat"},{"type":"meshNode","material":"assets/materials/O.mat"}]}}"#,
+    )
+    .unwrap();
+
+    let job = BuildJob {
+        wechat_subpackages: Some(true),
+        wechat_subpackage_size: Some(1.0),
+        ..wechat_job(&root, wechat_files())
+    };
+    let result = run_build(job, &JobCtx::default())
+        .unwrap_or_else(|e| panic!("分包构建失败: {e}"));
+    assert!(result.ok);
+    assert!(result.message.contains("分包"), "结果消息应报告分包统计: {}", result.message);
+
+    let out = root.join("build/wechat");
+    // game.json：三个分包声明（root 与 name 同值）
+    let game_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
+    assert_eq!(
+        game_json["subpackages"],
+        serde_json::json!([
+            { "root": "pkg-1", "name": "pkg-1" },
+            { "root": "pkg-2", "name": "pkg-2" },
+            { "root": "pkg-3", "name": "pkg-3" }
+        ]),
+        "三张 800KB 贴图在 1MB 上限下应分三个分包"
+    );
+
+    // game.js：启动前预加载全部分包（roots 字面量 + loadSubpackage + 进游戏）
+    let game_js = fs::read_to_string(out.join("game.js")).unwrap();
+    assert!(game_js.contains("[\"pkg-1\",\"pkg-2\",\"pkg-3\"]"), "入口应内嵌分包 root 清单");
+    assert!(game_js.contains("loadSubpackage"), "入口应经 loadSubpackage 预加载分包");
+    assert!(game_js.contains("require(\"./code.js\")"), "预加载完成后应进游戏");
+
+    // data.js 清单带分包前缀；原始字节落盘分包目录；主包 assets/ 消失
+    let data = fs::read_to_string(out.join("data.js")).unwrap();
+    assert!(data.contains("\"assets/textures/a.png\":\"pkg-1/assets/"), "清单应带分包前缀");
+    assert!(
+        !data.contains("\"assets/textures/a.png\":\"assets/"),
+        "启用分包后不应再有主包形态映射"
+    );
+    for pkg in ["pkg-1", "pkg-2", "pkg-3"] {
+        // 分包根目录必须有 game.js（开发者工具静态校验，缺失报「未找到 root 对应
+        // 的 /pkg-N/game.js」）
+        assert!(out.join(pkg).join("game.js").is_file(), "{pkg} 应含入口 game.js 桩");
+        let dir = out.join(pkg).join("assets");
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{pkg}/assets 应存在: {e}"))
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 1, "{pkg} 应恰好一个文件化资产: {names:?}");
+        assert_eq!(fs::read(dir.join(&names[0])).unwrap(), big, "分包资产应为原始字节");
+    }
+    assert!(!out.join("assets").exists(), "全部分包后主包不应再有 assets/ 目录");
+
+    // 运行时文件留主包（分包只装文件化资产）
+    assert!(
+        out.join("engine/runtime/loaders/meshopt_decoder.wasm").is_file(),
+        "运行时 wasm 应留主包"
+    );
+    assert!(out.join("code.js").is_file() && out.join("data.js").is_file());
+
+    // 未启用（缺省 false）→ 单包形态回退：无 subpackages 声明，资产回主包 assets/
+    run_build(wechat_job(&root, wechat_files()), &JobCtx::default()).unwrap();
+    let game_json2: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
+    assert!(game_json2.get("subpackages").is_none(), "未启用分包不应声明 subpackages");
+    assert!(out.join("assets").is_dir(), "未启用分包资产应回主包 assets/");
+
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// resolve 归一化：分包体积钳到 1..=4 MB、开关缺省 false
+#[test]
+fn wechat_resolve_normalizes_subpackage_options() {
+    let base = std::env::temp_dir().join(format!("tve-wechat-resolve-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = setup_project(&base);
+    use crate::build::channels::wechat::WechatPipeline;
+    use crate::build::options::ResolvedChannel;
+    use crate::build::pipeline::ChannelPipeline;
+
+    let job = BuildJob {
+        wechat_subpackages: Some(true),
+        wechat_subpackage_size: Some(9.6),
+        ..wechat_job(&root, wechat_files())
+    };
+    match WechatPipeline.resolve(&job) {
+        ResolvedChannel::Wechat(p) => {
+            assert!(p.subpackages);
+            assert_eq!(p.subpackage_size, 4, "分包体积应钳到上限 4 MB");
+        }
+        _ => panic!("微信管线 resolve 应返回微信参数"),
+    }
+    match WechatPipeline.resolve(&wechat_job(&root, wechat_files())) {
+        ResolvedChannel::Wechat(p) => {
+            assert!(!p.subpackages, "分包开关缺省 false");
+            assert_eq!(p.subpackage_size, 2, "分包体积缺省 2 MB");
+        }
+        _ => panic!("微信管线 resolve 应返回微信参数"),
+    }
     let _ = fs::remove_dir_all(&base);
 }

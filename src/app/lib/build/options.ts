@@ -45,4 +45,8 @@ export interface BuildOptions {
   wechatAppId?: string;
   /** 微信小游戏屏幕方向（wechat 渠道；缺省 portrait） */
   wechatOrientation?: "portrait" | "landscape";
+  /** 微信小游戏分包：文件化二进制资产移出主包，启动前预加载（主包 4MB 限制的解法） */
+  wechatSubpackages?: boolean;
+  /** 单个分包体积上限（MB，1~4，缺省 2；超限单资产独占分包） */
+  wechatSubpackageSize?: number;
 }

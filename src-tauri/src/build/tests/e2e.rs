@@ -79,6 +79,8 @@ fn build_export_end_to_end_all_modes() {
             out_dir: None,
             wechat_appid: None,
             wechat_orientation: None,
+            wechat_subpackages: None,
+            wechat_subpackage_size: None,
         };
         let result = run_build(job, &JobCtx::default())
             .unwrap_or_else(|e| panic!("single_page={single_page} gzip={gzip} 构建失败: {e}"));

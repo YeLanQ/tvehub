@@ -33,6 +33,11 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
       cdnBase: typeof cfg.cdnBase === "string" ? cfg.cdnBase : "",
       wechatAppId: typeof cfg.wechatAppId === "string" ? cfg.wechatAppId : "",
       wechatOrientation: cfg.wechatOrientation === "landscape" ? "landscape" : "portrait",
+      wechatSubpackages: cfg.wechatSubpackages === true,
+      wechatSubpackageSize:
+        typeof cfg.wechatSubpackageSize === "number" && Number.isFinite(cfg.wechatSubpackageSize)
+          ? Math.min(4, Math.max(1, Math.round(cfg.wechatSubpackageSize)))
+          : 2,
     };
   } catch {
     return null;
@@ -56,6 +61,11 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     cdnBase: prefs.cdnBase,
     wechatAppId: prefs.wechatAppId ?? "",
     wechatOrientation: prefs.wechatOrientation ?? "portrait",
+    wechatSubpackages: prefs.wechatSubpackages === true,
+    wechatSubpackageSize:
+      typeof prefs.wechatSubpackageSize === "number" && Number.isFinite(prefs.wechatSubpackageSize)
+        ? Math.min(4, Math.max(1, Math.round(prefs.wechatSubpackageSize)))
+        : 2,
   };
   await api.writeText(root, BUILD_CONFIG_REL, JSON.stringify(next, null, 2));
 }

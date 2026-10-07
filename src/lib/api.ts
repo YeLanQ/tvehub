@@ -770,6 +770,10 @@ export type BuildExportArgs = {
   /** 微信小游戏渠道：AppID（缺省 = 继承上次产物 > touristappid）与屏幕方向 */
   wechatAppid?: string;
   wechatOrientation?: string;
+  /** 微信小游戏分包：文件化二进制资产移出主包（主包 4MB 限制的解法） */
+  wechatSubpackages?: boolean;
+  /** 单个分包体积上限（MB，1~4；超限单资产独占分包） */
+  wechatSubpackageSize?: number;
 };
 
 /** 构建导出结果（与 Rust build::BuildResult 对应） */

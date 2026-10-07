@@ -5,17 +5,52 @@
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// 游客模式 AppID（未注册身份；工具可打开模拟器，真机预览需真实 AppID）
 pub(super) const TOURIST_APPID: &str = "touristappid";
 
-/// 入口：唯一职责是装载预构建 bundle（adapter + player + engine + three）。
+/// 入口：装载预构建 bundle（adapter + player + engine + three）；启用分包时
+/// 先并行预加载全部分包再进游戏——桥接层对资产是同步读契约（readFileSync），
+/// 分包必须在游戏启动前就绪；单个分包加载失败不阻断启动，其内资产按缺失
+/// 降级（readPackageFile 返回 null 走调用方降级链）。基础库 2.1.0 以下无
+/// loadSubpackage，直接进游戏（分包资产缺失，控制台可见 404 告警）。
 /// 入口体不做任何全局写入——开发者工具对入口体与模块提供独立全局视图，
 /// 跨边界全局不可见，一切适配都在 bundle 单一模块作用域内完成。
-pub(super) fn game_js() -> String {
-    "// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）\nrequire(\"./code.js\");\n".to_string()
+pub(super) fn game_js(sub_roots: &[String]) -> String {
+    if sub_roots.is_empty() {
+        return "// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）\nrequire(\"./code.js\");\n".to_string();
+    }
+    let roots: Vec<serde_json::Value> = sub_roots
+        .iter()
+        .map(|r| serde_json::Value::String(r.clone()))
+        .collect();
+    format!(
+        r#"// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）
+(function (roots) {{
+  var load = null;
+  try {{
+    if (typeof wx !== "undefined" && wx && typeof wx.loadSubpackage === "function") load = wx.loadSubpackage;
+  }} catch (e) {{ /* 沙箱遮蔽时读 free 标识符可能抛错 */ }}
+  if (!load) {{ require("./code.js"); return; }}
+  var left = roots.length;
+  var enter = function (root, err) {{
+    if (err) console.warn("[TvE] 分包 " + root + " 加载失败（其内资产将按缺失降级）", err);
+    left -= 1;
+    if (left === 0) require("./code.js");
+  }};
+  for (var i = 0; i < roots.length; i++) {{
+    (function (root) {{
+      try {{
+        load({{ name: root, success: function () {{ enter(root); }}, fail: function (res) {{ enter(root, res); }} }});
+      }} catch (e) {{ enter(root, e); }}
+    }})(roots[i]);
+  }}
+}})({roots});
+"#,
+        roots = serde_json::Value::Array(roots)
+    )
 }
 
 /// data.js：config + 场景/小文本资产（base64 内联，热路径零 FS 读）+ 文件化资产
@@ -79,8 +114,14 @@ pub(super) fn asset_file_name(rel: &str, used: &mut HashSet<String>) -> String {
 
 /// game.json：屏幕方向由构建配置选择（portrait / landscape，缺省 portrait）；
 /// with_workers = 物理 Worker bundle 实际随包时声明 workers 字段（wx.createWorker
-/// 依赖该声明；声明而无目录会令开发者工具编译失败，故按实际随包条件写入）
-pub(super) fn game_json(orientation: &str, with_workers: bool) -> Result<String, String> {
+/// 依赖该声明；声明而无目录会令开发者工具编译失败，故按实际随包条件写入）；
+/// sub_roots 非空时声明 subpackages 字段（root 与 name 同值，wx.loadSubpackage
+/// 按 name 加载，同值消除两种指称的歧义）
+pub(super) fn game_json(
+    orientation: &str,
+    with_workers: bool,
+    sub_roots: &[String],
+) -> Result<String, String> {
     let orientation = match orientation {
         "landscape" => "landscape",
         _ => "portrait",
@@ -95,12 +136,58 @@ pub(super) fn game_json(orientation: &str, with_workers: bool) -> Result<String,
             "downloadFile": 10000
         }
     });
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "game.json 结构异常".to_string())?;
     if with_workers {
-        value.as_object_mut()
-            .ok_or_else(|| "game.json 结构异常".to_string())?
-            .insert("workers".to_string(), serde_json::Value::String("workers".to_string()));
+        obj.insert("workers".to_string(), serde_json::Value::String("workers".to_string()));
+    }
+    if !sub_roots.is_empty() {
+        let packages: Vec<serde_json::Value> = sub_roots
+            .iter()
+            .map(|r| serde_json::json!({ "root": r, "name": r }))
+            .collect();
+        obj.insert("subpackages".to_string(), serde_json::Value::Array(packages));
     }
     serde_json::to_string_pretty(&value).map_err(|e| format!("game.json 序列化失败: {e}"))
+}
+
+/// 分包入口桩：微信要求每个分包根目录必须含 game.js（开发者工具静态校验
+/// 「未找到 root 对应的 game.js」直接报错；分包加载完成后该文件会被执行），
+/// 资产分包无代码，落注释桩即可（桩在分包上下文执行，不写任何全局）。
+pub(super) fn subpackage_game_js() -> String {
+    "// TvE Hub 分包入口（本分包只含资产文件，无代码；微信要求分包根目录含 game.js）\n"
+        .to_string()
+}
+
+/// 二进制资产分包装箱：按 rel 序贪心填入 pkg-1、pkg-2…（确定性布局：同输入同
+/// 分包，跨构建稳定）。单个超限资产独占一个分包，不阻断构建（体积限制由开发
+/// 者工具在预览/上传时判定）。就地为 asset_files 的包内路径加分包前缀，返回
+/// 分包 root 列表（game.json 声明 + game.js 预加载）。
+pub(super) fn split_into_subpackages(
+    asset_files: &mut [(String, String)],
+    binaries: &HashMap<String, Vec<u8>>,
+    limit_mb: u32,
+) -> Vec<String> {
+    let limit = (limit_mb as usize) * 1024 * 1024;
+    let mut roots: Vec<String> = Vec::new();
+    let mut cur_root = String::new();
+    let mut cur_size = 0usize;
+    for (rel, file) in asset_files.iter_mut() {
+        let size = binaries.get(rel).map(|b| b.len()).unwrap_or(0);
+        // 当前箱非空且再装一件将超限 → 开新箱（超限单件独占新箱，不拆文件）
+        if !cur_root.is_empty() && cur_size > 0 && cur_size + size > limit {
+            cur_root = String::new();
+        }
+        if cur_root.is_empty() {
+            cur_root = format!("pkg-{}", roots.len() + 1);
+            roots.push(cur_root.clone());
+            cur_size = 0;
+        }
+        cur_size += size;
+        *file = format!("{cur_root}/{file}");
+    }
+    roots
 }
 
 /// project.config.json 的 condition 槽位结构（照官方 quickstart——工程按小游戏
@@ -178,12 +265,24 @@ pub(super) fn project_private_config_json(project_name: &str) -> Result<String, 
 }
 
 /// README.txt：导入步骤 + 限制说明（包体积由微信开发者工具在发布/上传时判定，
-/// 构建期不做限制）+ 工具缓存排障
-pub(super) fn readme(appid: &str, orientation: &str) -> String {
+/// 构建期不做限制）+ 工具缓存排障；分包启用时追加分包结构说明
+pub(super) fn readme(appid: &str, orientation: &str, sub_roots: &[String]) -> String {
     let effective = if appid == TOURIST_APPID {
         "touristappid（游客模式：可模拟器运行；真机预览需填入真实 AppID 后重新构建）"
     } else {
         "已在构建配置中显式填写"
+    };
+    let sub_section = if sub_roots.is_empty() {
+        String::new()
+    } else {
+        let list = sub_roots.join("、");
+        format!(
+            r#"- pkg-N/            分包（{list}）：文件化二进制资产按体积分箱移出主包
+  （主包 4MB 限制的解法）；每个分包根目录含入口 game.js 桩（微信要求）；game.js
+  在启动前并行预加载全部分包后才进游戏，单个分包加载失败不阻断启动（其内资产
+  按缺失降级，控制台有告警行）；场景与小文本资产仍在主包 data.js 内
+"#
+        )
     };
     format!(
         r#"TvE Hub 微信小游戏构建产物
@@ -204,7 +303,7 @@ pub(super) fn readme(appid: &str, orientation: &str) -> String {
                      的文件化清单 assetFiles）
 - assets/            文件化二进制资产（贴图/模型/音频，原始字节；运行期经清单
                      + FileSystemManager 读取，不交 base64 税）
-- engine/core/tve.js 用户脚本 tve API 门面（转发 code.js）
+{sub_section}- engine/core/tve.js 用户脚本 tve API 门面（转发 code.js）
 - src/               用户脚本（CommonJS 编译产物）
 - engine/runtime/physics-engines/  物理引擎（启用物理的项目按后端随包：
   rapier/jolt/ammo 的胶水 .js + .wasm 文件）
@@ -215,7 +314,8 @@ pub(super) fn readme(appid: &str, orientation: &str) -> String {
 已知限制
 --------
 - 包体积：本构建不做限制，由微信开发者工具在预览/上传发布时按其规则判定
-  （超限时工具会给出具体提示）；
+  （主包 4MB；启用分包时单个分包体积按构建配置分箱，总包上限以微信平台
+  当前规则为准）；
 - 资产文件化：二进制资产以白名单扩展名（png/jpg/gif/webp/mp3/wav/ogg/m4a）
   或 .bin 落盘，首次导出后请在工具确认包内文件齐全（工具对陌生扩展名会
   静默剔除，.bin 兜底应可规避）；

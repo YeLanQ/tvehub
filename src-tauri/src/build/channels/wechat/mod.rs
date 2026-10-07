@@ -9,15 +9,17 @@
 //! - 资产文件化（2.0）：场景/小文本资产 base64 内联进 data.js，二进制资产
 //!   （贴图/模型/音频）按 assets/<uid><safe-ext> 原始字节落盘，data.js 带
 //!   assetFiles 清单（rel → 文件路径），桥接层查内联表 miss 时经端点
-//!   readPackageFile 读包内文件——33% base64 税从资产上移除；
+//!   readPackageFile 读包内文件——33% base64 税从资产上移除；分包选项把
+//!   文件化资产按体积分入 pkg-N 分包（game.json 声明 + game.js 启动前预加载，
+//!   主包 4MB 限制的解法），运行时与场景文本始终留主包；
 //! - 数据全内联：场景/资产 → data.js（config + assets{rel: base64}），运行期零
 //!   文件系统参与——「自定义后缀不进包 / 路径大小写」两类问题类别整体消失；
 //! - 用户脚本（src/**.js，前端已按 CommonJS 编译）小写文件名进包（开发者工具
 //!   包内注册表小写归一），经 tve.js 门面 require 引擎 API；
 //! - 工程文件（game.js/game.json/project.config.json）由 pack 子模块生成。
 //!
-//! 子模块：pack（包文件生成）、preflight（能力边界预检）；场景收集走内容内核
-//! kernel::content，产物 config 组装走共享步骤 steps::config。
+//! 子模块：pack（包文件生成 + 分包装箱）、preflight（能力边界预检）；场景收集
+//! 走内容内核 kernel::content，产物 config 组装走共享步骤 steps::config。
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -38,7 +40,7 @@ mod pack;
 mod preflight;
 use self::pack::{
     asset_file_name, data_js, game_js, game_json, project_config_json, project_private_config_json,
-    readme, resolve_appid,
+    readme, resolve_appid, split_into_subpackages, subpackage_game_js,
 };
 use self::preflight::preflight_project;
 
@@ -58,9 +60,17 @@ impl ChannelPipeline for WechatPipeline {
             .map(str::trim)
             .map(str::to_ascii_lowercase)
             .unwrap_or_default();
+        // 分包体积归一化：钳到 1..=4 MB（微信单个分包上限），缺省 2
+        let subpackage_size = job
+            .wechat_subpackage_size
+            .unwrap_or(2.0)
+            .round()
+            .clamp(1.0, 4.0) as u32;
         ResolvedChannel::Wechat(WechatParams {
             appid: job.wechat_appid.clone(),
             orientation: if orientation == "landscape" { "landscape" } else { "portrait" }.to_string(),
+            subpackages: job.wechat_subpackages.unwrap_or(false),
+            subpackage_size,
         })
     }
 
@@ -151,6 +161,14 @@ impl ChannelPipeline for WechatPipeline {
             .map(|rel| (rel.clone(), asset_file_name(rel, &mut used_names)))
             .collect();
         asset_files.sort_by(|a, b| a.0.cmp(&b.0));
+        // 分包选项：文件化二进制资产按体积分入 pkg-N 分包（主包 4MB 限制的解法；
+        // 运行时/worker/物理 wasm 与场景文本始终留主包）。分箱就地改写包内路径
+        // 加前缀，sub_roots 供 game.json 声明 + game.js 启动前预加载
+        let sub_roots = if wechat.subpackages {
+            split_into_subpackages(&mut asset_files, &content.binaries, wechat.subpackage_size)
+        } else {
+            Vec::new()
+        };
 
         // —— 包组装 ——
         let orientation = wechat.orientation.as_str();
@@ -190,9 +208,16 @@ impl ChannelPipeline for WechatPipeline {
                 binaries.insert(file.clone(), bytes.clone());
             }
         }
-        package.insert("game.js".to_string(), game_js());
+        for root in &sub_roots {
+            // 每个分包根目录必须有 game.js（开发者工具静态校验，缺失直接报错）
+            package.insert(format!("{root}/game.js"), subpackage_game_js());
+        }
+        package.insert("game.js".to_string(), game_js(&sub_roots));
         package.insert("data.js".to_string(), data_js(cfg, &entries, &asset_files)?);
-        package.insert("game.json".to_string(), game_json(orientation, with_workers)?);
+        package.insert(
+            "game.json".to_string(),
+            game_json(orientation, with_workers, &sub_roots)?,
+        );
         package.insert(
             "project.config.json".to_string(),
             project_config_json(&project_name, &appid)?,
@@ -201,18 +226,34 @@ impl ChannelPipeline for WechatPipeline {
             "project.private.config.json".to_string(),
             project_private_config_json(&project_name)?,
         );
-        package.insert("README.txt".to_string(), readme(&appid, orientation));
+        package.insert(
+            "README.txt".to_string(),
+            readme(&appid, orientation, &sub_roots),
+        );
         // 包体积不做构建期限制：由微信开发者工具在预览/上传发布时按其规则判定
 
+        // 主包/分包分开计量：分包前缀 pkg- 为本管线专用命名，无撞名面
+        let sub_bytes = binaries
+            .iter()
+            .filter(|(k, _)| k.starts_with("pkg-"))
+            .map(|(_, b)| b.len())
+            .sum::<usize>();
         let total_kb = (package.values().map(|t| t.len()).sum::<usize>()
             + binaries.values().map(|b| b.len()).sum::<usize>())
             / 1024;
         // 写盘（公共收尾：取消检查 + 写入锚点 + 原子换入）
         write_products(p, package, &binaries, ctx)?;
 
-        let mut message = format!(
-            "构建完成（appid: {appid}，方向: {orientation}；数据全内联，主包 {total_kb}KB）"
-        );
+        let mut message = if sub_roots.is_empty() {
+            format!("构建完成（appid: {appid}，方向: {orientation}；数据全内联，主包 {total_kb}KB）")
+        } else {
+            let sub_kb = sub_bytes / 1024;
+            format!(
+                "构建完成（appid: {appid}，方向: {orientation}；主包 {}KB + 分包 {} 个共 {sub_kb}KB）",
+                total_kb - sub_kb,
+                sub_roots.len()
+            )
+        };
         if !content.missing.is_empty() {
             message.push_str(&format!("（{} 项缺失资产被跳过）", content.missing.len()));
         }

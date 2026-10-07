@@ -95,6 +95,8 @@ fn build_export_release_renames_and_rewrites() {
                 out_dir: None,
             wechat_appid: None,
             wechat_orientation: None,
+            wechat_subpackages: None,
+            wechat_subpackage_size: None,
             },
             &JobCtx::default(),
     )

@@ -17,12 +17,17 @@ pub struct WebParams {
     pub three_base: String,
 }
 
-/// 微信小游戏渠道参数（orientation 已归一化为 portrait/landscape）
+/// 微信小游戏渠道参数（orientation 已归一化为 portrait/landscape，分包体积已归一化）
 pub struct WechatParams {
     /// AppID（None = 走「上次产物继承 > touristappid」链，见 pack::resolve_appid）
     pub appid: Option<String>,
     /// 屏幕方向（"portrait" / "landscape"，缺省 portrait）
     pub orientation: String,
+    /// 分包加载：文件化二进制资产按体积分入 pkg-N 分包（game.json 声明 +
+    /// game.js 启动前预加载）；false = 全部进主包
+    pub subpackages: bool,
+    /// 单个分包体积上限（MB，已钳到 1..=4，缺省 2）
+    pub subpackage_size: u32,
 }
 
 /// 公共预检后交付渠道管线的渠道参数。渠道与参数的配对由工厂保证

@@ -69,6 +69,10 @@ const cdnBase = ref("");
 const wechatAppId = ref("");
 /** 微信小游戏屏幕方向 */
 const wechatOrientation = ref<"portrait" | "landscape">("portrait");
+/** 微信小游戏分包：文件化二进制资产移出主包，启动前预加载 */
+const wechatSubpackages = ref(false);
+/** 单个分包体积上限（MB，1~4；超限单资产独占分包） */
+const wechatSubpackageSize = ref(2);
 
 // 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）
 watch(release, (v) => {
@@ -134,6 +138,11 @@ async function restoreState(): Promise<void> {
     cdnBase.value = prefs.cdnBase;
     wechatAppId.value = prefs.wechatAppId ?? "";
     wechatOrientation.value = prefs.wechatOrientation ?? "portrait";
+    wechatSubpackages.value = prefs.wechatSubpackages === true;
+    wechatSubpackageSize.value =
+      typeof prefs.wechatSubpackageSize === "number" && Number.isFinite(prefs.wechatSubpackageSize)
+        ? Math.min(4, Math.max(1, Math.round(prefs.wechatSubpackageSize)))
+        : 2;
     // 兼容旧配置（两者曾可同时为 true）：发布模式优先
     if (release.value) debug.value = false;
   } else {
@@ -150,6 +159,8 @@ async function restoreState(): Promise<void> {
     cdnBase.value = "";
     wechatAppId.value = "";
     wechatOrientation.value = "portrait";
+    wechatSubpackages.value = false;
+    wechatSubpackageSize.value = 2;
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -177,6 +188,8 @@ async function persistPrefs(): Promise<void> {
     cdnBase: cdnBase.value,
     wechatAppId: wechatAppId.value,
     wechatOrientation: wechatOrientation.value,
+    wechatSubpackages: wechatSubpackages.value,
+    wechatSubpackageSize: wechatSubpackageSize.value,
   };
   try {
     await saveBuildPrefs(projectStore.currentPath, prefs);
@@ -206,6 +219,8 @@ async function doBuild(): Promise<void> {
       cdnBase: cdnBase.value,
       wechatAppId: wechatAppId.value || undefined,
       wechatOrientation: wechatOrientation.value,
+      wechatSubpackages: wechatSubpackages.value || undefined,
+      wechatSubpackageSize: wechatSubpackages.value ? wechatSubpackageSize.value : undefined,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -385,6 +400,8 @@ watch(projectScenes, (next, prev) => {
               v-else-if="channel === 'wechat'"
               v-model:wechat-app-id="wechatAppId"
               v-model:wechat-orientation="wechatOrientation"
+              v-model:wechat-subpackages="wechatSubpackages"
+              v-model:wechat-subpackage-size="wechatSubpackageSize"
               v-model:release="release"
               v-model:debug="debug"
             />
