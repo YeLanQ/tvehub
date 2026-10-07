@@ -43,8 +43,9 @@ interface WorkerEnvelope {
   payload: unknown;
 }
 
-/** 当前支持多路复用的协议（worker 侧已有路由的 ns；animation 待 worker 侧路由就绪后加入） */
-const SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set(["physics"]);
+/** 当前支持多路复用的协议（worker 侧已有路由的 ns；与 entries/wechat-worker.ts
+ *  的 ns 分发一一对应） */
+const SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set(["physics", "animation"]);
 
 /** ready 门超时（wx.createWorker 返回到 worker bundle 就绪的等待上限；超时按
  *  平台不支持处理——单例终结，此后 createPort 返回 null → 引擎回退主线程） */

@@ -22,6 +22,7 @@
 import * as THREE from "../core/three.module.min.js";
 import { CCDIKSolver } from "./loaders/CCDIKSolver.js";
 import { postLog } from "../core/log";
+import { createChannelWorker } from "./channelWorker";
 import type { NodeJson } from "./node-json";
 import type { SceneNodeEntry } from "./nodes";
 
@@ -1367,10 +1368,13 @@ function createBindingStructure(nodeJson: NodeJson, root: THREE.Object3D): Bindi
 
 /**
  * 创建骨骼动画 Worker 代理（与 createAnimations 同接口）。
- * 在多文件导出模式下使用 Worker 线程；单页模式或 Worker 失败回退到 createAnimations。
+ * 渠道端口优先：平台桥接（微信 = wx.createWorker 单实例 + ns 信封多路复用，
+ * 与物理共用同一 worker 线程）在位时即使无 workerUrl 也走 Worker；否则 web 原生
+ * module Worker（workerUrl 由 player 解析；单页模式/file:// 或 Worker 失败一律
+ * 回退 createAnimations 主线程）。
  * @param meshes buildSceneTree 收集的 meshNode 列表
  * @param models 模型 Map（name → { clips }）
- * @param workerUrl Worker 脚本 URL（缺省/null → 回退主线程）
+ * @param workerUrl Worker 脚本 URL（平台钩子在位时可空；否则必须给 bona fide URL）
  * @returns {Promise<AnimationsApi>} 与 createAnimations 同接口的动画 API
  */
 export async function createAnimationsWorker(
@@ -1378,7 +1382,8 @@ export async function createAnimationsWorker(
   models: Map<string, { clips?: THREE.AnimationClip[] } | null>,
   workerUrl: string | null | undefined,
 ) {
-  if (!workerUrl) return createAnimations(meshes, models);
+  const port = createChannelWorker(workerUrl ?? "", "animation", "[动画]");
+  if (!port) return createAnimations(meshes, models);
 
   // 筛选模型节点 + 序列化场景数据
   const modelEntries: SceneNodeEntry[] = [];
@@ -1391,7 +1396,10 @@ export async function createAnimationsWorker(
     if (!clips) continue;
     modelEntries.push(entry);
   }
-  if (!modelEntries.length) return createAnimations(meshes, models);
+  if (!modelEntries.length) {
+    port.terminate();
+    return createAnimations(meshes, models);
+  }
 
   const serializedMeshes = modelEntries
     .map(serializeMeshEntry)
@@ -1408,30 +1416,37 @@ export async function createAnimationsWorker(
     }
   }
 
-  // 创建 Worker + 发送 init
-  let worker;
-  try {
-    worker = new Worker(workerUrl, { type: "module" });
-    worker.postMessage({
+  // 发送 init（端口消息只在事件循环投递，同块注册无竞态）。ready 超时兜底对齐
+  // 物理 Worker：下行投递断/worker 内静默卡死时 init 永无应答——超时即回退主线程
+  // 实现（动画晚启动优于骨骼静止）。平台渠道下 init 经 ready 门缓冲，worker bundle
+  // 加载完成后放行；旧版 worker bundle 无 animation 路由时同样落超时回退
+  const ready = await new Promise<WorkerReadyMsg | null>((resolve) => {
+    const timeout = setTimeout(() => {
+      postLog("warn", "[动画] Worker ready 超时（下行投递或初始化无应答），回退主线程");
+      resolve(null);
+    }, 10000);
+    port.onmessage = (e: { data: unknown }): void => {
+      const data = e.data as { type?: string };
+      if (data.type === "ready") {
+        clearTimeout(timeout);
+        resolve(e.data as WorkerReadyMsg);
+      } else if (data.type === "error") {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    };
+    port.onerror = (): void => {
+      clearTimeout(timeout);
+      resolve(null);
+    };
+    port.postMessage({
       type: "init",
       meshEntries: serializedMeshes,
       modelMap: serializedModels,
     });
-  } catch {
-    return createAnimations(meshes, models);
-  }
-
-  // 等待 Worker ready
-  const ready = await new Promise<WorkerReadyMsg | null>((resolve) => {
-    worker.onmessage = (e: MessageEvent) => {
-      const data = e.data as { type?: string };
-      if (data.type === "ready") resolve(e.data as WorkerReadyMsg);
-      else if (data.type === "error") resolve(null);
-    };
-    worker.onerror = () => resolve(null);
   });
   if (!ready) {
-    worker.terminate();
+    port.terminate();
     return createAnimations(meshes, models);
   }
 
@@ -1452,7 +1467,7 @@ export async function createAnimationsWorker(
   let workerBusy = false;
   const mirrorState = new Map<string, AnimMirrorState>(); // nodeId → { weights, iks, ikTargets }
 
-  worker.onmessage = (e: MessageEvent) => {
+  port.onmessage = (e: { data: unknown }) => {
     const msg = e.data as { type?: string };
     if (msg.type === "stepped") {
       pending = e.data as WorkerSteppedMsg;
@@ -1460,9 +1475,9 @@ export async function createAnimationsWorker(
     }
   };
 
-  // 命令转发辅助
+  // 命令转发辅助（拷贝传输下 args 内 TypedArray 由桥接层数组化，worker 侧兼容）
   const send = (method: string, ...args: unknown[]) => {
-    try { worker.postMessage({ type: "command", method, args }); } catch { /* Worker 已终止 */ }
+    try { port.postMessage({ type: "command", method, args }); } catch { /* Worker 已终止 */ }
   };
 
   postLog("info", "[动画] Worker 模式已启动（骨骼动画 + IK 在独立线程）");
@@ -1532,9 +1547,10 @@ export async function createAnimationsWorker(
           }
         }
         // 回读缓冲消费完归还 Worker 复用（免每帧 TypedArray 分配；state/events
-        // 是克隆副本不受影响）
+        // 是克隆副本不受影响。拷贝传输下为纯数组无 buffer，transfer 形参在平台
+        // 端口被忽略，worker 侧缓冲池按 buffer 存在性旁路）
         try {
-          worker.postMessage(
+          port.postMessage(
             { type: "recycleResult", transforms, morphs },
             [transforms.buffer, morphs.buffer],
           );
@@ -1553,7 +1569,7 @@ export async function createAnimationsWorker(
       // 3) 发 dt 给 Worker（非忙时）
       if (!workerBusy) {
         try {
-          worker.postMessage({ type: "step", dt });
+          port.postMessage({ type: "step", dt });
           workerBusy = true;
         } catch { /* Worker 已终止 */ }
       }
@@ -1843,8 +1859,8 @@ export async function createAnimationsWorker(
     resume(nodeId: string) { send("resume", nodeId); return true; },
 
     dispose() {
-      try { worker.postMessage({ type: "dispose" }); } catch {}
-      worker.terminate();
+      try { port.postMessage({ type: "dispose" }); } catch {}
+      port.terminate();
     },
   };
 }

@@ -28,6 +28,7 @@ export async function runBuild(opts: BuildOptions): Promise<BuildResult> {
     channel: opts.channel,
     mode: "export",
     mainScene: opts.mainScene,
+    scenes: opts.scenes,
     logs: { tag: "build", errorSuffix: "构建", warnOnSkip: true },
   });
   // 渠道导出期工件（web = 导出模板入口页；返回 IPC 的 singlePage 实际取值）

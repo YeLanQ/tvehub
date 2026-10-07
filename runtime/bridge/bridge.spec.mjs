@@ -555,20 +555,29 @@ check(
   await import("./worker.ts?scen");
   const hook = globalThis.__tveCreateWorker;
   check("worker 桥：钩子已安装", typeof hook === "function");
-  check("worker 桥：未支持协议（animation）返回 null", hook("", "animation") === null);
+  check("worker 桥：未支持协议（unknown）返回 null", hook("", "unknown") === null);
 
   const port = hook("", "physics");
   check("worker 桥：physics 端口创建", !!port);
   check("worker 桥：平台 createWorker 收到入口路径", createdPath === "workers/tve.js");
 
-  // ready 门：握手前下行缓冲，握手后放行
+  // animation 协议多路复用：单实例共载双 ns（平台限额每包 1 worker），animation
+  // 端口不新建平台 worker；双端口 ready 前的下行共用一道缓冲门
+  const animPort = hook("", "animation");
+  check("worker 桥：animation 端口创建（单实例复用）", !!animPort && createdPath === "workers/tve.js" && terminatedCount === 0);
   port.postMessage({ type: "init", verts: new Float32Array([1, 2, 3]) });
-  check("worker 桥：ready 前下行缓冲", downEvents.length === 0);
+  animPort.postMessage({ type: "init", meshEntries: [] });
+  check("worker 桥：ready 前双 ns 下行缓冲", downEvents.length === 0);
   fakeOnMessage({ ns: "bridge", seq: 1, payload: { t: "ready" } });
-  check("worker 桥：ready 后缓冲放行", downEvents.length === 1);
-  const env1 = downEvents[0];
-  check("worker 桥：下行信封 ns/seq/payload", env1.ns === "physics" && env1.seq > 0 && !!env1.payload);
-  check("worker 桥：TypedArray 拷贝归一为纯数组", Array.isArray(env1.payload.verts) && env1.payload.verts[1] === 2);
+  check("worker 桥：ready 后缓冲放行（双 ns 共门）", downEvents.length === 2);
+  const env0 = downEvents[0];
+  const env1 = downEvents[1];
+  check(
+    "worker 桥：放行顺序保持 physics 先 animation 后",
+    env0.ns === "physics" && env0.payload?.type === "init" && env1.ns === "animation" && env1.payload?.type === "init",
+  );
+  check("worker 桥：下行信封 ns/seq/payload", env0.ns === "physics" && env0.seq > 0 && !!env0.payload);
+  check("worker 桥：TypedArray 拷贝归一为纯数组", Array.isArray(env0.payload.verts) && env0.payload.verts[1] === 2);
 
   // 上行按 ns 派发
   let got = null;
@@ -597,9 +606,12 @@ check(
   const miss = downEvents.map((e) => e.payload).find((p) => p && p.t === "wasmRes" && p.id === 8);
   check("worker 桥：读包失败回传 b64 null", !!miss && miss.b64 === null);
 
-  // 末端口关闭 → 终结平台 worker；此后同协议新建 → 平台 worker 重新懒建
+  // 末端口关闭 → 终结平台 worker：双协议端口并存时关其一仅摘端口，全部关闭才终结；
+  // 此后同协议新建 → 平台 worker 重新懒建
   port.terminate();
-  check("worker 桥：末端口关闭终结平台 worker", terminatedCount === 1);
+  check("worker 桥：仅关 physics 端口不终结单例（animation 仍开）", terminatedCount === 0);
+  animPort.terminate();
+  check("worker 桥：末端口（animation）关闭终结平台 worker", terminatedCount === 1);
   const port2 = hook("", "physics");
   port2.terminate();
   check("worker 桥：单例重建后再次终结", terminatedCount === 2);

@@ -49,6 +49,9 @@ export interface CollectOptions {
   mode: "preview" | "export";
   /** export 模式的主场景（图侧车按它定位）；preview 模式用 graph.sceneRel */
   mainScene?: string;
+  /** 选中的构建场景（项目相对路径；wechat 渠道据此探测模型动画节点 → Worker
+   *  bundle 随包。缺省不探测——无物理项目按不带 worker 处理） */
+  scenes?: string[];
   /** 场景图来源；缺省不注入（构建导出按 mainScene 侧车注入） */
   graph?: CollectGraph;
   /** 组装前保存编辑器脏脚本（remoteCommands 语义；预览面板/图窗口自行管理落盘） */
@@ -66,11 +69,41 @@ export async function readProjectConfigText(root: string): Promise<string | null
   }
 }
 
+/** 场景 JSON 递归含模型节点（json.source === "model"；与运行时动画绑定同判据的
+ *  超集——模型是否有 clip 运行时才可知，此处只作 Worker bundle 随包的宽松信号，
+ *  误判代价 = 多带一份 worker bundle，运行时无 clip 自动回退主线程零开销） */
+function nodeUsesModel(json: unknown, depth: number): boolean {
+  if (depth <= 0 || typeof json !== "object" || json === null) return false;
+  const n = json as { source?: unknown; children?: unknown[] };
+  if (n.source === "model") return true;
+  return Array.isArray(n.children) && n.children.some((c) => nodeUsesModel(c, depth - 1));
+}
+
+/** 任一构建场景含模型节点（读取失败/解析失败按不含处理，与配置判据同口径） */
+async function scenesUseModelNodes(root: string, scenes: string[]): Promise<boolean> {
+  for (const rel of scenes) {
+    try {
+      const text = await api.readText(root, rel);
+      const doc = JSON.parse(text) as { nodes?: unknown[] };
+      if (Array.isArray(doc.nodes) && doc.nodes.some((n) => nodeUsesModel(n, 32))) return true;
+    } catch {
+      /* 单场景读取失败按不含处理 */
+    }
+  }
+  return false;
+}
+
 /** 组装渠道运行时与用户脚本编译产物（四胞胎的唯一实现，见模块头注释） */
 export async function collectExportFiles(opts: CollectOptions): Promise<Record<string, string>> {
   const adapter = getBuildChannel(opts.channel);
   const configText = await readProjectConfigText(opts.root);
-  const files = await fetchChannelRuntimeFiles(opts.channel, adapter.runtimeOptions(configText));
+  const runtimeOpts = { ...adapter.runtimeOptions(configText) };
+  // wechat：无物理但构建场景含模型节点 → Worker bundle 随包（骨骼动画走独立线程；
+  // 有物理时 bundle 本就随包，无需探测）
+  if (opts.channel === "wechat" && !runtimeOpts.includePhysics && opts.scenes?.length) {
+    runtimeOpts.includeAnimationWorker = await scenesUseModelNodes(opts.root, opts.scenes);
+  }
+  const files = await fetchChannelRuntimeFiles(opts.channel, runtimeOpts);
 
   if (opts.mode === "preview") {
     // 预览产物带 config.json（player 直取）；导出模式由 Rust 直读磁盘不进 files

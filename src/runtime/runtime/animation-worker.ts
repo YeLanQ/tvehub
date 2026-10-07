@@ -5,6 +5,13 @@
 // 消息协议（类型单源；主线程适配在 animation.ts createAnimationsWorker）：
 // → AnimationWorkerIn
 // ← AnimationWorkerOut
+//
+// 路由复用：消息处理核心抽为 routeAnimationMessage（transport 无关），三处消费——
+// - web 渠道：本模块按 DOM 专用 Worker 形态自装（self.onmessage）；
+// - 微信渠道：entries/wechat-worker.ts 以 ns 信封接 worker.onMessage/self.onmessage
+//   后调同一路由（拷贝语义传输，消息内 TypedArray 已被桥接层数组化；回读缓冲
+//   无 transfer 可用，缓冲池按 buffer 存在性自动旁路）；
+// - node 冒烟：worker-smoke.mjs 直接驱动产物 bundle 内的同一路由做全链回归。
 
 import * as THREE from "../core/three.module.min.js";
 import { createAnimations } from "./animation";
@@ -97,7 +104,12 @@ interface WorkerScope {
   postMessage(message: AnimationWorkerOut, transfer?: Transferable[]): void;
   close(): void;
 }
-const scope = self as unknown as WorkerScope;
+
+/** 路由回复端口（DOM = self；平台 = 信封信道封装；transfer 仅 DOM 形态支持） */
+export interface AnimationWorkerReply {
+  postMessage(message: AnimationWorkerOut, transfer?: Transferable[]): void;
+  close(): void;
+}
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -138,11 +150,18 @@ interface ProxyBinding {
   morphMeshes: { name: string; mesh: THREE.Mesh; influenceCount: number }[];
 }
 
-self.onmessage = async (e: MessageEvent) => {
-  const msg = e.data as AnimationWorkerIn;
+/**
+ * 消息路由核心（transport 无关）：处理一条 AnimationWorkerIn 并经 reply 回话。
+ * 平台拷贝传输下输入输出均为纯数组——索引读写兼容，TypedArray 专属操作
+ * （transfer/缓冲池）按 buffer 存在性自动旁路。init 同步（纯数学代理重建，
+ * 无 wasm），完成前到达的 step/command 因 api 未就绪被丢弃（与 DOM Worker
+ * 形态一致）。
+ */
+export function routeAnimationMessage(msg: AnimationWorkerIn, reply: AnimationWorkerReply): void {
   switch (msg.type) {
     case "recycleResult": {
-      // 主线程消费完的回读缓冲归还复用（transform/morph 各一池）
+      // 主线程消费完的回读缓冲归还复用（transform/morph 各一池）；
+      // 拷贝传输下为纯数组（无 buffer），缓冲池自动旁路
       if (msg.transforms?.buffer) transformPool.push(msg.transforms);
       if (msg.morphs?.buffer) morphPool.push(msg.morphs);
       break;
@@ -174,9 +193,9 @@ self.onmessage = async (e: MessageEvent) => {
             pendingEvents.push({ type: "loop", nodeId: b.nodeId, clip: p.clip }),
           );
         }
-        scope.postMessage({ type: "ready", bindingLayouts });
+        reply.postMessage({ type: "ready", bindingLayouts });
       } catch (err) {
-        scope.postMessage({ type: "error", message: errText(err) });
+        reply.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
@@ -186,14 +205,15 @@ self.onmessage = async (e: MessageEvent) => {
         api.update(msg.dt);
         const { transforms, morphs, state } = readbackState();
         const events = pendingEvents.splice(0);
-        // 池内缓冲均为本 worker 新建，buffer 必为可转移的 ArrayBuffer
+        // 池内缓冲均为本 worker 新建，buffer 必为可转移的 ArrayBuffer（平台
+        // 信封信道不支持 transfer，形参被忽略即拷贝语义）
         const transferList: Transferable[] = [
           transforms.buffer as ArrayBuffer,
           morphs.buffer as ArrayBuffer,
         ];
-        scope.postMessage({ type: "stepped", transforms, morphs, state, events }, transferList);
+        reply.postMessage({ type: "stepped", transforms, morphs, state, events }, transferList);
       } catch (err) {
-        scope.postMessage({ type: "error", message: errText(err) });
+        reply.postMessage({ type: "error", message: errText(err) });
       }
       break;
     }
@@ -206,20 +226,22 @@ self.onmessage = async (e: MessageEvent) => {
         if (typeof fn === "function") {
           try {
             const value = fn.apply(api, args);
-            if (value !== undefined) scope.postMessage({ type: "result", method, value });
+            if (value !== undefined) reply.postMessage({ type: "result", method, value });
           } catch (err) {
-            scope.postMessage({ type: "error", message: errText(err) });
+            reply.postMessage({ type: "error", message: errText(err) });
           }
         }
       }
       break;
     }
     case "dispose": {
-      scope.close();
+      api = null;
+      proxyBindings = [];
+      reply.close();
       break;
     }
   }
-};
+}
 
 // ---------------------------------------------------------------------------
 // 代理场景树构建：从序列化数据重建 THREE.Object3D 树（含 Bone/Skeleton/SkinnedMesh）
@@ -429,4 +451,20 @@ function readbackState(): {
   }
 
   return { transforms, morphs, state };
+}
+
+// ---------------------------------------------------------------------------
+// DOM 专用 Worker 自装（web 渠道 animation-worker.mjs 产物形态）：专用 Worker
+// 作用域才生效（无 document/window 且有 self；lib.dom 无 WorkerGlobalScope 值，
+// 用环境 duck-type 判定）——微信 worker bundle 复用本模块时平台不经 onmessage
+// 属性投递（下行走 worker.onMessage/addEventListener，入口以 ns 信封接），此处
+// 自装为惰性旁路（收到的也只可能是平台信封，路由按消息形态自然忽略）；
+// node 导入（冒烟/测试）三条件皆缺不影响。
+// ---------------------------------------------------------------------------
+
+if (typeof document === "undefined" && typeof window === "undefined" && typeof self !== "undefined") {
+  const scope = self as unknown as WorkerScope;
+  self.onmessage = (e: MessageEvent) => {
+    routeAnimationMessage(e.data as AnimationWorkerIn, scope);
+  };
 }

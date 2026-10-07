@@ -20,6 +20,10 @@ export interface ChannelRuntimeOptions {
   includePhysics?: boolean;
   /** 物理后端 id（physics.backend；缺省/未知回退 rapier） */
   physicsBackend?: string | null;
+  /** 场景含模型动画节点 → 物理 Worker bundle 随包（动画在独立线程步进；与物理
+   *  共用单实例，wx.createWorker 平台限额每包 1 个。无物理项目缺省 false——
+   *  worker bundle 含 three 构建，非必要不随包） */
+  includeAnimationWorker?: boolean;
   /** 项目渲染后端为 WebGPU/自动 → three 的 WebGPU 构建与粒子 TSL 材质随导出 */
   includeWebgpu?: boolean;
   /** 项目启用 Draco 压缩 → Draco wasm 解码器（wrapper JS + .wasm）随导出 */
@@ -111,14 +115,18 @@ export async function fetchChannelRuntimeFiles(
     if (opts.includeWebgpu) groupKeys.push("webgpu");
     if (opts.includeDracoDecoder) groupKeys.push("draco");
     if (opts.includeBasisDecoder) groupKeys.push("basis");
-  } else if (opts.includePhysics) {
+  } else if (opts.includePhysics || opts.includeAnimationWorker) {
     // wechat：物理引擎按后端随包（rapier/jolt/ammo CJS 预转换产物；真机 wasm
     // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）。
-    // 同后端的物理 Worker bundle（workers/<backend>/tve.js）一并随包——wx.createWorker
-    // 单实例跑物理模拟（信封多路复用 + bridge 保留信道回传 wasm 字节）。
+    // 同后端的物理 Worker bundle（workers/<backend>/tve.js，内含 physics/animation
+    // 双路由）一并随包——wx.createWorker 单实例跑物理模拟与骨骼动画（信封多路复用
+    // + bridge 保留信道回传 wasm 字节）。仅动画（无物理）时引擎胶水不随包，worker
+    // bundle 里的物理路由永不接收 init（主线程物理未启用不建端口）。
     const backend = opts.physicsBackend || "rapier";
-    const key = `physics:${backend}`;
-    groupKeys.push(spec.groups[key] ? key : "physics:rapier");
+    if (opts.includePhysics) {
+      const key = `physics:${backend}`;
+      groupKeys.push(spec.groups[key] ? key : "physics:rapier");
+    }
     const workerKey = `worker:physics:${backend}`;
     if (spec.groups[workerKey]) groupKeys.push(workerKey);
     else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
@@ -130,7 +138,7 @@ export async function fetchChannelRuntimeFiles(
   );
   const files: Record<string, string> = {};
   for (let i = 0; i < list.length; i++) files[list[i].key] = texts[i];
-  if (channel === "wechat" && opts.includePhysics) {
+  if (channel === "wechat" && (opts.includePhysics || opts.includeAnimationWorker)) {
     // Worker bundle 改键落盘：wx.createWorker 入口路径恒为 workers/tve.js
     //（常量单源 runtime/bridge/protocol.ts TVE_WORKER_ENTRY；引擎源同款保持字面量）
     const workerFile = groupKeys

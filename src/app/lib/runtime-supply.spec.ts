@@ -92,6 +92,17 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     const disabled = await fetchChannelRuntimeFiles("wechat", { includePhysics: false });
     expect(Object.keys(disabled).some((k) => k.startsWith("workers/"))).toBe(false);
   });
+
+  it("正常：仅动画（无物理）随包 Worker bundle，引擎胶水不随（动画路由免 wasm）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("wechat", {
+      includePhysics: false,
+      includeAnimationWorker: true,
+    });
+    expect(files["workers/tve.js"]).toBe("// stub");
+    // 骨骼动画在 worker 内为纯数学代理，无需引擎 wasm → 物理引擎产物整组缺省
+    expect(runtimeKeys(files)).toHaveLength(0);
+  });
 });
 
 describe("fetchChannelRuntimeFiles web 可选运行时", () => {

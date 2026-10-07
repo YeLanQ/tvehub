@@ -1,13 +1,18 @@
 // 微信 bundle · 物理 Worker 构建（产物 workers/<backend>/tve.js，按后端一份）：
-// 入口 = bridge/entries/wechat-worker.ts（ns 信封 + wasm 字节中继 + 物理路由），
-// 打包三件套——three（src/runtime 下不存在的构建，解析到 public/engine 并内联）、
-// physics-worker 路由 + createPhysics 全量（src/runtime 源直入）、预构建 CJS 胶水
+// 入口 = bridge/entries/wechat-worker.ts（ns 信封 + wasm 字节中继 + 物理/动画
+// 双路由），打包四件套——three（src/runtime 下不存在的构建，解析到 public/engine
+// 并内联）、physics-worker 路由 + createPhysics 全量（src/runtime 源直入）、
+// animation-worker 路由 + createAnimations 全量（同上；CCDIKSolver 为 vendor
+// 产物，src 下只有 .d.ts → 同插件映射到 public/engine）、预构建 CJS 胶水
 // （选中的后端静态 import 进 bundle；其余两枚动态 import 改写为拒绝型 Promise，
-// createPhysics 只加载配置后端、永不触达）。
+// createPhysics 只加载配置后端、永不触达）。physics/animation 共享单实例 worker
+// （wx.createWorker 平台限额每包 1 个，ns 信封多路复用），故动画路由随各后端
+// bundle 一起进包。
 //
 // 与主 bundle（wechat.mjs）的关系：物理引擎胶水须先经 buildPhysicsEngines 产出
 // （本模块直接消费其产物），wasm 不进 worker bundle——worker 线程经 bridge 保留
-// 信道向主线程要包内 .wasm 字节（worker 线程无文件系统/WXWebAssembly）。
+// 信道向主线程要包内 .wasm 字节（worker 线程无文件系统/WXWebAssembly）。动画
+// 路由无 wasm 依赖（纯数学代理重建），worker bundle 内零 wasm 请求即可用。
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,14 +26,19 @@ function engineImportSpec(def) {
   return `./physics-engines/${def.key === "ammo" ? "ammo/ammo-esm.mjs" : `${def.key}.mjs`}`;
 }
 
-/** three 构建解析：src/runtime/core 下不存在（构建期外部化的产物同路径）→
- *  public/engine/core（worker 自包含，必须打包进去） */
+/** three / vendor 产物解析：src/runtime 下不存在的构建期外部化产物同路径 →
+ *  public/engine（worker 自包含，必须打包进去）。CCDIKSolver 为 vendor 拷贝
+ *  （animation.ts 的 IK 求解器依赖），其内部 three import 已是相对说明符，
+ *  落到 ENGINE_DIR 后被第一条规则接住。 */
 function workerResolvePlugin() {
   return {
     name: "tve-wechat-worker-resolve",
     setup(build) {
       build.onResolve({ filter: /three\.module\.min\.js$/ }, () => ({
         path: path.join(ENGINE_DIR, "core", "three.module.min.js"),
+      }));
+      build.onResolve({ filter: /(?:^|[\\/])loaders[\\/]CCDIKSolver\.js$/ }, () => ({
+        path: path.join(ENGINE_DIR, "runtime", "loaders", "CCDIKSolver.js"),
       }));
     },
   };

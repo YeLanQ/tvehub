@@ -1,9 +1,10 @@
 // 物理 Worker bundle · node 全链冒烟（构建链内运行；exit code 判定）：
 // 伪平台 worker 环境（worker 方法形态全局 + bridge 保留信道的 wasm 字节应答）下
-// 驱动产物 bundle 走 init→ready→step→stepped→castRay→dispose 全链——物理引擎以
-// 真实 wasm 实例化（读取随包 .wasm 真字节），消息全程纯数组（与微信拷贝传输同
-// 形态），globalThis 不遮蔽（真全局形态；rapier 胶水的 wasm-bindgen 借用检查对
-// 全局形态敏感）。
+// 驱动产物 bundle 走 physics（init→ready→step→stepped→castRay→dispose）与
+// animation（init→ready→play→step→stepped→command→dispose）双 ns 全链——物理引擎
+// 以真实 wasm 实例化（读取随包 .wasm 真字节），动画为纯数学代理（免 wasm），
+// 消息全程纯数组（与微信拷贝传输同形态），globalThis 不遮蔽（真全局形态；
+// rapier 胶水的 wasm-bindgen 借用检查对全局形态敏感）。
 //
 // 已知环境敏感点（真机验证清单）：胶水对自由标识符 `self` 的存在性敏感——沙箱
 // 注入 self 时 rapier 在 world.step 触发 wasm unreachable（jolt/ammo 不受影响）。
@@ -281,7 +282,141 @@ serveBridge();
 deliverDown({ ns: "physics", seq: ++downSeq, payload: { type: "dispose" } });
 serveBridge();
 
+// ---------------------------------------------------------------------------
+// 动画路由全链（同一 worker 单例的 animation ns；纯数学无 wasm）：
+// init（2 骨骼代理 + 1 剪辑）→ ready（绑定布局）→ play → step → stepped（骨骼
+// 变换回写 + 状态镜像）→ command（getWeight 结果回包）→ dispose。消息全程纯数组
+// （与微信拷贝传输同口径——track times/values 数组化后 worker 侧重建）
+// ---------------------------------------------------------------------------
+
+let animReady = null;
+let animError = null;
+deliverDown({
+  ns: "animation",
+  seq: ++downSeq,
+  payload: {
+    type: "init",
+    meshEntries: [
+      {
+        json: { id: "hero", type: "meshNode", source: "model", model: "hero" },
+        modelRoot: {
+          bones: [
+            { name: "hip", position: [0, 1, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], parentIndex: -1 },
+            { name: "tail", position: [0, 0, -1], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], parentIndex: 0 },
+          ],
+          morphMeshes: [],
+        },
+      },
+    ],
+    modelMap: [
+      {
+        name: "hero",
+        clips: [
+          {
+            name: "idle",
+            duration: 2,
+            blendMode: 2500, // NormalAnimationBlendMode（serializeClip 数值枚举口径）
+            tracks: [
+              {
+                name: "tail.position",
+                times: [0, 1, 2],
+                values: [0, 0, -1, 0, 0, -3, 0, 0, -1],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+});
+await waitFor(
+  () => {
+    serveBridge();
+    for (const e of upEnvelopes.splice(0)) {
+      if (e.ns !== "animation") continue;
+      if (e.payload.type === "ready") animReady = e.payload;
+      else if (e.payload.type === "error") animError = e.payload.message;
+    }
+    return animReady || animError;
+  },
+  "animation ready",
+);
+assert.ok(animReady, `动画 worker init 应成功（error=${animError ?? "无"}）`);
+assert.strictEqual(animReady.bindingLayouts?.length, 1, "绑定布局应恰 1 条");
+const layout = animReady.bindingLayouts[0];
+assert.deepStrictEqual(
+  { nodeId: layout.nodeId, boneCount: layout.boneCount, boneNames: layout.boneNames },
+  { nodeId: "hero", boneCount: 2, boneNames: ["hip", "tail"] },
+  "绑定布局应与 init 骨骼清单一致",
+);
+
+// play 命令：返回值 true 经 result 回包（命令通道 + 结果回包双覆盖）
+deliverDown({
+  ns: "animation",
+  seq: ++downSeq,
+  payload: { type: "command", method: "play", args: ["hero", "idle"] },
+});
+await waitFor(
+  () => {
+    serveBridge();
+    return upEnvelopes.some((e) => e.ns === "animation" && e.payload.type === "result" && e.payload.method === "play");
+  },
+  "play result",
+);
+upEnvelopes.length = 0;
+
+// step 驱动：30 帧 = 0.5s，tail.position.z 应在 0→1s 关键帧插值的中点（≈-2）
+let lastAnimStep = null;
+for (let i = 0; i < 30; i++) {
+  deliverDown({ ns: "animation", seq: ++downSeq, payload: { type: "step", dt: 1 / 60 } });
+  serveBridge();
+  for (const e of upEnvelopes.splice(0)) {
+    if (e.ns !== "animation") continue;
+    if (e.payload.type === "stepped") lastAnimStep = e.payload;
+    else if (e.payload.type === "error") throw new Error(`动画 step 失败: ${e.payload.message}`);
+  }
+  await tick();
+}
+assert.ok(lastAnimStep, "step 后应收到 stepped 回包");
+assert.strictEqual(lastAnimStep.transforms.length, 14, "回写变换应为 2 骨骼 × 7 分量");
+const tailZ = lastAnimStep.transforms[9];
+assert.ok(
+  Math.abs(tailZ - -2) < 0.2,
+  `tail.z 应处于关键帧插值中段（实测 ${Number(tailZ).toFixed(3)}，期望 ≈-2）`,
+);
+assert.ok(
+  lastAnimStep.state && lastAnimStep.state.hero && lastAnimStep.state.hero.weights.idle > 0,
+  "状态镜像应含 hero/idle 的有效权重",
+);
+
+// getWeight 命令：同步读数经 result 回包（null 值也回包）
+deliverDown({
+  ns: "animation",
+  seq: ++downSeq,
+  payload: { type: "command", method: "getWeight", args: ["hero", "idle"] },
+});
+await waitFor(
+  () => {
+    serveBridge();
+    return upEnvelopes.some((e) => e.ns === "animation" && e.payload.type === "result" && e.payload.method === "getWeight");
+  },
+  "getWeight result",
+);
+const weightEnv = upEnvelopes.find((e) => e.ns === "animation" && e.payload.method === "getWeight");
+upEnvelopes.length = 0;
+assert.ok(typeof weightEnv.payload.value === "number" && weightEnv.payload.value > 0, "getWeight 应回有效权重");
+
+// recycleResult（拷贝传输下无 buffer，缓冲池旁路不抛错）+ dispose 收尾
+deliverDown({
+  ns: "animation",
+  seq: ++downSeq,
+  payload: { type: "recycleResult", transforms: lastAnimStep.transforms, morphs: lastAnimStep.morphs },
+});
+deliverDown({ ns: "animation", seq: ++downSeq, payload: { type: "dispose" } });
+serveBridge();
+
 console.log(
   `[worker-smoke] PASS ${backend} — ready 握手 ✓ wasm 实例化 ×${wasmServed} ✓ ` +
-    `stepped 30 帧（ball y=${Number(ballY).toFixed(3)}）✓ raycast ${rayEnv.payload.hits.length} 命中 ✓`,
+    `stepped 30 帧（ball y=${Number(ballY).toFixed(3)}）✓ raycast ${rayEnv.payload.hits.length} 命中 ✓ ` +
+    `动画 init/ready ✓ stepped 30 帧（tail.z=${Number(tailZ).toFixed(3)}）✓ 命令回包 ×2 ✓`,
 );
