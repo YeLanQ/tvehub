@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  assistantTools,
   injectWorkspaceRoot,
   normalizeNodeAddArgs,
   outcomeToToolResult,
@@ -53,6 +54,15 @@ describe("injectWorkspaceRoot", () => {
     expect([...ROOT_METHODS].sort()).toEqual(
       ["asset.list", "asset.read", "asset.write", "file.index", "file.search", "file.module", "scene.list", "scene.write", "shader.write"].sort(),
     );
+  });
+});
+
+describe("assistantTools 工具目录", () => {
+  it("正常：构建导出工具随目录下发（助手可直连构建，区域表已登记黄灯）", () => {
+    const build = assistantTools().find((t) => t.function.name === "project.build");
+    expect(build, "project.build 应在助手工具目录中").toBeTruthy();
+    expect(build?.function.description).toContain("singlePage");
+    expect(build?.function.description).toContain("missing");
   });
 });
 

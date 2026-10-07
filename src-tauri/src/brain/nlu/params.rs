@@ -123,6 +123,18 @@ pub fn suggest(method: &str, seg: &str) -> Option<Value> {
                 None
             }
         }
+        "project.build" => {
+            let mut p = serde_json::Map::new();
+            // 单页信号：口语里的确定性开关（"打包成单页/单个文件发朋友"）
+            if ["单页", "单文件", "单个文件", "一个文件"].iter().any(|w| seg.contains(w)) {
+                p.insert("singlePage".into(), json!(true));
+            }
+            // 引号名/「叫xxx」 → 页面标题建议
+            if let Some(t) = extract_name(seg) {
+                p.insert("title".into(), json!(t));
+            }
+            if p.is_empty() { None } else { Some(Value::Object(p)) }
+        }
         _ => None,
     }
 }
@@ -172,5 +184,14 @@ mod tests {
         assert!(suggest("node.add", "添加一个方向光，一个环境光").is_none());
         // 无参数可提取（写入内容无法规则提取）
         assert!(suggest("asset.write", "写入一个脚本文件").is_none());
+    }
+
+    #[test]
+    fn suggest_project_build_flags_single_page_and_title() {
+        let p = suggest("project.build", "构建项目「我的世界」，打包成单页发朋友").unwrap();
+        assert_eq!(p["singlePage"], true);
+        assert_eq!(p["title"], "我的世界");
+        // 无单页/标题信号不硬造建议
+        assert!(suggest("project.build", "构建导出当前项目").is_none());
     }
 }

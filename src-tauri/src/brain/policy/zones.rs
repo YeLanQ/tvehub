@@ -51,12 +51,15 @@ pub fn zone_of(method: &str) -> Zone {
     Zone::Yellow // 已登记写操作与未登记方法一律黄灯（宁可多问，不可擅动）
 }
 
-/// devtools 方法全量登记（与前端 tools.ts CATALOG 同集；新增方法两处同步）
+/// devtools 方法全量登记 + Rust 直答方法（tools.ts CATALOG 是给助手的下发子集；
+/// 新增方法同步本表与 CATALOG——未登记方法在门控处不吃审批豁免，永远卡确认）
 const ALL_METHODS: &[&str] = &[
     "editor.state",
     "state.snapshot",
+    "state.restore",
     "project.list",
     "project.create",
+    "project.build",
     "project.open",
     "project.close",
     "scene.list",
@@ -100,6 +103,7 @@ pub fn energy_weight(method: &str) -> f64 {
 pub fn speed_budget_ms(method: &str) -> u64 {
     match method {
         "preview.start" | "preview.open" | "project.create" | "project.open" => 15_000,
+        "project.build" => 120_000, // 构建导出是分钟级重操作，预算按上限给
         m if zone_of(m) == Zone::Green => 2_000,
         _ => 5_000,
     }
@@ -135,5 +139,19 @@ mod tests {
     #[test]
     fn heavy_operations_get_wider_budget() {
         assert!(speed_budget_ms("preview.start") > speed_budget_ms("asset.read"));
+    }
+
+    #[test]
+    fn build_and_restore_registered_as_yellow() {
+        // 构建导出/快照恢复是写操作：登记在表（获批后可放行）但保持黄灯；
+        // 回归锚点——漏登记会让 gate() 即使获批也永远 NeedConfirm（known=false）
+        assert!(is_known("project.build"));
+        assert_eq!(zone_of("project.build"), Zone::Yellow);
+        assert!(is_known("state.restore"));
+        assert_eq!(zone_of("state.restore"), Zone::Yellow);
+        assert!(
+            speed_budget_ms("project.build") >= 60_000,
+            "构建是分钟级重操作，预算应放宽"
+        );
     }
 }
