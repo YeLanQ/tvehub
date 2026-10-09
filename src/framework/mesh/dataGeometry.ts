@@ -5,7 +5,9 @@
 //   自包含可随场景分发；预览/导出不依赖源文件；
 // - 支持格式：JSON 显式网格（positions/indices/normals/uvs 数组）与
 //   XYZ/CSV 规则格点（x 最快、z 行序；自动检测列数并菱形三角化）；
-// - 播放侧镜像：runtime/mesh.ts（只解码载荷，不解析源文件；两边算法需同步）。
+// - 本模块即共享单源：播放侧 src/runtime/runtime/mesh.ts 直接 import
+//   parseMeshData/buildDataGeometry（损坏时把编辑器的可见报错适配为 null
+//   回退占位基元），不再维护解码镜像。
 // ---------------------------------------------------------------------------
 
 import * as THREE from "three";

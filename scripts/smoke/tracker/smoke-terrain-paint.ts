@@ -232,13 +232,17 @@ console.log("[4] 契约：重烤链路 / 控制器 / 引擎 / 命令与 UI / 装
   check("控制器：双会话分发（绘制层 / 雕刻）", /kind === "paint"/.test(ctrl) && /stampSculptLine/.test(ctrl)
     && /onCommitSculpt/.test(ctrl) && /onCommitSplat/.test(ctrl));
 
+  // 地形绘制会话拆至 engine/terrainPaint.ts、点选抑制在 engine/events.ts
+  //（挂载/事件/领域编排拆分）；契约不变、读取目标随迁。
   const engineSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/EditorEngine.ts"), "utf8");
-  check("引擎：开始/结束/失效 + 点选抑制", /async beginTerrainPaint/.test(engineSrc)
+  const terrainPaintSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/terrainPaint.ts"), "utf8");
+  const eventsSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/events.ts"), "utf8");
+  check("引擎：开始/结束/失效 + 点选抑制", /async function beginTerrainPaint/.test(terrainPaintSrc)
     && /endTerrainPaint/.test(engineSrc) && /invalidateTerrainSplatmap/.test(engineSrc)
-    && /this\.terrainPaint\?\.active/.test(engineSrc));
+    && /engine\.terrainPaint\?\.active/.test(eventsSrc));
   check("引擎：落盘回调装配点", /setTerrainPaintCommitHandler/.test(engineSrc));
-  check("引擎：雕刻提交走节点补丁（可撤销）", /commitTerrainSculpt/.test(engineSrc)
-    && /雕刻地形/.test(engineSrc) && /bakeTerrainHeights/.test(engineSrc));
+  check("引擎：雕刻提交走节点补丁（可撤销）", /commitTerrainSculpt/.test(terrainPaintSrc)
+    && /雕刻地形/.test(terrainPaintSrc) && /bakeTerrainHeights/.test(terrainPaintSrc));
 
   const nodeSrc = readFileSync(resolve(process.cwd(), "src/framework/prototype/nodes/TerrainNode.ts"), "utf8");
   check("节点：sculpt 字段持久化（空值不写盘）", /target\.sculpt = \{ \.\.\.this\.sculpt \}/.test(nodeSrc)

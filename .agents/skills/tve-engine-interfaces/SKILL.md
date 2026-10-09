@@ -15,7 +15,11 @@ description: TvE Hub 引擎侧全部接口设计：编辑器引擎（EditorEngin
      engine/*/backends + 台账存量；engine 不依赖上层/vue/tauri）
 
 编辑器侧  src/framework/**            Framework 层：可复用引擎功能与通用机制
-  ├─ engine/EditorEngine.ts           编辑器引擎门面（3155 行）+ modules/ 12 个子系统
+  ├─ engine/EditorEngine.ts           编辑器引擎门面（~970 行：字段+构造接线+选择+薄委托）
+  ├─ engine/{mount,events,nodeOps,assetRefresh,skyEnv,fogEnv,previewView,
+  │  pipView,navSources,terrainPaint,viewportQuery,layoutNav}.ts
+  │     按关切拆分的实现体：挂载/卸载、事件反应路由、节点操作族、资产刷新、
+  │     天空/雾环境、预览与画中画、导航烘焙输入、地形绘制会话、视口查询
   ├─ engine/modules/RendererManager   视口策略层（设备/管线经 src/engine 抽象）
   ├─ prototype/ + scene/              数据模型层：Node/Transform/ScenePrototype/SceneClient
   └─ camera/ lighting/ material/ …    各系统（与运行时模块一一对应）
@@ -48,7 +52,13 @@ description: TvE Hub 引擎侧全部接口设计：编辑器引擎（EditorEngin
   拖拽期间只改镜像、松手一次性提交（一次拖动 = 一个撤销步骤）。
 - **tve SDK 版本** 1.3.0（tve.d.ts ↔ public/engine/core/tve.mjs 镜像同步）；
   API 文档 `public/docs/sdk/api.md` 由 `pnpm gen:api-docs` 自动生成，勿手改。
-- **SCRIPT_NODE_BASE 表**（EditorEngine.ts:104）：新增可创建节点类型漏登记会编译报错。
+- **SCRIPT_NODE_BASE 表**（engine/nodeOps.ts）：新增可创建节点类型漏登记会编译报错。
+- **编辑器↔播放共享单源**（「共享纯逻辑 + 各自适配」边界）：地形全套算法
+  （framework/terrain/{types,generate,simplify,dem,noise}——含 ImprovedNoise 自包含
+  副本，勿改回 three/examples import）与基元几何/数据网格解码
+  （framework/mesh/{geometry,dataGeometry}）由播放侧 src/runtime/runtime/{terrain,mesh}.ts
+  直接 import——改参数/算法只改 framework 一处，两端产物一致；播放侧文件只留
+  场景装配适配（JSON 收敛/chunk 拆分/回退策略）。
 - **词法器**：glslLexer → glslParser → glslToTsl（framework 侧）+ runtime/core/glslToTsl.ts
   （WebGPU 路径），改一处要看另一侧镜像。
 

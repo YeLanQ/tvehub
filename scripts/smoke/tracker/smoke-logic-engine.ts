@@ -304,10 +304,13 @@ async function main(): Promise<void> {
     const nodeCmds = readFileSync(resolve(process.cwd(), "src/app/commands/nodeCommands.ts"), "utf8");
     check("nodeCommands 有 logic 分支", /case "logic":/.test(nodeCmds) && /addFsmRunner/.test(nodeCmds) && /addBtRunner/.test(nodeCmds));
 
+    // 引擎拆分（挂载/事件/领域编排）后，接线分布到关切模块；契约不变、读取目标随迁。
     const engineSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/EditorEngine.ts"), "utf8");
-    check("引擎：SCRIPT_NODE_BASE 登记（漏登记编译报错机制）", /fsmRunnerNode: \(e, p\) => e\.addFsmRunner\(p\)/.test(engineSrc)
-      && /btRunnerNode: \(e, p\) => e\.addBtRunner\(p\)/.test(engineSrc));
-    check("引擎：渲染循环推进 logic", /this\.logic\.update\(dt\)/.test(engineSrc));
+    const nodeOpsSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/nodeOps.ts"), "utf8");
+    const mountSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/mount.ts"), "utf8");
+    check("引擎：SCRIPT_NODE_BASE 登记（漏登记编译报错机制）", /fsmRunnerNode: \(e, p\) => addFsmRunner\(e, p\)/.test(nodeOpsSrc)
+      && /btRunnerNode: \(e, p\) => addBtRunner\(e, p\)/.test(nodeOpsSrc));
+    check("引擎：渲染循环推进 logic", /engine\.logic\.update\(dt\)/.test(mountSrc));
     check("引擎：图事件接线（同步/解绑）", /this\.logic\.syncFsm/.test(engineSrc) && /this\.logic\.unbind/.test(engineSrc));
     check("引擎：logic:changed 事件广播", /"logic:changed"/.test(engineSrc));
     check("引擎：整体重建重绑逻辑运行器", (() => {

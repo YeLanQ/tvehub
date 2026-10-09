@@ -3,9 +3,13 @@
 // 以及模型网格（source=model）的实例化挂载。
 // 自定义着色效果由材质所挂 .shader 的 Hook 片段以注入方式叠加在上述内置材质上
 // （shaderHooks.mjs），不替换渲染分支。
-// 与编辑器 framework/mesh、framework/material/factory 的规则保持同步。
+// 基元构造与数据化网格解码单源自编辑器 framework/mesh（geometry.ts 注册表 +
+// dataGeometry.ts 解码），本文件只保留播放端差异：构建期共享缓存（同参数只建
+// 一份、运行期只读）与损坏回退策略（null → 基元占位，编辑器侧为可见报错）。
 import * as THREE from "../core/three.module.min.js";
 import { num, vec } from "../core/utils";
+import { buildGeometry } from "../../framework/mesh/geometry";
+import { buildDataGeometry, parseMeshData } from "../../framework/mesh/dataGeometry";
 import { MAT_DEFAULTS, makeToonGradient, displacedGeometry } from "./material";
 import type { MaterialParam } from "./material";
 import { instantiateModel } from "./model";
@@ -83,36 +87,15 @@ const primitiveGeometryCache = new Map<string, THREE.BufferGeometry>();
 const branchMaterialCache = new WeakMap<object, THREE.Material>();
 const outlineMaterialCache = new WeakMap<object, THREE.MeshBasicMaterial>();
 
-/** 按种类+尺寸取基元几何（相同参数共享一份 BufferGeometry） */
+/** 按种类+尺寸取基元几何（相同参数共享一份 BufferGeometry；构造单源 framework/mesh） */
 function getPrimitiveGeometry(kind: string, x: number, y: number, z: number): THREE.BufferGeometry {
   const key = `${kind}|${x}|${y}|${z}`;
   let geom = primitiveGeometryCache.get(key);
   if (geom === undefined) {
-    if (kind === "sphere") geom = new THREE.SphereGeometry(x / 2, 32, 24);
-    else if (kind === "plane") geom = new THREE.PlaneGeometry(x, z, 10, 10).rotateX(-Math.PI / 2);
-    else if (kind === "quad") geom = new THREE.PlaneGeometry(x, y);
-    else if (kind === "cylinder") geom = new THREE.CylinderGeometry(x / 2, x / 2, y, 24);
-    else if (kind === "cone") geom = new THREE.ConeGeometry(x / 2, y, 24);
-    else if (kind === "torus") geom = new THREE.TorusGeometry(x / 2, y / 2, 16, 48);
-    else if (kind === "capsule") geom = new THREE.CapsuleGeometry(x / 2, y, 8, 24);
-    else geom = new THREE.BoxGeometry(x, y, z);
+    geom = buildGeometry(kind, { x, y, z });
     primitiveGeometryCache.set(key, geom);
   }
   return geom;
-}
-
-// —— 数据化网格（编辑器 framework/mesh/dataGeometry.ts 的解码镜像：只解码内嵌
-//    载荷构建 BufferGeometry，不解析 JSON/XYZ 源文件；两边算法需同步）——
-function _decodeMeshData(data: string, Ctor: typeof Float32Array | typeof Uint32Array): Float32Array | Uint32Array | null {
-  try {
-    const bin = atob(data);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    if (bytes.byteLength % Ctor.BYTES_PER_ELEMENT !== 0) return null;
-    return new Ctor(bytes.buffer);
-  } catch {
-    return null;
-  }
 }
 
 /** 数据化网格载荷（节点 dataMesh 字段的解码读面） */
@@ -125,34 +108,21 @@ interface DataMeshPayload {
   uvs?: unknown;
 }
 
-/** 载荷 → BufferGeometry（按载荷长度签名共享；损坏回退占位方块） */
-function getDataGeometry(d: DataMeshPayload): THREE.BufferGeometry | null {
-  const vc = Number(d.vertexCount) | 0;
-  if (vc < 3 || typeof d.positions !== "string") return null;
-  // 与原逻辑同语义：indices 任意类型读 length（无则 0）
-  const indsLen = (d.indices as { length?: number } | undefined)?.length ?? 0;
-  const key = `data|${d.positions.length}|${indsLen}|${vc}|${Number(d.indexCount) | 0}`;
-  let geom = primitiveGeometryCache.get(key);
-  if (geom !== undefined) return geom;
-  const pos = _decodeMeshData(d.positions, Float32Array);
-  if (!pos || pos.length !== vc * 3) return null;
-  geom = new THREE.BufferGeometry();
-  geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  if ((Number(d.indexCount) | 0) > 0 && d.indices) {
-    const idx = _decodeMeshData(d.indices as string, Uint32Array);
-    if (idx && idx.length === (Number(d.indexCount) | 0)) geom.setIndex(new THREE.BufferAttribute(idx, 1));
+/** 载荷 → BufferGeometry（按载荷长度签名共享；损坏回退占位方块——解码单源
+ *  framework/mesh/dataGeometry，播放端把"编辑器可见报错"适配为 null 回退） */
+function getDataGeometry(payload: DataMeshPayload): THREE.BufferGeometry | null {
+  const d = parseMeshData(payload);
+  if (!d) return null;
+  const key = `data|${d.positions.length}|${d.indices.length}|${d.vertexCount}|${d.indexCount}`;
+  const cached = primitiveGeometryCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const geom = buildDataGeometry(d);
+    primitiveGeometryCache.set(key, geom);
+    return geom;
+  } catch {
+    return null;
   }
-  if (d.normals) {
-    const nrm = _decodeMeshData(d.normals as string, Float32Array);
-    if (nrm && nrm.length === vc * 3) geom.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
-  }
-  if (d.uvs) {
-    const uv = _decodeMeshData(d.uvs as string, Float32Array);
-    if (uv && uv.length === vc * 2) geom.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  }
-  if (!geom.getAttribute("normal")) geom.computeVertexNormals();
-  primitiveGeometryCache.set(key, geom);
-  return geom;
 }
 
 /** 按解析后的 .mat 参数对象取共享材质（同引用网格共用一个材质实例；

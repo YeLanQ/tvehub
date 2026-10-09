@@ -3,10 +3,10 @@
 //
 // 地形节点（TerrainNode.terrain）持有可 JSON 序列化的程序化地形设置：高度场
 // 参数（seed/分形/侵蚀/形变）+ 表面配色。读取经 parseTerrainSettings 统一收敛
-// （缺失/越界回退默认，旧场景兼容）；编辑器（framework/terrain/generate.ts）与
-// 播放器（public/engine/runtime/terrain.mjs）按同一取值域生成同一片地形。
-// 算法语义参考 three.js 示例 TerrainGenerator（derivative-damped 分形 +
-// domain warp + 热侵蚀 + 菱形网格）。
+// （缺失/越界回退默认，旧场景兼容）；编辑器与播放产物**同源消费本模块**
+// （播放侧 src/runtime/runtime/terrain.ts 直接 import），按同一取值域生成
+// 同一片地形。算法语义参考 three.js 示例 TerrainGenerator（derivative-damped
+// 分形 + domain warp + 热侵蚀 + 菱形网格）。
 // ---------------------------------------------------------------------------
 
 /** 地形设置（TerrainNode.terrain 的形状；全部字段随场景序列化） */

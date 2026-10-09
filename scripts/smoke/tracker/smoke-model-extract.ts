@@ -139,9 +139,10 @@ console.log("[3] 契约：同步器 / 引擎 / 检查器 / 菜单 / 预取");
   check("同步器：覆盖材质缓存 + 失效 + 局部刷新", /modelOverrideMaterials/.test(syncSrc)
     && /invalidateModelOverrideMaterial/.test(syncSrc) && /refreshModelMeshMaterials/.test(syncSrc));
 
-  const engineSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/EditorEngine.ts"), "utf8");
-  check("引擎：材质变更联动模型覆盖刷新", /invalidateModelOverrideMaterial\(rel\)/.test(engineSrc)
-    && /refreshModelMeshMaterials\(node\)/.test(engineSrc));
+  // 资产刷新拆至 engine/assetRefresh.ts（挂载/事件/领域编排拆分）；契约不变、读取目标随迁。
+  const assetRefreshSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/assetRefresh.ts"), "utf8");
+  check("引擎：材质变更联动模型覆盖刷新", /invalidateModelOverrideMaterial\(rel\)/.test(assetRefreshSrc)
+    && /refreshModelMeshMaterials\(node\)/.test(assetRefreshSrc));
 
   const menu = readFileSync(resolve(process.cwd(), "src/app/lib/asset-menu.ts"), "utf8");
   check("资产菜单：提取材质动作", /提取材质为编辑器材质/.test(menu) && /onExtractModelMaterials/.test(menu));

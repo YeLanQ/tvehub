@@ -5,12 +5,14 @@
 //   （山脊蜿蜒）+ 谷地压平幂曲线 + 海平面下移；
 // - 热侵蚀（talus）：超过休止角的坡面逐 pass 塌落，消除分形针尖；
 // - 网格：逐 quad 交替对角线的菱形三角化，避免单向纹理感；
-// - 着色：按海拔/坡度在 CPU 烘焙 128×128 颜色纹理（草/林/岩/碎石/雪带 + 明度扰动），
+// - 着色：按海拔/坡度在 CPU 烘焙 256×256 颜色纹理（草/林/岩/碎石/雪带 + 明度扰动），
 //   MeshStandardMaterial(map) 直接消费，WebGL/WebGPU 双后端可用。
-// 播放器侧同语义实现见 public/engine/runtime/terrain.mjs（两边改参数需同步）。
+// 本模块即「共享纯逻辑」单源：播放侧 src/runtime/runtime/terrain.ts 直接 import
+// （经 runtime 构建链打进 public/engine 与微信 bundle），不再维护逐行镜像——
+// 改参数/算法只改这一处，两端产物天然一致。
 // ---------------------------------------------------------------------------
 import * as THREE from "three";
-import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
+import { ImprovedNoise } from "./noise";
 import { cloneTerrainSettings, type TerrainSettings } from "./types";
 import { simplifyTerrainMesh } from "./simplify";
 

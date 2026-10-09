@@ -219,6 +219,8 @@ console.log("[5] 菜单映射与契约：「雾」分组三类型 / 播放器接
   const player = readFileSync(resolve(process.cwd(), "public/web-preview/player.mjs"), "utf8");
   const nodeCommands = readFileSync(resolve(process.cwd(), "src/app/commands/nodeCommands.ts"), "utf8");
   const engineSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/EditorEngine.ts"), "utf8");
+  // 雾应用拆至 engine/fogEnv.ts（挂载/事件/领域编排拆分）；patch 安装仍在门面构造器。
+  const fogEnvSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/fogEnv.ts"), "utf8");
 
   check("runtime/fog.mjs 收敛 heightY/heightFalloff", /heightY/.test(runtimeFog) && /heightFalloff/.test(runtimeFog));
   check("runtime/heightFog.mjs 提供 chunk patch 与 WebGPU 节点", /ensureHeightFogChunk/.test(runtimeHeight) &&
@@ -233,8 +235,8 @@ console.log("[5] 菜单映射与契约：「雾」分组三类型 / 播放器接
   check("nodeCommands 的 FOG_KINDS 引自 fog/types（无本地副本）",
     /FOG_KINDS[^;\n]*from\s+"[^"]*\/fog\/types"/.test(nodeCommands) && !/const FOG_KINDS/.test(nodeCommands));
   check("EditorEngine 高度雾分支与 patch 安装",
-    /fogKind === "height"/.test(engineSrc) && /ensureHeightFogChunk\(\)/.test(engineSrc) &&
-    /applyHeightFogWebGPU/.test(engineSrc));
+    /fogKind === "height"/.test(fogEnvSrc) && /ensureHeightFogChunk\(\)/.test(engineSrc) &&
+    /applyHeightFogWebGPU/.test(fogEnvSrc));
 }
 
 // ===========================================================================

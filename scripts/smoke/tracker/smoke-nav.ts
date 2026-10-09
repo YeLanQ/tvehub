@@ -478,14 +478,19 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
   check("同步器：导航叠层刷新 + 子对象名 + 层跟随", /refreshNavArea/.test(syncSrc)
     && /__navMesh/.test(syncSrc) && /NAV_MESH_NAME/.test(syncSrc));
 
+  // 引擎拆分（挂载/事件/领域编排）后，接线分布到关切模块；契约不变、读取目标随迁。
   const engineSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/EditorEngine.ts"), "utf8");
-  check("引擎：SCRIPT_NODE_BASE 登记（漏登记编译报错机制）", /navAreaNode: \(e, p\) => e.addNavArea\(p\)/.test(engineSrc)
-    && /navAgentNode: \(e, p\) => e.addNavAgent\(p\)/.test(engineSrc));
-  check("引擎：渲染循环推进 nav", /this\.nav\.update\(dt\)/.test(engineSrc));
+  const nodeOpsSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/nodeOps.ts"), "utf8");
+  const mountSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/mount.ts"), "utf8");
+  const navSourcesSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/navSources.ts"), "utf8");
+  const eventsSrc = readFileSync(resolve(process.cwd(), "src/framework/engine/events.ts"), "utf8");
+  check("引擎：SCRIPT_NODE_BASE 登记（漏登记编译报错机制）", /navAreaNode: \(e, p\) => addNavArea\(e, p\)/.test(nodeOpsSrc)
+    && /navAgentNode: \(e, p\) => addNavAgent\(e, p\)/.test(nodeOpsSrc));
+  check("引擎：渲染循环推进 nav", /engine\.nav\.update\(dt\)/.test(mountSrc));
   check("引擎：图事件接线（烘焙/解绑）", /this\.nav\.unbind/.test(engineSrc) && /this\.nav\.syncArea/.test(engineSrc));
-  check("引擎：烘焙输入提供者（多源解析 + 网格光栅化 + 障碍收集）", /navSourcesOf/.test(engineSrc)
-    && /rasterizeMeshesToHeightField/.test(engineSrc) && /navObstaclesFor/.test(engineSrc));
-  check("引擎：场景变化重检 + 模型加载失效缓存", /resyncNavAreas/.test(engineSrc)
+  check("引擎：烘焙输入提供者（多源解析 + 网格光栅化 + 障碍收集）", /navSourcesOf/.test(navSourcesSrc)
+    && /rasterizeMeshesToHeightField/.test(navSourcesSrc) && /navObstaclesFor/.test(navSourcesSrc));
+  check("引擎：场景变化重检 + 模型加载失效缓存", /resyncNavAreas\(engine\)/.test(eventsSrc)
     && /navFieldCache\.clear\(\)/.test(engineSrc));
 
   const meshFieldSrc = readFileSync(resolve(process.cwd(), "src/framework/navigation/meshField.ts"), "utf8");
@@ -498,7 +503,7 @@ console.log("[5] 契约：菜单 / 命令 / 同步器 / 引擎 / 检查器");
   check("代理：目标寻路（startAgent/巡回接力/最近可达/目标位置签名）", /startAgent/.test(navSysSrc)
     && /advanceSequence/.test(navSysSrc) && /repathNearest/.test(navSysSrc) && /targetFor\?/.test(navSysSrc));
   check("引擎：代理目标位置提供者", /navTargetOf/.test(engineSrc)
-    && /targetFor: \(nodeId\) => this\.navTargetOf\(nodeId\)/.test(engineSrc));
+    && /targetFor: \(nodeId\) => navTargetOf\(this, nodeId\)/.test(engineSrc));
   check("引擎：整体重建重绑导航（打开项目后勾选/绑定不丢）", (() => {
     const rb = engineSrc.match(/rebuildAll\(\): void \{[\s\S]*?\n  \}/);
     return !!rb && /nav\.unbindAll\(\)/.test(rb[0])
