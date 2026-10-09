@@ -372,10 +372,12 @@ const wechatHost: WechatEndpoint = {
   createWorker(path: string): HostWorker | null {
     try {
       if (wxApi && typeof wxApi.createWorker === "function") {
-        // 包内预检（缺失静默回退，真机错误行省一条）。accessSync 平台形态不一：
-        // 部分平台对代码包相对路径恒抛 → 先用必然存在的 game.js 探测能力本身，
-        // 探测不过 = 平台不支持 accessSync → 跳过预检，交由 createWorker 实证
-        //（缺失时平台报错 + 抛错路径兜底）——不得让预检误杀随包 Worker。
+        // 包内预检降级为纯日志（2026-10-09 真机实锤二级误杀）：官方打包规则 =
+        // workers/ 目录全部 JS 上传时合并为单文件，真机包内 workers/tve.js 对主线程
+        // FileSystemManager 不可见（game.js 在主包可见）——能力探测通过后信任入口
+        // 预检即恒杀随包 Worker；模拟器读磁盘源文件从不复现。多线程未勾选时
+        // config.workerThread=false 已在 worker.ts 门控拦截，此处预检只作告警
+        // 留痕，真缺失由 createWorker 实证抛错路径兜底（外层 catch）。
         const fsm =
           wxApi && typeof wxApi.getFileSystemManager === "function" ? wxApi.getFileSystemManager() : null;
         if (fsm && typeof fsm.accessSync === "function") {
@@ -390,8 +392,7 @@ const wechatHost: WechatEndpoint = {
             try {
               fsm.accessSync(path);
             } catch {
-              bridgeLog("warn", `[runtime-bridge] worker 入口预检缺失（${path}）→ 回退主线程`);
-              return null;
+              bridgeLog("warn", `[runtime-bridge] worker 入口预检判定缺失（${path}）——真机 workers/ 合并打包可致误判，仍实证 createWorker`);
             }
           } else {
             bridgeLog("warn", "[runtime-bridge] accessSync 不可用（跳过 worker 入口预检，交由 createWorker 实证）");

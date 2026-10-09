@@ -79,25 +79,38 @@ describe("fetchChannelRuntimeFiles wechat 物理供给", () => {
     expect(engines).not.toContain("engine/runtime/physics-engines/jolt.js");
   });
 
-  it("正常：物理启用随包物理 Worker bundle（改键 workers/tve.js，同后端同选）", async () => {
+  it("正常：勾选多线程随包物理 Worker bundle（改键 workers/tve.js，同后端同选）", async () => {
+    stubRuntimeFetch();
+    const files = await fetchChannelRuntimeFiles("wechat", {
+      includePhysics: true,
+      physicsBackend: "jolt",
+      wechatWorker: true,
+    });
+    // wx.createWorker 入口路径恒定：按后端拉取的 workers/jolt/tve.js 改键落盘
+    expect(files["workers/tve.js"]).toBe("// stub");
+    expect(Object.keys(files).some((k) => k.startsWith("workers/jolt/"))).toBe(false);
+  });
+
+  it("边界：未勾选多线程（缺省）不随 Worker bundle，物理引擎照常随包（全主线程）", async () => {
     stubRuntimeFetch();
     const files = await fetchChannelRuntimeFiles("wechat", {
       includePhysics: true,
       physicsBackend: "jolt",
     });
-    // wx.createWorker 入口路径恒定：按后端拉取的 workers/jolt/tve.js 改键落盘
-    expect(files["workers/tve.js"]).toBe("// stub");
-    expect(Object.keys(files).some((k) => k.startsWith("workers/jolt/"))).toBe(false);
-    // 物理未启用时 worker bundle 不随包（无 workers/ 键）
+    // 微信多线程设备适配性/普及率不足：缺省全主线程（胶水恒随包 = 兜底恒在）
+    expect(Object.keys(files).some((k) => k.startsWith("workers/"))).toBe(false);
+    expect(runtimeKeys(files)).toContain("engine/runtime/physics-engines/jolt.js");
+    // 物理未启用时同样无 worker bundle（无 workers/ 键）
     const disabled = await fetchChannelRuntimeFiles("wechat", { includePhysics: false });
     expect(Object.keys(disabled).some((k) => k.startsWith("workers/"))).toBe(false);
   });
 
-  it("正常：仅动画（无物理）随包 Worker bundle，引擎胶水不随（动画路由免 wasm）", async () => {
+  it("正常：勾选多线程 + 仅动画（无物理）随包 Worker bundle，引擎胶水不随（动画路由免 wasm）", async () => {
     stubRuntimeFetch();
     const files = await fetchChannelRuntimeFiles("wechat", {
       includePhysics: false,
       includeAnimationWorker: true,
+      wechatWorker: true,
     });
     expect(files["workers/tve.js"]).toBe("// stub");
     // 骨骼动画在 worker 内为纯数学代理，无需引擎 wasm → 物理引擎产物整组缺省

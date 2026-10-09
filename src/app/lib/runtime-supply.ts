@@ -31,6 +31,11 @@ export interface ChannelRuntimeOptions {
   includeDracoDecoder?: boolean;
   /** 项目启用纹理压缩 → Basis 转码器（胶水 JS + .wasm）随导出 */
   includeBasisDecoder?: boolean;
+  /** wechat 专属：多线程加速（Worker）随包——物理/动画在 wx.createWorker 单实例
+   *  运行。**缺省 false = 全主线程**：微信多线程的设备适配性与普及率不足，
+   *  Worker 失败会引入设备间行为差异；勾选后 Worker 为加速路径、主线程恒为
+   *  兜底（物理胶水恒随包，两路由模拟结果一致） */
+  wechatWorker?: boolean;
 }
 
 /** 运行时单文件文本缓存（key = fetch URL）。
@@ -119,19 +124,25 @@ export async function fetchChannelRuntimeFiles(
   } else {
     // wechat：物理引擎按后端随包（rapier/jolt/ammo CJS 预转换产物；真机 wasm
     // 由桥接层垫片经 WXWebAssembly 实例化）。未知后端回退 rapier（与 web 同规则）。
-    // 同后端的物理 Worker bundle（workers/<backend>/tve.js，内含 physics/animation
-    // 双路由）一并随包——wx.createWorker 单实例跑物理模拟与骨骼动画（信封多路复用
-    // + bridge 保留信道回传 wasm 字节）。仅动画（无物理）时引擎胶水不随包，worker
-    // bundle 里的物理路由永不接收 init（主线程物理未启用不建端口）。
+    // 物理胶水恒随包 = 主线程兜底恒在（任何设备物理都能跑、结果一致——2026-10-09
+    // 用户拍板一致性优先，A 计划「仅 Worker 路由省体积」已废弃）。
+    // Worker bundle（workers/<backend>/tve.js，physics/animation 双路由）仅在
+    // 构建面板勾选「多线程加速」时随包（wechatWorker）：wx.createWorker 单实例
+    // 跑物理模拟与骨骼动画（信封多路复用 + bridge 保留信道回传 wasm 字节）。
+    // 微信多线程设备适配性/普及率不足 → 缺省不随包，全主线程为缺省一致形态。
+    // 仅动画（无物理）勾选时引擎 wasm 不随包，worker bundle 里的物理路由永不
+    // 接收 init（主线程物理未启用不建端口）。
     if (opts.includePhysics || opts.includeAnimationWorker) {
       const backend = opts.physicsBackend || "rapier";
       if (opts.includePhysics) {
         const key = `physics:${backend}`;
         groupKeys.push(spec.groups[key] ? key : "physics:rapier");
       }
-      const workerKey = `worker:physics:${backend}`;
-      if (spec.groups[workerKey]) groupKeys.push(workerKey);
-      else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
+      if (opts.wechatWorker) {
+        const workerKey = `worker:physics:${backend}`;
+        if (spec.groups[workerKey]) groupKeys.push(workerKey);
+        else if (spec.groups["worker:physics:rapier"]) groupKeys.push("worker:physics:rapier");
+      }
     }
     // Draco wasm 解码器按项目配置随包（与 web 同判据 resources.dracoCompression）：
     // 运行时懒加载——仅模型带 KHR_draco 扩展时经 __tveLoadModule require wrapper

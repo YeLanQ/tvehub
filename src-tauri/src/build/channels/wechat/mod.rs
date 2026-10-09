@@ -138,7 +138,7 @@ impl ChannelPipeline for WechatPipeline {
         for (rel, text) in &content.text_assets {
             cfg_input.entry(rel.clone()).or_insert_with(|| text.clone());
         }
-        let cfg = product_config(project_cfg, &content.packed, &main_name, job.debug, &cfg_input, "");
+        let mut cfg = product_config(project_cfg, &content.packed, &main_name, job.debug, &cfg_input, "");
 
         // data.js：场景 + 文本资产 + script-graph（base64 内联，体量小、热路径零
         // FS 读）；二进制资产文件化落盘（assets/<uid><safe-ext> 原始字节），data.js 只
@@ -181,6 +181,13 @@ impl ChannelPipeline for WechatPipeline {
         // 物理 Worker bundle 随包 → game.json 声明 workers 字段（声明而无目录会
         // 令开发者工具编译失败，故按实际随包条件写入）
         let with_workers = runtime_files.contains_key("workers/tve.js");
+        // 多线程开关同步进产物 config（bridge worker.ts 门控读）：未随包 = false
+        // → 运行期静默回主线程且不触达 wx.createWorker（缺失文件的平台报错行从
+        // 根上消除）；缺省（旧产物无此键）按 true = 尝试创建 + 回退兜底
+        cfg.insert(
+            "workerThread".to_string(),
+            serde_json::Value::Bool(with_workers),
+        );
 
         let mut package: HashMap<String, String> = HashMap::new();
         let mut binaries: HashMap<String, Vec<u8>> = HashMap::new();

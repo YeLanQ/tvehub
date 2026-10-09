@@ -52,4 +52,7 @@ export interface BuildOptions {
   /** 微信真机诊断弹窗（真机定时弹窗读数排障用；勾选写入设备 storage 开关，
    *  不勾选启动即清除——正常游玩请保持关闭） */
   wechatDiag?: boolean;
+  /** 微信多线程加速（Worker）：物理/动画在独立线程运行（实验性——微信多线程
+   *  设备适配性/普及率不足，缺省关闭 = 全主线程，行为跨设备一致） */
+  wechatWorker?: boolean;
 }

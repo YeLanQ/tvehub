@@ -550,7 +550,9 @@ check(
   h().showDiagModal("测试诊断");
   check("微信端点：showDiagModal 直连 wx.showModal", diagModals.length === 1 && diagModals[0] === "测试诊断");
 
-  // worker 入口预检三形态：accessSync 不可用不得误杀随包 Worker（真机回退根因）
+  // worker 入口预检三形态：accessSync 不可用不得误杀随包 Worker（真机回退根因）；
+  // 入口预检降级为纯日志（2026-10-09 真机实锤：workers/ 上传合并打包对主线程
+  // FSM 不可见，预检判缺失即回退恒杀随包 Worker——判定只留痕，createWorker 实证）
   accessMode = "absent";
   h().createWorker("workers/tve.js");
   check(
@@ -565,9 +567,12 @@ check(
   );
   accessMode = "ok";
   h().createWorker("workers/missing.js");
-  check("worker 预检：能力可用且入口缺失 → 静默回退 null", workerCreates.length === 2);
+  check(
+    "worker 预检：能力可用且入口缺失 → 判定仅日志仍实证 createWorker",
+    workerCreates.length === 3 && workerCreates[2] === "workers/missing.js",
+  );
   h().createWorker("workers/tve.js");
-  check("worker 预检：能力可用且入口存在 → 放行 createWorker", workerCreates.length === 3);
+  check("worker 预检：能力可用且入口存在 → 放行 createWorker", workerCreates.length === 4);
   accessMode = "absent";
 }
 
@@ -759,6 +764,22 @@ check(
   const hook = globalThis.__tveCreateWorker;
   check("worker 桥：钩子已安装", typeof hook === "function");
   check("worker 桥：未支持协议（unknown）返回 null", hook("", "unknown") === null);
+
+  // 多线程开关（config.workerThread，导出期按面板勾选写入）：未随包 = false →
+  // createPort 静默回主线程且不触达 wx.createWorker（缺失文件的平台报错行消除）。
+  // 门控在钩子层（createPort），非平台端点层；读测后恢复全局，不污染后续用例
+  //（此刻 createdPath 尚为 "" ——未被触达即保持 ""）
+  {
+    const g = globalThis;
+    const beforeData = g.__TVE_BUILD_DATA;
+    g.__TVE_BUILD_DATA = { config: { workerThread: false } };
+    const gated = hook("", "physics");
+    g.__TVE_BUILD_DATA = beforeData;
+    check(
+      "worker 桥：config.workerThread=false → 钩子静默回主线程不触达 createWorker",
+      gated === null && createdPath === "",
+    );
+  }
 
   const port = hook("", "physics");
   check("worker 桥：physics 端口创建", !!port);

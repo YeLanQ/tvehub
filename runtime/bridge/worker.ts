@@ -63,6 +63,23 @@ let seqCounter = 0;
 const ports = new Map<string, BridgeWorkerPort>();
 
 // ---------------------------------------------------------------------------
+// 诊断状态（真机弹窗「W」行读出；真机控制台不中继用户代码，这里是创建→ready→
+// wasm 链路的结构化读出面，配合「志」行的 [bridge] 日志分诊）
+// ---------------------------------------------------------------------------
+
+const workerDiag = { attempts: 0, ready: false, readyAtMs: 0, createdAtMs: 0, lastEvent: "未尝试" };
+
+function noteWorkerEvent(text: string): void {
+  workerDiag.lastEvent = text;
+}
+
+/** 诊断弹窗读出：创建/ready 态 + 里程碑时刻 + 最后事件（一行） */
+export function workerDiagLine(): string {
+  const t = (ms: number): string => (ms ? `${((ms - workerDiag.createdAtMs) / 1000).toFixed(1)}s` : "-");
+  return `创${workerDiag.attempts > 0 ? 1 : 0} 就绪${workerDiag.ready ? 1 : 0} 创建${t(workerDiag.createdAtMs)} 就绪@${t(workerDiag.readyAtMs)} 末事=${workerDiag.lastEvent}`;
+}
+
+// ---------------------------------------------------------------------------
 // 下行：信封发送与拷贝归一
 // ---------------------------------------------------------------------------
 
@@ -180,11 +197,15 @@ function handleBridgePayload(payload: unknown): void {
       readyTimer = null;
     }
     singletonReady = true;
+    workerDiag.ready = true;
+    workerDiag.readyAtMs = Date.now();
+    noteWorkerEvent("ready（bundle 加载完成）");
     bridgeLog("log", "[runtime-bridge] worker 已就绪（worker bundle 加载完成）");
     flushBootBuffer();
     return;
   }
   if (p.t === "wasmReq" && typeof p.id === "number" && typeof p.path === "string") {
+    noteWorkerEvent(`wasm字节请求 ${p.path.slice(-40)}`);
     bridgeLog("log", `[runtime-bridge] worker wasm 字节请求: ${p.path}`);
     let b64: string | null = null;
     try {
@@ -236,6 +257,7 @@ function terminateSingleton(): void {
   singleton = null;
   singletonReady = false;
   bootBuffer = [];
+  noteWorkerEvent(w && !workerDiag.ready ? "ready超时→终结回退" : "已终结");
   if (w) {
     try {
       w.terminate();
@@ -245,15 +267,37 @@ function terminateSingleton(): void {
   }
 }
 
+/** 构建配置的多线程开关（data.js config.workerThread，导出期按面板勾选写入：
+ *  worker bundle 实际随包时为 true）。缺省（旧产物/配置缺失）按 true 处理——
+ *  尝试创建失败有回退兜底；显式 false = 包内无 worker bundle，静默回主线程
+ *  且不触达 wx.createWorker（缺失文件的平台报错行从根上消除）。 */
+function workerThreadEnabled(): boolean {
+  try {
+    const data = (globalThis as { __TVE_BUILD_DATA?: { config?: { workerThread?: unknown } } })
+      .__TVE_BUILD_DATA;
+    return data?.config?.workerThread !== false;
+  } catch {
+    return true;
+  }
+}
+
 function createPort(protocol: string): BridgeWorkerPort | null {
   if (!SUPPORTED_PROTOCOLS.has(protocol)) return null;
+  if (!workerThreadEnabled()) {
+    noteWorkerEvent("多线程未勾选（全主线程）");
+    return null;
+  }
   const endpoint = host();
-  if (!endpoint || typeof endpoint.createWorker !== "function") return null;
+  if (!endpoint || typeof endpoint.createWorker !== "function") {
+    noteWorkerEvent("端点缺席（钩子未装/平台无 createWorker）");
+    return null;
+  }
   if (!singleton) {
     let w: HostWorkerLike | null = null;
     try {
       w = endpoint.createWorker(TVE_WORKER_ENTRY);
     } catch (e) {
+      noteWorkerEvent(`创建抛错 ${e instanceof Error ? e.message.slice(0, 60) : String(e).slice(0, 60)}`);
       bridgeLog("warn", "[runtime-bridge] 平台 createWorker 抛错（回退主线程）", e);
       w = null;
     }
@@ -261,9 +305,14 @@ function createPort(protocol: string): BridgeWorkerPort | null {
     singleton = w;
     singletonReady = false;
     bootBuffer = [];
+    workerDiag.attempts = 1;
+    workerDiag.ready = false;
+    workerDiag.createdAtMs = Date.now();
+    noteWorkerEvent("已创建，等 ready");
     w.onMessage(handleWorkerMessage);
     readyTimer = setTimeout(() => {
       if (!singletonReady) {
+        noteWorkerEvent("ready超时(10s)");
         bridgeLog("warn", "[runtime-bridge] worker ready 超时，按平台不支持回退主线程");
         terminateSingleton();
       }

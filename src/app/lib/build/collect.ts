@@ -58,6 +58,9 @@ export interface CollectOptions {
   saveDirtyScripts?: boolean;
   /** 编译期日志口径；null = 全静默（图窗口） */
   logs?: CollectLogs | null;
+  /** wechat 专属：多线程加速（Worker）随包——物理/动画在独立线程运行（构建面板
+   *  勾选项；缺省 false = 全主线程，微信多线程设备适配性/普及率不足） */
+  wechatWorker?: boolean;
 }
 
 /** 读取项目配置原文（缺失返回 null——调用方按未启用可选运行时处理） */
@@ -99,9 +102,13 @@ export async function collectExportFiles(opts: CollectOptions): Promise<Record<s
   const configText = await readProjectConfigText(opts.root);
   const runtimeOpts = { ...adapter.runtimeOptions(configText) };
   // wechat：无物理但构建场景含模型节点 → Worker bundle 随包（骨骼动画走独立线程；
-  // 有物理时 bundle 本就随包，无需探测）
+  // 有物理时 bundle 本就随包，无需探测）。面板未勾选「多线程加速」时恒主线程
+  //（wechatWorker 缺省 false = 不随 worker bundle，includeAnimationWorker 一并不进）
   if (opts.channel === "wechat" && !runtimeOpts.includePhysics && opts.scenes?.length) {
     runtimeOpts.includeAnimationWorker = await scenesUseModelNodes(opts.root, opts.scenes);
+  }
+  if (opts.channel === "wechat") {
+    runtimeOpts.wechatWorker = opts.wechatWorker === true;
   }
   const files = await fetchChannelRuntimeFiles(opts.channel, runtimeOpts);
 

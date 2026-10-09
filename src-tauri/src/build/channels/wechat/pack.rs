@@ -331,8 +331,9 @@ pub(super) fn readme(appid: &str, orientation: &str, sub_roots: &[String]) -> St
 - src/               用户脚本（CommonJS 编译产物）
 - engine/runtime/physics-engines/  物理引擎（启用物理的项目按后端随包：
   rapier/jolt/ammo 的胶水 .js + .wasm 文件）
-- workers/tve.js     物理 Worker（启用物理的项目随包：物理模拟在独立线程运行，
-  wasm 字节经主线程读包回传实例化；game.json 已声明 workers 字段）
+- workers/tve.js     物理 Worker（仅构建面板勾选「多线程加速」时随包：物理/动画
+  模拟在独立线程运行，wasm 字节经主线程读包回传实例化；game.json 已声明 workers
+  字段。未勾选 = 全主线程，包内无此文件与 workers 声明）
 - engine/runtime/loaders/meshopt_decoder.wasm  meshopt 解码（GLTFLoader 依赖）
 
 已知限制
@@ -344,10 +345,11 @@ pub(super) fn readme(appid: &str, orientation: &str, sub_roots: &[String]) -> St
   或 .bin 落盘，首次导出后请在工具确认包内文件齐全（工具对陌生扩展名会
   静默剔除，.bin 兜底应可规避）；
 - 物理：rapier/jolt/ammo 三后端均支持——wasm 以代码包内 .wasm 文件随包，主
-  线程由桥接层经 WXWebAssembly.instantiate(路径) 实例化，Worker 线程经字节
-  中继以原生 WebAssembly 实例化；物理模拟默认跑在 Worker 线程（平台不支持
-  或 Worker 就绪失败时自动回退主线程，控制台有告警行）；Draco 压缩已支持
-  （主线程内联解码）；Basis 纹理压缩不支持（请关闭后重新构建）；
+  线程由桥接层经 WXWebAssembly.instantiate(路径) 实例化。缺省全主线程运行
+  （跨设备行为一致）；构建面板勾选「多线程加速」后物理/动画优先跑在 Worker
+  线程（微信多线程设备适配性/普及率不足，Worker 不可用时自动回退主线程，模拟
+  结果一致）。Draco 压缩已支持（主线程内联解码）；Basis 纹理压缩不支持（请
+  关闭后重新构建）；
 - 真机（iOS/Android）的 Worker 线程与 wasm 物理未经实机验证，请以开发者
   工具模拟器验收为准，真机异常时留意控制台 [runtime-bridge]/[物理] 告警行。
 "#

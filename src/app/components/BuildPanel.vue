@@ -75,6 +75,9 @@ const wechatSubpackages = ref(false);
 const wechatSubpackageSize = ref(2);
 /** 微信真机诊断弹窗（真机定时弹窗读数排障用；正常游玩保持关闭） */
 const wechatDiag = ref(false);
+/** 微信多线程加速（Worker）：物理/动画在独立线程运行（缺省关 = 全主线程，
+ *  微信多线程设备适配性/普及率不足） */
+const wechatWorker = ref(false);
 
 // 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）；
 // 真机诊断挂在调试模式下——关闭调试即清空诊断勾选（导出侧同步清设备开关）
@@ -144,6 +147,7 @@ async function restoreState(): Promise<void> {
     wechatOrientation.value = prefs.wechatOrientation ?? "portrait";
     wechatSubpackages.value = prefs.wechatSubpackages === true;
     wechatDiag.value = prefs.wechatDiag === true;
+    wechatWorker.value = prefs.wechatWorker === true;
     wechatSubpackageSize.value =
       typeof prefs.wechatSubpackageSize === "number" && Number.isFinite(prefs.wechatSubpackageSize)
         ? Math.min(4, Math.max(1, Math.round(prefs.wechatSubpackageSize)))
@@ -169,6 +173,7 @@ async function restoreState(): Promise<void> {
     wechatSubpackages.value = false;
     wechatSubpackageSize.value = 2;
     wechatDiag.value = false;
+    wechatWorker.value = false;
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -198,6 +203,7 @@ async function persistPrefs(): Promise<void> {
     wechatOrientation: wechatOrientation.value,
     wechatSubpackages: wechatSubpackages.value,
     wechatDiag: wechatDiag.value,
+    wechatWorker: wechatWorker.value,
     wechatSubpackageSize: wechatSubpackageSize.value,
   };
   try {
@@ -231,6 +237,7 @@ async function doBuild(): Promise<void> {
       wechatSubpackages: wechatSubpackages.value || undefined,
       wechatSubpackageSize: wechatSubpackages.value ? wechatSubpackageSize.value : undefined,
       wechatDiag: wechatDiag.value || undefined,
+      wechatWorker: wechatWorker.value || undefined,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -413,6 +420,7 @@ watch(projectScenes, (next, prev) => {
               v-model:wechat-subpackages="wechatSubpackages"
               v-model:wechat-subpackage-size="wechatSubpackageSize"
               v-model:wechat-diag="wechatDiag"
+              v-model:wechat-worker="wechatWorker"
               v-model:release="release"
               v-model:debug="debug"
             />

@@ -13,6 +13,7 @@ import { canvasEvents } from "./canvas.ts";
 import { view, winEvents } from "./env.ts";
 import { logTail } from "./log-capture.ts";
 import { loadTelemetry } from "./load-module.ts";
+import { workerDiagLine } from "./worker.ts";
 
 /** 引擎输入探针（entries/wechat 求值后装配：读 engine.input 触点快照）。
  *  桥派发计数照涨而探针恒 0 = canvas 监听面死（注册被原生画布监听表吸走
@@ -100,6 +101,7 @@ export function createAudioDiag(native: NativeAudioContext, createdAt: number): 
           `触 d${touchDiag.down} m${touchDiag.move} u${touchDiag.up} c${touchDiag.cancel} @${touchDiag.lastX},${touchDiag.lastY}\n` +
           `面 c${canvasEvents.listenerCount("pointerdown")}+${canvasEvents.listenerCount("pointermove")} w${winEvents.listenerCount("pointerdown")} 视${view.width}x${view.height}\n` +
           `探 ${probeInput()}\n` +
+          `W ${read(() => workerDiagLine(), "读出异常")}\n` +
           `志${loadTelemetry.calls}/${loadTelemetry.fails} ${loadTelemetry.lastSpec.slice(-34)}${loadTelemetry.lastErr ? ` !${loadTelemetry.lastErr.slice(0, 60)}` : ""} ${logTail()}`,
       );
     } catch {

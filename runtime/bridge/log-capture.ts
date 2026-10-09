@@ -20,9 +20,8 @@ const RING_MAX = 30;
 export function installLogCapture(): void {
   if (!bridgeActive()) return;
   setGlobal(TVE_WORKER_LOG_HOOK, (lv: unknown, tx: unknown) => {
-    const rec: LogRec = { lv: String(lv ?? "info"), tx: String(tx ?? "").slice(0, 200) };
-    ring.push(rec);
-    if (ring.length > RING_MAX) ring.shift();
+    captureLine(String(lv ?? "info"), String(tx ?? ""));
+    const rec = ring[ring.length - 1];
     try {
       if (rec.lv === "error") console.error("[tve]", rec.tx);
       else if (rec.lv === "warn") console.warn("[tve]", rec.tx);
@@ -31,6 +30,15 @@ export function installLogCapture(): void {
       /* console 缺席静默 */
     }
   });
+}
+
+/** 桥接层日志直接入环（log.ts 的 bridgeLog 调用；不受 debug 门控——真机控制台
+ *  不中继用户代码 console，诊断弹窗「志」行是 worker 创建/ready/wasm 链路日志
+ *  唯一的真机读出口，弹窗自身有 __tveDiagOn 显式开关兜底不扰民）。 */
+export function captureLine(lv: string, tx: string): void {
+  const rec: LogRec = { lv, tx: tx.slice(0, 200) };
+  ring.push(rec);
+  if (ring.length > RING_MAX) ring.shift();
 }
 
 /** 诊断弹窗用日志尾读出：近 10 条内优先最后一条 error/warn，否则最后一条；

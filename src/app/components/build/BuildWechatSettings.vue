@@ -11,6 +11,7 @@ const wechatOrientation = defineModel<"portrait" | "landscape">("wechatOrientati
 const wechatSubpackages = defineModel<boolean>("wechatSubpackages", { required: true });
 const wechatSubpackageSize = defineModel<number>("wechatSubpackageSize", { required: true });
 const wechatDiag = defineModel<boolean>("wechatDiag", { required: true });
+const wechatWorker = defineModel<boolean>("wechatWorker", { required: true });
 const release = defineModel<boolean>("release", { required: true });
 const debug = defineModel<boolean>("debug", { required: true });
 </script>
@@ -72,6 +73,20 @@ const debug = defineModel<boolean>("debug", { required: true });
       体积限制最终由微信开发者工具在预览/上传时判定。
     </p>
   </div>
+  <div class="bp-field">
+    <label for="bp-wechat-worker">多线程加速</label>
+    <label class="bp-check">
+      <input id="bp-wechat-worker" v-model="wechatWorker" type="checkbox" />
+      <span>物理/动画在 Worker 独立线程运行（实验性）</span>
+    </label>
+  </div>
+  <!-- 说明文字放行外独立 bp-note（同真机诊断块）：bp-field 是行式 flex，
+       note 放里面会被压到勾选框旁边 -->
+  <p class="bp-note">
+    缺省关闭 = 物理与动画全部在主线程运行（跨设备行为一致）。微信多线程的设备
+    适配性与普及率不足，勾选后在不支持的设备上会自动回退主线程（结果一致、仅
+    线程不同）；勾选同时随包 Worker 运行时（主包 +约 600KB）。
+  </p>
   <div class="bp-field">
     <label for="bp-wechat-release">发布模式</label>
     <label class="bp-check">
