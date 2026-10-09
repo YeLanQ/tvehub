@@ -42,7 +42,7 @@ import { wechatTransformPlugin } from "./wechat/transforms.mjs";
 import { buildPhysicsEngines } from "./wechat/engines.mjs";
 import { buildWorkerBundles } from "./wechat/worker.mjs";
 import { copyDracoWasmDecoder } from "./wechat/draco.mjs";
-import { runSurfaceCheck, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, runWorkerSmoke, writeTveFacade } from "./wechat/guards.mjs";
+import { runSurfaceCheck, runBridgeTypes, runBridgeSpec, smokeRequireBundle, runDracoDecodeSmoke, runWorkerSmoke, writeTveFacade } from "./wechat/guards.mjs";
 import { MESHOPT_WASM_PATH } from "../bridge/protocol.ts";
 
 /** 产物体积上限告警阈值（微信主包 4MB，data.js 由导出期另计） */
@@ -83,6 +83,7 @@ export async function buildWechatRuntime(reason = "") {
   const dracoBytes = copyDracoWasmDecoder();
   const facadeBytes = writeTveFacade();
   runSurfaceCheck();
+  runBridgeTypes();
   runBridgeSpec();
   smokeRequireBundle(engines);
   runDracoDecodeSmoke(dracoBytes);

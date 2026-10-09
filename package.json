@@ -35,7 +35,8 @@
     "qr:check": "node scripts/qr-selfcheck-run.mjs",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
-    "version:bump": "node scripts/sync-version.mjs bump"
+    "version:bump": "node scripts/sync-version.mjs bump",
+    "check:bridge-types": "node node_modules/typescript/bin/tsc -p runtime/bridge/tsconfig.json"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

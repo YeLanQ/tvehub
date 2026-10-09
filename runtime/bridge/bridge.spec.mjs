@@ -47,6 +47,8 @@ function makeMockHost() {
   const images = [];
   const touchHandlers = [];
   const keyHandlers = [];
+  const inners = [];
+  const innerOptions = [];
   const lifecycle = { show: [], hide: [], resize: [], error: [] };
   const storage = new Map();
   const wasmCalls = [];
@@ -95,17 +97,45 @@ function makeMockHost() {
     createAudioContext: () => {
       // 平台真实形态：resume 为只读访问器（getter-only），返回值非 Promise
       const ctx = { state: "suspended", sampleRate: 44100, destination: {}, listener: {} };
-      let resumed = false;
+      let resumed = 0;
       Object.defineProperty(ctx, "resume", {
         get: () => () => {
-          resumed = true;
+          resumed++;
           return undefined;
         },
         configurable: true,
       });
-      ctx.__wasResumed = () => resumed;
+      ctx.__wasResumed = () => resumed > 0;
+      ctx.__resumeCount = () => resumed;
       return ctx;
     },
+    // InnerAudioContext 桩（2D 音源平台代管通路，audio-inner 消费）
+    createInnerAudio: () => {
+      const a = {
+        src: "",
+        loop: false,
+        volume: 1,
+        playbackRate: 1,
+        currentTime: 0,
+        duration: 0,
+        play() {},
+        stop() {},
+        pause() {},
+        destroy() {},
+        seek(v) {
+          a.currentTime = v;
+        },
+        onPlay() {},
+        onEnded() {},
+        onPause() {},
+        onStop() {},
+        onError() {},
+      };
+      inners.push(a);
+      return a;
+    },
+    setInnerAudioOptions: (o) => innerOptions.push(o),
+    writeUserFile: (name, bytes) => `wxfile://usr/${name}`,
     onTouchStart: (fn) => touchHandlers.push({ type: "start", fn }),
     onTouchMove: (fn) => touchHandlers.push({ type: "move", fn }),
     onTouchEnd: (fn) => touchHandlers.push({ type: "end", fn }),
@@ -125,6 +155,8 @@ function makeMockHost() {
     __images: images,
     __touchHandlers: touchHandlers,
     __keyHandlers: keyHandlers,
+    __inners: inners,
+    __innerOptions: innerOptions,
     __lifecycle: lifecycle,
     __wasmCalls: wasmCalls,
     __packageFiles: packageFiles,
@@ -253,6 +285,137 @@ check(
   );
 }
 
+// 音频手势解锁：iOS 真机 resume 仅在用户交互回调栈内生效，而 engine 解锁链被
+// facade state 短路（上面用例已把 state 置 running）——桥接层手势监听必须绕过
+// 短路直调原生 resume（幂等），否则真机触摸后永不补解锁
+{
+  const Ctor = globalThis.AudioContext;
+  const ctx2 = new Ctor();
+  const before = ctx2.__tveNative.__resumeCount();
+  ctx2.resume(); // state 短路成立（resumed = true）
+  const afterFacade = ctx2.__tveNative.__resumeCount();
+  const { winEvents } = await import("./env.ts");
+  winEvents.emit("pointerdown", { type: "pointerdown" });
+  check(
+    "音频手势：pointerdown 经桥接监听直调原生 resume（state 短路不解耦解锁链）",
+    afterFacade === before + 1 && ctx2.__tveNative.__resumeCount() === before + 2,
+    `before=${before} afterFacade=${afterFacade} final=${ctx2.__tveNative.__resumeCount()}`,
+  );
+}
+
+// 音频解码兜底：真机不回调型静默失败（既不 success 也不 error）→ 超时重试一次
+{
+  const Ctor = globalThis.AudioContext;
+  const ctx3 = new Ctor();
+  const native3 = ctx3.__tveNative;
+  native3.__tveDecodeTimeoutMs = 25;
+  let done = null;
+  let got = null;
+  let calls = 0;
+  native3.decodeAudioData = (buf, ok, bad) => {
+    calls++;
+    /* 不回调：模拟真机挂死 */
+  };
+  ctx3.decodeAudioData(new ArrayBuffer(8), () => (done = "ok"), (e) => (done = "err"));
+  await new Promise((r) => setTimeout(r, 120));
+  check(
+    "音频解码：超时不回调 → 副本重试一次 → 耗尽走 error",
+    calls === 2 && done === "err",
+    `calls=${calls} done=${done}`,
+  );
+
+  // 重试后成功：首轮超时 → 第二轮回调 AudioBuffer
+  done = null;
+  got = null;
+  let calls2 = 0;
+  native3.decodeAudioData = (buf, ok) => {
+    calls2++;
+    if (calls2 >= 2) ok({ duration: 1.5 });
+  };
+  ctx3.decodeAudioData(new ArrayBuffer(8), (b) => (done = "ok", got = b), () => (done = "err"));
+  await new Promise((r) => setTimeout(r, 120));
+  check(
+    "音频解码：首轮超时重试后成功回调（含时长采样）",
+    calls2 === 2 && done === "ok" && got && got.duration === 1.5,
+    `calls=${calls2} done=${done}`,
+  );
+
+  // 失败透传：error 回调也走一次重试，耗尽后把末次错误交给调用方
+  done = null;
+  got = null;
+  let calls3 = 0;
+  native3.decodeAudioData = (buf, ok, bad) => {
+    calls3++;
+    bad(new Error("fmt"));
+  };
+  ctx3.decodeAudioData(new ArrayBuffer(8), () => (done = "ok"), (e) => (done = "err", got = e));
+  await new Promise((r) => setTimeout(r, 120));
+  check(
+    "音频解码：失败重试一次后 error 透传",
+    calls3 === 2 && done === "err" && got && got.message === "fmt",
+    `calls=${calls3} done=${done}`,
+  );
+
+  // 回调形态无返回值；Promise 形态返回 thenable（引擎外的标准消费面）
+  let calls4 = 0;
+  native3.decodeAudioData = (buf, ok) => {
+    calls4++;
+    ok({ duration: 0.5 });
+  };
+  const cbForm = ctx3.decodeAudioData(new ArrayBuffer(8), () => {}, () => {});
+  const pForm = ctx3.decodeAudioData(new ArrayBuffer(8));
+  check(
+    "音频解码：回调形态无返回值 / Promise 形态返回 thenable",
+    cbForm === undefined && pForm && typeof pForm.then === "function",
+  );
+  await pForm;
+  delete native3.__tveDecodeTimeoutMs;
+}
+
+// 2D 音源平台代管：__tveCreateAudioEmitter 钩子（InnerAudioContext 通路）
+{
+  const factory = globalThis.__tveCreateAudioEmitter;
+  check("内音钩子：求值期安装（GLOBAL_SURFACE 清单内）", typeof factory === "function");
+  const prevData = globalThis.__TVE_BUILD_DATA;
+  globalThis.__TVE_BUILD_DATA = {
+    config: {},
+    assets: { "assets/bgm.mp3": Buffer.from([0xff, 0xfb]).toString("base64") },
+    assetFiles: { "assets/audio.mp3": "pkg-1/assets/a.mp3" },
+  };
+  // 文件化资产：直用包内路径（分包预载后可读，不落盘不解码）
+  const em = factory({ source: "assets/audio.mp3", spatial: "2d" });
+  const inner = mock.__inners[0];
+  check(
+    "内音发射器：文件化资产直用包内路径",
+    !!em && em.__tveChannelAudio === true && !!inner && inner.src === "pkg-1/assets/a.mp3",
+    `src=${inner && inner.src}`,
+  );
+  em.setVolume(0.5);
+  em.setLoop(true);
+  em.setPlaybackRate(1.5);
+  em.play();
+  check(
+    "内音发射器：音量/循环/倍速/起播语义透传",
+    inner.volume === 0.5 && inner.loop === true && inner.playbackRate === 1.5 && em.isPlaying === true,
+  );
+  em.offset = 7;
+  check("内音发射器：offset 写走 seek / 读走 currentTime", inner.currentTime === 7 && em.offset === 7);
+  em.pause();
+  check("内音发射器：pause 后 isPlaying=false", em.isPlaying === false);
+  em.destroy();
+  // 内联资产：base64 字节落用户目录稳定名文件
+  const em2 = factory({ source: "assets/bgm.mp3", spatial: "2d" });
+  const inner2 = mock.__inners[1];
+  check(
+    "内音发射器：内联资产落用户目录（稳定名 tve-audio-<hash>.mp3）",
+    !!em2 && !!inner2 && /^wxfile:\/\/usr\/tve-audio-[0-9a-f]{8}\.mp3$/.test(inner2.src),
+    `src=${inner2 && inner2.src}`,
+  );
+  // 未命中：null（引擎回退共享 WebAudio 链）
+  check("内音钩子：资产未命中返回 null", factory({ source: "assets/none.mp3" }) === null);
+  globalThis.__TVE_BUILD_DATA = prevData;
+}
+
 // fetch：内联资产表命中
 {
   const res = await globalThis.fetch("assets/tex.png");
@@ -308,6 +471,10 @@ check(
   const wxStorageBox = {};
   const wasmWrites = [];
   const wasmInstantiates = [];
+  const diagModals = [];
+  const workerCreates = [];
+  const workerFiles = new Set(["workers/tve.js"]);
+  let accessMode = "absent"; // "absent" | "ok" | "always-throw"
   globalThis.wx = {
     platform: "devtools",
     getSystemInfoSync: () => ({ windowWidth: 800, windowHeight: 360, pixelRatio: 3 }),
@@ -316,6 +483,22 @@ check(
     createOffscreenCanvas: (opts) => ({ width: (opts && opts.width) || 300, height: (opts && opts.height) || 150, style: {}, getContext: () => ({}) }),
     createImage: () => ({ width: 0, height: 0 }),
     createWebAudioContext: () => ({ state: "running" }),
+    showModal: (opts) => diagModals.push(opts && opts.content),
+    createWorker: (p) => {
+      workerCreates.push(p);
+      return { onMessage() {}, postMessage() {}, terminate() {} };
+    },
+    getFileSystemManager: () => ({
+      writeFileSync: (path, data, encoding) => wasmWrites.push({ path, data, encoding }),
+      ...(accessMode === "absent"
+        ? {}
+        : {
+            accessSync: (p) => {
+              if (accessMode === "always-throw") throw new Error("access unsupported");
+              if (p !== "game.js" && !workerFiles.has(p)) throw new Error(`missing: ${p}`);
+            },
+          }),
+    }),
     getStorageSync: () => wxStorageBox,
     setStorageSync: (_k, v) => Object.assign(wxStorageBox, v),
     removeStorageSync() {},
@@ -328,9 +511,6 @@ check(
     requestAnimationFrame: (fn) => setTimeout(fn, 16),
     cancelAnimationFrame: (id) => clearTimeout(id),
     env: { USER_DATA_PATH: "wxfile://usr" },
-    getFileSystemManager: () => ({
-      writeFileSync: (path, data, encoding) => wasmWrites.push({ path, data, encoding }),
-    }),
   };
   // 真机形态：标准 WebAssembly 缺位、WXWebAssembly.instantiate 只认文件路径
   globalThis.WXWebAssembly = {
@@ -366,6 +546,29 @@ check(
     "微信端点：同内容 wasm 命名稳定",
     wasmInstantiates.length === 2 && wasmInstantiates[1].arg === wasmInstantiates[0].arg,
   );
+  // 非契约诊断通道：showDiagModal 直连 wx.showModal（音频诊断面消费面）
+  h().showDiagModal("测试诊断");
+  check("微信端点：showDiagModal 直连 wx.showModal", diagModals.length === 1 && diagModals[0] === "测试诊断");
+
+  // worker 入口预检三形态：accessSync 不可用不得误杀随包 Worker（真机回退根因）
+  accessMode = "absent";
+  h().createWorker("workers/tve.js");
+  check(
+    "worker 预检：accessSync 缺席 → 跳过预检直调 createWorker",
+    workerCreates.length === 1 && workerCreates[0] === "workers/tve.js",
+  );
+  accessMode = "always-throw";
+  h().createWorker("workers/tve.js");
+  check(
+    "worker 预检：accessSync 恒抛（能力探测不过）→ 跳过预检不误杀",
+    workerCreates.length === 2,
+  );
+  accessMode = "ok";
+  h().createWorker("workers/missing.js");
+  check("worker 预检：能力可用且入口缺失 → 静默回退 null", workerCreates.length === 2);
+  h().createWorker("workers/tve.js");
+  check("worker 预检：能力可用且入口存在 → 放行 createWorker", workerCreates.length === 3);
+  accessMode = "absent";
 }
 
 // ---------------------------------------------------------------- 场景 D：WebAssembly 垫片

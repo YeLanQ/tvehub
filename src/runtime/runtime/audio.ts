@@ -114,6 +114,22 @@ function createBinding(nodeJson: Record<string, unknown>, obj: THREE.Object3D): 
  *  换源重建时调用方先清空旧发射态。 */
 function attachSource(b: AudioBinding): void {
   if (!b.settings.source) return;
+  // 渠道代管发射器（鸭子类型钩子，web 渠道钩子缺席零开销）：2D 音源整条交平台
+  // 原生音频（微信 InnerAudioContext——真机 WebAudio 输出通路不可靠的既定兜底），
+  // 钩子缺席/拒绝（返回 null）时回退共享 WebAudio 链
+  const factory = (globalThis as unknown as {
+    __tveCreateAudioEmitter?: (settings: AudioSettings) => unknown;
+  }).__tveCreateAudioEmitter;
+  if (typeof factory === "function" && b.settings.spatial === "2d") {
+    const made = factory(b.settings) as THREE.Audio<AudioNode> | null;
+    if (made) {
+      b.emitter = made;
+      b.ready = true;
+      applyParams(b);
+      if (b.settings.autoplay && !b.userStopped) tryStart(b, true);
+      return;
+    }
+  }
   loadBuffer(b.settings.source)
     .then((buf) => {
       if (!buf) return;
@@ -131,6 +147,8 @@ function detachEmitter(b: AudioBinding): void {
   if (!b.emitter) return;
   if (b.emitter.isPlaying) b.emitter.stop();
   if (b.emitter instanceof THREE.PositionalAudio) b.obj.remove(b.emitter);
+  // 渠道代管发射器的平台资源释放（InnerAudioContext.destroy；THREE.Audio 无此方法跳过）
+  (b.emitter as unknown as { destroy?: () => void }).destroy?.();
   b.emitter = null;
   b.ready = false;
 }
@@ -171,8 +189,12 @@ function applyParams(b: AudioBinding): void {
 function tryStart(b: AudioBinding, fromStart: boolean): boolean {
   const e = b.emitter;
   if (!e || !b.ready) return false;
-  resumeContext();
-  if (getContext().state !== "running") return false;
+  // 渠道代管发射器不依赖 WebAudio 上下文（解锁/状态门是共享链路语义）
+  const channel = (e as unknown as { __tveChannelAudio?: boolean }).__tveChannelAudio === true;
+  if (!channel) {
+    resumeContext();
+    if (getContext().state !== "running") return false;
+  }
   if (e.isPlaying) e.stop();
   if (!fromStart && b.offset > 0) e.offset = b.offset;
   e.play();

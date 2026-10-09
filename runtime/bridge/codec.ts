@@ -6,8 +6,11 @@ import { setGlobal } from "./install.ts";
 
 const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-export function bytesToBase64(bytes) {
-  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes ?? 0);
+/** 可解码字节形态（TypedArray/ArrayBuffer 均收，duck 判定见各消费点） */
+export type BytesLike = ArrayBuffer | Uint8Array;
+
+export function bytesToBase64(bytes: BytesLike | null | undefined): string {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array((bytes ?? 0) as ArrayBuffer);
   let out = "";
   const len = u8.length;
   for (let i = 0; i < len; i += 3) {
@@ -28,7 +31,7 @@ const B64_LOOKUP = (() => {
   return table;
 })();
 
-export function base64ToBytes(text) {
+export function base64ToBytes(text: unknown): Uint8Array {
   const clean = String(text ?? "").replace(/[^A-Za-z0-9+/=]/g, "");
   const len = clean.length;
   const pad = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
@@ -46,19 +49,21 @@ export function base64ToBytes(text) {
   return out;
 }
 
-export function bytesToDataUrl(bytes, mime) {
+export function bytesToDataUrl(bytes: BytesLike, mime?: string): string {
   return `data:${mime || "application/octet-stream"};base64,${bytesToBase64(bytes)}`;
 }
 
+/** TextEncoder 缺失兜底（仅 utf-8；与原生同名方法同形） */
 class TextEncoderShim {
-  get encoding() {
+  get encoding(): string {
     return "utf-8";
   }
-  encode(text) {
+
+  encode(text: unknown): Uint8Array {
     const s = String(text ?? "");
-    const out = [];
+    const out: number[] = [];
     for (let i = 0; i < s.length; i++) {
-      let cp = s.codePointAt(i);
+      let cp = s.codePointAt(i) ?? 0;
       if (cp > 0xffff) i++;
       if (cp < 0x80) out.push(cp);
       else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
@@ -69,17 +74,19 @@ class TextEncoderShim {
   }
 }
 
+/** TextDecoder 缺失兜底（仅 utf-8；非 fatal 语义） */
 class TextDecoderShim {
-  get encoding() {
+  get encoding(): string {
     return "utf-8";
   }
-  decode(bytes) {
-    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes ?? 0);
+
+  decode(bytes: BytesLike | null | undefined): string {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array((bytes ?? 0) as ArrayBuffer);
     let out = "";
     let i = 0;
     while (i < u8.length) {
       const b = u8[i];
-      let cp;
+      let cp: number;
       if (b < 0x80) {
         cp = b;
         i += 1;
@@ -103,24 +110,34 @@ class TextDecoderShim {
 }
 
 /** 字节 → 二进制字符串（一字节一字符，atob 标准语义；块级 apply 防栈溢出） */
-function bytesToBinaryString(u8) {
+function bytesToBinaryString(u8: Uint8Array): string {
   let out = "";
   const chunk = 0x8000;
   for (let i = 0; i < u8.length; i += chunk) {
-    out += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+    out += String.fromCharCode.apply(null, u8.subarray(i, i + chunk) as unknown as number[]);
   }
   return out;
 }
 
-export function installCodecGlobals() {
-  if (!bridgeActive()) return;
-  if (typeof globalThis.btoa !== "function") setGlobal("btoa", (s) => bytesToBase64(new TextEncoderShim().encode(String(s))));
+/** 编解码垫片安装结果（安装过才有返回值） */
+export interface CodecShims {
+  TextEncoderShim: typeof TextEncoderShim;
+  TextDecoderShim: typeof TextDecoderShim;
+}
+
+export function installCodecGlobals(): CodecShims | undefined {
+  if (!bridgeActive()) return undefined;
+  if (typeof (globalThis as unknown as Record<string, unknown>).btoa !== "function")
+    setGlobal("btoa", (s: unknown) => bytesToBase64(new TextEncoderShim().encode(String(s))));
   // atob 标准语义 = 二进制字符串（非 UTF-8 解码）：消费方（GLTF data URI、
   // fetch data:）按字符取字节后再自行 TextDecoder，此前误接 UTF-8 解码器，
   // 二进制载荷在真机必炸（模拟器有原生 atob 不走垫片，从不复现）
-  if (typeof globalThis.atob !== "function") setGlobal("atob", (s) => bytesToBinaryString(base64ToBytes(String(s))));
-  if (typeof globalThis.TextEncoder !== "function") setGlobal("TextEncoder", TextEncoderShim);
-  if (typeof globalThis.TextDecoder !== "function") setGlobal("TextDecoder", TextDecoderShim);
+  if (typeof (globalThis as unknown as Record<string, unknown>).atob !== "function")
+    setGlobal("atob", (s: unknown) => bytesToBinaryString(base64ToBytes(String(s))));
+  if (typeof (globalThis as unknown as Record<string, unknown>).TextEncoder !== "function")
+    setGlobal("TextEncoder", TextEncoderShim);
+  if (typeof (globalThis as unknown as Record<string, unknown>).TextDecoder !== "function")
+    setGlobal("TextDecoder", TextDecoderShim);
   return { TextEncoderShim, TextDecoderShim };
 }
 

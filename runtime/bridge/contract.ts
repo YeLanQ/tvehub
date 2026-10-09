@@ -153,6 +153,9 @@ export const GLOBAL_SURFACE: string[] = [
   "createImageBitmap",
   "AudioContext",
   "webkitAudioContext",
+  // 平台原生音频发射器钩子（audio-inner 安装；引擎 attachSource 渠道门控消费，
+  // web 渠道钩子缺席走共享 WebAudio 链——缺席属预期，见 spec 例外说明）
+  "__tveCreateAudioEmitter",
   TVE_LOAD_MODULE,
   TVE_BUILD_DATA,
   TVE_CREATE_WORKER,

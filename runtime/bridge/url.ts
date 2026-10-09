@@ -4,8 +4,10 @@
 import { bridgeActive } from "./host.ts";
 import { setGlobal } from "./install.ts";
 
-class URLSearchParamsShim {
-  constructor(init) {
+export class URLSearchParamsShim {
+  private _map: Map<string, string[]>;
+
+  constructor(init?: string | Record<string, unknown> | Iterable<[string, string]> | null | undefined) {
     this._map = new Map();
     if (typeof init === "string") {
       const q = init.startsWith("?") ? init.slice(1) : init;
@@ -16,35 +18,37 @@ class URLSearchParamsShim {
         this.append(decodePlus(key), eq < 0 ? "" : decodePlus(pair.slice(eq + 1)));
       }
     } else if (init && typeof init === "object") {
-      for (const [k, v] of init) this.append(String(k), String(v));
+      for (const [key, value] of init as Iterable<[string, string]>) {
+        this.append(String(key), String(value));
+      }
     }
   }
 
-  append(key, value) {
+  append(key: string, value: string): void {
     const list = this._map.get(key) || [];
     list.push(value);
     this._map.set(key, list);
   }
 
-  get(key) {
+  get(key: string): string | null {
     const list = this._map.get(String(key));
     return list && list.length ? list[0] : null;
   }
 
-  has(key) {
+  has(key: string): boolean {
     return this._map.has(String(key));
   }
 
-  *entries() {
-    for (const [k, list] of this._map) for (const v of list) yield [k, v];
+  *entries(): Generator<[string, string]> {
+    for (const [key, list] of this._map) for (const v of list) yield [key, v];
   }
 
-  toString() {
+  toString(): string {
     return [...this.entries()].map(([k, v]) => `${encodePlus(k)}=${encodePlus(v)}`).join("&");
   }
 }
 
-function decodePlus(s) {
+function decodePlus(s: string): string {
   try {
     return decodeURIComponent(s.replace(/\+/g, " "));
   } catch {
@@ -52,14 +56,27 @@ function decodePlus(s) {
   }
 }
 
-function encodePlus(s) {
+function encodePlus(s: unknown): string {
   return encodeURIComponent(String(s)).replace(/%20/g, "+");
 }
 
 const ABSOLUTE_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*:)(\/\/[^/?#]*)?([^?#]*)(\?[^#]*)?(#[\s\S]*)?$/;
 
-class URLShim {
-  constructor(url, base) {
+export class URLShim {
+  protocol: string;
+  host: string;
+  hostname: string;
+  port: string;
+  origin: string;
+  pathname: string;
+  search: string;
+  hash: string;
+  href: string;
+  searchParams: URLSearchParamsShim;
+  username: string;
+  password: string;
+
+  constructor(url: unknown, base?: unknown) {
     const raw = String(url ?? "");
     let merged = raw;
     if (base && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw) && !raw.startsWith("data:")) {
@@ -70,6 +87,7 @@ class URLShim {
       this.protocol = "";
       this.host = "";
       this.hostname = "";
+      this.port = "";
       this.origin = "";
       this.pathname = raw;
       this.search = "";
@@ -95,16 +113,16 @@ class URLShim {
     this.password = "";
   }
 
-  toString() {
+  toString(): string {
     return this.href;
   }
 
-  toJSON() {
+  toJSON(): string {
     return this.href;
   }
 }
 
-function resolveRelative(raw, base) {
+function resolveRelative(raw: string, base: string): string {
   if (raw.startsWith("//")) {
     const m = ABSOLUTE_RE.exec(base);
     return m && m[1] ? m[1] + raw : raw;
@@ -118,14 +136,14 @@ function resolveRelative(raw, base) {
   return origin + joinPath(baseDir, pathPart) + tail;
 }
 
-function splitQueryHash(raw) {
+function splitQueryHash(raw: string): [string, string] {
   const i = raw.search(/[?#]/);
   return i < 0 ? [raw, ""] : [raw.slice(0, i), raw.slice(i)];
 }
 
-function joinPath(dir, rel) {
+function joinPath(dir: string, rel: string): string {
   const parts = (dir + rel).split("/");
-  const out = [];
+  const out: string[] = [];
   for (const p of parts) {
     if (p === "" || p === ".") continue;
     if (p === "..") out.pop();
@@ -134,14 +152,12 @@ function joinPath(dir, rel) {
   return "/" + out.join("/");
 }
 
-export function installUrlGlobals() {
+export function installUrlGlobals(): void {
   if (!bridgeActive()) return;
   setGlobal("URL", URLShim);
   setGlobal("URLSearchParams", URLSearchParamsShim);
-  return { URLShim, URLSearchParamsShim };
 }
 
 // 求值期安装（bootstrap 以 import 装配，见该文件说明）
 installUrlGlobals();
 
-export { URLShim, URLSearchParamsShim };

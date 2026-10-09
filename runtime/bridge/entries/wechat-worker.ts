@@ -94,20 +94,6 @@ receiveFromMain((ns, payload) => {
       return false;
     }
   })();
-  const selfKeys = (() => {
-    try {
-      return typeof self !== "undefined" && self ? Object.keys(self).slice(0, 8).join(",") : "-";
-    } catch {
-      return "?";
-    }
-  })();
-  const workerKeys = (() => {
-    try {
-      return typeof worker !== "undefined" && worker ? Object.keys(worker).slice(0, 12).join(",") : "-";
-    } catch {
-      return "?";
-    }
-  })();
   const chanTypes = (() => {
     try {
       const w = typeof worker !== "undefined" ? worker : null;

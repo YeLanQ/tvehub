@@ -9,9 +9,9 @@ import { TVE_BUILD_DATA } from "./protocol.ts";
 
 import * as tveBuildData from "./data.js";
 
-export function installBuildData() {
+export function installBuildData(): void {
   if (!bridgeActive()) return;
-  const data = tveBuildData && (tveBuildData.default ?? tveBuildData);
+  const data = tveBuildData && ((tveBuildData as { default?: unknown }).default ?? tveBuildData);
   if (!data || typeof data !== "object") {
     bridgeLog("error", "[runtime-bridge] data.js 形态异常（缺少 config/assets）");
     flushBridgeLogs();

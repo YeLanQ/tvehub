@@ -63,6 +63,6 @@ export const PHYSICS_ENGINES_PREFIX = "engine/runtime/physics-engines/";
 export const MESHOPT_WASM_PATH = "engine/runtime/loaders/meshopt_decoder.wasm";
 
 /** 物理引擎产物根相对路径助手（胶水与同目录 .wasm 同主名） */
-export function physicsEnginePath(file) {
+export function physicsEnginePath(file: string): string {
   return PHYSICS_ENGINES_PREFIX + file;
 }

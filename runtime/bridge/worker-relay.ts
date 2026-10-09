@@ -9,7 +9,7 @@
 //   见 entries/wechat-worker.ts——wasm-file-hook 幂等让位先行安装方）。
 
 import { base64ToBytes } from "./b64.ts";
-import { TVE_INSTANTIATE_WASM_FILE, TVE_WORKER_LOG_HOOK, TVE_WORKER_NS_BRIDGE } from "./protocol.ts";
+import { TVE_WORKER_LOG_HOOK, TVE_WORKER_NS_BRIDGE } from "./protocol.ts";
 
 /** wx worker 线程注入的平台全局（真机/工具均提供；node 冒烟经包装形参供给） */
 interface WxWorkerGlobal {
@@ -224,7 +224,7 @@ export function installWasmRelay(): void {
           return;
         }
         try {
-          resolve(instantiate(base64ToBytes(b64), imports));
+          resolve(instantiate(base64ToBytes(b64), imports as Parameters<typeof WebAssembly.instantiate>[1]));
         } catch (e) {
           reject(e instanceof Error ? e : new Error(String(e)));
         }

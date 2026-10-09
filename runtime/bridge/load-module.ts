@@ -8,7 +8,10 @@ import { bridgeActive } from "./host.ts";
 import { setGlobal } from "./install.ts";
 import { TVE_LOAD_MODULE, TVE_SPEC_PREFIX } from "./protocol.ts";
 
-function normalizeSpec(spec) {
+/** bundle 运行域的 CJS require（esbuild CJS 产物包装器注入；类型层仅此消费面） */
+declare const require: (id: string) => unknown;
+
+function normalizeSpec(spec: unknown): string {
   let rel = String(spec ?? "").replace(/\\/g, "/");
   if (rel.startsWith(TVE_SPEC_PREFIX)) rel = rel.slice(TVE_SPEC_PREFIX.length);
   rel = rel.toLowerCase();
@@ -16,11 +19,11 @@ function normalizeSpec(spec) {
   return rel;
 }
 
-function loadModule(spec) {
+function loadModule(spec: unknown): Promise<unknown> {
   return Promise.resolve(require(normalizeSpec(spec)));
 }
 
-export function installLoadModule() {
+export function installLoadModule(): void {
   if (!bridgeActive()) return;
   setGlobal(TVE_LOAD_MODULE, loadModule);
 }

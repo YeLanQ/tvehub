@@ -1,0 +1,24 @@
+{
+  "//": "runtime/bridge 层专属 tsconfig：整层（21 文件）strict 类型检查 + IDE 同源。esbuild 会读取 entry 祖先链上最近的 tsconfig.json——target/useDefineForClassFields/jsx 必须与根 tsconfig 同值，否则 bundle 输出漂移（字段定义发射口径）。entries/wechat.ts 唯一排除：仅 import 装配（public/engine 的 tve.mjs/player.mjs 无类型声明，纳入会拖进整条引擎 .mjs 链）。",
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true
+  },
+  "include": ["**/*.ts", "**/*.d.ts"],
+  "exclude": ["entries/wechat.ts"]
+}

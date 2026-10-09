@@ -4,24 +4,27 @@
 import { host, bridgeActive } from "./host.ts";
 import { setGlobal, windowRef } from "./install.ts";
 
-export function installStorageGlobals() {
+/** localStorage 门面形态（引擎/pak 消费的标准子集；迭代能力端点未提供） */
+type LocalStorageShim = Pick<Storage, "length" | "getItem" | "setItem" | "removeItem" | "clear" | "key">;
+
+export function installStorageGlobals(): void {
   if (!bridgeActive()) return;
-  const store = {
+  const store: LocalStorageShim = {
     length: 0,
-    getItem(key) {
-      const v = host().storageGet(String(key));
+    getItem(key: string): string | null {
+      const v = host()!.storageGet(String(key));
       return v == null ? null : String(v);
     },
-    setItem(key, value) {
-      host().storageSet(String(key), String(value ?? ""));
+    setItem(key: string, value: string): void {
+      host()!.storageSet(String(key), String(value ?? ""));
     },
-    removeItem(key) {
-      host().storageRemove(String(key));
+    removeItem(key: string): void {
+      host()!.storageRemove(String(key));
     },
-    clear() {
+    clear(): void {
       /* 端点未提供全清能力：静默跳过（localStorage 语义允许失败） */
     },
-    key() {
+    key(): string | null {
       /* 端点未提供枚举能力：返回 null */
       return null;
     },

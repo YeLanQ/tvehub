@@ -5,6 +5,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { BRIDGE_DIR, WECHAT_RUNTIME_DIR } from "../lib/paths.mjs";
@@ -17,6 +18,18 @@ export function runSurfaceCheck() {
   execFileSync(process.execPath, [path.join(BRIDGE_DIR, "check-surface.mjs")], {
     stdio: "inherit",
     timeout: 60_000,
+  });
+}
+
+/** 强类型守卫：bridge 层整层（runtime/bridge/tsconfig.json，strict）全量类型检查。
+ *  IDE 对 bridge 文件同源解析（最近 tsconfig 原则）；entries/wechat.ts 因 import
+ *  无声明的引擎 .mjs 产物而在该 tsconfig 内显式排除。 */
+export function runBridgeTypes() {
+  const require = createRequire(import.meta.url);
+  const tsc = require.resolve("typescript/bin/tsc");
+  execFileSync(process.execPath, [tsc, "-p", path.join(BRIDGE_DIR, "tsconfig.json")], {
+    stdio: "inherit",
+    timeout: 120_000,
   });
 }
 
