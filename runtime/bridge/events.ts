@@ -6,7 +6,7 @@
 
 import { host, bridgeActive } from "./host.ts";
 import { bridgeLog } from "./log.ts";
-import { winEvents } from "./env.ts";
+import { updateViewSize, winEvents } from "./env.ts";
 import { makeEvent } from "./util.ts";
 import { canvasEvents, screenCanvas } from "./canvas.ts";
 import { docEvents, visibility } from "./dom.ts";

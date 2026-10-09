@@ -93,16 +93,32 @@ class TextDecoderShim {
         cp = ((b & 7) << 18) | ((u8[i + 1] & 63) << 12) | ((u8[i + 2] & 63) << 6) | (u8[i + 3] & 63);
         i += 4;
       }
+      // 非 fatal 语义：越界码点与代理区一律替换 U+FFFD（二进制误入时不得抛
+      // RangeError——真机曾因 PNG 字节被当 UTF-8 解出 0x1A2CA2 直接炸启动链）
+      if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) cp = 0xfffd;
       out += String.fromCodePoint(cp);
     }
     return out;
   }
 }
 
+/** 字节 → 二进制字符串（一字节一字符，atob 标准语义；块级 apply 防栈溢出） */
+function bytesToBinaryString(u8) {
+  let out = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < u8.length; i += chunk) {
+    out += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+  }
+  return out;
+}
+
 export function installCodecGlobals() {
   if (!bridgeActive()) return;
   if (typeof globalThis.btoa !== "function") setGlobal("btoa", (s) => bytesToBase64(new TextEncoderShim().encode(String(s))));
-  if (typeof globalThis.atob !== "function") setGlobal("atob", (s) => new TextDecoderShim().decode(base64ToBytes(String(s))));
+  // atob 标准语义 = 二进制字符串（非 UTF-8 解码）：消费方（GLTF data URI、
+  // fetch data:）按字符取字节后再自行 TextDecoder，此前误接 UTF-8 解码器，
+  // 二进制载荷在真机必炸（模拟器有原生 atob 不走垫片，从不复现）
+  if (typeof globalThis.atob !== "function") setGlobal("atob", (s) => bytesToBinaryString(base64ToBytes(String(s))));
   if (typeof globalThis.TextEncoder !== "function") setGlobal("TextEncoder", TextEncoderShim);
   if (typeof globalThis.TextDecoder !== "function") setGlobal("TextDecoder", TextDecoderShim);
   return { TextEncoderShim, TextDecoderShim };

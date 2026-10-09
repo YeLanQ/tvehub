@@ -227,6 +227,16 @@ const wechatHost = {
   createWorker(path) {
     try {
       if (wxApi && typeof wxApi.createWorker === "function") {
+        // 包内预检：项目未随 worker bundle 时（game.json 无 workers 字段），
+        // 平台 createWorker 会打 SystemError 且必然失败——先 accessSync 静默
+        // 判定，直接走调用方主线程回退（真机错误行省一条，回退零延迟）
+        try {
+          const fsm =
+            wxApi && typeof wxApi.getFileSystemManager === "function" ? wxApi.getFileSystemManager() : null;
+          if (fsm && typeof fsm.accessSync === "function") fsm.accessSync(path);
+        } catch {
+          return null;
+        }
         const w = /** @type {null | { onMessage?: unknown; postMessage?: unknown; terminate?: unknown }} */ (
           wxApi.createWorker(path)
         );
@@ -317,7 +327,15 @@ const wechatHost = {
   onError(handler) {
     if (typeof wxApi.onError === "function") {
       try {
-        wxApi.onError((message) => handler(String(message || "未知错误")));
+        // 新基础库的负载可能是 {message, stack} 对象而非字符串，直接 String()
+        // 会丢成 "[object Object]"
+        wxApi.onError((message) => {
+          let text = message;
+          if (text && typeof text === "object") {
+            text = text.stack || text.message || JSON.stringify(text);
+          }
+          handler(String(text || "未知错误"));
+        });
       } catch {
         /* 同上 */
       }
