@@ -20,6 +20,7 @@ import {
   CALLS_PLACEHOLDER,
   doneWritesNote,
   looksLikeConfirmRequest,
+  resumeToolReplay,
   runAgent,
   toWire,
   type AgentEvent,
@@ -485,6 +486,14 @@ async function resolveRefAttachments(refs: string[], root?: string): Promise<str
   return blocks.join("");
 }
 
+/** 续跑短语：任务暂停/确认等待后用户让任务接着走的简短回复——命中才注入
+ * 上一任务的接续回放（普通新任务不回放，避免 prefill 膨胀） */
+function isContinuationPhrase(text: string): boolean {
+  return /^(继续|确认|同意|批准|ok|go|继续执行|继续吧|接着执行|接着来|请继续)[！!。.\s]*$/i.test(
+    text.trim(),
+  );
+}
+
 /** 发送（textArg 供确认浮动条等程序化调用；模板 @click 必须写 send()） */
 async function send(textArg?: string | Event): Promise<void> {
   const typed = typeof textArg === "string";
@@ -512,6 +521,10 @@ async function send(textArg?: string | Event): Promise<void> {
   // 跨轮防重复备忘：本会话已成功的写操作（只进 wire 不落库）——跨轮历史不含
   // 工具结果，没有它模型会把往期任务并入 brain.plan 重跑（如再次 project.create）
   const note = doneWritesNote(messages.value);
+  // 跨任务接续回放：暂停/确认后「继续」类短语恢复任务——wire 历史不含工具
+  // 结果，没有回放模型会把上一任务的探测/读取原样重跑（实测同一场景全文被
+  // 反复拉取，每轮「继续」都从零开始）
+  const replay = isContinuationPhrase(text) ? resumeToolReplay(messages.value) : "";
   // 可加载资料索引：官方文档+工坊原型目录常驻提示词——模型首调即中，
   // 不必空参试探 load_doc 换目录（失败回落空索引，只退化为无目录不阻塞）
   const catalogs = await fetchLoadableCatalogs();
@@ -519,6 +532,7 @@ async function send(textArg?: string | Event): Promise<void> {
     { role: "system" as const, content: buildSystemPrompt(card0, root, undefined, catalogs) },
     // 历史末尾是刚追加的用户消息 → 占位剔除，稍后替换为"原文 + 引用附件"版本
     ...history.slice(0, -1),
+    ...(replay ? [{ role: "user" as const, content: replay }] : []),
     ...(note ? [{ role: "user" as const, content: note }] : []),
   ];
   run.busy = true;

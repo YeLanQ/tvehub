@@ -47,6 +47,30 @@ export function callFromLooseJson(raw: unknown): ToolCall | null {
   return null;
 }
 
+/** 容器壳键：弱模型一次发多个并行调用时，把调用数组包进一个外壳对象的常用槽名
+ * （实测方言：宣布「并行调用」后发 {"calls":[…]}——外壳无名字槽，旧解析整体
+ * 消费为 null，内部调用永远看不见，且不留任何标签残骸，救援只能空转到暂停） */
+const JSON_CONTAINER_KEYS = ["calls", "tool_calls", "function_calls", "tools"] as const;
+
+/** 容器壳解包：外壳对象槽里的调用数组逐元素走 callFromLooseJson 校验
+ * （元素必须是名字+参数槽的调用形状），一个都捞不出返回 null——场景数据等
+ * 普通 JSON（children 等数组字段、元素无参数槽）不会误吞。 */
+export function callsFromContainerJson(raw: unknown): ToolCall[] | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  for (const key of JSON_CONTAINER_KEYS) {
+    const value = obj[key];
+    if (!Array.isArray(value)) continue;
+    const calls: ToolCall[] = [];
+    for (const item of value) {
+      const call = callFromLooseJson(item);
+      if (call) calls.push(call);
+    }
+    if (calls.length) return calls;
+  }
+  return null;
+}
+
 let seq = 0;
 
 /** 生成内联调用 id（JSON / invoke / 标签三种内联形态共用一套前缀语义） */
