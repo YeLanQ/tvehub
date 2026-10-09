@@ -4,6 +4,7 @@ import { createRHIDevice, type RHIDevice } from "../../../engine/rhi";
 import { registerThreeRHIBackends } from "../../../engine/rhi/backends/three";
 import { createRPIPipeline, type RPIClearDesc, type RPIPipeline } from "../../../engine/rpi";
 import type { PiPRequest } from "./CameraPiP";
+import { FrameRateLimiter } from "./frameLimiter";
 
 export type RendererBackend = "webgl" | "webgpu" | "auto";
 
@@ -14,6 +15,9 @@ export const EDITOR_BACKGROUND_COLOR = 0x141414;
 const IDLE_DELAY_MS = 800;
 /** 空闲视口帧率上限：视口静止（无交互且无活动内容）时的降频渲染目标 */
 const IDLE_FPS = 12;
+/** 活动视口帧率上限：高刷屏（120/144/165Hz）全速 rAF 是视口功耗/发热的直接
+ *  来源——Bresenham 数帧锁 60（60Hz 屏全渲零回归），与播放器缺省帧率一致 */
+const ACTIVE_FPS_CAP = 60;
 
 /** 渲染统计快照（调试面板每帧/定时拉取） */
 export interface RenderStats {
@@ -45,7 +49,8 @@ export interface CameraClearState {
  *
  * 渲染设计要点：
  * - 设备与管线经 RHI/RPI 抽象（src/engine）：RendererManager 只做编辑器
- *   策略（空闲降帧/尺寸同步节奏/阴影按需重画），不直接创建 three 渲染器——
+ *   策略（活动期锁 60 帧率上限/空闲降帧/尺寸同步节奏/阴影按需重画），不直接
+ *   创建 three 渲染器——
  *   后端选择（webgl / webgpu / auto）由 RHI registry 解析（WebGPU 不可用
  *   自动回退 WebGL），多 pass/离屏/回贴流程由 RPI 管线承担。运行时不可
  *   切换，修改后需重新挂载；
@@ -101,6 +106,8 @@ export class RendererManager {
   private lastActivityAt = performance.now();
   /** 上一次空闲降帧渲染的时间戳 */
   private lastIdleRenderAt = 0;
+  /** 活动期帧率配额（Bresenham 数帧；见 ACTIVE_FPS_CAP） */
+  private activeLimiter = new FrameRateLimiter(ACTIVE_FPS_CAP);
   /** 场景活动谓词（引擎注入：动画播放中/粒子发射中/物理模拟中等返回 true 即保持全速） */
   private activityHooks: (() => boolean)[] = [];
 
@@ -339,12 +346,15 @@ export class RendererManager {
     // 活动内容钩子（动画/粒子/物理/导航/逻辑/着色器时间）：既驱动空闲降帧判定，
     // 也驱动阴影图按需重画（见下方 shadowMap 门控）
     const contentActive = this.activityHooks.some((h) => h());
+    const now = performance.now();
     // 空闲降帧（功耗）：无交互且无活动内容（活动钩子，见 viewportActive）时视口
     // 降频渲染——编辑器空闲时 GPU/CPU 从满速 rAF 降到 12fps，交互即刻恢复全速
-    if (performance.now() - this.lastActivityAt > IDLE_DELAY_MS && !contentActive) {
-      const now = performance.now();
+    if (now - this.lastActivityAt > IDLE_DELAY_MS && !contentActive) {
       if (now - this.lastIdleRenderAt < 1000 / IDLE_FPS) return;
       this.lastIdleRenderAt = now;
+    } else if (!this.activeLimiter.tick(now)) {
+      // 活动期帧率上限（功耗）：高刷屏 Bresenham 数帧锁 60，60Hz 屏全渲零回归
+      return;
     }
     this.applySizeIfNeeded();
     this.orbit?.update();

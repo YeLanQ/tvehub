@@ -27,6 +27,7 @@ import {
   fetchTexCubeDoc,
   loadTexCubeTexture,
 } from "../../../framework/engine/modules/skyboxTextures";
+import { FrameRateLimiter } from "../../../framework/engine/modules/frameLimiter";
 import { buildNishitaSkyEquirect, type NishitaSkyParams } from "../../../framework/engine/modules/nishitaSky";
 import { getEditorStore } from "../../stores/editor";
 import { getProjectStore } from "../../stores/project";
@@ -86,6 +87,11 @@ let grid: THREE.GridHelper | null = null;
 let ground: THREE.Mesh | null = null;
 let raf = 0;
 let resizeObs: ResizeObserver | null = null;
+/** 功耗闸：Bresenham 数帧锁 60（高刷屏全速 rAF 刷新过高）+ 预览滚出视口/
+ *  检查器切走时整循环暂停（IntersectionObserver 恢复可见时再启） */
+const frameLimiter = new FrameRateLimiter(60);
+let viewVisible = true;
+let viewObs: IntersectionObserver | null = null;
 /** 补光（光照模式切换时显隐；模型模式由主光投影） */
 let hemiLight: THREE.HemisphereLight | null = null;
 let keyLight: THREE.DirectionalLight | null = null;
@@ -195,17 +201,25 @@ function syncSize(): void {
   camera.updateProjectionMatrix();
 }
 
-// —— 渲染循环：常驻（阻尼/自转/动画都需要连续帧）；页面隐藏时浏览器自动降频 ——
+// —— 渲染循环：常驻（阻尼/自转/动画都需要连续帧），带两重功耗闸（见 frameLimiter
+// 注释）；页面隐藏时浏览器自动降频 ——
 function startLoop(): void {
   stopLoop();
   const clock = new THREE.Clock();
   const tick = (): void => {
-    raf = requestAnimationFrame(tick);
-    const dt = clock.getDelta();
+    raf = 0;
+    if (disposed || !viewVisible) return; // 暂停态：IO 恢复可见时 startLoop 再启
+    if (!frameLimiter.tick(performance.now())) {
+      raf = requestAnimationFrame(tick);
+      return;
+    }
+    // 限频跳帧/暂停恢复后的真实帧间隔（钳掉暂停期巨大值，避免动画跳变）
+    const dt = Math.min(clock.getDelta(), 0.1);
     if (mixer && playing.value) mixer.update(dt);
     if (autoRotate.value && subject && !hasClips.value) subject.rotation.y += dt * 0.6;
     controls?.update();
     if (renderer && scene && camera) renderer.render(scene, camera);
+    raf = requestAnimationFrame(tick);
   };
   tick();
 }
@@ -657,6 +671,19 @@ onMounted(() => {
   } else {
     window.addEventListener("resize", syncSize);
   }
+  // 可见性暂停：预览滚出视口/检查器切走时停整条渲染循环（IO 恢复可见再启）
+  if (host.value && typeof IntersectionObserver !== "undefined") {
+    viewObs = new IntersectionObserver(
+      (entries) => {
+        const visible = entries[entries.length - 1].isIntersecting;
+        if (visible === viewVisible) return;
+        viewVisible = visible;
+        if (visible) startLoop();
+      },
+      { threshold: 0 },
+    );
+    viewObs.observe(host.value);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -664,6 +691,8 @@ onBeforeUnmount(() => {
   stopLoop();
   resizeObs?.disconnect();
   resizeObs = null;
+  viewObs?.disconnect();
+  viewObs = null;
   window.removeEventListener("resize", syncSize);
   clearSubject();
   controls?.dispose();
