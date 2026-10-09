@@ -15,6 +15,9 @@ frontmatter（name=目录名、description 非空）；行数软上限 200/硬�
 
 **layers（check-layers.mjs）**：依赖方向白名单——`src/lib/**` 是唯一允许
 import `@tauri-apps/*` 的层；业务层绕过 lib 门面直调 invoke 在此失败。
+扫描范围 src/ 全量 + runtime/bridge（渠道桥接）+ public/web-preview（播放
+组合根），含 `.mjs`；three 同规则走台账 `layers-three-allowlist.json`
+（只减不增，player.mjs 在账）。
 
 **unit（vitest run）**：无覆盖率（快）；阈值结算只在 `test:coverage` / ci:local
 --full。分桶阈值与"数组分组写法静默忽略"怪癖：`tve-unit-testing`

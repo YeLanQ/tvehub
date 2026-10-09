@@ -1,5 +1,6 @@
 {
   "files": [
+    "public/web-preview/player.mjs",
     "src/app/components/inspector/AssetPreview3D.vue",
     "src/app/composables/anim-editor/ctx.ts",
     "src/app/composables/anim-editor/useAnimPreview.ts",

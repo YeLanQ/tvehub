@@ -44,6 +44,11 @@
 3. **engine 层方向**：`src/engine` 不依赖 framework/app/runtime/UI 包
    （vue/tauri 等）；层内只准向下（rpi → rhi，禁止反向）。
 
+   扫描范围：`src/` 全量 + `runtime/bridge`（web/微信渠道桥接）+
+   `public/web-preview`（播放组合根 player.mjs，存量台账）。构建链脚本
+   （`runtime/scripts`，以 three 说明符为加工数据）与构建产物
+   （`public/engine`、`public/exports/wechat/runtime`）不入扫描。
+
 ## 双轨消费
 
 - **编辑器轨**：`src/app` → `EditorEngine.mount` → `RendererManager`

@@ -12,6 +12,11 @@
 // 规则三（engine 层方向）：src/engine 是最底层抽象——不得 import
 // framework/app/runtime/UI 层，不得依赖 vue/tauri；依赖只允许向下
 // （rpi → rhi；rhi 不得反向引用 rpi）。
+//
+// 扫描范围：src/ 全量 + runtime/bridge（web/微信渠道桥接）+
+// public/web-preview（播放组合根 player.mjs）。构建链脚本（runtime/scripts）
+// 与构建产物（public/engine、public/exports/wechat/runtime）不入扫描——
+// 前者以 three 说明符为加工数据，后者由台账源码再生。
 
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,6 +24,11 @@ import { dirname, join, resolve, sep } from "node:path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(root, "src");
+// 渠道运行时面与 src 同规则三类扫描（web/微信渠道不得越层依赖渲染库/IPC）：
+// runtime/bridge（渠道桥接，随包进产物）+ public/web-preview（播放组合根）。
+// runtime/scripts（构建链）不扫——改写器/打包器以 three 说明符为加工数据，
+// 字符串字面量必然命中，属设计内误报；其产物由台账源码再生。
+const scanRoots = [srcDir, join(root, "runtime", "bridge"), join(root, "public", "web-preview")];
 const coreRef = /@tauri-apps\/api\/core/;
 const allowlistPath = join(root, "scripts", "layers-three-allowlist.json");
 const updateAllowlist = process.argv.includes("--update-three-allowlist");
@@ -50,7 +60,7 @@ function* walk(dir) {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) {
       yield* walk(full);
-    } else if (/\.(ts|tsx|js|vue)$/.test(name)) {
+    } else if (/\.(ts|tsx|js|mjs|vue)$/.test(name)) {
       yield full;
     }
   }
@@ -96,26 +106,29 @@ const threeViolations = [];
 const directionViolations = [];
 const threeFiles = new Set();
 
-for (const file of walk(srcDir)) {
-  const rel = relToRoot(file);
-  const lines = readFileSync(file, "utf8").split("\n");
-  lines.forEach((ln, i) => {
-    const at = `${rel}:${i + 1}`;
-    if (coreRef.test(ln) && !ln.trim().startsWith("//") && !isDataLayer(rel)) {
-      tauriViolations.push(`${at} 直接引用 @tauri-apps/api/core（只允许 src/lib/，改用 lib/api.ts 门面）`);
-    }
-    if (threeSpecifier(ln)) {
-      if (!isRHIBackend(rel) && !isRPIBackend(rel)) threeViolations.push(`${at} 直接引用 three（只允许 engine/*/backends/ 与台账存量，新代码走 RHI/RPI）`);
-      threeFiles.add(rel);
-    }
-    if (rel.startsWith("src/engine/")) {
-      const specMatch = ln.match(/(?:from|import\()\s*["']([^"']+)["']/);
-      if (specMatch && !ln.trim().startsWith("//")) {
-        const problem = checkEngineDirection(rel, specMatch[1], file);
-        if (problem) directionViolations.push(`${at} ${problem}`);
+for (const scanDir of scanRoots) {
+  if (!existsSync(scanDir)) continue;
+  for (const file of walk(scanDir)) {
+    const rel = relToRoot(file);
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((ln, i) => {
+      const at = `${rel}:${i + 1}`;
+      if (coreRef.test(ln) && !ln.trim().startsWith("//") && !isDataLayer(rel)) {
+        tauriViolations.push(`${at} 直接引用 @tauri-apps/api/core（只允许 src/lib/，改用 lib/api.ts 门面）`);
       }
-    }
-  });
+      if (threeSpecifier(ln)) {
+        if (!isRHIBackend(rel) && !isRPIBackend(rel)) threeViolations.push(`${at} 直接引用 three（只允许 engine/*/backends/ 与台账存量，新代码走 RHI/RPI）`);
+        threeFiles.add(rel);
+      }
+      if (rel.startsWith("src/engine/")) {
+        const specMatch = ln.match(/(?:from|import\()\s*["']([^"']+)["']/);
+        if (specMatch && !ln.trim().startsWith("//")) {
+          const problem = checkEngineDirection(rel, specMatch[1], file);
+          if (problem) directionViolations.push(`${at} ${problem}`);
+        }
+      }
+    });
+  }
 }
 
 // ---- 台账 ----
@@ -139,5 +152,5 @@ if (violations.length) {
   process.exit(1);
 }
 console.log(
-  `[check-layers] 通过：@tauri-apps/api/core 仅限 src/lib；three 仅限 engine/*/backends 与 ${allowlist.size} 项存量台账；engine 层无反向依赖`,
+  `[check-layers] 通过（src + runtime/bridge + public/web-preview）：@tauri-apps/api/core 仅限 src/lib；three 仅限 engine/*/backends 与 ${allowlist.size} 项存量台账；engine 层无反向依赖`,
 );

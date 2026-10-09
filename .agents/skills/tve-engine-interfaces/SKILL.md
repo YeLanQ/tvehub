@@ -12,7 +12,8 @@ description: TvE Hub 引擎侧全部接口设计：编辑器引擎（EditorEngin
   ├─ rhi/  types+registry+backends/three（唯一直接 import three 的设备层）
   └─ rpi/  types+layerSet+backends/three（清除/分层多 pass/离屏回贴）
      分层规则见 ARCHITECTURE.md 与 scripts/check-layers.mjs（three 只准
-     engine/*/backends + 台账存量；engine 不依赖上层/vue/tauri）
+     engine/*/backends + 台账存量；engine 不依赖上层/vue/tauri）；扫描含
+     渠道运行时面 runtime/bridge 与 public/web-preview（player.mjs 在台账）
 
 编辑器侧  src/framework/**            Framework 层：可复用引擎功能与通用机制
   ├─ engine/EditorEngine.ts           编辑器引擎门面（~970 行：字段+构造接线+选择+薄委托）
