@@ -61,12 +61,16 @@ export function registerComponent(nodeId: string, instance: ScriptInstance, scri
 // 漏接线会让按脚本类名/源路径查找组件永远返回 null
 state.resolveScriptInstance = resolveScriptInstance;
 
-/** 脚本类注册（宿主在脚本模块加载后调用；路径与类名双键，类名先到先得） */
+/** 脚本类注册（宿主在脚本模块加载后调用；路径与类名双键，类名先到先得）。
+ *  类名优先取编译期注入的 __tveClassName（原始名）——下游压缩混淆（微信工具
+ *  上传预览包 minified 把类名改写成单字母）后 klass.name 不可信，字符串静态
+ *  字段是唯一稳定锚点 */
 export function registerScriptClass(srcRel: string, klass: ScriptKlass): void {
   if (typeof srcRel !== "string" || !srcRel || typeof klass !== "function") return;
   state.scriptClassByPath.set(srcRel, klass);
-  if (klass.name && !state.scriptClassByName.has(klass.name)) {
-    state.scriptClassByName.set(klass.name, klass);
+  const name = klass.__tveClassName || klass.name;
+  if (name && !state.scriptClassByName.has(name)) {
+    state.scriptClassByName.set(name, klass);
   }
 }
 
@@ -86,7 +90,10 @@ export function resolveScriptClass(token: unknown): { klass: ScriptKlass; srcRel
   return klass ? { klass, srcRel: "" } : null;
 }
 
-/** 实体上按脚本源路径 / 脚本类名查找已挂载的脚本组件实例（未挂载 null） */
+/** 实体上按脚本源路径 / 脚本类名查找已挂载的脚本组件实例（未挂载 null）。
+ *  类名匹配同时比对构造器 name 与 __tveClassName（原始名锚点——实例的类在
+ *  下游压缩混淆后 constructor.name 被改写，原始名只存在于编译期注入的静态
+ *  字段与 scriptClassByName 注册表） */
 export function resolveScriptInstance(nodeId: string, token: string): ScriptInstance | null {
   const list = state.componentsByNode.get(nodeId);
   if (!list || typeof token !== "string" || !token) return null;
@@ -94,7 +101,10 @@ export function resolveScriptInstance(nodeId: string, token: string): ScriptInst
     const p = normalizeScriptPath(token);
     return list.find((c) => c.__tveScript === p) ?? null;
   }
-  const byName = list.find((c) => c.constructor && c.constructor.name === token);
+  const byName = list.find((c) => {
+    const ctor = c.constructor as ScriptKlass | undefined;
+    return !!ctor && (ctor.name === token || ctor.__tveClassName === token);
+  });
   if (byName) return byName;
   const klass = state.scriptClassByName.get(token);
   return klass ? list.find((c) => c instanceof klass) ?? null : null;

@@ -115,6 +115,32 @@ function isDefaultExportClass(ts: TsModule, node: ts.Node): node is ts.ClassDecl
   );
 }
 
+/** 注入静态成员：static __tveClassName = "原始类名"（字符串字面量，任何下游
+ *  压缩/混淆都不改写字符串值——微信开发者工具上传预览包时对包内 JS 开
+ *  minified 会把类名混淆成单字母，getComponent(类名) 的按名解析自此免疫） */
+function injectClassName(
+  ts: TsModule,
+  factory: ts.NodeFactory,
+  cls: ts.ClassDeclaration,
+  name: string,
+): ts.ClassDeclaration {
+  const member = factory.createPropertyDeclaration(
+    [factory.createModifier(ts.SyntaxKind.StaticKeyword)],
+    "__tveClassName",
+    undefined,
+    undefined,
+    factory.createStringLiteral(name),
+  );
+  return factory.updateClassDeclaration(
+    cls,
+    cls.modifiers,
+    cls.name,
+    cls.typeParameters,
+    cls.heritageClauses,
+    [...cls.members, member],
+  );
+}
+
 /** 注入静态成员：static __tveComponentKeys = [[name, typeKey], ...] */
 function injectComponentKeys(
   ts: TsModule,
@@ -147,15 +173,29 @@ function injectComponentKeys(
   );
 }
 
-/** 裸组件字段声明收集/注入 transformer（默认导出类；已有该静态成员则跳过）。
- *  wechat.ts 的 CJS 编译复用同一 transformer（导出仅供渠道编译变体使用） */
+/** 裸组件字段声明收集/注入 + 原始类名注入 transformer（默认导出类；已有对应
+ *  静态成员则跳过）。wechat.ts 的 CJS 编译复用同一 transformer（导出仅供渠道
+ *  编译变体使用） */
 export function componentFieldTransformer(ts: TsModule): ts.TransformerFactory<ts.SourceFile> {
   return (context) => (sf: ts.SourceFile) => {
     const importedNames = collectImportedNames(ts, sf);
     const visitor = (node: ts.Node): ts.Node => {
       if (isDefaultExportClass(ts, node)) {
+        let cls = node;
+        const staticNameOf = (m: ts.ClassElement): string =>
+          m.name && ts.isIdentifier(m.name) &&
+          ts.canHaveModifiers(m) &&
+          !!m.modifiers?.some((k) => k.kind === ts.SyntaxKind.StaticKeyword)
+            ? m.name.text
+            : "";
+        const hasMember = (name: string): boolean =>
+          cls.members.some((m) => staticNameOf(m) === name);
+        // 原始类名（匿名默认导出无名字不注入；运行期按名解析的混淆免疫锚点）
+        if (cls.name && !hasMember("__tveClassName")) {
+          cls = injectClassName(ts, context.factory, cls, cls.name.text);
+        }
         const pairs: [string, string][] = [];
-        for (const m of node.members) {
+        for (const m of cls.members) {
           if (!ts.isPropertyDeclaration(m) || !m.type) continue;
           // 静态成员与 @property 装饰器字段（装饰器路径自行登记）不参与
           if (m.modifiers?.some((k) => k.kind === ts.SyntaxKind.StaticKeyword)) continue;
@@ -165,14 +205,9 @@ export function componentFieldTransformer(ts: TsModule): ts.TransformerFactory<t
           const name = ts.isIdentifier(m.name) || ts.isStringLiteral(m.name) ? m.name.text : null;
           if (name) pairs.push([name, token]);
         }
-        if (!pairs.length) return node;
-        const hasExisting = node.members.some(
-          (m) =>
-            ts.isPropertyDeclaration(m) &&
-            !!m.modifiers?.some((k) => k.kind === ts.SyntaxKind.StaticKeyword) &&
-            (ts.isIdentifier(m.name) ? m.name.text : "") === "__tveComponentKeys",
-        );
-        return hasExisting ? node : injectComponentKeys(ts, context.factory, node, pairs);
+        if (!pairs.length) return cls;
+        if (hasMember("__tveComponentKeys")) return cls;
+        return injectComponentKeys(ts, context.factory, cls, pairs);
       }
       return ts.visitEachChild(node, visitor, context);
     };

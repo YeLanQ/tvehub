@@ -54,6 +54,22 @@ describe("compileScriptWechat", () => {
     expect(js).toContain("rigidBody");
   });
 
+  it("正常：原始类名注入为字符串静态字段（__tveClassName；下游 minified 混淆免疫锚点）", async () => {
+    const src = `export default class MyJoystick {\n  dirX = 0;\n}\n`;
+    const { js, error } = await compileScriptWechat(src, "src/myjoystick.ts");
+    expect(error).toBeNull();
+    expect(js).toContain('__tveClassName = "MyJoystick"');
+    // 静态字段挂在类体内（CJS 产物 class 声明处），非模块级附加导出
+    expect(js).toContain("class MyJoystick");
+  });
+
+  it("边界：匿名默认导出类不注入类名元数据", async () => {
+    const src = `export default class {\n  x = 1;\n}\n`;
+    const { js, error } = await compileScriptWechat(src, "src/anon.ts");
+    expect(error).toBeNull();
+    expect(js).not.toContain("__tveClassName");
+  });
+
   it("异常：语法错误返回诊断、产物为空", async () => {
     const { js, error } = await compileScriptWechat(`export default class {\n`, "src/bad.ts");
     expect(js).toBe("");

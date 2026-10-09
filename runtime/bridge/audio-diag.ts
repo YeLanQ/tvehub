@@ -8,6 +8,28 @@
 
 import { host } from "./host.ts";
 import type { NativeAudioContext } from "./audio.ts";
+import { touchDiag } from "./events.ts";
+import { canvasEvents } from "./canvas.ts";
+import { view, winEvents } from "./env.ts";
+import { logTail } from "./log-capture.ts";
+import { loadTelemetry } from "./load-module.ts";
+
+/** 引擎输入探针（entries/wechat 求值后装配：读 engine.input 触点快照）。
+ *  桥派发计数照涨而探针恒 0 = canvas 监听面死（注册被原生画布监听表吸走
+ *  类分叉）；探针 >0 而摇杆仍死 = 命中测试/目标绑定侧问题，下一轮下钻。 */
+let inputProbe: (() => string) | null = null;
+
+export function setInputProbe(fn: () => string): void {
+  inputProbe = fn;
+}
+
+function probeInput(): string {
+  try {
+    return inputProbe ? inputProbe() : "未装配";
+  } catch {
+    return "探针异常";
+  }
+}
 
 /** WebAudio 侧计数（createAudioDiag 持有；decode 壳经引用写入） */
 export interface AudioDiagCounters {
@@ -74,7 +96,11 @@ export function createAudioDiag(native: NativeAudioContext, createdAt: number): 
           `state=${state} cur=${typeof cur === "number" ? cur.toFixed(2) : String(cur)}\n` +
           `解码 成${counters.decodeOk} 败${counters.decodeFail} 超时${counters.decodeTimeout}\n` +
           `时长${dur} 手势r=${counters.gestureResume} 内音${innerCounters.innerMade}/${innerCounters.innerPlay}\n` +
-          (counters.gestureStates ? `手势态 ${counters.gestureStates}` : "无手势采样"),
+          (counters.gestureStates ? `手势态 ${counters.gestureStates}\n` : "") +
+          `触 d${touchDiag.down} m${touchDiag.move} u${touchDiag.up} c${touchDiag.cancel} @${touchDiag.lastX},${touchDiag.lastY}\n` +
+          `面 c${canvasEvents.listenerCount("pointerdown")}+${canvasEvents.listenerCount("pointermove")} w${winEvents.listenerCount("pointerdown")} 视${view.width}x${view.height}\n` +
+          `探 ${probeInput()}\n` +
+          `志${loadTelemetry.calls}/${loadTelemetry.fails} ${loadTelemetry.lastSpec.slice(-34)}${loadTelemetry.lastErr ? ` !${loadTelemetry.lastErr.slice(0, 60)}` : ""} ${logTail()}`,
       );
     } catch {
       /* 诊断失败静默 */

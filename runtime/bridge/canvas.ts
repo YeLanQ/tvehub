@@ -24,12 +24,17 @@ function enhanceCanvas(canvas: unknown, surface: Emitter | null): unknown {
   // 屏上画布共享真实事件面；离屏画布各自独立（无人派发，仅保证形态完整）
   const emitter = surface || new Emitter();
   try {
-    if (typeof c.addEventListener !== "function") {
-      c.addEventListener = (type: unknown, fn: unknown) => emitter.on(type as string, fn);
-      c.removeEventListener = (type: unknown, fn: unknown) => {
-        emitter.off(type as string, fn as (event: unknown) => void);
-      };
-    }
+    // 强制覆盖而非「缺员补装」：平台画布可能自带原生 addEventListener（模拟器
+    // 与真机能力面不一，innerWidth 泄漏同款分叉），而平台原生监听表永远不会
+    // 收到桥接合成的 pointer 事件——引擎输入与 UI 按钮注册全被吸进死监听面
+    // （真机症状：window 面手势计数照涨、摇杆/按钮全死）。本平台合成触摸是
+    // 唯一事件源，覆盖后 three 的 webglcontextlost 落发射器（桥不发射该事件，
+    // 等效原生空表）；不向原生接链：模拟器原生触摸若存在亦与 wx.onTouch* 同
+    // 源鼠标，双投递只增噪。
+    c.addEventListener = (type: unknown, fn: unknown) => emitter.on(type as string, fn);
+    c.removeEventListener = (type: unknown, fn: unknown) => {
+      emitter.off(type as string, fn as (event: unknown) => void);
+    };
     c.getBoundingClientRect = () => ({
       left: 0,
       top: 0,

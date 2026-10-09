@@ -71,6 +71,8 @@ export interface ScriptKlass {
   new (entity: unknown): Record<string, unknown>;
   prototype: object;
   name: string;
+  /** 原始类名（编译期注入的静态字段；下游压缩混淆改写 name 后按名解析锚点） */
+  __tveClassName?: string;
 }
 
 /** 内置组件门面实例联合（component-registry 注册的六类） */

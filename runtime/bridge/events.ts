@@ -47,6 +47,19 @@ function pointerEvent(type: string, touch: HostTouch): TveEvent {
   });
 }
 
+/** 输入桥诊断读数（audio-diag 弹窗「触」行消费；恒更新，无开关成本）。
+ *  lastX/lastY/lastId = 最近一次派发的触点原值——真机横屏坐标空间错位类
+ *  问题（x/y 交换、物理像素混入）以此对照视口值判读。 */
+export const touchDiag = {
+  down: 0,
+  move: 0,
+  up: 0,
+  cancel: 0,
+  lastX: -1,
+  lastY: -1,
+  lastId: -1,
+};
+
 function dispatchPointer(type: string, touch: HostTouch): void {
   const ev = pointerEvent(type, touch);
   ev.target = screenCanvas;
@@ -55,6 +68,13 @@ function dispatchPointer(type: string, touch: HostTouch): void {
   const winEv = pointerEvent(type, touch);
   winEv.target = screenCanvas;
   winEvents.emit(type, winEv);
+  if (type === "pointerdown") touchDiag.down++;
+  else if (type === "pointermove") touchDiag.move++;
+  else if (type === "pointerup") touchDiag.up++;
+  else if (type === "pointercancel") touchDiag.cancel++;
+  touchDiag.lastX = Number(touch.clientX) || 0;
+  touchDiag.lastY = Number(touch.clientY) || 0;
+  touchDiag.lastId = Number(touch.identifier ?? 0) || 0;
 }
 
 type TouchBridgeName = "onTouchStart" | "onTouchMove" | "onTouchEnd" | "onTouchCancel";

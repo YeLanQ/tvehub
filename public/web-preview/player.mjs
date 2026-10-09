@@ -811,6 +811,14 @@ async function main() {
     physicsWorker: physicsApi?.workerMode === true,
     animationWorker: animations?.workerMode === true,
   };
+  // 鸭子全局（微信诊断弹窗探针消费；web 渠道零读者零影响，globalThis. 读法不触 check-surface）：
+  // physicsApi 非 null = 物理运行时启动成功（世界就绪）；worker 布尔 = 物理/动画线程标识。
+  // 真机判读：界0=物理世界没起来（角色冻结实锤）；界1 物W1=物理 Worker 链在跑。
+  globalThis.__tveRuntimeStatus = {
+    physicsReady: physicsApi != null,
+    physicsWorker: runtimeStatus.physicsWorker,
+    animationWorker: runtimeStatus.animationWorker,
+  };
   if (physicsActive && physicsApi && !runtimeStatus.physicsWorker) {
     warnRuntime("[TvE] 物理 Worker 未启用（单页模式或 Worker 创建失败），物理模拟在主线程运行");
   }

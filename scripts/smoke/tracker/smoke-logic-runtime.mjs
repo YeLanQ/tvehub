@@ -205,5 +205,34 @@ console.log("[4] SDK：engine.logic 按实体寻址");
     tve.engine.logic.fsmState(entity) === null && typeof tve.engine.logic.fire(entity, "x") === "undefined");
 }
 
+console.log("[5] SDK：脚本类按名解析（下游混淆免疫）");
+{
+  // 模拟下游压缩混淆：constructor.name 被改写为单字母，原始名只存在于
+  // 编译期注入的 __tveClassName 静态字段（compile.ts 注入；微信工具上传
+  // 预览包 minified 实证场景——getComponent("VirtualJoystick") 按名失效根因）
+  const tve2 = await import(engine("core/tve.mjs"));
+  // 重新装配（上一节末把宿主清成了空注册表）
+  tve2.installRuntime({
+    registry: nodes.map(({ json }) => ({ json, obj: null })),
+    rootObj: null, canvas: null, animations: null, audios: null, physics: null,
+    clipAnims: null, particles: null, terrains: null, ui: null, logic,
+    scripts: { spawn: () => null },
+  });
+  const Mangled = class V {
+    dirX = 0;
+    dirY = 0;
+  };
+  Mangled.__tveClassName = "VirtualJoystick";
+  const inst = new Mangled({ id: "joy1", userData: {} });
+  tve2.registerScriptClass("src/virtualjoystick.ts", Mangled);
+  tve2.registerComponent("joy1", inst, "src/virtualjoystick.ts");
+  ok("按原始名解析实例（constructor.name 已混淆）",
+    tve2.resolveScriptInstance("joy1", "VirtualJoystick") === inst);
+  ok("按类名解析脚本类（scriptClassByName 锚点）",
+    tve2.resolveScriptClass("VirtualJoystick")?.klass === Mangled);
+  ok("路径解析不受影响",
+    tve2.resolveScriptInstance("joy1", "src/virtualjoystick.ts") === inst);
+}
+
 logic.dispose();
 finish();
