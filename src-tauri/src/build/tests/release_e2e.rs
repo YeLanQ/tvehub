@@ -97,6 +97,7 @@ fn build_export_release_renames_and_rewrites() {
             wechat_orientation: None,
             wechat_subpackages: None,
             wechat_subpackage_size: None,
+        wechat_diag: None,
             },
             &JobCtx::default(),
     )

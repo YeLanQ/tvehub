@@ -102,6 +102,7 @@ const WECHAT_CHANNEL: BuildChannel = {
       typeof opts.wechatSubpackageSize === "number" && Number.isFinite(opts.wechatSubpackageSize)
         ? Math.min(4, Math.max(1, Math.round(opts.wechatSubpackageSize)))
         : 2,
+    wechatDiag: opts.wechatDiag === true,
   }),
 };
 

@@ -774,6 +774,8 @@ export type BuildExportArgs = {
   wechatSubpackages?: boolean;
   /** 单个分包体积上限（MB，1~4；超限单资产独占分包） */
   wechatSubpackageSize?: number;
+  /** 微信真机诊断弹窗开关（game.js 启动同步到设备 storage；不勾选启动即清除） */
+  wechatDiag?: boolean;
 };
 
 /** 构建导出结果（与 Rust build::BuildResult 对应） */

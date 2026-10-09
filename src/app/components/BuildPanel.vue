@@ -73,13 +73,17 @@ const wechatOrientation = ref<"portrait" | "landscape">("portrait");
 const wechatSubpackages = ref(false);
 /** 单个分包体积上限（MB，1~4；超限单资产独占分包） */
 const wechatSubpackageSize = ref(2);
+/** 微信真机诊断弹窗（真机定时弹窗读数排障用；正常游玩保持关闭） */
+const wechatDiag = ref(false);
 
-// 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）
+// 调试/发布互斥：勾选其一自动取消另一个（两者都未选 = 标准构建）；
+// 真机诊断挂在调试模式下——关闭调试即清空诊断勾选（导出侧同步清设备开关）
 watch(release, (v) => {
   if (v) debug.value = false;
 });
 watch(debug, (v) => {
   if (v) release.value = false;
+  else wechatDiag.value = false;
 });
 
 const building = ref(false);
@@ -139,12 +143,15 @@ async function restoreState(): Promise<void> {
     wechatAppId.value = prefs.wechatAppId ?? "";
     wechatOrientation.value = prefs.wechatOrientation ?? "portrait";
     wechatSubpackages.value = prefs.wechatSubpackages === true;
+    wechatDiag.value = prefs.wechatDiag === true;
     wechatSubpackageSize.value =
       typeof prefs.wechatSubpackageSize === "number" && Number.isFinite(prefs.wechatSubpackageSize)
         ? Math.min(4, Math.max(1, Math.round(prefs.wechatSubpackageSize)))
         : 2;
     // 兼容旧配置（两者曾可同时为 true）：发布模式优先
     if (release.value) debug.value = false;
+    // 真机诊断挂在调试模式下（含旧配置归一化：watch 在无变化时不触发）
+    if (!debug.value) wechatDiag.value = false;
   } else {
     channel.value = "web";
     selectedScenes.value = [...scenes];
@@ -161,6 +168,7 @@ async function restoreState(): Promise<void> {
     wechatOrientation.value = "portrait";
     wechatSubpackages.value = false;
     wechatSubpackageSize.value = 2;
+    wechatDiag.value = false;
   }
   if (!selectedScenes.value.includes(mainScene.value)) {
     mainScene.value =
@@ -189,6 +197,7 @@ async function persistPrefs(): Promise<void> {
     wechatAppId: wechatAppId.value,
     wechatOrientation: wechatOrientation.value,
     wechatSubpackages: wechatSubpackages.value,
+    wechatDiag: wechatDiag.value,
     wechatSubpackageSize: wechatSubpackageSize.value,
   };
   try {
@@ -221,6 +230,7 @@ async function doBuild(): Promise<void> {
       wechatOrientation: wechatOrientation.value,
       wechatSubpackages: wechatSubpackages.value || undefined,
       wechatSubpackageSize: wechatSubpackages.value ? wechatSubpackageSize.value : undefined,
+      wechatDiag: wechatDiag.value || undefined,
     });
     result.value = res;
     resultSource.value = "fresh";
@@ -402,6 +412,7 @@ watch(projectScenes, (next, prev) => {
               v-model:wechat-orientation="wechatOrientation"
               v-model:wechat-subpackages="wechatSubpackages"
               v-model:wechat-subpackage-size="wechatSubpackageSize"
+              v-model:wechat-diag="wechatDiag"
               v-model:release="release"
               v-model:debug="debug"
             />

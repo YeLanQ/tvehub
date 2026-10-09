@@ -11,16 +11,39 @@ use std::path::Path;
 /// 游客模式 AppID（未注册身份；工具可打开模拟器，真机预览需真实 AppID）
 pub(super) const TOURIST_APPID: &str = "touristappid";
 
-/// 入口：装载预构建 bundle（adapter + player + engine + three）；启用分包时
+/// 真机诊断开关同步语句（audio-diag 的 __tveDiagOn storage 显式开关；盒中盒
+/// 键位必须与 platforms/wechat storageGet 同模式）。diag=true 写 "1"，false
+/// 删键——勾选框恒为权威态：上一轮开启后设备 storage 的残留会被下一次不勾选
+/// 的导出自愈清掉，弹窗不会关不掉。入口体不做全局写入是原则，storage 是例外：
+/// 平台 storage 是入口/模块互相隔离的全局视图之间唯一跨界面（V10 教训）。
+fn diag_switch_js(diag: bool) -> &'static str {
+    if diag {
+        "try {
+  var __tveBox = wx.getStorageSync(\"__tve_wx_local_storage__\") || {};
+  if (__tveBox.__tveDiagOn !== \"1\") { __tveBox.__tveDiagOn = \"1\"; wx.setStorageSync(\"__tve_wx_local_storage__\", __tveBox); }
+} catch (e) { /* storage 不可用按无诊断 */ }"
+    } else {
+        "try {
+  var __tveBox = wx.getStorageSync(\"__tve_wx_local_storage__\");
+  if (__tveBox && __tveBox.__tveDiagOn !== undefined) { delete __tveBox.__tveDiagOn; wx.setStorageSync(\"__tve_wx_local_storage__\", __tveBox); }
+} catch (e) { /* storage 不可用按无诊断 */ }"
+    }
+}
+
+/// 入口：先同步真机诊断开关（storage 平台通道，见 diag_switch_js），再装载
+/// 预构建 bundle（adapter + player + engine + three）；启用分包时
 /// 先并行预加载全部分包再进游戏——桥接层对资产是同步读契约（readFileSync），
 /// 分包必须在游戏启动前就绪；单个分包加载失败不阻断启动，其内资产按缺失
 /// 降级（readPackageFile 返回 null 走调用方降级链）。基础库 2.1.0 以下无
 /// loadSubpackage，直接进游戏（分包资产缺失，控制台可见 404 告警）。
 /// 入口体不做任何全局写入——开发者工具对入口体与模块提供独立全局视图，
 /// 跨边界全局不可见，一切适配都在 bundle 单一模块作用域内完成。
-pub(super) fn game_js(sub_roots: &[String]) -> String {
+pub(super) fn game_js(sub_roots: &[String], diag: bool) -> String {
+    let diag_sync = diag_switch_js(diag);
     if sub_roots.is_empty() {
-        return "// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）\nrequire(\"./code.js\");\n".to_string();
+        return format!(
+            "// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）\n{diag_sync}\nrequire(\"./code.js\");\n"
+        );
     }
     let roots: Vec<serde_json::Value> = sub_roots
         .iter()
@@ -28,6 +51,7 @@ pub(super) fn game_js(sub_roots: &[String]) -> String {
         .collect();
     format!(
         r#"// 由 TvE Hub 微信小游戏构建生成（请勿手动编辑）
+{diag_sync}
 (function (roots) {{
   var load = null;
   try {{

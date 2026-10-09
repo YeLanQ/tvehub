@@ -28,11 +28,12 @@ pub async fn build_export(
     files: HashMap<String, String>,
     out_dir: Option<String>,
     // 微信小游戏渠道专属：AppID（空 = 继承上次产物 > touristappid）、屏幕方向、
-    // 分包开关与单个分包体积上限（MB）
+    // 分包开关与单个分包体积上限（MB）、真机诊断弹窗开关
     wechat_appid: Option<String>,
     wechat_orientation: Option<String>,
     wechat_subpackages: Option<bool>,
     wechat_subpackage_size: Option<f64>,
+    wechat_diag: Option<bool>,
 ) -> Result<BuildResult, String> {
     // 注册到任务管理器：支持取消 + 进度广播 + 多项目隔离
     let handle = state.register(&app, "export", Some(&root), crate::task::Priority::Normal);
@@ -64,6 +65,7 @@ pub async fn build_export(
                 wechat_orientation,
                 wechat_subpackages,
                 wechat_subpackage_size,
+                wechat_diag,
             },
             &ctx,
         );

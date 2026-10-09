@@ -49,4 +49,7 @@ export interface BuildOptions {
   wechatSubpackages?: boolean;
   /** 单个分包体积上限（MB，1~4，缺省 2；超限单资产独占分包） */
   wechatSubpackageSize?: number;
+  /** 微信真机诊断弹窗（真机定时弹窗读数排障用；勾选写入设备 storage 开关，
+   *  不勾选启动即清除——正常游玩请保持关闭） */
+  wechatDiag?: boolean;
 }

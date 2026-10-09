@@ -34,6 +34,7 @@ export async function loadBuildPrefs(root: string | null): Promise<BuildPrefs | 
       wechatAppId: typeof cfg.wechatAppId === "string" ? cfg.wechatAppId : "",
       wechatOrientation: cfg.wechatOrientation === "landscape" ? "landscape" : "portrait",
       wechatSubpackages: cfg.wechatSubpackages === true,
+      wechatDiag: cfg.wechatDiag === true,
       wechatSubpackageSize:
         typeof cfg.wechatSubpackageSize === "number" && Number.isFinite(cfg.wechatSubpackageSize)
           ? Math.min(4, Math.max(1, Math.round(cfg.wechatSubpackageSize)))
@@ -62,6 +63,7 @@ export async function saveBuildPrefs(root: string | null, prefs: BuildPrefs): Pr
     wechatAppId: prefs.wechatAppId ?? "",
     wechatOrientation: prefs.wechatOrientation ?? "portrait",
     wechatSubpackages: prefs.wechatSubpackages === true,
+    wechatDiag: prefs.wechatDiag === true,
     wechatSubpackageSize:
       typeof prefs.wechatSubpackageSize === "number" && Number.isFinite(prefs.wechatSubpackageSize)
         ? Math.min(4, Math.max(1, Math.round(prefs.wechatSubpackageSize)))

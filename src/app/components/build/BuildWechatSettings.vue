@@ -10,6 +10,7 @@ const wechatOrientation = defineModel<"portrait" | "landscape">("wechatOrientati
 });
 const wechatSubpackages = defineModel<boolean>("wechatSubpackages", { required: true });
 const wechatSubpackageSize = defineModel<number>("wechatSubpackageSize", { required: true });
+const wechatDiag = defineModel<boolean>("wechatDiag", { required: true });
 const release = defineModel<boolean>("release", { required: true });
 const debug = defineModel<boolean>("debug", { required: true });
 </script>
@@ -85,6 +86,20 @@ const debug = defineModel<boolean>("debug", { required: true });
       <span>运行日志输出到控制台（与发布模式互斥）</span>
     </label>
   </div>
+  <!-- 真机诊断仅在调试模式出现（联动清空见 BuildPanel 的 debug watch）；
+       说明文字放行外独立 bp-note，避免挤进行式 flex 被压到勾选框旁边 -->
+  <template v-if="debug">
+    <div class="bp-field">
+      <label for="bp-wechat-diag">真机诊断</label>
+      <label class="bp-check">
+        <input id="bp-wechat-diag" v-model="wechatDiag" type="checkbox" />
+        <span>真机定时弹窗读数（8s / 20s / 首触+1.5s 采样，排障用）</span>
+      </label>
+    </div>
+    <p class="bp-note">
+      勾选后产物在真机启动时写入诊断开关；不勾选导出会在启动时自动清除设备上的开关（上一轮残留自愈）。正常游玩请保持关闭。
+    </p>
+  </template>
   <p class="bp-note">
     产物为微信小游戏工程（场景与资产全内联，运行期零文件系统）：用「微信开发者工具」导入
     <code>build/wechat</code> 目录即可运行。当前限制：Basis 纹理压缩不支持（请关闭「纹理压缩」后构建）；Draco

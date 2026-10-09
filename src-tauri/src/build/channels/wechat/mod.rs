@@ -212,7 +212,10 @@ impl ChannelPipeline for WechatPipeline {
             // 每个分包根目录必须有 game.js（开发者工具静态校验，缺失直接报错）
             package.insert(format!("{root}/game.js"), subpackage_game_js());
         }
-        package.insert("game.js".to_string(), game_js(&sub_roots));
+        package.insert(
+            "game.js".to_string(),
+            game_js(&sub_roots, job.wechat_diag.unwrap_or(false)),
+        );
         package.insert("data.js".to_string(), data_js(cfg, &entries, &asset_files)?);
         package.insert(
             "game.json".to_string(),

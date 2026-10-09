@@ -44,6 +44,10 @@ pub struct BuildJob {
     pub wechat_subpackages: Option<bool>,
     /// 单个分包体积上限（MB；管线 resolve 阶段归一化钳到 1..=4，缺省 2）
     pub wechat_subpackage_size: Option<f64>,
+    /// 微信真机诊断弹窗（audio-diag 的 __tveDiagOn storage 显式开关；勾选时
+    /// game.js 启动即写开关，不勾则启动即清键——勾选框恒为权威态，设备
+    /// storage 残留自愈）
+    pub wechat_diag: Option<bool>,
 }
 
 /// 任务运行期上下文：取消检查与进度上报（命令层注入，单元测试传默认值）

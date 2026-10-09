@@ -79,6 +79,7 @@ fn wechat_job(root: &std::path::Path, files: HashMap<String, String>) -> BuildJo
         wechat_orientation: None,
         wechat_subpackages: None,
         wechat_subpackage_size: None,
+        wechat_diag: None,
     }
 }
 
@@ -135,6 +136,10 @@ fn wechat_export_end_to_end() {
     // game.js 入口仅 require code.js；game.json 屏幕方向缺省 portrait
     let game_js = fs::read_to_string(out.join("game.js")).unwrap();
     assert!(game_js.contains("require(\"./code.js\")"), "入口应只装载 bundle");
+    // 真机诊断开关：缺省（不勾选）= 携带清键自愈语句（上一轮开启的设备 storage
+    // 残留被清掉），且不写 "1"
+    assert!(game_js.contains("delete __tveBox.__tveDiagOn"), "缺省导出应清诊断开关");
+    assert!(!game_js.contains("__tveDiagOn = \"1\""), "缺省导出不应打开诊断");
     let game_json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
     assert_eq!(game_json["deviceOrientation"], "portrait");
@@ -214,6 +219,64 @@ fn wechat_export_end_to_end() {
     let game_json2: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("game.json")).unwrap()).unwrap();
     assert_eq!(game_json2["deviceOrientation"], "landscape");
+
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn wechat_diag_switch_baked_into_entry() {
+    let base = std::env::temp_dir().join(format!("tve-wechat-diag-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = setup_project(&base);
+
+    // 勾选（无分包形态）
+    let job = BuildJob {
+        wechat_diag: Some(true),
+        ..wechat_job(&root, wechat_files())
+    };
+    let result = run_build(job, &JobCtx::default())
+        .unwrap_or_else(|e| panic!("诊断勾选构建失败: {e}"));
+    assert!(result.ok);
+    // 勾选 = game.js 启动即写开启开关（盒中盒同模式），且无清键语句
+    let game_js = fs::read_to_string(root.join("build/wechat/game.js")).unwrap();
+    assert!(game_js.contains("__tveDiagOn = \"1\""), "勾选诊断应写开启开关");
+    assert!(!game_js.contains("delete __tveBox.__tveDiagOn"), "勾选诊断不应清键");
+
+    // 勾选（分包形态）：诊断语句必须在分包预加载之前（此前分包形态漏插）
+    let big = vec![7u8; 800 * 1024];
+    for name in ["a.png", "b.png", "c.png"] {
+        fs::write(root.join("assets/textures").join(name), &big).unwrap();
+    }
+    for (mat, tex) in [("N", "b"), ("O", "c")] {
+        fs::write(
+            root.join(format!("assets/materials/{mat}.mat")),
+            format!(r#"{{"$type":"material","name":"{mat}","map":"assets/textures/{tex}.png"}}"#),
+        )
+        .unwrap();
+    }
+    fs::write(
+        root.join("assets/Main.scene"),
+        r#"{"type":"scene","root":{"type":"node","children":[{"type":"meshNode","material":"assets/materials/M.mat"},{"type":"meshNode","material":"assets/materials/N.mat"},{"type":"meshNode","material":"assets/materials/O.mat"}]}}"#,
+    )
+    .unwrap();
+    let job = BuildJob {
+        wechat_diag: Some(true),
+        wechat_subpackages: Some(true),
+        wechat_subpackage_size: Some(1.0),
+        ..wechat_job(&root, wechat_files())
+    };
+    let result = run_build(job, &JobCtx::default())
+        .unwrap_or_else(|e| panic!("诊断+分包构建失败: {e}"));
+    assert!(result.ok);
+    assert!(result.message.contains("分包"), "应确实走分包形态: {}", result.message);
+    let game_js = fs::read_to_string(root.join("build/wechat/game.js")).unwrap();
+    assert!(
+        game_js.contains("__tveDiagOn = \"1\"") && game_js.contains("loadSubpackage"),
+        "分包形态的入口同样要带诊断开关"
+    );
+    let diag_pos = game_js.find("__tveDiagOn").expect("诊断语句在入口内");
+    let load_pos = game_js.find("loadSubpackage").expect("分包预加载在入口内");
+    assert!(diag_pos < load_pos, "诊断开关先于分包预加载写入");
 
     let _ = fs::remove_dir_all(&base);
 }
@@ -497,6 +560,7 @@ fn wechat_subpackage_split() {
     let job = BuildJob {
         wechat_subpackages: Some(true),
         wechat_subpackage_size: Some(1.0),
+        wechat_diag: None,
         ..wechat_job(&root, wechat_files())
     };
     let result = run_build(job, &JobCtx::default())
@@ -575,6 +639,7 @@ fn wechat_resolve_normalizes_subpackage_options() {
     let job = BuildJob {
         wechat_subpackages: Some(true),
         wechat_subpackage_size: Some(9.6),
+        wechat_diag: None,
         ..wechat_job(&root, wechat_files())
     };
     match WechatPipeline.resolve(&job) {
