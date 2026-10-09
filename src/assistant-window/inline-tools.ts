@@ -13,6 +13,7 @@ import type { ToolCall } from "./agent";
 import {
   balancedObject,
   callFromLooseJson,
+  callsFromContainerJson,
   decodeEntities,
   makeCall,
   parseObjectAt,
@@ -142,10 +143,18 @@ export function parseInlineToolCalls(content: string): ParsedInline {
       if (brace < 0) break;
       const range = balancedObject(inner, brace);
       if (!range) break;
-      const call = callFromLooseJson(parseObjectAt(inner, brace));
+      const parsed = parseObjectAt(inner, brace);
+      const call = callFromLooseJson(parsed);
       if (call) {
         calls.push(call);
         found = true;
+      } else {
+        // 容器壳（{"calls":[…]} 等）整体不是调用，槽里的数组才是
+        const batch = callsFromContainerJson(parsed);
+        if (batch) {
+          calls.push(...batch);
+          found = true;
+        }
       }
       pos = range[1] + 1;
     }
@@ -169,10 +178,18 @@ export function parseInlineToolCalls(content: string): ParsedInline {
     if (start < 0) break;
     const range = balancedObject(scanText, start);
     if (!range) break;
-      const call = callFromLooseJson(parseObjectAt(scanText, start));
+    const parsed = parseObjectAt(scanText, start);
+    const call = callFromLooseJson(parsed);
     if (call) {
       calls.push(call);
       ranges.push([range[0], range[1] + 1]);
+    } else {
+      // 容器壳（{"calls":[…]} 等并行调用数组）：整体消费，槽内逐个解出
+      const batch = callsFromContainerJson(parsed);
+      if (batch) {
+        calls.push(...batch);
+        ranges.push([range[0], range[1] + 1]);
+      }
     }
     cursor = range[1] + 1;
   }

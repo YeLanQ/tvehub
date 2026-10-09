@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, compactToolHistory, contextBudgetChars, doneWritesNote, fitWireBudget, looksLikeCompletion, looksLikeConfirmRequest, runAgent, toWire, toolResultLimitFor } from "./agent";
+import { buildSystemPrompt, compactToolHistory, contextBudgetChars, doneWritesNote, fitWireBudget, looksLikeCompletion, looksLikeConfirmRequest, resumeToolReplay, runAgent, toWire, toolResultLimitFor } from "./agent";
 import { assistantTools } from "./tools";
 import type { AgentCard } from "./store";
 import type { AssistantReply, WireMessage } from "./agent";
@@ -827,6 +827,69 @@ describe("looksLikeConfirmRequest", () => {
       looksLikeConfirmRequest(script + "是否按此计划执行？（回复「确认」即开始创建并保存。）"),
     ).toBe(true);
     expect(looksLikeConfirmRequest(script + "以上是本轮执行摘要，任务全部完成。")).toBe(false);
+  });
+
+  it("回归（会话取证）：自查旁白「需确认+名词」不是向用户要确认", () => {
+    // 野生误判案例：这句是助手中途叙述自己接下来要核查什么，
+    // 被旧判据拦截成确认请求，健康运行被打断、用户被迫手点「确认」
+    expect(
+      looksLikeConfirmRequest(
+        "file.search 未返回内容，改用分页直读场景尾部（那里已出现「屋顶」，需确认现有建筑与顶层结构）。",
+      ),
+    ).toBe(false);
+  });
+
+  it("正常：带受话对象的确认句式仍识别", () => {
+    expect(looksLikeConfirmRequest("计划共 3 步，需要你确认后我再执行。")).toBe(true);
+    expect(looksLikeConfirmRequest("场景较大，是否继续？需要确认。")).toBe(true);
+  });
+});
+
+describe("resumeToolReplay（跨任务接续回放）", () => {
+  it("正常：回放最后一条用户消息之前任务的工具结果", () => {
+    const replay = resumeToolReplay([
+      { role: "user", content: "丰富场景" },
+      { role: "tool", toolName: "asset.list", content: '[{"path":"a"}]', result: true },
+      { role: "assistant", content: "…任务已在此暂停" },
+      { role: "user", content: "继续" },
+    ]);
+    expect(replay).toContain("[工具 asset.list 执行结果]");
+    expect(replay).toContain("不要重复");
+  });
+
+  it("边界：调用行（无 result 标记）与 assistant 消息不回放", () => {
+    const replay = resumeToolReplay([
+      { role: "user", content: "任务" },
+      { role: "tool", toolName: "scene.list", content: "{}" },
+      { role: "assistant", content: "中途叙述" },
+      { role: "user", content: "继续" },
+    ]);
+    expect(replay).toBe("");
+  });
+
+  it("边界：重复读取去重，只回放一份", () => {
+    const replay = resumeToolReplay([
+      { role: "user", content: "任务" },
+      { role: "tool", toolName: "asset.read", content: '{"path":"Main.scene"}', result: true },
+      { role: "tool", toolName: "asset.read", content: '{"path":"Main.scene"}', result: true },
+      { role: "user", content: "继续" },
+    ]);
+    expect(replay.split("[工具 asset.read 执行结果]")).toHaveLength(2);
+  });
+
+  it("边界：大结果只留头部并标注压实", () => {
+    const big = "x".repeat(3000);
+    const replay = resumeToolReplay([
+      { role: "user", content: "任务" },
+      { role: "tool", toolName: "asset.read", content: big, result: true },
+      { role: "user", content: "继续" },
+    ]);
+    expect(replay).toContain("已压实");
+    expect(replay.length).toBeLessThan(1200);
+  });
+
+  it("空值：无上一任务工具结果返回空串", () => {
+    expect(resumeToolReplay([{ role: "user", content: "继续" }])).toBe("");
   });
 });
 

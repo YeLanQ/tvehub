@@ -384,7 +384,6 @@ describe("parseInlineToolCalls Markdown 标签方言", () => {
     expect(out).toContain("然后我改好了文件。");
     expect(out).not.toContain("执行结果");
   });
-
   it("回归（截图案例）：模仿回喂的「[工具 X 调用]」旁白标记剔除，旁白正文保留", () => {
     const leaked =
       "[工具 load_doc 调用] 让我先读补间动画文档，确认 `sequence`（串联两段不同缓动）和缓动名的准确写法，再动手改曲线。";
@@ -392,5 +391,40 @@ describe("parseInlineToolCalls Markdown 标签方言", () => {
     expect(out).not.toContain("[工具");
     expect(out).toContain("让我先读补间动画文档");
     expect(out).toContain("再动手改曲线");
+  });
+});
+
+describe("parseInlineToolCalls 容器壳并行调用", () => {
+  it("正常：{calls:[…]} 外壳包多个调用全部解出并整块剔除", () => {
+    const text =
+      '**并行调用：**\n{"calls":[{"tool":"node.add","input":{"kind":"group","name":"大陆"}},{"tool":"node.add","input":{"kind":"group","name":"道路"}}]}';
+    const { calls, cleaned } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].name).toBe("node.add");
+    expect(JSON.parse(calls[0].arguments).name).toBe("大陆");
+    expect(JSON.parse(calls[1].arguments).name).toBe("道路");
+    expect(cleaned).not.toContain("大陆");
+    expect(cleaned).toContain("**并行调用：**");
+  });
+
+  it("正常：{tool_calls:[…]} 外壳（OpenAI 数组方言）识别", () => {
+    const { calls } = parseInlineToolCalls('{"tool_calls":[{"name":"scene.list","arguments":{}}]}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("scene.list");
+  });
+
+  it("正常：<tool_call> 壳内的容器对象同样解包", () => {
+    const text = '<tool_call>{"calls":[{"tool":"asset.list","input":{"kind":"mat"}}]}</tool_call>';
+    const { calls } = parseInlineToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("asset.list");
+  });
+
+  it("边界：非调用容器键 / 调用形状不符的数组不误吞", () => {
+    const sceneData =
+      '{"summary":"场景数据","children":[{"type":"meshNode","name":"树叶"},{"type":"meshNode","name":"屋顶"}]}';
+    expect(parseInlineToolCalls(sceneData).calls).toHaveLength(0);
+    const badShapes = '{"calls":[{"type":"meshNode","name":"树叶"}]}';
+    expect(parseInlineToolCalls(badShapes).calls).toHaveLength(0);
   });
 });
