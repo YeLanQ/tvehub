@@ -196,6 +196,21 @@ if (bridgeActive()) {
   installWindow();
   installMiscGlobals();
 
+  // 视口族全局（live getter）：部分消费点从 globalThis 裸读（如 dom 的
+  // clientWidth 桩），只装 window 门面时真机沙箱读不到 → 恒落缺省值
+  const viewGlobal = (name, get) => {
+    try {
+      Object.defineProperty(globalThis, name, { get, configurable: true });
+    } catch {
+      /* 平台全局只读按缺省 */
+    }
+  };
+  viewGlobal("innerWidth", () => view.width);
+  viewGlobal("innerHeight", () => view.height);
+  viewGlobal("outerWidth", () => view.width);
+  viewGlobal("outerHeight", () => view.height);
+  viewGlobal("devicePixelRatio", () => view.dpr);
+
   // bundle 作用域裸赋值（env 拥有的名字；其余名字由各自模块安装）
   try {
     window = win;

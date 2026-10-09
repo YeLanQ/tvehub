@@ -47,7 +47,9 @@ function enhanceCanvas(canvas, surface) {
   return canvas;
 }
 
-/** 屏上画布：端点 createScreenCanvas 的首调结果，桥接内仅此一次 */
+/** 屏上画布：端点 createScreenCanvas 的首调结果，桥接内仅此一次。
+ *  注意：微信真机首画布求值期是竖屏占位符（750x1334），不代表最终显示面——
+ *  视口唯一可信来源是启动 sys 值（env.applyViewport），此处不得用画布尺寸反推。 */
 export const screenCanvas = bridgeActive() ? enhanceCanvas(host().createScreenCanvas(), canvasEvents) : null;
 
 /** canvas2d 工厂：离屏 2D 画布（天空盒程序化贴图 / UI 文本测量等消费）。

@@ -317,7 +317,12 @@ const wechatHost = {
   onWindowResize(handler) {
     if (typeof wxApi.onWindowResize === "function") {
       try {
-        wxApi.onWindowResize((res) => handler({ width: res && res.windowWidth, height: res && res.windowHeight }));
+        // 视口真相由本端点守：game.json 锁定方向后视口恒等启动 sys 值，真机
+        // 横屏 settle 期 onWindowResize 会报竖屏值（V7 读数实证），直接采信
+        // 会把渲染缓冲拉成竖屏比例被平台拉伸上屏——事件仅作重新布局信号，
+        // 值不采信（折叠屏展开等真实尺寸变化同样忽略，属既定取舍）
+        const boot = readViewport();
+        wxApi.onWindowResize(() => handler({ width: boot.width, height: boot.height }));
       } catch {
         /* 同上 */
       }

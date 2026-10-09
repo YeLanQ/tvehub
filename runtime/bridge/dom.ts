@@ -3,7 +3,7 @@
 // 画布消费走 canvas2d 工厂，图片消费走 net.js 的 Image 形态。
 
 import { bridgeActive } from "./host.ts";
-import { locationShim } from "./env.ts";
+import { locationShim, view } from "./env.ts";
 import { Emitter, makeElementStub, mergeKeys } from "./util.ts";
 import { createCanvas2d, screenCanvas } from "./canvas.ts";
 import { createImageElement } from "./image.ts";
@@ -25,14 +25,14 @@ function makeAppElement() {
 }
 
 function viewWidth() {
-  // 延迟读 env.view：避免模块加载期对 env 的强时序依赖
-  const w = typeof globalThis.innerWidth === "number" ? globalThis.innerWidth : 375;
-  return w;
+  // 直接读 env.view（env 本就已在 import 图内）：此前读 globalThis.innerWidth，
+  // 但该全局从未被安装（innerWidth 只装在 window 门面上），真机沙箱恒 undefined
+  // → 恒落 375 兜底 → 舞台按假尺寸 setSize（真机拉伸根因，V8 读数实证）
+  return view.width;
 }
 
 function viewHeight() {
-  const h = typeof globalThis.innerHeight === "number" ? globalThis.innerHeight : 667;
-  return h;
+  return view.height;
 }
 
 const appElement = makeAppElement();
