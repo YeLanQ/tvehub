@@ -14,6 +14,7 @@
 | 帧循环顺序（player.mjs） | player-runtime.md 帧循环段 | 顺序图重画 + smoke-script-hooks 过一遍 |
 | `vitest.config.ts` 阈值/口径 | tve-unit-testing/coverage-buckets.md 分桶表 | 表格 + **负向验证**（临时设 100 确认会拦）记录 |
 | `package.json` scripts / 门禁链 | tve-unit-testing/gates.md + tve-local-ci/gate-chains.md | 两处链路图同步；ci-local STEPS 表若动，同步 gate-chains |
+| 版本/CHANGELOG 工具链（sync-version.mjs / changelog-core.mjs / gen-changelog.mjs） | tve-release-versioning | 命令族表、bump 语义、锚点正则与"落锚三步"剧本核对；`文件:行号` 引用回填 |
 | 检查器分区/工具栏/右键菜单/快捷键 | tve-app-operations 对应单元操作面 | 操作表增删；入口 `文件:行号` 回填 |
 | 图节点注册表（nodeRegistry/opRegistry） | tve-app-operations/graph-nodes.md 类型全表 | 表格行 |
 | 白板工具/文件管理规则 | whiteboard-usage / whiteboard-files | 操作表；改名/防覆盖规则变更重点核对 |
