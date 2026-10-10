@@ -45,3 +45,6 @@ reports/
 # public/web-preview + public/engine），由 scripts/build-wechat-runtime.mjs
 # 一次全量再生，不入库（与 public/engine/ 同一 doctrine）
 public/exports/wechat/runtime/
+
+# 工程实战笔记独立仓（docs/notes，远程 TvEHub-Practical-Notes；非子模块，父仓库不跟踪）
+docs/
