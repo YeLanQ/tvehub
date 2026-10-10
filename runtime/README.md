@@ -11,8 +11,8 @@
 | wechat（微信小游戏） | wx 小游戏沙箱 | `bridge/entries/wechat.ts`：平台端点注册 → 桥接核心安装 → player | `runtime/scripts/wechat.mjs` 产出 `public/exports/wechat/runtime/`（code.js 单文件 CJS bundle） |
 
 新渠道（抖音小游戏 / 原生壳等）= 平级新增 `bridge/platforms/<id>.ts`（实现
-~22 方法的 `HostEndpoint` 契约，见 `bridge/contract.ts`）+ 一份组装入口，核心
-零改动。
+24 方法 + platformId 标识的 `HostEndpoint` 契约，HOST_SURFACE 台账 25 项，
+见 `bridge/contract.ts`）+ 一份组装入口，核心零改动。
 
 ## 目录导览
 
