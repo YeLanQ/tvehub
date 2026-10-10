@@ -58,7 +58,7 @@ runtime/scripts/manifest.mjs
 
 ## 导出内容一致性
 
-Rust 侧 `src-tauri/src/build/content.rs` 是渠道无关的「导出内容内核」（场景收集
+Rust 侧 `src-tauri/src/build/kernel/content.rs` 是渠道无关的「导出内容内核」（场景收集
 + 引用资产 + release 处理），web/wechat 管线都只消费它的产物做包装；跨渠道一致
 性（场景清单/资产集合/缺失/release 生效/内容字节）由
 `src-tauri/src/build/tests/consistency_e2e.rs` 守护。
