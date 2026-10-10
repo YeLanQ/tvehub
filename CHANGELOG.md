@@ -6,9 +6,35 @@
 - `pnpm version:bump auto` 按未发布提交的类型自动递增版本（feat→minor、fix→patch、
   破坏性→major，0.x 阶段破坏性按 semver 惯例只升 minor），并把新版本段写进本文件。
 
-## v0.1.4（未发布）
+## v1.0.0+1（2026-10-10）
 
 ### 新特性
+- **wechat**: 多线程加速改为构建面板勾选项（缺省全主线程，微信多线程设备适配性/普及率不足）——勾选才随包 worker bundle 与 game.json workers 声明，config.workerThread 门控运行期零触达…
+- **wechat**: 构建面板加真机诊断勾选框（仅调试模式出现，取消调试自动清空）——勾选写入设备 __tveDiagOn 开关/不勾选启动即清键自愈残留；game.js 入口两形态（含分包）都携带开关语句并先于分包预加载，e2e 补组合用例
+- **wechat**: 分包选项——资产按体积分 pkg-N 分包，game.js 启动前预加载，每分包带入口桩
+- **wechat**: Draco 解码器切 wasm 形态——wrapper+包内 .wasm 经 emscripten instantiateWasm 配置口接物理 wasm 同款钩子链替代旧纯 JS（省 260KB），Rust 白名单/manifest…
+- **wechat**: Draco 解码器按项目配置条件随包——manifest 独立 draco 组+channels/runtime-supply 按 resources.dracoCompression 映射（与 web 同判据），未启用包省 512KB
+- **wechat**: 动画 Worker 并入物理单实例——animation-worker 抽 routeAnimationMessage+钩子协议加 animation ns+主线程 createChannelWorker+ready…
+- **assistant**: 构建命令接线——project.build 补登记区域表+下发助手工具目录+NLU 构建语汇，布尔参数宽松收窄
+- **assistant**: 工具调用语法通用化——结构引擎兼容任意标记模板（DeepSeek DSML 等）+ tools 真下发 API、400/422 自动去 tools 降级重试
+- **wechat**: 物理 Worker 落地——单实例信封多路复用+wasm 字节中继+按后端 bundle，模拟器实测 worker 内 ammo 世界就绪；修下行投递(事件注册/信封解包)、钩子安装时序、就绪超时回退与渲染器重建画布透传
+- **wechat**: Draco 压缩支持——主线程纯 JS 内联解码，替代已废弃的 wasm 腿方案
+- **types**: runtime 纳入 vue-tsc strict 检查——2800 错全量清零零 any，修生命周期调用丢 this 回归
+- **web**: 运行时 wasm 文件化——物理/draco/basis 去内联改钩子直连 .wasm 并支持 Worker，修单页资产垫片入参与 KTX2 渲染器探测
+- **wechat**: 资产文件化 2.0——二进制按 assets/uid 原始字节落盘去 base64 税，桥接清单兜底读包文件
+- **bridge**: 桥接层日志门控——release 零 console 输出，安装期日志缓冲回放
+- **wechat**: 物理后端全放开——wasm 抽包内文件路径直连 + 桥接垫片三态安装，胶水去 eval
+- **build**: 微信小游戏导出渠道——预构建 CJS bundle + 数据全内联，不干扰 web 渠道
+- **prefs**: 主题颜色自定义接线生效，默认值对齐 ui-kit 令牌
+- **inspector**: Mesh 卡新增基元 size 逐轴编辑
+- **devtools**: 新增 project.build 远程命令，构建导出可远程驱动
+- **gate**: 分层门禁管制 three 直依与 engine 层方向，存量入台账
+- **engine**: 新增 RHI/RPI 渲染抽象，编辑器与运行时渲染全量接入
+- **viewport**: 相机选中画中画，编辑视口右下角按该相机实时取景
+- **mesh**: 数据化网格+渲染优化（阴影按需重画/几何共享缓存/大地形自适应分块）
+- **terrain**: 数字地形 DEM 数据源（asc/hgt/pgm/xyz）+导入比例自动适配
+- **ui**: UI Widget 新增不透明度 opacity(0..1)——检查器图片/文本/按钮卡+编辑器与运行时材质透明渲染(按钮标签跟随)+SDK契约/文档同步,旧场景回退1
+- **docs**: 文档代码块测试基建(docs:test 两级验证)+API 示例库与覆盖门禁,tve.d.ts 类型缺口修正
 - **assistant**: shader资产职责分离与格式锁定：新增shader.write(引擎解析校验Shader指令/Base分支/钩子,拒绝时回喂引擎原因),asset.write锁.redirect
 - **assistant**: 大文件读法扩展：file.module按模块目录读单模块全文+asset.read行区间分页(startLine/endLine带翻页游标,超512KB区间放行),整读截断附翻页指引
 - **assistant**: 供应商思考开关与强度设置(默认/开/关三态,GLM/Qwen/o系方言并发,强度四档透传含xhigh)
@@ -32,9 +58,29 @@
 - **brain**: 助手大脑（冷热分层+知识图谱+因果链进化+向量自压缩+0.99 效能门控），skills 构建期内嵌驱动策略自主执行
 - **assistant**: TvE 助手面板（会话树/卡片/供应商/流式对话）+ devtools 内部桥与本地 CI 收口
 - **ci**: 本地自动 CI 链 + 技能文档自演化校验，技能组补系统层三技能
-- **docs**: 文档弹层改为全局单例窗口（双通道跳转同白板）
 
 ### 问题修复
+- **wechat**: 真机摇杆不动角色——工具上传预览包 minified 混淆用户脚本类名致 getComponent 按名解析断（模拟器被键盘 WASD 掩盖），编译期注入 __tveClassName…
+- **wechat**: 音频真机无声+Worker 误杀+bridge 全量强类型——①facade resume 即恒报 running 短路手势解锁链→桥接手势监听幂等直调原生 resume+decode 10s…
+- **wechat**: 真机画面拉伸——dom 桩 viewWidth 读未安装的 globalThis.innerWidth 恒落 375x667 兜底致舞台按假尺寸 setSize（模拟器泄漏原生 innerWidth 从不复现），改直读 env.view…
+- **wechat**: 真机首验四连修——events 漏 import updateViewSize 断首帧（模拟器不发 resize 从不复现）、codec atob 误接 UTF-8 解码器+TextDecoder 越界码点钳制、worker 包内…
+- **assistant**: 并行调用容器壳解包+确认判据收紧+宣言救援教格式+继续时回放上一任务工具结果，断暂停循环
+- **runtime**: 生命周期与图输入回调以组件实例为接收者——修丢 this 致用户脚本崩
+- **assistant**: @候选与文件树随工作区与文件变更自动刷新，修事件系统错配
+- **engine**: 画中画透视相机同步目标面宽高比，消除拉伸
+- **preview**: 场景保存打自写标记，预览不再被自动重载拽回场景视图
+- **engine**: 新建网格/音频/粒子节点落世界原点，去除随机出生偏移
+- **editor**: 交付流补设项目根，.scene 分级重载，save 防竞态，mesh 落位
+- **preview**: 导出目录换入瞬时锁短重试，修偶发拒绝访问
+- **scene**: 后端变更提交串行链+在途回显抑制,修属性面板快速连编时数值回弹/反复跳/被覆盖丢失
+- **terrain**: heightScale 上限 500 放宽到 10000(双轨),DEM 导入真实起伏不再被钳
+- **physics**: 高度场碰撞分辨率默认自动对齐地形网格(新增512档),修大地图采样混叠致线框/碰撞不贴地
+- **ui**: 数据化网格补齐来源下拉/材质区/动画材质组/图窗索引的 data 分支
+- **app**: 组件类型入参大小写归一，修 node.component.add 挂 rigidBody 报未登记
+- **physics**: 高度场碰撞签名改读地形组 userData，模拟中地形变化重建生效
+- **scene**: 场景装载为缺 id 节点补生成，修复挂根孤儿致保存/导出丢节点
+- **engine**: 添加节点隐式父级只认容器型(空组/UI画布/布局)——实体选中或无选中一律挂根,消除添加后自动选中导致的连续添加链式嵌套;层级右键显式父级不受影响;含判定单测+命令描述/技能文档同步+CDP实机复测脚本
+- **inspector**: 修UIButton取色无效——onColorInput柯里化工厂被模板当处理器调用,闭包创建即丢弃未emit;改双参签名直传$event+取色回归spec
 - **assistant**: 大脑过程容器按任务累积保留：时间线抽纯函数timeline.ts,运行中只隐藏当前任务(callId匹配)的静态对,先前任务容器不再随运行消失
 - **assistant**: 撤销pruneMissing启发式删除会话(探测误判即整区清空致数据丢失),已删项目残留改渲染层过滤+聚焦补同步
 - **assistant**: 零工具完成守卫：计划型任务没跑过任何工具轮就宣称任务完成判为空话(FAKE_DONE_NUDGE拉回真执行,预算2次不锁死,纯问答不开启)
@@ -65,22 +111,46 @@
 - **whiteboard**: 新建白板重置为空白文档，命名框常显支持重命名并防同名覆盖
 
 ### 性能优化
+- **editor**: 编辑器视口与资产 3D 预览锁 60fps——新增共用 FrameRateLimiter（Bresenham 数帧，与播放器同算法，60Hz 零回归/高刷屏按比例锁 60），资产预览滚出视口整循环暂停
+- **runtime**: 导出产物性能诊断——evalC 评测链、阴影节流 opt-in（修闪烁回归）、F3 HUD 增强、workerMode 回退告警、加载并发闸
+- **engine**: 引擎功耗优化——预览限帧60+不可见暂停+powerPreference缺省省电,编辑器空闲降帧+统计按需+阴影refit静止跳过+灯光/几何签名门控,粒子活动信号emitting修正,Worker缓冲池化与tween/图每帧零分配,预览服…
 - **assistant**: 助手提速三件套——node.add 参数别名（rel/path/parent）+ 重复调用守卫与空参可恢复回执（docs_list 目录/load_skill 任务路由/brain.query 校验）+ 旧工具结果压实减 prefill
 - **assistant**: 模糊原子单元合并为单会话按计划推进（原逐单元独立会话致全量上下文往返翻N倍），纯直执行任务零LLM汇总
 
 ### 重构
+- **engine**: EditorEngine 按挂载/事件/领域编排拆 12 模块（3349→974 行，公共 API 零改动）+ 地形/几何播放侧镜像收敛为 framework 单源（ImprovedNoise 自包含，runtime 只留装配适配）
+- **types**: TS 显式 any 清零——命令层 args 窄化、worker 协议判别联合、TslNode/NodeJson 结构视图
+- **build**: 构建子系统分层化——Rust 管线五层+scene_pack 底座、node 链 lib/wechat 拆分+protocol 单源、前端 build/ 收敛四胞胎、surface/bridge 守卫接入 ci:local
+- **runtime**: 运行时统一——内容内核跨渠道一致、桥接层 TS 化迁 runtime/、web 供给并入统一清单
+- **bridge**: wechat-runtime 桥接层化——契约+通用核心+平台端点，接入漂移守卫与契约测试
+- **build**: 渠道实现收敛 web/ 与 wechat/ 子目录，场景收集抽共享阶段
+- **build**: 构建导出工厂化，build.rs 拆分模块目录
 - **build**: repos外置不内嵌进exe,release构建自动拷public/repos到exe同级(只补缺失不覆盖),归档契约测试翻转折防回归
 - **brain**: 未登记方法不吃审批豁免(黄灯必确认)，补入参4096护栏与冷层装载探针，decompose合并重复路由
 - **brain**: 原子命令全部经助手转换（建议参数辅助），绿色通道仅保留无参绿灯过程命令，删$prev链式
 
 ### 文档
+- **arch**: 新增分层架构文档，同步引擎技能文档 RHI/RPI 口径
 - **skills**: 助手三层教学面入库文件关联规则(改名/移动/删除前file.search查引用方,@property与着色器属性改名致已存参数回退默认)
 - **skills**: 自主决策验证规则新增关联影响先行(改完先分析关联功能受影响面,测试全绿≠没破坏,附会话误删判例)
 - **skills**: 新增 .agents/skills 技能组（API/单测/引擎接口/SDK 脚本/应用操作）
-- **readme**: 主 README 更新为 kp-3 / v0.1.3，kp-2 基线改名存档
 
 ### 测试
 - 单测补齐至 351 例 + 覆盖率分桶阈值 + smoke P0/P1 分层与报告归档
+
+### 其他
+- **gate**: 分层门禁扫描扩渠道运行时面 runtime/bridge + public/web-preview（walk 补 .mjs），player.mjs 补录台账 107→108，构建链 scripts 以 three 说明符为加工数据不扫
+- **ui-kit**: 新增 --check 勾选色令牌，全量勾选/单选选中色与强调灰解耦
+- **inspector**: UI 卡片两列网格布局，属性面板最小宽度提至 300
+- **submodule**: repos 指针更新至 manuals 钉子问题手册
+- **console**: 控制台日志文本可选中
+- **ui**: 检查器卡片体去除 8px 行间距
+- **scripts**: CDP 实机评测工具——帧率/暂停/预览服务评测脚本(cdp 客户端+场景搭建+四项评测)
+
+## v0.1.3.1-forge（2026-09-21）
+
+### 新特性
+- **docs**: 文档弹层改为全局单例窗口（双通道跳转同白板）
 
 ### 其他
 - **release**: CHANGELOG 自动生成、version:bump auto 与 API 文档自动生成
